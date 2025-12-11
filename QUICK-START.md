@@ -2,11 +2,15 @@
 
 ## What's Ready
 
-✅ **Test mockup created**: Invoice Status Card
-✅ **Screenshot captured**: `examples/test-2-invoice-card.png` (17KB)
+✅ **Test 2 mockup**: Invoice Status Card - `test-2-invoice-card.png` (17KB, simple)
+✅ **Test 3 mockup**: Styled Invoice Card - `test-3-styled-invoice-card.png` (330KB, complex)
 ✅ **screenshot-to-code cloned**: Ready for Phase 1
 ✅ **Test workflow documented**: `TEST-RUN.md`
 ✅ **Screenshot tool**: Playwright-based (in `tools/screenshot.js`)
+
+### Test Sequence
+1. **Test 2** (simple) - Baseline to validate tool works
+2. **Test 3** (styled) - Complex design with Matrix theme background
 
 ---
 
