@@ -1,99 +1,135 @@
-# visual-to-code
+# Visual to Code
 
-> **Status**: Research & Spike Phase
-> **Goal**: Tools and workflows to convert visual designs into structured data specifications for agent-driven code generation
+**Convert design images to HTML/Tailwind code using Claude**
 
-## The Problem
-
-Agents excel at backend development but struggle with visual/UI work because:
-- They work from code, not visual references
-- Lack precise specifications (colors, spacing, layout)
-- Over-engineer when fixing UI issues
-- Break adjacent features during "fixes"
-
-## The Solution
-
-Build a pipeline: **Visual Design → Structured Spec → Code Generation**
-
-```
-Screenshot/Design File
-        ↓
-  Extraction Tool
-  (Figma/Penpot/AI)
-        ↓
-  Structured JSON Spec
-  {
-    "layout": "grid-3-col-24px-gap",
-    "components": [...],
-    "tokens": {
-      "colors": ["#3B82F6"],
-      "spacing": ["24px", "16px"]
-    }
-  }
-        ↓
-  Code Generator
-  (Agent + Templates)
-        ↓
-  React + Tailwind Code
-```
-
-## Research Phase
-
-Currently investigating:
-
-### 1. Figma Ecosystem
-- Figma Dev Mode capabilities
-- Community plugins for spec extraction
-- Figma REST API for programmatic access
-
-### 2. Open-Source Alternatives
-- **Penpot** - OSS Figma alternative
-- **Framer** - Design with code generation
-- **Plasmic** - Visual builder
-- Other OSS design tools
-
-### 3. AI-Native Tools
-- Screenshot-to-code projects (GitHub)
-- Vision model-based extractors
-- Design token extraction tools
-
-### 4. Design Token Tools
-- Extract colors, spacing, typography from:
-  - Images/screenshots
-  - Design files
-  - Live websites
-
-## Evaluation Criteria
-
-For each tool:
-- **License**: OSS? Free tier? API access?
-- **Output Format**: JSON? TypeScript? CSS?
-- **Capabilities**: Layout, colors, spacing, typography, components
-- **Integration**: Fits into agent workflow?
-
-## Target Use Cases
-
-1. **Screenshot → Component**: Take screenshot, generate React component
-2. **Design File → Design Tokens**: Extract colors/spacing/typography
-3. **Reference UI → Implementation**: Clone existing UI with precision
-4. **Fix Verification**: Compare before/after screenshots programmatically
-
-## Related Projects
-
-- `repos/reflex` - Evidence-based specification (pixel diffs, screenshots)
-- `repos/pip-by-arc-forge` - Test case for UI regression prevention
-- `~/.claude/skills/orchestrating-contracts` - API contract infrastructure
-- `~/.claude/skills/frontend-aesthetics` - Design principles
-
-## Next Steps
-
-1. Complete tool research (in progress)
-2. Create comparison matrix of top candidates
-3. Build proof-of-concept with most promising tool
-4. Test on real Pip UI component
-5. Extract reusable patterns into skills
+Unified toolkit with SDK, CLI, web app, and automation tools. Uses exact screenshot-to-code parameters for 85-90% visual accuracy.
 
 ---
 
-**Created**: 2025-12-11
-**Related**: Joplin note "Agent Visual Design Problem", `~/.claude/ISSUES.md` issue_009
+## 🚀 Quick Start
+
+### CLI (Recommended for Automation)
+
+```bash
+# Set API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Generate code from image
+./cli/visual-to-code design.png
+
+# Output: design.html
+```
+
+### Web App (Recommended for Interactive Use)
+
+```bash
+cd app
+npm install
+npm start
+
+# Open http://localhost:3000
+```
+
+### SDK (For Programmatic Use)
+
+```javascript
+import { generateFromFile } from './sdk/node/index.js';
+
+const result = await generateFromFile('design.png');
+console.log(result.code);  // Generated HTML
+```
+
+---
+
+## 📦 What's Inside
+
+### 1. **SDK** (`sdk/node/`)
+
+Reusable library for design→code conversion.
+
+**Features**:
+- `generateFromFile()` - Generate from image file
+- `generateFromBase64()` - Generate from base64 data
+- `generateVariants()` - Generate multiple variants
+- Uses exact screenshot-to-code parameters
+
+[📚 SDK Documentation](sdk/node/README.md)
+
+### 2. **CLI** (`cli/`)
+
+Command-line tool for automation.
+
+```bash
+./cli/visual-to-code design.png
+```
+
+[📚 CLI Documentation](cli/README.md)
+
+### 3. **Web App** (`app/`)
+
+Interactive web interface.
+
+```bash
+cd app && npm start
+```
+
+[📚 Web App Documentation](app/README.md)
+
+### 4. **Automation Tools** (`tools/`)
+
+Python scripts for advanced workflows:
+- `batch_generate.py` - Batch processing
+- `generate_variants.py` - Multi-variant generation
+- `auto_iterate.py` - Automated iteration
+- `auto_iterate_reflex.py` - Iteration with objective evals
+
+[📚 Tools Documentation](TOOLS-SUMMARY.md)
+
+---
+
+## 🎯 Vision Parameters
+
+Uses exact parameters from screenshot-to-code:
+- `detail: "high"` for maximum visual fidelity
+- Specialized system prompts emphasizing "exactly"
+- **Result**: 85-90% visual accuracy
+
+[📚 Full Analysis](FINAL-SUMMARY.md)
+
+---
+
+## 💰 Cost Tracking
+
+**Per-generation costs** (Sonnet 4.5):
+- Simple: ~$0.02
+- Complex: ~$0.04
+
+---
+
+## 🏗️ Architecture
+
+```
+visual-to-code/
+├── sdk/node/              # Core SDK
+├── cli/                   # CLI tool
+├── app/                   # Web app
+├── tools/                 # Python automation
+└── examples/              # Test images
+```
+
+---
+
+## 📖 Documentation
+
+- [SDK Documentation](sdk/node/README.md)
+- [CLI Documentation](cli/README.md)
+- [Web App Documentation](app/README.md)
+- [Tools Documentation](TOOLS-SUMMARY.md)
+- [Testing Results](TESTING-RESULTS.md)
+- [Final Summary](FINAL-SUMMARY.md)
+
+---
+
+## 📄 License
+
+MIT
