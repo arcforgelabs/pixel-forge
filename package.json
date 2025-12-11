@@ -1,0 +1,20 @@
+{
+  "name": "visual-to-code",
+  "version": "1.0.0",
+  "description": "> **Status**: Research & Spike Phase > **Goal**: Tools and workflows to convert visual designs into structured data specifications for agent-driven code generation",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.57.0"
+  }
+}
