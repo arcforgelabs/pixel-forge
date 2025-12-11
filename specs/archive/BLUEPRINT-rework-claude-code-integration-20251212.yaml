@@ -1,0 +1,860 @@
+blueprint_type: rework
+created: 2025-12-12
+rework_reason: "Migrate from standalone web app to Claude Code-integrated architecture with phased rollout"
+affected_scope: "Entire toolkit - SDK, CLI, Web App, and new orchestration layer"
+tracking_method: document
+
+project_overview:
+  brief: "Transform visual-to-code toolkit from isolated web app to Claude Code-integrated system, exposing all 7 output formats from upstream fork (HTML/CSS, HTML/Tailwind, React/Tailwind, Bootstrap, Vue/Tailwind, Ionic/Tailwind, SVG) with iterative refinement capabilities."
+  core_objectives:
+    - "Validate existing HTML/Tailwind API foundation works correctly (Phase 1)"
+    - "Integrate Claude Code as primary execution engine with terminal spawning and output capture (Phases 2-4)"
+    - "Enable all 7 output formats through systematic backend prompt migration"
+    - "Implement iterative eval feedback via reflex toolkit integration (Phase 5)"
+    - "Provide skill-orchestrated workflow for preference management and visual generation"
+
+architecture:
+  pattern: "layered"
+  rationale: "Layered architecture fits this project's clear separation of concerns: API layer (routes/controllers), Web UI (presentation), Tools (application/CLI), SDK (business logic). Team is familiar with traditional patterns, and CRUD-style operations dominate the workflow."
+  source_structure:
+    api: "API layer - routes, controllers for web app backend"
+    web: "Presentation layer - React UI components"
+    tools: "Application layer - CLI tools, orchestration scripts"
+    sdk: "Business logic - core generation, format handling"
+    backend: "Upstream fork integration - prompt templates, LLM handling"
+
+milestones:
+  milestone_1:
+    name: "Phase 1 - API Foundation Validation"
+    timeline_weeks: "1-2"
+    description: "Validate that core HTML/Tailwind generation via API still functions correctly after SDK/CLI/Web refactor"
+
+    epics:
+      epic_1:
+        name: "API Testing Infrastructure"
+        description: "Set up comprehensive testing for existing HTML/Tailwind API endpoint"
+
+        feature_1_1:
+          name: "API Endpoint Validation"
+          description: "Test existing HTML/Tailwind generation via API calls"
+          complexity:
+            composite: 2.0
+            dimensions:
+              technical_complexity: 2
+              scope_size: 2
+              dependencies: 1
+              uncertainty: 2
+              risk: 2
+              testing: 3
+          estimated_days: 3
+
+          task_1_1_1:
+            name: "Create API test suite for HTML/Tailwind endpoint"
+            description: "Write integration tests covering image upload, generation request, and response validation"
+            complexity:
+              composite: 1.8
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 1
+                testing: 3
+            estimated_days: 1.5
+
+          task_1_1_2:
+            name: "Validate response format and structure"
+            description: "Ensure API returns well-formed HTML with Tailwind classes, no broken templates"
+            complexity:
+              composite: 1.5
+              dimensions:
+                technical_complexity: 1
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 1
+                testing: 3
+            estimated_days: 1
+
+          task_1_1_3:
+            name: "Test error handling and edge cases"
+            description: "Invalid images, large files, malformed requests, timeout scenarios"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1
+
+        feature_1_2:
+          name: "SDK Integration Testing"
+          description: "Verify SDK correctly interfaces with backend generation logic"
+          complexity:
+            composite: 2.2
+            dimensions:
+              technical_complexity: 2
+              scope_size: 2
+              dependencies: 3
+              uncertainty: 2
+              risk: 2
+              testing: 3
+          estimated_days: 3
+
+          task_1_2_1:
+            name: "Test SDK Node.js wrapper functionality"
+            description: "Verify SDK correctly wraps API calls, handles responses, manages errors"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 2
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1.5
+
+          task_1_2_2:
+            name: "Validate image processing pipeline"
+            description: "Ensure images are correctly encoded, transmitted, and decoded throughout SDK->API flow"
+            complexity:
+              composite: 2.2
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 3
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1
+
+          task_1_2_3:
+            name: "Test concurrent request handling"
+            description: "Verify SDK handles multiple simultaneous generation requests without race conditions"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 3
+                scope_size: 2
+                dependencies: 3
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1
+
+  milestone_2:
+    name: "Phase 2-4 - Claude Code Integration"
+    timeline_weeks: "3-8"
+    description: "Implement Claude Code as primary execution engine through web UI integration, standalone CLI tool, and orchestrating skill"
+
+    epics:
+      epic_2:
+        name: "Web UI Claude Code Bridge (Phase 2)"
+        description: "Web UI sends prompts to external Claude Code instance with auto-spawned terminal and output capture"
+
+        feature_2_1:
+          name: "Terminal Automation Infrastructure"
+          description: "Auto-spawn terminal, inject prompts, capture output for web UI feedback"
+          complexity:
+            composite: 3.5
+            dimensions:
+              technical_complexity: 4
+              scope_size: 3
+              dependencies: 4
+              uncertainty: 4
+              risk: 3
+              testing: 3
+          estimated_days: 7
+          needs_decomposition: true
+          decomposition_reason: "High technical complexity (4) and dependencies (4) - requires OS-specific terminal automation, process management, output streaming"
+
+          task_2_1_1:
+            name: "Implement cross-platform terminal spawning"
+            description: "Support Linux, macOS, Windows terminal auto-launch with configurable terminal emulators"
+            complexity:
+              composite: 3.2
+              dimensions:
+                technical_complexity: 4
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 3
+                testing: 3
+            estimated_days: 3
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "OS-specific implementations require separate subtasks per platform"
+
+          task_2_1_2:
+            name: "Build prompt injection mechanism"
+            description: "Safely inject visual generation prompts into spawned Claude Code instance via stdin/pipe"
+            complexity:
+              composite: 3.0
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 4
+                uncertainty: 3
+                risk: 3
+                testing: 3
+            estimated_days: 2
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "Requires IPC, prompt escaping, error handling across process boundaries"
+
+          task_2_1_3:
+            name: "Implement output capture and streaming"
+            description: "Capture stdout/stderr from Claude Code process, stream to web UI in real-time"
+            complexity:
+              composite: 3.2
+              dimensions:
+                technical_complexity: 4
+                scope_size: 3
+                dependencies: 4
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2.5
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "Real-time streaming requires WebSocket infrastructure, buffer management, partial output parsing"
+
+        feature_2_2:
+          name: "Web UI Integration Layer"
+          description: "Modify web UI to orchestrate Claude Code instead of direct SDK calls"
+          complexity:
+            composite: 2.8
+            dimensions:
+              technical_complexity: 3
+              scope_size: 3
+              dependencies: 3
+              uncertainty: 3
+              risk: 3
+              testing: 2
+          estimated_days: 5
+
+          task_2_2_1:
+            name: "Add Claude Code session management UI"
+            description: "UI controls for starting/stopping Claude Code sessions, viewing status, handling errors"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_2_2_2:
+            name: "Implement real-time output display"
+            description: "Stream Claude Code output to web UI with syntax highlighting, progress indicators"
+            complexity:
+              composite: 2.8
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 2
+            estimated_days: 2
+
+          task_2_2_3:
+            name: "Add fallback to direct SDK mode"
+            description: "Allow users to toggle between Claude Code mode and direct SDK mode for compatibility"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 3
+                scope_size: 2
+                dependencies: 3
+                uncertainty: 2
+                risk: 3
+                testing: 2
+            estimated_days: 1.5
+
+      epic_3:
+        name: "Standalone CLI Tool (Phase 3)"
+        description: "Claude Code CLI tool for direct invocation in coding sessions"
+
+        feature_3_1:
+          name: "CLI Tool Implementation"
+          description: "Standalone tool accepting image input, format options, outputting generated code"
+          complexity:
+            composite: 2.5
+            dimensions:
+              technical_complexity: 2
+              scope_size: 3
+              dependencies: 2
+              uncertainty: 3
+              risk: 2
+              testing: 3
+          estimated_days: 5
+
+          task_3_1_1:
+            name: "Build CLI argument parser and validation"
+            description: "Parse image path, format selection, style constraints, output destination"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1.5
+
+          task_3_1_2:
+            name: "Implement image loading and preprocessing"
+            description: "Load image from file/URL, validate format, resize if needed, encode for API"
+            complexity:
+              composite: 2.3
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_3_1_3:
+            name: "Add output handling and file writing"
+            description: "Write generated code to file or stdout, handle overwrite prompts, validate output"
+            complexity:
+              composite: 2.2
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 2
+                uncertainty: 2
+                risk: 2
+                testing: 3
+            estimated_days: 1.5
+
+        feature_3_2:
+          name: "Programmatic Constraints System"
+          description: "Allow CLI users to specify constraints (max lines, specific frameworks, accessibility requirements)"
+          complexity:
+            composite: 2.8
+            dimensions:
+              technical_complexity: 3
+              scope_size: 3
+              dependencies: 2
+              uncertainty: 3
+              risk: 2
+              testing: 3
+          estimated_days: 5
+
+          task_3_2_1:
+            name: "Design constraint schema and validation"
+            description: "Define constraint types (line limits, framework versions, a11y rules), validate input"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 3
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_3_2_2:
+            name: "Integrate constraints into prompt generation"
+            description: "Modify SDK prompt templates to incorporate user-specified constraints"
+            complexity:
+              composite: 2.8
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_3_2_3:
+            name: "Add constraint validation post-generation"
+            description: "Verify generated code meets specified constraints, retry if violations detected"
+            complexity:
+              composite: 3.0
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 4
+                risk: 2
+                testing: 4
+            estimated_days: 2
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "Post-generation validation requires parsing, linting, accessibility checking - complex multi-step pipeline"
+
+      epic_4:
+        name: "Agent Orchestrating Skill (Phase 4)"
+        description: "Skill managing user preferences and coordinating visual generation workflows"
+
+        feature_4_1:
+          name: "User Preference Management"
+          description: "Skill uses AskUserQuestion to gather and persist format preferences, style choices"
+          complexity:
+            composite: 2.3
+            dimensions:
+              technical_complexity: 2
+              scope_size: 3
+              dependencies: 2
+              uncertainty: 3
+              risk: 2
+              testing: 2
+          estimated_days: 4
+
+          task_4_1_1:
+            name: "Implement preference questionnaire flow"
+            description: "Use AskUserQuestion for output format, framework version, style guide selection"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 2
+                testing: 2
+            estimated_days: 1.5
+
+          task_4_1_2:
+            name: "Add preference persistence layer"
+            description: "Store preferences in project-level config file, validate schema, merge with defaults"
+            complexity:
+              composite: 2.2
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 1.5
+
+          task_4_1_3:
+            name: "Build preference override mechanism"
+            description: "Allow one-off overrides via CLI args without modifying stored preferences"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 2
+                uncertainty: 2
+                risk: 1
+                testing: 2
+            estimated_days: 1
+
+        feature_4_2:
+          name: "Visual Generation Orchestration"
+          description: "Skill coordinates CLI tool invocation, constraint application, output validation"
+          complexity:
+            composite: 2.5
+            dimensions:
+              technical_complexity: 3
+              scope_size: 3
+              dependencies: 3
+              uncertainty: 3
+              risk: 2
+              testing: 2
+          estimated_days: 5
+
+          task_4_2_1:
+            name: "Implement CLI tool invocation wrapper"
+            description: "Skill programmatically calls CLI tool with user preferences, handles errors"
+            complexity:
+              composite: 2.3
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 2
+            estimated_days: 2
+
+          task_4_2_2:
+            name: "Add multi-format generation support"
+            description: "Enable skill to generate multiple formats in parallel for comparison"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_4_2_3:
+            name: "Build output validation and reporting"
+            description: "Validate generated code quality, report metrics (lines, complexity, accessibility score)"
+            complexity:
+              composite: 2.7
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+      epic_5:
+        name: "Multi-Format Support Migration"
+        description: "Expose all 7 output formats from upstream fork's backend"
+
+        feature_5_1:
+          name: "Format Backend Integration"
+          description: "Integrate upstream fork's backend prompts for HTML/CSS, React, Bootstrap, Vue, Ionic, SVG"
+          complexity:
+            composite: 3.0
+            dimensions:
+              technical_complexity: 3
+              scope_size: 4
+              dependencies: 3
+              uncertainty: 3
+              risk: 2
+              testing: 3
+          estimated_days: 8
+          needs_decomposition: true
+          decomposition_reason: "Large scope (4) - 6 additional formats beyond baseline Tailwind, each requires prompt migration"
+
+          task_5_1_1:
+            name: "Migrate HTML/CSS format backend prompts"
+            description: "Extract and integrate HTML/CSS generation prompts from upstream fork backend"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_5_1_2:
+            name: "Migrate React/Tailwind format backend prompts"
+            description: "Extract and integrate React/Tailwind generation prompts from upstream fork backend"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+          task_5_1_3:
+            name: "Migrate Bootstrap, Vue, Ionic, SVG format prompts"
+            description: "Extract and integrate remaining 4 formats from upstream fork backend"
+            complexity:
+              composite: 3.2
+              dimensions:
+                technical_complexity: 3
+                scope_size: 4
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 4
+            estimated_days: 4
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "4 formats bundled - should be split into individual subtasks per format"
+
+        feature_5_2:
+          name: "Format Selection UI/CLI"
+          description: "Add format selection to web UI and CLI tool"
+          complexity:
+            composite: 2.3
+            dimensions:
+              technical_complexity: 2
+              scope_size: 3
+              dependencies: 2
+              uncertainty: 2
+              risk: 2
+              testing: 3
+          estimated_days: 4
+
+          task_5_2_1:
+            name: "Add format dropdown to web UI"
+            description: "UI component for selecting output format with preview examples"
+            complexity:
+              composite: 2.0
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 2
+                uncertainty: 2
+                risk: 1
+                testing: 3
+            estimated_days: 1.5
+
+          task_5_2_2:
+            name: "Add format flag to CLI tool"
+            description: "CLI --format flag with validation, help text showing available formats"
+            complexity:
+              composite: 1.8
+              dimensions:
+                technical_complexity: 2
+                scope_size: 2
+                dependencies: 1
+                uncertainty: 2
+                risk: 1
+                testing: 3
+            estimated_days: 1
+
+          task_5_2_3:
+            name: "Wire format selection to backend routing"
+            description: "Route format selection to appropriate backend prompt templates"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 2
+                risk: 3
+                testing: 3
+            estimated_days: 1.5
+
+  milestone_3:
+    name: "Phase 5 - Iterative Automation (Reflex Integration)"
+    timeline_weeks: "9-12"
+    description: "Integrate reflex toolkit for eval feedback and multi-pass iterative refinement"
+
+    epics:
+      epic_6:
+        name: "Reflex Toolkit Integration"
+        description: "Enable iterative eval feedback loops for visual generation quality improvement"
+
+        feature_6_1:
+          name: "Eval Framework Setup"
+          description: "Define evaluation metrics for generated code quality (visual fidelity, accessibility, performance)"
+          complexity:
+            composite: 3.2
+            dimensions:
+              technical_complexity: 4
+              scope_size: 3
+              dependencies: 3
+              uncertainty: 4
+              risk: 2
+              testing: 3
+          estimated_days: 7
+          needs_spike: true
+          spike_reason: "High uncertainty (4) - unclear which eval metrics correlate with user satisfaction, require research"
+
+          task_6_1_1:
+            name: "Research and select eval metrics"
+            description: "Investigate visual similarity metrics (SSIM, perceptual hashing), accessibility scores, performance budgets"
+            complexity:
+              composite: 3.0
+              dimensions:
+                technical_complexity: 3
+                scope_size: 2
+                dependencies: 2
+                uncertainty: 4
+                risk: 2
+                testing: 3
+            estimated_days: 3
+            needs_spike: true
+            spike_reason: "Metric selection unclear - needs comparison study"
+
+          task_6_1_2:
+            name: "Implement eval metric computation"
+            description: "Build pipeline for automated screenshot comparison, accessibility scanning, bundle size analysis"
+            complexity:
+              composite: 3.5
+              dimensions:
+                technical_complexity: 4
+                scope_size: 4
+                dependencies: 4
+                uncertainty: 4
+                risk: 2
+                testing: 3
+            estimated_days: 4
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "High technical complexity (4), large scope (4), high dependencies (4) - requires Playwright integration, image processing, linting toolchain"
+
+        feature_6_2:
+          name: "Feedback Loop Implementation"
+          description: "Use eval scores to iteratively refine prompts and regenerate improved code"
+          complexity:
+            composite: 3.5
+            dimensions:
+              technical_complexity: 4
+              scope_size: 4
+              dependencies: 4
+              uncertainty: 4
+              risk: 3
+              testing: 3
+          estimated_days: 10
+          needs_decomposition: true
+          decomposition_reason: "High complexity across all dimensions - requires prompt optimization strategy, convergence criteria, retry logic"
+
+          task_6_2_1:
+            name: "Design prompt refinement strategy"
+            description: "Define how eval feedback modifies prompts (constraint tightening, example injection, style guide emphasis)"
+            complexity:
+              composite: 3.2
+              dimensions:
+                technical_complexity: 4
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 4
+                risk: 2
+                testing: 3
+            estimated_days: 4
+            needs_spike: true
+            spike_reason: "Uncertain which prompt modification strategies improve eval scores - requires experimentation"
+
+          task_6_2_2:
+            name: "Implement multi-pass generation pipeline"
+            description: "Orchestrate generate -> eval -> refine -> regenerate loop with convergence detection"
+            complexity:
+              composite: 3.8
+              dimensions:
+                technical_complexity: 4
+                scope_size: 4
+                dependencies: 4
+                uncertainty: 4
+                risk: 3
+                testing: 4
+            estimated_days: 5
+            needs_decomposition: true
+            decomposition_depth: 3
+            decomposition_reason: "Highly complex (3.8) - requires state machine, rate limiting, convergence heuristics, LLM cost tracking"
+
+          task_6_2_3:
+            name: "Add user-in-the-loop approval gates"
+            description: "Allow users to review intermediate generations, approve/reject refinements, stop iteration early"
+            complexity:
+              composite: 2.8
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 3
+
+        feature_6_3:
+          name: "Reflex Integration Testing"
+          description: "Validate iterative refinement improves quality metrics across diverse test cases"
+          complexity:
+            composite: 2.8
+            dimensions:
+              technical_complexity: 3
+              scope_size: 3
+              dependencies: 3
+              uncertainty: 3
+              risk: 2
+              testing: 4
+          estimated_days: 6
+
+          task_6_3_1:
+            name: "Build test dataset of reference designs"
+            description: "Curate diverse UI screenshots with known good implementations for comparison"
+            complexity:
+              composite: 2.5
+              dimensions:
+                technical_complexity: 2
+                scope_size: 3
+                dependencies: 2
+                uncertainty: 3
+                risk: 1
+                testing: 4
+            estimated_days: 2
+
+          task_6_3_2:
+            name: "Run iterative refinement benchmark suite"
+            description: "Measure quality improvement across iterations for all test cases, formats"
+            complexity:
+              composite: 3.0
+              dimensions:
+                technical_complexity: 3
+                scope_size: 3
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 4
+            estimated_days: 3
+
+          task_6_3_3:
+            name: "Analyze results and tune convergence criteria"
+            description: "Identify optimal stopping conditions, cost/quality tradeoffs, failure modes"
+            complexity:
+              composite: 2.8
+              dimensions:
+                technical_complexity: 3
+                scope_size: 2
+                dependencies: 3
+                uncertainty: 3
+                risk: 2
+                testing: 3
+            estimated_days: 2
+
+summary:
+  total_milestones: 3
+  total_epics: 6
+  total_features: 11
+  total_tasks: 35
+
+  flagged_items:
+    needs_decomposition:
+      - task_2_1_1: "Cross-platform terminal spawning - OS-specific implementations"
+      - task_2_1_2: "Prompt injection mechanism - IPC and error handling complexity"
+      - task_2_1_3: "Output capture and streaming - WebSocket infrastructure complexity"
+      - task_3_2_3: "Constraint validation post-generation - multi-step validation pipeline"
+      - feature_5_1: "Format backend integration - 6 additional formats beyond baseline"
+      - task_5_1_3: "Migrate Bootstrap/Vue/Ionic/SVG - 4 formats bundled"
+      - task_6_1_2: "Eval metric computation - Playwright + image processing toolchain"
+      - feature_6_2: "Feedback loop implementation - high complexity across all dimensions"
+      - task_6_2_2: "Multi-pass generation pipeline - state machine + convergence logic"
+
+    needs_spike:
+      - feature_6_1: "Eval framework setup - uncertain metric selection"
+      - task_6_1_1: "Research eval metrics - requires comparison study"
+      - task_6_2_1: "Prompt refinement strategy - uncertain modification approaches"
+
+  estimated_timeline:
+    phase_1: "1-2 weeks"
+    phase_2_4: "5-6 weeks"
+    phase_5: "4 weeks"
+    total: "10-12 weeks"
+
+  risk_areas:
+    - "Terminal automation across platforms (Windows/macOS/Linux compatibility)"
+    - "Real-time output streaming performance at scale"
+    - "Eval metric selection and validation (requires research spike)"
+    - "Convergence criteria for iterative refinement (may need tuning)"
+    - "LLM cost management in multi-pass generation loops"
+
+  dependencies:
+    external:
+      - "Upstream screenshot-to-code fork backend prompts (already implemented)"
+      - "Reflex toolkit availability and API stability"
+      - "Claude Code API for terminal spawning and prompt injection"
+    internal:
+      - "SDK must remain stable during CLI/skill development"
+      - "Web UI changes must not break existing API contracts"
+      - "Format migration depends on backend prompt extraction"
