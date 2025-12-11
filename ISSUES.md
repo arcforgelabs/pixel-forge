@@ -12,7 +12,8 @@ Spike tasks are time-boxed research efforts to reduce uncertainty before impleme
 ### Spike 1: Research Eval Metrics for Iterative Refinement
 
 **ID**: `spike_6_1_1` (maps to task_6_1_1 in PROGRESS.md)
-**Status**: 🔴 Not Started
+**Status**: ✅ Complete (2025-12-12)
+**Output**: `docs/SPIKE-eval-metrics-research.md`
 **Duration**: 3-5 days (time-boxed)
 **Start Blocker**: Must complete before implementing Epic 6.1 (Eval Framework)
 **Reduces Uncertainty**: task_6_1_1 UA: 4/5 → 2/5
@@ -71,7 +72,8 @@ Spike tasks are time-boxed research efforts to reduce uncertainty before impleme
 ### Spike 2: Investigate Prompt Optimization Strategies
 
 **ID**: `spike_6_2_1` (maps to task_6_2_1 in PROGRESS.md)
-**Status**: 🔴 Not Started
+**Status**: ✅ Complete (2025-12-12)
+**Output**: `docs/SPIKE-prompt-optimization-strategies.md`
 **Duration**: 4-5 days (time-boxed)
 **Start Blocker**: Must complete before implementing Epic 6.2 (Feedback Loop)
 **Reduces Uncertainty**: task_6_2_1 UA: 4/5 → 2/5
@@ -247,9 +249,9 @@ No guarantee that selected metrics (visual similarity, accessibility, performanc
 
 ### Feature 6.1: Eval Framework Setup
 
-**Status**: ⏹️ **BLOCKED** - Awaiting Spike 1
+**Status**: ✅ **UNBLOCKED** - Spike 1 complete (2025-12-12)
 
-**Unblocks When**: Spike 1 complete (metric selection report delivered)
+**Unblocks When**: Spike 1 complete (metric selection report delivered) ✅
 
 **Dependent Tasks**:
 - subtask_6_1_2_1: Playwright screenshot capture
@@ -264,9 +266,9 @@ No guarantee that selected metrics (visual similarity, accessibility, performanc
 
 ### Feature 6.2: Feedback Loop & Iteration
 
-**Status**: ⏹️ **BLOCKED** - Awaiting Spike 2
+**Status**: ✅ **UNBLOCKED** - Spike 2 complete (2025-12-12)
 
-**Unblocks When**: Spike 2 complete (prompt optimization strategy delivered)
+**Unblocks When**: Spike 2 complete (prompt optimization strategy delivered) ✅
 
 **Dependent Tasks**:
 - subtask_6_2_2_1: State machine
@@ -319,9 +321,9 @@ No guarantee that selected metrics (visual similarity, accessibility, performanc
 
 ## Summary
 
-**Total Spike Tasks**: 2 (8-10 days total blocking time)
+**Total Spike Tasks**: 2 ✅ **BOTH COMPLETE** (2025-12-12)
 **Total High-Risk Issues**: 4 (all mitigated with architecture, monitoring pending)
-**Blocked Features**: 2 (Epic 6.1, Epic 6.2 - unblocks after spikes complete)
-**Ready-to-Implement Features**: 7 (Milestone 1-4, Phase 5.1)
+**Blocked Features**: 0 ✅ **ALL UNBLOCKED**
+**Ready-to-Implement Features**: 9 (All milestones ready)
 
-**Critical Path Impact**: Spikes add ~2 weeks to timeline, but must complete before feedback loop implementation
+**Critical Path Impact**: Spikes completed - all features now unblocked for implementation
