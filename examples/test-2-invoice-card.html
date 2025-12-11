@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Status Card - Test Mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-8">
+    <!-- Invoice Status Card -->
+    <div class="bg-white shadow-lg rounded-xl p-6 w-96">
+        <!-- Invoice Number -->
+        <div class="text-gray-500 text-sm mb-4">
+            Invoice #1234
+        </div>
+
+        <!-- Amount -->
+        <div class="text-gray-900 text-2xl font-bold mb-2">
+            $1,245.50
+        </div>
+
+        <!-- Due Date -->
+        <div class="text-gray-600 text-sm mb-6">
+            Due: Jan 15, 2025
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-3">
+            <!-- Paid Badge -->
+            <span class="inline-flex items-center gap-1 bg-green-100 text-green-800 text-sm px-3 py-1 rounded-full">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                Paid
+            </span>
+
+            <!-- View Details Button -->
+            <button class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">
+                View Details
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+</body>
+</html>
