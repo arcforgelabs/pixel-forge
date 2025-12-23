@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test App for Proxy</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-2xl mx-auto">
+        <header class="bg-white rounded-lg shadow p-6 mb-6">
+            <h1 class="text-3xl font-bold text-blue-600">Test App</h1>
+            <p class="text-gray-600 mt-2">This is a test app for the pixel-forge proxy injection.</p>
+        </header>
+
+        <main class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Sample Components</h2>
+
+            <div class="space-y-4">
+                <button id="primary-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-medium px-4 py-2 rounded">
+                    Primary Button
+                </button>
+
+                <button id="secondary-btn" class="bg-gray-500 hover:bg-gray-600 text-white font-medium px-4 py-2 rounded ml-2">
+                    Secondary Button
+                </button>
+
+                <div class="border rounded p-4 mt-4">
+                    <h3 class="font-medium text-gray-700">Card Component</h3>
+                    <p class="text-gray-500 text-sm mt-1">This is a card with some content inside it.</p>
+                    <a href="#" class="text-blue-500 hover:underline text-sm mt-2 inline-block">Learn more →</a>
+                </div>
+
+                <ul class="list-disc list-inside text-gray-600 mt-4">
+                    <li>List item one</li>
+                    <li>List item two</li>
+                    <li>List item three</li>
+                </ul>
+
+                <form class="mt-4 space-y-3">
+                    <input type="text" placeholder="Enter your name" class="w-full border rounded px-3 py-2">
+                    <input type="email" placeholder="Enter your email" class="w-full border rounded px-3 py-2">
+                    <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-medium px-4 py-2 rounded">
+                        Submit Form
+                    </button>
+                </form>
+            </div>
+        </main>
+
+        <footer class="text-center text-gray-500 text-sm mt-6">
+            <p>Test app for pixel-forge proxy</p>
+        </footer>
+    </div>
+
+    <script>
+        console.log('Test app loaded');
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                console.log('Button clicked:', e.target.id || e.target.textContent);
+            });
+        });
+    </script>
+</body>
+</html>

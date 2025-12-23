@@ -17,6 +17,9 @@ from typing import Literal
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
 
@@ -124,6 +127,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Import and include app proxy router
+from app_proxy import router as app_proxy_router, set_target_url
+app.include_router(app_proxy_router)
+
+
+# Pydantic models for API
+class AppProxyConfig(BaseModel):
+    target_url: str
+
+
+@app.post("/config/app-proxy")
+async def configure_app_proxy(config: AppProxyConfig):
+    """Configure the target URL for the app proxy."""
+    set_target_url(config.target_url)
+    return {"status": "ok", "target_url": config.target_url}
+
+
+@app.get("/config/app-proxy")
+async def get_app_proxy_config():
+    """Get the current app proxy configuration."""
+    from app_proxy import TARGET_APP_URL
+    return {"target_url": TARGET_APP_URL}
+
+
+# Static file routes for testing
+@app.get("/test-harness.html")
+async def serve_test_harness():
+    """Serve the test harness HTML file."""
+    return FileResponse("test-harness.html", media_type="text/html")
+
+
+# Mount test-app as static files
+app.mount("/test-app", StaticFiles(directory="test-app", html=True), name="test-app")
+
 
 # System prompts from screenshot-to-code
 SYSTEM_PROMPTS = {
