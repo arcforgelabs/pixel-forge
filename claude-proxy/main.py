@@ -317,12 +317,15 @@ def save_base64_image(data_url: str) -> str:
 
 
 async def generate_with_claude_cli(
-    image_path: str,
+    image_path: str | None,
     system_prompt: str,
     user_prompt: str,
 ) -> str:
     """Call Claude CLI to generate code from image."""
-    prompt = f"Read the image at {image_path} and {user_prompt}"
+    if image_path:
+        prompt = f"Read the image at {image_path} and {user_prompt}"
+    else:
+        prompt = user_prompt
 
     cmd = [
         "claude",
@@ -330,6 +333,48 @@ async def generate_with_claude_cli(
         "--system-prompt", system_prompt,
         "--dangerously-skip-permissions",
         "--tools", "Read",
+        "--output-format", "json",
+        "--no-session-persistence",
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        raise Exception(f"Claude CLI error: {error_msg}")
+
+    # Parse JSON response
+    result = json.loads(stdout.decode())
+    return result.get("result", "")
+
+
+async def generate_update_with_claude_cli(
+    system_prompt: str,
+    current_code: str,
+    update_instruction: str,
+) -> str:
+    """Call Claude CLI to update existing code based on instruction."""
+    prompt = f"""Here is the current HTML code:
+
+```html
+{current_code}
+```
+
+User request: {update_instruction}
+
+Update the code according to the user's request. Return ONLY the complete updated HTML code, nothing else. Do not include markdown fences. Start with <!DOCTYPE html> or <html> and end with </html>."""
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--system-prompt", system_prompt,
+        "--dangerously-skip-permissions",
         "--output-format", "json",
         "--no-session-persistence",
     ]
@@ -370,11 +415,14 @@ async def generate_code(websocket: WebSocket):
         print("Waiting for params...", flush=True)
         params = await websocket.receive_json()
         print(f"Received params: keys={list(params.keys())}", flush=True)
-        print(f"Stack: {params.get('generatedCodeConfig')}, InputMode: {params.get('inputMode')}", flush=True)
 
-        # Extract stack type
+        # Extract key parameters
         stack = params.get("generatedCodeConfig", "html_tailwind")
         input_mode = params.get("inputMode", "image")
+        generation_type = params.get("generationType", "create")
+        history = params.get("history", [])
+
+        print(f"Stack: {stack}, InputMode: {input_mode}, GenerationType: {generation_type}", flush=True)
 
         # Map stack names to our keys
         stack_map = {
@@ -393,56 +441,100 @@ async def generate_code(websocket: WebSocket):
         # Tell frontend we're using 1 variant (Claude CLI mode)
         await websocket.send_json({"type": "variantCount", "value": "1", "variantIndex": 0})
 
-        # Extract image/video from prompt
-        prompt_data = params.get("prompt", {})
-        images = prompt_data.get("images", [])
+        # Handle UPDATE requests (Select and update feature)
+        if generation_type == "update" and history:
+            print(f"Processing UPDATE request with {len(history)} history items", flush=True)
+            await websocket.send_json({"type": "status", "value": "Updating code via Claude Code...", "variantIndex": 0})
 
-        if not images:
-            await websocket.send_json({"type": "error", "value": "No image provided"})
-            await websocket.close()
-            return
+            # History format:
+            # - Even indices (0, 2, 4...): assistant messages (generated code)
+            # - Odd indices (1, 3, 5...): user messages (update instructions)
+            # The last item is the user's update instruction
 
-        data_url = images[0]
+            # Get the most recent code (second to last item, which is assistant's code)
+            if len(history) >= 2:
+                current_code = history[-2].get("text", "")
+            else:
+                # Fallback: shouldn't happen but handle gracefully
+                current_code = history[0].get("text", "") if history else ""
 
-        # Handle video vs image input
-        if input_mode == "video":
-            await websocket.send_json({"type": "status", "value": "Extracting video frames...", "variantIndex": 0})
-            image_path = process_video_to_image(data_url)
-            # Update user prompt for video context - BE VERY STRICT about output format
-            user_prompt = """These are frames extracted from a video recording of a web page. Generate HTML/Tailwind code that recreates the UI shown.
+            # Get the update instruction (last item)
+            update_instruction = history[-1].get("text", "")
+
+            print(f"Current code length: {len(current_code)}", flush=True)
+            print(f"Update instruction: {update_instruction[:200]}...", flush=True)
+
+            try:
+                # Generate updated code via Claude CLI
+                result = await generate_update_with_claude_cli(
+                    system_prompt=system_prompt,
+                    current_code=current_code,
+                    update_instruction=update_instruction,
+                )
+
+                # Extract and clean HTML
+                html_code = extract_html_content(result)
+
+                # Send result back to frontend
+                await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
+                await websocket.send_json({"type": "variantComplete", "value": "Update complete", "variantIndex": 0})
+
+            except Exception as e:
+                print(f"Update error: {e}", flush=True)
+                raise
+
+        # Handle CREATE requests (initial generation)
+        else:
+            # Extract image/video from prompt
+            prompt_data = params.get("prompt", {})
+            images = prompt_data.get("images", [])
+
+            if not images:
+                await websocket.send_json({"type": "error", "value": "No image provided"})
+                await websocket.close()
+                return
+
+            data_url = images[0]
+
+            # Handle video vs image input
+            if input_mode == "video":
+                await websocket.send_json({"type": "status", "value": "Extracting video frames...", "variantIndex": 0})
+                image_path = process_video_to_image(data_url)
+                # Update user prompt for video context - BE VERY STRICT about output format
+                user_prompt = """These are frames extracted from a video recording of a web page. Generate HTML/Tailwind code that recreates the UI shown.
 
 CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description, or commentary. Do NOT describe what you see. Start directly with <!DOCTYPE html> or <html> and end with </html>. Nothing else."""
-            await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
-        else:
-            await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
-            # Save image to temp file
-            image_path = save_base64_image(data_url)
+                await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
+            else:
+                await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
+                # Save image to temp file
+                image_path = save_base64_image(data_url)
 
-        print(f"Saved {'video frames' if input_mode == 'video' else 'image'} to: {image_path}")
+            print(f"Saved {'video frames' if input_mode == 'video' else 'image'} to: {image_path}", flush=True)
 
-        try:
-            # Generate code via Claude CLI
-            result = await generate_with_claude_cli(
-                image_path=image_path,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
+            try:
+                # Generate code via Claude CLI
+                result = await generate_with_claude_cli(
+                    image_path=image_path,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
 
-            # Extract and clean HTML
-            html_code = extract_html_content(result)
+                # Extract and clean HTML
+                html_code = extract_html_content(result)
 
-            # Send result back to frontend
-            await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
-            await websocket.send_json({"type": "variantComplete", "value": "Generation complete", "variantIndex": 0})
+                # Send result back to frontend
+                await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
+                await websocket.send_json({"type": "variantComplete", "value": "Generation complete", "variantIndex": 0})
 
-        finally:
-            # Cleanup temp file
-            if os.path.exists(image_path):
-                os.unlink(image_path)
+            finally:
+                # Cleanup temp file
+                if os.path.exists(image_path):
+                    os.unlink(image_path)
 
     except Exception as e:
         import traceback
-        print(f"Error: {e}")
+        print(f"Error: {e}", flush=True)
         traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "value": str(e)})
@@ -450,7 +542,7 @@ CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description
             pass
 
     finally:
-        print("Closing websocket connection")
+        print("Closing websocket connection", flush=True)
         try:
             await websocket.close()
         except Exception:
