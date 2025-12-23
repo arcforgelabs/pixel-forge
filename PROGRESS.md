@@ -1,8 +1,8 @@
 # Visual-to-Code Integration Progress
 
 **Project**: Rework visual-to-code fork with Claude Code integration
-**Last Updated**: 2025-12-12
-**Status**: Planning complete → Ready for implementation
+**Last Updated**: 2025-12-23
+**Status**: MVP Complete - Claude CLI proxy working
 **Workflow Tier**: Simple (main branch only)
 **Tracking Method**: Document-based (PROGRESS.md + ISSUES.md)
 **Architecture**: Layered (API/Web/Tools/SDK layers)
@@ -478,7 +478,31 @@
 1. ✅ **Blueprint created** and decomposed to depth 4-8
 2. ✅ **Complexity assessed** - all subtasks ≤3.0
 3. ✅ **Translated to PROGRESS.md** - task tracking ready
-4. ⏭️ **Create ISSUES.md** - spike tasks and risk items
+4. ✅ **Create ISSUES.md** - spike tasks and risk items
 5. ⏭️ **Archive blueprint** - move to specs/archive/
 6. ⏭️ **Commit and push** - version control
 7. ⏭️ **Begin Phase 1** - API testing (independent, no blockers)
+
+---
+
+## MVP: Claude CLI Proxy (2025-12-23)
+
+**Goal**: Route screenshot-to-code through Claude Code CLI to use subscription billing instead of raw API credits.
+
+**Status**: ✅ Working
+
+### Completed
+- ✅ Proof of concept: Claude CLI can read images and generate HTML
+- ✅ Proxy backend (`claude-proxy/main.py`) - FastAPI WebSocket server
+- ✅ Image input support - base64 → temp file → Claude CLI
+- ✅ Video input support - frame extraction via moviepy → grid image
+- ✅ Frontend integration - screenshot-to-code UI connects to proxy
+
+### Architecture
+```
+Frontend (localhost:5173) → Proxy (localhost:7001) → Claude CLI → Subscription
+```
+
+### Known Issues
+- Video output quality needs tuning (prompt refinement)
+- Claude sometimes outputs thinking text instead of pure code
