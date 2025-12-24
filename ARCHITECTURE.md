@@ -63,7 +63,7 @@
 ## ADR-001: Dev App Embedding Strategy
 
 **Date:** 2025-12-23
-**Status:** Proposed (under evaluation)
+**Status:** Implemented (Option 2 - Proxy with Script Injection)
 
 ### Context
 
@@ -257,16 +257,16 @@ async def proxy(request: Request, path: str):
 5. Implementation complexity is manageable
 
 **Trade-offs accepted:**
-- Need to implement WebSocket passthrough for HMR
-- Some edge cases with authentication
-- Slight complexity in path handling
+- WebSocket passthrough for HMR - implemented in `app_proxy.py`
+- Authentication edge cases - basic header forwarding works
+- Path rewriting complexity - handled with regex in `inject_script()` and `rewrite_js_imports()`
 
 ### Implementation Plan
 
-1. **Phase 1:** Basic HTTP proxy with script injection
-2. **Phase 2:** WebSocket passthrough for HMR
-3. **Phase 3:** Authentication header forwarding
-4. **Phase 4:** HTTPS support (optional)
+1. **Phase 1:** Basic HTTP proxy with script injection - **Done**
+2. **Phase 2:** WebSocket passthrough for HMR - **Done**
+3. **Phase 3:** Authentication header forwarding - **Done** (X-Forwarded headers)
+4. **Phase 4:** HTTPS support (optional) - Not implemented
 
 ---
 
@@ -354,7 +354,7 @@ pixel-forge/
 │
 ├── claude-proxy/          # Backend
 │   ├── main.py            # WebSocket server + code generation
-│   ├── app_proxy.py       # [Future] Dev app proxy
+│   ├── app_proxy.py       # Dev app proxy with script injection
 │   ├── session_manager.py # [Future] Claude session management
 │   └── requirements.txt
 │
@@ -369,7 +369,7 @@ pixel-forge/
 
 ## Open Questions
 
-1. **HMR passthrough:** How to proxy WebSocket connections for hot module reload?
+1. ~~**HMR passthrough:** How to proxy WebSocket connections for hot module reload?~~ **Resolved** - see `app_proxy.py:proxy_websocket()`
 2. **Session cleanup:** When to expire old Claude sessions?
 3. **Multi-project:** Support multiple projects in one pixel-forge instance?
 4. **File watching:** Notify frontend when Claude modifies files?
