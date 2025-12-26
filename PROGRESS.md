@@ -1,15 +1,46 @@
 # Visual-to-Code Integration Progress
 
 **Project**: Rework visual-to-code fork with Claude Code integration
-**Last Updated**: 2025-12-23
+**Last Updated**: 2025-12-27
 **Status**: MVP Complete - Claude CLI proxy working
 **Workflow Tier**: Simple (main branch only)
 **Tracking Method**: Document-based (PROGRESS.md + ISSUES.md)
-**Architecture**: Layered (API/Web/Tools/SDK layers)
 
 ---
 
-## Milestone 1: Phase 1 - API Foundation Validation (Weeks 1-2)
+## Current: MVP Claude CLI Proxy
+
+**Status**: ✅ Working (2025-12-23)
+
+Routes screenshot-to-code through Claude CLI for subscription billing instead of raw API credits.
+
+### Completed
+- ✅ Proof of concept: Claude CLI can read images and generate HTML
+- ✅ Proxy backend (`claude-proxy/main.py`) - FastAPI WebSocket server
+- ✅ Image input support - base64 → temp file → Claude CLI
+- ✅ Video input support - frame extraction via moviepy → grid image
+- ✅ Frontend integration - screenshot-to-code UI connects to proxy
+- ✅ App proxy with script injection for dev app embedding
+
+### Architecture
+```
+Frontend (localhost:5173) → Proxy (localhost:7001) → Claude CLI → Subscription
+```
+
+### Known Issues
+- Video output quality needs tuning (prompt refinement)
+- Claude sometimes outputs thinking text instead of pure code
+
+---
+
+## Future: Detailed Enhancement Planning
+
+The milestones below represent detailed planning for future enhancements beyond the MVP.
+These were created before the MVP and may need revision based on what was learned.
+
+---
+
+## Milestone 1: Phase 1 - API Foundation Validation
 
 **Goal**: Validate that existing HTML/Tailwind API generation still works after SDK/CLI/Web refactor
 
@@ -475,34 +506,6 @@
 
 ## Next Steps
 
-1. ✅ **Blueprint created** and decomposed to depth 4-8
-2. ✅ **Complexity assessed** - all subtasks ≤3.0
-3. ✅ **Translated to PROGRESS.md** - task tracking ready
-4. ✅ **Create ISSUES.md** - spike tasks and risk items
-5. ⏭️ **Archive blueprint** - move to specs/archive/
-6. ⏭️ **Commit and push** - version control
-7. ⏭️ **Begin Phase 1** - API testing (independent, no blockers)
-
----
-
-## MVP: Claude CLI Proxy (2025-12-23)
-
-**Goal**: Route screenshot-to-code through Claude Code CLI to use subscription billing instead of raw API credits.
-
-**Status**: ✅ Working
-
-### Completed
-- ✅ Proof of concept: Claude CLI can read images and generate HTML
-- ✅ Proxy backend (`claude-proxy/main.py`) - FastAPI WebSocket server
-- ✅ Image input support - base64 → temp file → Claude CLI
-- ✅ Video input support - frame extraction via moviepy → grid image
-- ✅ Frontend integration - screenshot-to-code UI connects to proxy
-
-### Architecture
-```
-Frontend (localhost:5173) → Proxy (localhost:7001) → Claude CLI → Subscription
-```
-
-### Known Issues
-- Video output quality needs tuning (prompt refinement)
-- Claude sometimes outputs thinking text instead of pure code
+1. Fix MVP known issues (video quality, thinking text in output)
+2. Add session persistence (ADR-002 in ARCHITECTURE.md)
+3. Evaluate which future milestones align with MVP architecture

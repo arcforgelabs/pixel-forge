@@ -23,11 +23,15 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ### Web App (Recommended for Interactive Use)
 
 ```bash
-cd app
-npm install
-npm start
+# Terminal 1: Start the Claude CLI proxy
+cd claude-proxy
+pip install -r requirements.txt
+python main.py  # Runs on port 7001
 
-# Open http://localhost:3000
+# Terminal 2: Start the frontend
+cd screenshot-to-code/frontend
+yarn install
+yarn dev  # Opens http://localhost:5173
 ```
 
 ### SDK (For Programmatic Use)
