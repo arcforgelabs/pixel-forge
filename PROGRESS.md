@@ -49,23 +49,25 @@ This is the core differentiator from screenshot-to-code: editing real apps with 
 | Element data capture (XPath, outerHTML, classes) | ✅ Done | postMessage to parent |
 | WebSocket passthrough for HMR | ✅ Done | `proxy_websocket()` |
 | Test harness UI | ✅ Done | `test-harness.html` |
-| "Send to Claude" button | ⚠️ Placeholder | TODO on line 188 |
+| "Send to Claude" button | ✅ Done | Wired to `/edit-element` endpoint |
+| `/edit-element` endpoint | ✅ Done | `main.py:656` |
+| Project path input | ✅ Done | `test-harness.html` |
 
 ### What's Missing
 
 | Component | Complexity | Description |
 |-----------|------------|-------------|
-| Element → Claude endpoint | Low | WebSocket endpoint to receive element + instruction |
+| ~~Element → Claude endpoint~~ | ~~Low~~ | ✅ Done - `/edit-element` WebSocket endpoint |
 | Session manager | Medium | Persist Claude sessions per project (ADR-002) |
-| Wire test harness to endpoint | Low | Replace alert() with actual WebSocket call |
-| Project directory awareness | Medium | Claude needs to know which files to edit |
+| ~~Wire test harness to endpoint~~ | ~~Low~~ | ✅ Done - WebSocket integration |
+| ~~Project directory awareness~~ | ~~Low~~ | ✅ Done - Project path input field |
 
 ### Implementation Tasks
 
-1. **Create `/edit-element` WebSocket endpoint** (Low)
-   - Receive: `{ element: {...}, instruction: "make it blue", projectPath: "/path/to/project" }`
-   - Build prompt with element context
-   - Call Claude CLI with project working directory
+1. ~~**Create `/edit-element` WebSocket endpoint**~~ ✅ Done
+   - Receives element data + instruction + project path
+   - Builds prompt with element context (outerHTML, XPath, classes)
+   - Calls Claude CLI with project as cwd
 
 2. **Add session persistence** (Medium) - See ADR-002
    - Generate session ID from project path hash
@@ -73,13 +75,14 @@ This is the core differentiator from screenshot-to-code: editing real apps with 
    - Subsequent: `--resume <uuid>`
    - Session manager class to track active sessions
 
-3. **Wire test harness** (Low)
-   - Replace `alert()` with WebSocket connection to `/edit-element`
-   - Display Claude's response and file changes
+3. ~~**Wire test harness**~~ ✅ Done
+   - WebSocket connection to `/edit-element`
+   - Displays Claude's response
+   - Auto-reloads iframe after successful edit
 
-4. **Project path configuration** (Low)
-   - Add project path input to test harness
-   - Pass to Claude CLI as working directory
+4. ~~**Project path configuration**~~ ✅ Done
+   - Project path input in test harness
+   - Passed to Claude CLI as working directory
 
 ### Test Harness
 
