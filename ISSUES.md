@@ -200,8 +200,53 @@ No guarantee that selected metrics (visual similarity, accessibility, performanc
 
 ---
 
+---
+
+## Live Editor v2 - Technical Notes
+
+### Architecture Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| State management | Zustand | Matches aim-up pattern, already in codebase |
+| Streaming format | stream-json | Claude CLI native, proven in aim-up |
+| Chat persistence | localStorage | Client-only, simple, matches aim-up |
+| Markdown rendering | react-markdown | Already in screenshot-to-code |
+
+### Known Considerations
+
+#### Proxy Architecture
+- **Catch-all proxy** implemented - forwards unknown paths to target app
+- HMR WebSocket proxying working via root `/` WebSocket handler
+- Selection script in app_proxy.py will grow with multi-select features
+
+#### Dependencies Between Tasks
+
+| Task | Depends On | Notes |
+|------|------------|-------|
+| task_1_5 | None | Can start immediately |
+| task_1_6 | task_1_1 through task_1_5 | Final integration |
+| task_2_1, task_2_2 | task_2_3 | Selection state must exist first |
+| task_3_* | task_2_* | Multi-select extends persistence |
+
+### Questions Resolved
+
+- **Chat history persistence**: Client-only (localStorage), matches aim-up pattern
+- **Max elements in multi-select**: 10 elements to keep context manageable
+
+### Testing Checklist
+
+When testing Live Editor v2:
+1. Start pixel-forge: `./start-dev.sh`
+2. Start target app: `cd ~/repos/1-projects/pip-by-arc-forge && pnpm dev`
+3. Load target app URL in Live Editor
+4. Test: streaming responses, tool visualization, multi-select
+
+---
+
 ## Summary
 
 - **Current MVP Issues**: 2 (thinking text, video quality)
 - **Future Feature Risks**: 4 (all mitigated in planning)
 - **Spikes**: 2 complete
+- **Live Editor v2**: 12 tasks planned across 3 features

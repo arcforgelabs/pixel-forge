@@ -577,12 +577,84 @@ These were created before the MVP and may need revision based on what was learne
 
 ## Next Steps
 
-1. **Complete Visual Editor Mode** (see "Next Priority" section above)
-   - Create `/edit-element` endpoint
-   - Add session persistence (ADR-002)
-   - Wire test harness to endpoint
-   - Add project path configuration
-
+1. **Live Editor v2** - See below for detailed task tracking
 2. Fix MVP known issues (video quality, thinking text in output)
-
 3. Future: Evaluate which detailed milestones align with current architecture
+
+---
+
+## Live Editor v2 - Feature Enhancement
+
+**Blueprint**: `specs/archive/BLUEPRINT-feature-live-editor-v2-20251227.yaml`
+**Status**: :yellow_circle: In Progress
+**Tracking**: Document-based
+
+### Research References
+- **aim-up**: `~/repos/2-areas/aim-up/dashboard/` - Chat patterns, streaming, tool viz
+- **open-webui**: https://github.com/open-webui/open-webui - UI patterns
+
+### Phase 1: Foundation
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_1_1 | Create chat store with Zustand | 1.4 | :red_circle: Not Started |
+| task_2_3 | Add selection state to store | 1.2 | :red_circle: Not Started |
+
+### Phase 2: Chat Components
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_1_2 | Create ChatMessages component | 1.4 | :red_circle: Not Started |
+| task_1_3 | Create ToolCard component | 1.4 | :red_circle: Not Started |
+| task_1_4 | Create ChatInput component | 1.0 | :red_circle: Not Started |
+
+### Phase 3: Backend Streaming
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_1_5 | Update backend /edit-element for streaming | 2.2 | :red_circle: Not Started |
+
+### Phase 4: Selection Persistence
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_2_1 | Update selection script for persistence | 1.8 | :red_circle: Not Started |
+| task_2_2 | Create SelectedElementsList component | 1.6 | :red_circle: Not Started |
+
+### Phase 5: Multi-Select
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_3_1 | Update selection script for multi-select | 2.0 | :red_circle: Not Started |
+| task_3_2 | Context chips for multi-selection | 1.8 | :red_circle: Not Started |
+| task_3_3 | Build context from multiple elements | 1.6 | :red_circle: Not Started |
+
+### Phase 6: Integration
+| ID | Task | Complexity | Status |
+|----|------|------------|--------|
+| task_1_6 | Integrate chat UI into LiveEditorPane | 2.2 | :red_circle: Not Started |
+
+### Feature Summary
+
+| Feature | Tasks | Complete |
+|---------|-------|----------|
+| Full Chat Interface | 6 | 0/6 |
+| Persistent Element Selection | 3 | 0/3 |
+| Multi-Element Selection | 3 | 0/3 |
+
+### Files to Create
+```
+screenshot-to-code/frontend/src/components/live-editor/
+├── store/
+│   └── chat-store.ts          # task_1_1, task_2_3
+├── ChatMessages.tsx            # task_1_2
+├── ToolCard.tsx                # task_1_3
+├── ChatInput.tsx               # task_1_4
+├── SelectedElementsList.tsx    # task_2_2
+└── ContextChips.tsx            # task_3_2
+```
+
+### Files to Modify
+```
+claude-proxy/
+├── main.py                     # task_1_5 (streaming)
+└── app_proxy.py                # task_2_1, task_3_1 (SELECTION_SCRIPT)
+
+screenshot-to-code/frontend/src/components/live-editor/
+└── LiveEditorPane.tsx          # task_1_6, task_3_2
+```

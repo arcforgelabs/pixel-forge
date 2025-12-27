@@ -1,0 +1,362 @@
+# Blueprint: Live Editor v2
+# Type: feature
+# Created: 2025-12-27
+# Tracking: document-based
+
+meta:
+  name: live-editor-v2
+  type: feature
+  description: Enhanced Live Editor with full chat interface, persistent element selection, and multi-select capabilities
+  depth_limit: 2
+  tracking_method: document
+
+  # Research sources
+  references:
+    - path: ~/repos/2-areas/aim-up
+      patterns:
+        - Streaming WebSocket chat with Claude CLI
+        - Zustand store for chat state management
+        - Tool visualization with collapsible ToolCard components
+        - Session persistence via localStorage
+    - url: https://github.com/open-webui/open-webui
+      patterns:
+        - Svelte-based responsive chat UI
+        - PWA support
+        - Markdown rendering
+
+# Current State Analysis
+current_state:
+  location: /home/samuel/repos/1-projects/pixel-forge/screenshot-to-code/frontend/src/components/live-editor/
+  files:
+    - LiveEditorPane.tsx  # Single file, ~314 lines
+  capabilities:
+    - Single element selection with highlight overlay
+    - Instruction textarea (not chat)
+    - WebSocket to /edit-element endpoint
+    - Basic response display (no streaming)
+    - Auto-refresh after Claude completes
+  limitations:
+    - No chat history or conversation context
+    - No tool visualization (Claude's actions hidden)
+    - Selection lost on click outside
+    - Only one element at a time
+    - No streaming response feedback
+
+# Feature Breakdown
+features:
+  - id: feature_1
+    name: Full Chat Interface
+    description: Replace instruction textarea with full chat UI supporting streaming responses and tool visualization
+    complexity:
+      scope: 3        # New component architecture
+      technical: 3    # WebSocket streaming, state management
+      uncertainty: 2  # Patterns proven in aim-up
+      dependencies: 2 # Builds on existing WebSocket
+      risk: 2         # Can iterate safely
+      composite: 2.4
+    tasks:
+      - id: task_1_1
+        name: Create chat store with Zustand
+        description: |
+          Port chat-store pattern from aim-up:
+          - messages array with user/assistant/tool roles
+          - sessionId with localStorage persistence
+          - isStreaming and currentStreamContent for buffering
+          - currentTool for active tool tracking
+          - WebSocket connection management
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 1  # Direct port from aim-up
+          dependencies: 1
+          risk: 1
+          composite: 1.4
+        files:
+          - create: src/components/live-editor/store/chat-store.ts
+        reference: ~/repos/2-areas/aim-up/dashboard/frontend/src/store/chat-store.ts
+
+      - id: task_1_2
+        name: Create ChatMessages component
+        description: |
+          Scrollable message area with:
+          - User messages (right-aligned, accent bg)
+          - Assistant messages (left-aligned, markdown rendered)
+          - Streaming indicator (animated dots)
+          - Current streaming content with cursor
+          - Auto-scroll to bottom
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 1
+          dependencies: 1
+          risk: 1
+          composite: 1.4
+        files:
+          - create: src/components/live-editor/ChatMessages.tsx
+        reference: ~/repos/2-areas/aim-up/dashboard/frontend/src/components/chat/ChatMessages.tsx
+
+      - id: task_1_3
+        name: Create ToolCard component
+        description: |
+          Collapsible tool visualization cards:
+          - Icon mapping (Read, Bash, Edit, Write, Glob, Grep)
+          - Running state with spinner
+          - Complete state with checkmark
+          - Error state with red border
+          - Expandable output preview (max 32 lines)
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 1
+          dependencies: 1
+          risk: 1
+          composite: 1.4
+        files:
+          - create: src/components/live-editor/ToolCard.tsx
+        reference: ~/repos/2-areas/aim-up/dashboard/frontend/src/components/chat/SimpleChatView.tsx (lines 69-113)
+
+      - id: task_1_4
+        name: Create ChatInput component
+        description: |
+          Auto-expanding textarea input:
+          - Enter to send, Shift+Enter for newline
+          - Disabled during streaming
+          - Clear on send
+          - Max height constraint
+        complexity:
+          scope: 1
+          technical: 1
+          uncertainty: 1
+          dependencies: 1
+          risk: 1
+          composite: 1.0
+        files:
+          - create: src/components/live-editor/ChatInput.tsx
+        reference: ~/repos/2-areas/aim-up/dashboard/frontend/src/components/chat/ChatInput.tsx
+
+      - id: task_1_5
+        name: Update backend /edit-element for streaming
+        description: |
+          Modify claude-proxy to support streaming responses:
+          - Use --output-format stream-json
+          - Parse and forward chunk/tool_use/tool_result/complete messages
+          - Keep existing non-streaming mode as fallback
+        complexity:
+          scope: 2
+          technical: 3
+          uncertainty: 2
+          dependencies: 2
+          risk: 2
+          composite: 2.2
+        files:
+          - modify: claude-proxy/main.py
+        reference: ~/repos/2-areas/aim-up/dashboard/backend/services/claude_cli.py
+
+      - id: task_1_6
+        name: Integrate chat UI into LiveEditorPane
+        description: |
+          Replace right sidebar content:
+          - Remove instruction textarea and basic response display
+          - Add ChatMessages + ChatInput components
+          - Wire up to chat store
+          - Include selected elements as context chips above chat
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 2
+          dependencies: 3  # Depends on all above tasks
+          risk: 2
+          composite: 2.2
+        files:
+          - modify: src/components/live-editor/LiveEditorPane.tsx
+
+  - id: feature_2
+    name: Persistent Element Selection
+    description: Selected elements remain highlighted in iframe until explicitly deselected
+    complexity:
+      scope: 2
+      technical: 2
+      uncertainty: 2
+      dependencies: 1
+      risk: 1
+      composite: 1.6
+    tasks:
+      - id: task_2_1
+        name: Update selection script for persistence
+        description: |
+          Modify injected SELECTION_SCRIPT in app_proxy.py:
+          - Don't auto-clear highlight on new selection
+          - Add unique ID overlay per selected element
+          - Support "deselect" message from parent
+          - Visual distinction for multi-selected elements
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 2
+          dependencies: 1
+          risk: 2
+          composite: 1.8
+        files:
+          - modify: claude-proxy/app_proxy.py (SELECTION_SCRIPT)
+
+      - id: task_2_2
+        name: Create SelectedElementsList component
+        description: |
+          Sidebar list showing selected elements:
+          - Compact card per element (tag, id, classes)
+          - Click to scroll-to/highlight in iframe
+          - X button to deselect individual element
+          - "Clear all" button
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 1
+          dependencies: 2
+          risk: 1
+          composite: 1.6
+        files:
+          - create: src/components/live-editor/SelectedElementsList.tsx
+
+      - id: task_2_3
+        name: Add selection state to store
+        description: |
+          Extend chat store or create selection store:
+          - selectedElements: SelectedElement[]
+          - addElement, removeElement, clearElements actions
+          - Sync with iframe via postMessage
+        complexity:
+          scope: 1
+          technical: 2
+          uncertainty: 1
+          dependencies: 1
+          risk: 1
+          composite: 1.2
+        files:
+          - modify: src/components/live-editor/store/chat-store.ts
+          # or create: src/components/live-editor/store/selection-store.ts
+
+  - id: feature_3
+    name: Multi-Element Selection
+    description: Select multiple elements simultaneously and manage them as a collection
+    complexity:
+      scope: 2
+      technical: 2
+      uncertainty: 2
+      dependencies: 2  # Depends on feature_2
+      risk: 2
+      composite: 2.0
+    tasks:
+      - id: task_3_1
+        name: Update selection script for multi-select
+        description: |
+          Extend SELECTION_SCRIPT for multi-select mode:
+          - Ctrl+click to add to selection (vs replace)
+          - Visual indicator showing selection order/count
+          - Different highlight color for multi-select mode
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 2
+          dependencies: 2
+          risk: 2
+          composite: 2.0
+        files:
+          - modify: claude-proxy/app_proxy.py (SELECTION_SCRIPT)
+
+      - id: task_3_2
+        name: Context chips for multi-selection
+        description: |
+          Show selected elements as context chips above chat:
+          - Horizontal scrollable chip list
+          - Each chip shows element summary (tag.class#id)
+          - Click chip to expand details
+          - X on chip to remove from context
+          - "Use all" vs "Use selected" toggle
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 2
+          dependencies: 2
+          risk: 1
+          composite: 1.8
+        files:
+          - create: src/components/live-editor/ContextChips.tsx
+          - modify: src/components/live-editor/LiveEditorPane.tsx
+
+      - id: task_3_3
+        name: Build context from multiple elements
+        description: |
+          Format multi-element context for Claude:
+          - Clear XML-like structure for multiple elements
+          - Include element relationships if nested
+          - Truncate large outerHTML intelligently
+          - Number elements for reference in responses
+        complexity:
+          scope: 2
+          technical: 2
+          uncertainty: 2
+          dependencies: 1
+          risk: 1
+          composite: 1.6
+        files:
+          - modify: src/components/live-editor/store/chat-store.ts
+
+# Implementation Order
+implementation_order:
+  phase_1:
+    name: Foundation
+    tasks: [task_1_1, task_2_3]
+    rationale: State management must come first
+
+  phase_2:
+    name: Chat Components
+    tasks: [task_1_2, task_1_3, task_1_4]
+    rationale: UI components can be built in parallel
+
+  phase_3:
+    name: Backend Streaming
+    tasks: [task_1_5]
+    rationale: Backend must support streaming before integration
+
+  phase_4:
+    name: Selection Persistence
+    tasks: [task_2_1, task_2_2]
+    rationale: Build on state foundation
+
+  phase_5:
+    name: Multi-Select
+    tasks: [task_3_1, task_3_2, task_3_3]
+    rationale: Extends persistence feature
+
+  phase_6:
+    name: Integration
+    tasks: [task_1_6]
+    rationale: Final assembly after all components ready
+
+# Acceptance Criteria
+acceptance_criteria:
+  feature_1:
+    - Streaming responses appear character-by-character
+    - Tool executions show in collapsible cards
+    - Chat history persists across page refreshes
+    - Can have multi-turn conversations with context
+
+  feature_2:
+    - Selected element stays highlighted after selection
+    - Can click elsewhere without losing selection
+    - Can explicitly deselect via X button
+    - Multiple selections show in sidebar list
+
+  feature_3:
+    - Ctrl+click adds to selection
+    - Regular click replaces selection
+    - Context chips show all selected elements
+    - Can remove individual elements from context
+    - Claude receives all selected elements as context
+
+# Technical Decisions
+decisions:
+  state_management: Zustand (matches aim-up, already in screenshot-to-code)
+  streaming_format: stream-json from Claude CLI
+  markdown_rendering: react-markdown (existing in codebase)
+  ui_components: Existing shadcn/ui components
