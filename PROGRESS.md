@@ -33,6 +33,74 @@ Frontend (localhost:5173) → Proxy (localhost:7001) → Claude CLI → Subscrip
 
 ---
 
+## Next Priority: Visual Editor Mode
+
+**Status**: 🟡 In Progress (UI done, backend wiring needed)
+**Goal**: Point at elements in your running app, tell Claude what to change, watch it happen.
+
+This is the core differentiator from screenshot-to-code: editing real apps with persistent context.
+
+### What's Built
+
+| Component | Status | File |
+|-----------|--------|------|
+| App proxy with script injection | ✅ Done | `app_proxy.py` |
+| Element selector (hover/click) | ✅ Done | `SELECTION_SCRIPT` in app_proxy.py |
+| Element data capture (XPath, outerHTML, classes) | ✅ Done | postMessage to parent |
+| WebSocket passthrough for HMR | ✅ Done | `proxy_websocket()` |
+| Test harness UI | ✅ Done | `test-harness.html` |
+| "Send to Claude" button | ⚠️ Placeholder | TODO on line 188 |
+
+### What's Missing
+
+| Component | Complexity | Description |
+|-----------|------------|-------------|
+| Element → Claude endpoint | Low | WebSocket endpoint to receive element + instruction |
+| Session manager | Medium | Persist Claude sessions per project (ADR-002) |
+| Wire test harness to endpoint | Low | Replace alert() with actual WebSocket call |
+| Project directory awareness | Medium | Claude needs to know which files to edit |
+
+### Implementation Tasks
+
+1. **Create `/edit-element` WebSocket endpoint** (Low)
+   - Receive: `{ element: {...}, instruction: "make it blue", projectPath: "/path/to/project" }`
+   - Build prompt with element context
+   - Call Claude CLI with project working directory
+
+2. **Add session persistence** (Medium) - See ADR-002
+   - Generate session ID from project path hash
+   - First request: `--session-id <uuid>`
+   - Subsequent: `--resume <uuid>`
+   - Session manager class to track active sessions
+
+3. **Wire test harness** (Low)
+   - Replace `alert()` with WebSocket connection to `/edit-element`
+   - Display Claude's response and file changes
+
+4. **Project path configuration** (Low)
+   - Add project path input to test harness
+   - Pass to Claude CLI as working directory
+
+### Test Harness
+
+Access at: `http://localhost:7001/test-harness.html`
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  [Target URL: localhost:3000] [Load] [Select Mode: OFF]         │
+├─────────────────────────────────┬───────────────────────────────┤
+│                                 │  Selected Element             │
+│   Your App (iframe)             │  <button>                     │
+│   via /app/ proxy               │  .btn.primary                 │
+│                                 │  XPath: /html/body/div/button │
+│   [Click to select elements]    │                               │
+│                                 │  [Instruction input]          │
+│                                 │  [Send to Claude]             │
+└─────────────────────────────────┴───────────────────────────────┘
+```
+
+---
+
 ## Future: Detailed Enhancement Planning
 
 The milestones below represent detailed planning for future enhancements beyond the MVP.
@@ -506,6 +574,12 @@ These were created before the MVP and may need revision based on what was learne
 
 ## Next Steps
 
-1. Fix MVP known issues (video quality, thinking text in output)
-2. Add session persistence (ADR-002 in ARCHITECTURE.md)
-3. Evaluate which future milestones align with MVP architecture
+1. **Complete Visual Editor Mode** (see "Next Priority" section above)
+   - Create `/edit-element` endpoint
+   - Add session persistence (ADR-002)
+   - Wire test harness to endpoint
+   - Add project path configuration
+
+2. Fix MVP known issues (video quality, thinking text in output)
+
+3. Future: Evaluate which detailed milestones align with current architecture
