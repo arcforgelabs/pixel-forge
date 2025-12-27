@@ -8,19 +8,29 @@ Unified toolkit with SDK, CLI, web app, and automation tools. Uses exact screens
 
 ## 🚀 Quick Start
 
-### CLI (Recommended for Automation)
+### Install (Recommended)
 
 ```bash
-# Set API key
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Generate code from image
-./cli/visual-to-code design.png
-
-# Output: design.html
+./install.sh        # Install to ~/.local/bin/pixel-forge
+pixel-forge         # Start server on port 7001
 ```
 
-### Web App (Recommended for Interactive Use)
+Then open: http://localhost:7001/test-harness.html
+
+### Visual Editor Mode
+
+Point at elements in your running app, tell Claude what to change:
+
+1. Start `pixel-forge`
+2. Open the test harness
+3. Enter your dev app URL (e.g., `http://localhost:3000`)
+4. Enter your project path (e.g., `/home/user/my-app`)
+5. Click **Select Mode**, click an element
+6. Type instruction, click **Send to Claude**
+
+Claude finds the source file and makes the edit.
+
+### Manual Setup (Development)
 
 ```bash
 # Terminal 1: Start the Claude CLI proxy
@@ -28,7 +38,7 @@ cd claude-proxy
 pip install -r requirements.txt
 python main.py  # Runs on port 7001
 
-# Terminal 2: Start the frontend
+# Terminal 2: Start the frontend (optional, for screenshot-to-code UI)
 cd screenshot-to-code/frontend
 yarn install
 yarn dev  # Opens http://localhost:5173
@@ -113,12 +123,16 @@ Uses exact parameters from screenshot-to-code:
 ## 🏗️ Architecture
 
 ```
-visual-to-code/
+pixel-forge/
+├── claude-proxy/          # Main server (FastAPI + Claude CLI)
+│   ├── main.py            # WebSocket endpoints
+│   ├── app_proxy.py       # Dev app proxy with element selection
+│   └── test-harness.html  # Visual editor UI
+├── screenshot-to-code/    # Forked frontend (optional)
 ├── sdk/node/              # Core SDK
 ├── cli/                   # CLI tool
-├── app/                   # Web app
 ├── tools/                 # Python automation
-└── examples/              # Test images
+└── install.sh             # Install script
 ```
 
 ---
