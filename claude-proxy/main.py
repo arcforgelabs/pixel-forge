@@ -587,6 +587,165 @@ CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description
             pass
 
 
+async def edit_element_with_claude_cli(
+    element_html: str,
+    instruction: str,
+    project_path: str,
+    element_xpath: str | None = None,
+    element_classes: list[str] | None = None,
+) -> str:
+    """Call Claude CLI to edit an element in a real project."""
+
+    # Build context about the element
+    element_context = f"Element HTML:\n```html\n{element_html}\n```"
+    if element_xpath:
+        element_context += f"\n\nXPath: {element_xpath}"
+    if element_classes:
+        element_context += f"\n\nCSS Classes: {', '.join(element_classes)}"
+
+    prompt = f"""The user is pointing at this element in their running web app:
+
+{element_context}
+
+Their request: {instruction}
+
+Find the source file that renders this element and make the requested change.
+Use Glob and Grep to search the codebase, Read to examine files, and Edit to make changes.
+After making changes, briefly confirm what you changed."""
+
+    system_prompt = """You are a code editor assistant. The user has selected an element in their running web application and wants you to modify it.
+
+Your task:
+1. Find the source file that contains or renders this element
+2. Make the requested modification
+3. Confirm what you changed
+
+Tips for finding the element:
+- Search for unique text content, class names, or IDs
+- Look in common locations: src/, components/, pages/, app/
+- The element might be in a React component, Vue component, or plain HTML file
+
+Be precise and minimal - only change what's necessary."""
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--system-prompt", system_prompt,
+        "--dangerously-skip-permissions",
+        "--output-format", "json",
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path,
+    )
+
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        raise Exception(f"Claude CLI error: {error_msg}")
+
+    # Parse JSON response
+    result = json.loads(stdout.decode())
+    return result.get("result", "")
+
+
+@app.websocket("/edit-element")
+async def edit_element(websocket: WebSocket):
+    """WebSocket endpoint for element-based editing with Claude."""
+    await websocket.accept()
+    print("[edit-element] Connection opened", flush=True)
+
+    try:
+        # Receive edit request
+        data = await websocket.receive_json()
+        print(f"[edit-element] Received request: {list(data.keys())}", flush=True)
+
+        element = data.get("element", {})
+        instruction = data.get("instruction", "")
+        project_path = data.get("projectPath", "")
+
+        # Validate required fields
+        if not element.get("outerHTML"):
+            await websocket.send_json({
+                "type": "error",
+                "message": "No element HTML provided"
+            })
+            return
+
+        if not instruction:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No instruction provided"
+            })
+            return
+
+        if not project_path:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No project path provided"
+            })
+            return
+
+        # Verify project path exists
+        if not os.path.isdir(project_path):
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Project path does not exist: {project_path}"
+            })
+            return
+
+        # Send status update
+        await websocket.send_json({
+            "type": "status",
+            "message": "Finding and editing element..."
+        })
+
+        # Call Claude to edit the element
+        try:
+            result = await edit_element_with_claude_cli(
+                element_html=element.get("outerHTML", ""),
+                instruction=instruction,
+                project_path=project_path,
+                element_xpath=element.get("xpath"),
+                element_classes=element.get("classList", []),
+            )
+
+            await websocket.send_json({
+                "type": "result",
+                "message": result
+            })
+
+        except Exception as e:
+            print(f"[edit-element] Claude error: {e}", flush=True)
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+
+    except Exception as e:
+        import traceback
+        print(f"[edit-element] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[edit-element] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7001)

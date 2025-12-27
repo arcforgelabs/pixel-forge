@@ -53,20 +53,36 @@
                     <p>Click "Select Mode" then click on an element in the app to inspect it.</p>
                 </div>
             </div>
-            <div class="p-3 border-t border-gray-700">
-                <textarea
-                    id="instruction"
-                    class="w-full bg-gray-700 text-white rounded p-2 text-sm resize-none"
-                    rows="3"
-                    placeholder="Tell Claude what to change about this element..."
-                ></textarea>
+            <div class="p-3 border-t border-gray-700 space-y-2">
+                <div>
+                    <label class="text-gray-500 text-xs uppercase block mb-1">Project Path</label>
+                    <input
+                        type="text"
+                        id="project-path"
+                        class="w-full bg-gray-700 text-white rounded p-2 text-sm"
+                        placeholder="/path/to/your/project"
+                    >
+                </div>
+                <div>
+                    <label class="text-gray-500 text-xs uppercase block mb-1">Instruction</label>
+                    <textarea
+                        id="instruction"
+                        class="w-full bg-gray-700 text-white rounded p-2 text-sm resize-none"
+                        rows="3"
+                        placeholder="Tell Claude what to change about this element..."
+                    ></textarea>
+                </div>
                 <button
                     id="send-btn"
-                    class="w-full mt-2 bg-green-600 hover:bg-green-700 py-2 rounded text-sm font-medium disabled:opacity-50"
+                    class="w-full bg-green-600 hover:bg-green-700 py-2 rounded text-sm font-medium disabled:opacity-50"
                     disabled
                 >
                     Send to Claude
                 </button>
+                <div id="claude-response" class="hidden">
+                    <label class="text-gray-500 text-xs uppercase block mb-1">Claude's Response</label>
+                    <pre id="response-text" class="bg-gray-900 p-2 rounded text-xs overflow-auto max-h-60 text-gray-300 whitespace-pre-wrap"></pre>
+                </div>
             </div>
         </div>
     </div>
@@ -79,6 +95,9 @@
         const selectionInfo = document.getElementById('selection-info');
         const instructionInput = document.getElementById('instruction');
         const sendBtn = document.getElementById('send-btn');
+        const projectPathInput = document.getElementById('project-path');
+        const claudeResponse = document.getElementById('claude-response');
+        const responseText = document.getElementById('response-text');
 
         let selectMode = false;
         let selectedElement = null;
@@ -169,27 +188,75 @@
             return div.innerHTML;
         }
 
-        // Send to Claude (placeholder for now)
+        // Send to Claude via WebSocket
         sendBtn.addEventListener('click', async () => {
             const instruction = instructionInput.value.trim();
+            const projectPath = projectPathInput.value.trim();
+
             if (!instruction || !selectedElement) return;
 
+            if (!projectPath) {
+                alert('Please enter the project path (e.g., /home/user/my-app)');
+                return;
+            }
+
             sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
+            sendBtn.textContent = 'Connecting...';
+            claudeResponse.classList.remove('hidden');
+            responseText.textContent = 'Connecting to Claude...';
 
-            // Format the update instruction with element context
-            const fullInstruction = `${instruction} referring to this element specifically: ${selectedElement.outerHTML}`;
+            try {
+                const ws = new WebSocket('ws://localhost:7001/edit-element');
 
-            console.log('Would send to Claude:', {
-                instruction: fullInstruction,
-                element: selectedElement
-            });
+                ws.onopen = () => {
+                    sendBtn.textContent = 'Sending...';
+                    responseText.textContent = 'Sending request to Claude...';
 
-            // TODO: Wire up to actual Claude proxy update endpoint
-            alert('Selection captured! In the full implementation, this would be sent to Claude.\n\nElement: ' + selectedElement.tagName + '\nInstruction: ' + instruction);
+                    ws.send(JSON.stringify({
+                        element: selectedElement,
+                        instruction: instruction,
+                        projectPath: projectPath
+                    }));
+                };
 
-            sendBtn.textContent = 'Send to Claude';
-            sendBtn.disabled = false;
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'status') {
+                        responseText.textContent = data.message;
+                    } else if (data.type === 'result') {
+                        responseText.textContent = data.message;
+                        sendBtn.textContent = 'Send to Claude';
+                        sendBtn.disabled = false;
+
+                        // Reload the iframe to show changes
+                        setTimeout(() => {
+                            iframe.contentWindow.location.reload();
+                        }, 500);
+                    } else if (data.type === 'error') {
+                        responseText.textContent = 'Error: ' + data.message;
+                        sendBtn.textContent = 'Send to Claude';
+                        sendBtn.disabled = false;
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    responseText.textContent = 'Connection error. Is the proxy running?';
+                    sendBtn.textContent = 'Send to Claude';
+                    sendBtn.disabled = false;
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                };
+
+            } catch (error) {
+                console.error('Error:', error);
+                responseText.textContent = 'Error: ' + error.message;
+                sendBtn.textContent = 'Send to Claude';
+                sendBtn.disabled = false;
+            }
         });
     </script>
 </body>
