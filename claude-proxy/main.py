@@ -23,6 +23,13 @@ from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
 
+from session_manager import (
+    generate_session_id,
+    get_or_create_session,
+    is_session_active,
+    mark_session_active,
+)
+
 # Video processing settings
 TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
 GRID_COLS = 4  # 4 columns in the frame grid
@@ -358,8 +365,13 @@ async def generate_with_claude_cli(
     image_path: str | None,
     system_prompt: str,
     user_prompt: str,
-) -> str:
-    """Call Claude CLI to generate code from image."""
+    session_id: str | None = None,
+    project_path: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to generate code from image.
+    Returns (result, session_id).
+    """
     if image_path:
         prompt = f"Read the image at {image_path} and {user_prompt}"
     else:
@@ -372,13 +384,27 @@ async def generate_with_claude_cli(
         "--dangerously-skip-permissions",
         "--tools", "Read",
         "--output-format", "json",
-        "--no-session-persistence",
     ]
+
+    # Handle session persistence
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path or "")
+    else:
+        # Generate new session if project_path provided
+        if project_path:
+            session_id = generate_session_id(project_path)
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=project_path if project_path else None,
     )
 
     stdout, stderr = await proc.communicate()
@@ -389,15 +415,20 @@ async def generate_with_claude_cli(
 
     # Parse JSON response
     result = json.loads(stdout.decode())
-    return result.get("result", "")
+    return result.get("result", ""), session_id or ""
 
 
 async def generate_update_with_claude_cli(
     system_prompt: str,
     current_code: str,
     update_instruction: str,
-) -> str:
-    """Call Claude CLI to update existing code based on instruction."""
+    session_id: str | None = None,
+    project_path: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to update existing code based on instruction.
+    Returns (result, session_id).
+    """
     prompt = f"""Here is the current HTML code:
 
 ```html
@@ -414,13 +445,26 @@ Update the code according to the user's request. Return ONLY the complete update
         "--system-prompt", system_prompt,
         "--dangerously-skip-permissions",
         "--output-format", "json",
-        "--no-session-persistence",
     ]
+
+    # Handle session persistence
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path or "")
+    else:
+        if project_path:
+            session_id = generate_session_id(project_path)
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        cwd=project_path if project_path else None,
     )
 
     stdout, stderr = await proc.communicate()
@@ -431,7 +475,7 @@ Update the code according to the user's request. Return ONLY the complete update
 
     # Parse JSON response
     result = json.loads(stdout.decode())
-    return result.get("result", "")
+    return result.get("result", ""), session_id or ""
 
 
 @app.get("/")
@@ -460,7 +504,12 @@ async def generate_code(websocket: WebSocket):
         generation_type = params.get("generationType", "create")
         history = params.get("history", [])
 
+        # Session parameters (new)
+        session_id = params.get("session_id")
+        project_path = params.get("project_path")
+
         print(f"Stack: {stack}, InputMode: {input_mode}, GenerationType: {generation_type}", flush=True)
+        print(f"Session: {session_id}, Project: {project_path}", flush=True)
 
         # Map stack names to our keys
         stack_map = {
@@ -504,10 +553,12 @@ async def generate_code(websocket: WebSocket):
 
             try:
                 # Generate updated code via Claude CLI
-                result = await generate_update_with_claude_cli(
+                result, returned_session_id = await generate_update_with_claude_cli(
                     system_prompt=system_prompt,
                     current_code=current_code,
                     update_instruction=update_instruction,
+                    session_id=session_id,
+                    project_path=project_path,
                 )
 
                 # Extract and clean HTML
@@ -515,7 +566,12 @@ async def generate_code(websocket: WebSocket):
 
                 # Send result back to frontend
                 await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
-                await websocket.send_json({"type": "variantComplete", "value": "Update complete", "variantIndex": 0})
+                await websocket.send_json({
+                    "type": "variantComplete",
+                    "value": "Update complete",
+                    "variantIndex": 0,
+                    "session_id": returned_session_id,
+                })
 
             except Exception as e:
                 print(f"Update error: {e}", flush=True)
@@ -552,10 +608,12 @@ CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description
 
             try:
                 # Generate code via Claude CLI
-                result = await generate_with_claude_cli(
+                result, returned_session_id = await generate_with_claude_cli(
                     image_path=image_path,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
+                    session_id=session_id,
+                    project_path=project_path,
                 )
 
                 # Extract and clean HTML
@@ -563,7 +621,12 @@ CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description
 
                 # Send result back to frontend
                 await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
-                await websocket.send_json({"type": "variantComplete", "value": "Generation complete", "variantIndex": 0})
+                await websocket.send_json({
+                    "type": "variantComplete",
+                    "value": "Generation complete",
+                    "variantIndex": 0,
+                    "session_id": returned_session_id,
+                })
 
             finally:
                 # Cleanup temp file
@@ -593,9 +656,12 @@ async def edit_element_with_claude_cli(
     project_path: str,
     element_xpath: str | None = None,
     element_classes: list[str] | None = None,
-) -> str:
-    """Call Claude CLI to edit an element in a real project."""
-
+    session_id: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to edit an element in a real project.
+    Returns (result, session_id).
+    """
     # Build context about the element
     element_context = f"Element HTML:\n```html\n{element_html}\n```"
     if element_xpath:
@@ -635,6 +701,19 @@ Be precise and minimal - only change what's necessary."""
         "--output-format", "json",
     ]
 
+    # Handle session persistence
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
+    else:
+        # Generate new session from project path
+        session_id = generate_session_id(project_path)
+        cmd.extend(["--session-id", session_id])
+        mark_session_active(session_id, project_path)
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -650,7 +729,7 @@ Be precise and minimal - only change what's necessary."""
 
     # Parse JSON response
     result = json.loads(stdout.decode())
-    return result.get("result", "")
+    return result.get("result", ""), session_id or ""
 
 
 @app.websocket("/edit-element")
@@ -667,6 +746,9 @@ async def edit_element(websocket: WebSocket):
         element = data.get("element", {})
         instruction = data.get("instruction", "")
         project_path = data.get("projectPath", "")
+        session_id = data.get("session_id")
+
+        print(f"[edit-element] Session: {session_id}, Project: {project_path}", flush=True)
 
         # Validate required fields
         if not element.get("outerHTML"):
@@ -706,17 +788,19 @@ async def edit_element(websocket: WebSocket):
 
         # Call Claude to edit the element
         try:
-            result = await edit_element_with_claude_cli(
+            result, returned_session_id = await edit_element_with_claude_cli(
                 element_html=element.get("outerHTML", ""),
                 instruction=instruction,
                 project_path=project_path,
                 element_xpath=element.get("xpath"),
                 element_classes=element.get("classList", []),
+                session_id=session_id,
             )
 
             await websocket.send_json({
                 "type": "result",
-                "message": result
+                "message": result,
+                "session_id": returned_session_id,
             })
 
         except Exception as e:
@@ -740,6 +824,168 @@ async def edit_element(websocket: WebSocket):
 
     finally:
         print("[edit-element] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/chat")
+async def unified_chat(websocket: WebSocket):
+    """
+    Unified chat WebSocket endpoint for all modes.
+    Provides streaming responses with session persistence.
+    """
+    await websocket.accept()
+    print("[ws/chat] Connection opened", flush=True)
+
+    try:
+        while True:
+            # Receive chat message
+            data = await websocket.receive_json()
+            print(f"[ws/chat] Received: {list(data.keys())}", flush=True)
+
+            message = data.get("message", "")
+            context = data.get("context", "")
+            session_id = data.get("session_id")
+            project_path = data.get("project_path", "")
+
+            if not message:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No message provided"
+                })
+                continue
+
+            # Build prompt with context if provided
+            if context:
+                prompt = f"Context:\n{context}\n\nRequest: {message}"
+            else:
+                prompt = message
+
+            # Build command
+            cmd = [
+                "claude",
+                "-p", prompt,
+                "--dangerously-skip-permissions",
+                "--output-format", "stream-json",
+            ]
+
+            # Handle session persistence
+            if session_id:
+                if is_session_active(session_id):
+                    cmd.extend(["--resume", session_id])
+                else:
+                    cmd.extend(["--session-id", session_id])
+                    mark_session_active(session_id, project_path)
+            elif project_path:
+                session_id = generate_session_id(project_path)
+                cmd.extend(["--session-id", session_id])
+                mark_session_active(session_id, project_path)
+
+            print(f"[ws/chat] Session: {session_id}", flush=True)
+
+            # Send session info
+            await websocket.send_json({
+                "type": "session",
+                "session_id": session_id or "",
+            })
+
+            # Start streaming process
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=project_path if project_path else None,
+            )
+
+            # Stream output line by line
+            try:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+
+                    line_str = line.decode().strip()
+                    if not line_str:
+                        continue
+
+                    try:
+                        event = json.loads(line_str)
+                        event_type = event.get("type", "")
+
+                        if event_type == "assistant":
+                            # Text content from Claude
+                            content = event.get("message", {}).get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    await websocket.send_json({
+                                        "type": "text",
+                                        "content": block.get("text", ""),
+                                    })
+
+                        elif event_type == "tool_use":
+                            # Tool being used
+                            await websocket.send_json({
+                                "type": "tool_use",
+                                "tool": event.get("tool", ""),
+                                "input": event.get("input", {}),
+                            })
+
+                        elif event_type == "tool_result":
+                            # Tool result
+                            await websocket.send_json({
+                                "type": "tool_result",
+                                "result": event.get("result", ""),
+                            })
+
+                        elif event_type == "result":
+                            # Final result
+                            await websocket.send_json({
+                                "type": "complete",
+                                "content": event.get("result", ""),
+                                "session_id": session_id or "",
+                            })
+
+                    except json.JSONDecodeError:
+                        # Non-JSON output, send as raw text
+                        await websocket.send_json({
+                            "type": "raw",
+                            "content": line_str,
+                        })
+
+                # Wait for process to complete
+                await proc.wait()
+
+                if proc.returncode != 0:
+                    stderr = await proc.stderr.read()
+                    error_msg = stderr.decode() if stderr else "Unknown error"
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": error_msg,
+                    })
+
+            except Exception as e:
+                proc.kill()
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                })
+
+    except Exception as e:
+        import traceback
+        print(f"[ws/chat] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[ws/chat] Connection closing", flush=True)
         try:
             await websocket.close()
         except Exception:
