@@ -1,7 +1,41 @@
 # Issues & Spike Tasks
 
 **Last Updated**: 2025-12-27
-**Purpose**: Track high-uncertainty items and blocking issues
+**Purpose**: Track current bugs and future feature risks
+
+---
+
+## Current MVP Issues
+
+### Issue: Thinking Text in Output
+
+**Severity**: Low
+**Status**: Partially mitigated
+
+**Problem**: Claude sometimes includes explanatory text before/after HTML code.
+
+**Current mitigations**:
+- Prompts say "Return ONLY the HTML code"
+- `--output-format json` separates result from thinking
+- `extract_html_content()` strips markdown fences
+
+**What's missing**: Code-level extraction to find `<!DOCTYPE` or `<html>` and strip everything before it.
+
+---
+
+### Issue: Video Output Quality
+
+**Severity**: Low
+**Status**: Open
+
+**Problem**: Generated code from video input is lower quality than from static images.
+
+**Root cause**: Video frames are extracted to a grid image, losing temporal context and reducing per-frame resolution.
+
+**Potential fixes**:
+- Tune frame extraction (fewer frames, higher res)
+- Improve video-specific prompts
+- Consider multi-turn approach with key frames
 
 ---
 
@@ -12,11 +46,11 @@
 | Eval Metrics Research | [docs/SPIKE-eval-metrics-research.md](docs/SPIKE-eval-metrics-research.md) | 2025-12-12 |
 | Prompt Optimization | [docs/SPIKE-prompt-optimization-strategies.md](docs/SPIKE-prompt-optimization-strategies.md) | 2025-12-12 |
 
-All Phase 5 features (Eval Framework, Feedback Loop) are now unblocked.
-
 ---
 
-## High-Risk Issues (Requires Monitoring)
+## Future Feature Risks
+
+These risks apply to planned features that haven't been implemented yet.
 
 ### Issue 1: Cross-Platform Terminal Automation Complexity
 
@@ -168,6 +202,6 @@ No guarantee that selected metrics (visual similarity, accessibility, performanc
 
 ## Summary
 
-- **Spikes**: 2 complete (see Completed Spikes section)
-- **High-Risk Issues**: 4 (all mitigated, monitoring pending)
-- **Blocked Features**: None
+- **Current MVP Issues**: 2 (thinking text, video quality)
+- **Future Feature Risks**: 4 (all mitigated in planning)
+- **Spikes**: 2 complete
