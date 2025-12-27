@@ -2,13 +2,16 @@
 Session Manager for pixel-forge
 
 Generates and tracks Claude CLI session IDs per project.
-Session ID is deterministic based on project path, so same project = same session.
+Session IDs are unique per server run - restarting creates fresh sessions.
 """
 
-import hashlib
 import uuid
+import time
 from typing import Dict, Optional
 
+
+# Server start time - makes session IDs unique per server run
+_server_start_time: str = str(int(time.time()))
 
 # Track active sessions: session_id -> project_path
 _active_sessions: Dict[str, str] = {}
@@ -16,13 +19,15 @@ _active_sessions: Dict[str, str] = {}
 
 def generate_session_id(project_path: str) -> str:
     """
-    Generate a deterministic session ID from project path.
-    Same project path always returns same session ID.
+    Generate a session ID unique to this server run + project path.
+
+    - Same project path within same server run = same session ID
+    - Server restart = new session ID (avoids Claude CLI conflicts)
     """
-    # Create a hash of the project path
-    path_hash = hashlib.sha256(project_path.encode()).hexdigest()[:16]
-    # Format as UUID-like string for Claude CLI compatibility
-    return f"pf-{path_hash}"
+    # Combine server start time with project path for uniqueness
+    unique_key = f"{_server_start_time}:{project_path}"
+    namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+    return str(uuid.uuid5(namespace, unique_key))
 
 
 def get_or_create_session(project_path: str) -> tuple[str, bool]:
@@ -40,7 +45,7 @@ def get_or_create_session(project_path: str) -> tuple[str, bool]:
 
 
 def is_session_active(session_id: str) -> bool:
-    """Check if a session has been used before."""
+    """Check if a session has been used before in this server run."""
     return session_id in _active_sessions
 
 

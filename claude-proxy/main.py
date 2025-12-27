@@ -702,17 +702,15 @@ Be precise and minimal - only change what's necessary."""
     ]
 
     # Handle session persistence
+    # If session_id provided explicitly, try to resume it
+    # Otherwise start fresh (no session persistence by default)
     if session_id:
         if is_session_active(session_id):
             cmd.extend(["--resume", session_id])
         else:
             cmd.extend(["--session-id", session_id])
             mark_session_active(session_id, project_path)
-    else:
-        # Generate new session from project path
-        session_id = generate_session_id(project_path)
-        cmd.extend(["--session-id", session_id])
-        mark_session_active(session_id, project_path)
+    # else: No session flags = fresh conversation each time
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -869,6 +867,7 @@ async def unified_chat(websocket: WebSocket):
                 "-p", prompt,
                 "--dangerously-skip-permissions",
                 "--output-format", "stream-json",
+                "--verbose",
             ]
 
             # Handle session persistence
@@ -986,6 +985,221 @@ async def unified_chat(websocket: WebSocket):
 
     finally:
         print("[ws/chat] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/live-editor")
+async def live_editor_chat(websocket: WebSocket):
+    """
+    Live Editor WebSocket endpoint for element-based editing with streaming.
+    Supports tool visualization and multi-element selection.
+    """
+    await websocket.accept()
+    print("[live-editor] Connection opened", flush=True)
+
+    try:
+        while True:
+            # Receive chat message
+            data = await websocket.receive_json()
+            print(f"[live-editor] Received: {list(data.keys())}", flush=True)
+
+            message = data.get("message", "")
+            element_context = data.get("element_context", "")
+            session_id = data.get("session_id")
+            project_path = data.get("project_path", "")
+
+            if not message:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No message provided"
+                })
+                continue
+
+            if not project_path:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No project path configured"
+                })
+                continue
+
+            # Verify project path exists
+            if not os.path.isdir(project_path):
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Project path does not exist: {project_path}"
+                })
+                continue
+
+            # Build prompt with element context
+            if element_context:
+                prompt = f"""The user has selected element(s) in their running web app:
+
+{element_context}
+
+Their request: {message}
+
+Find the source file(s) that render these element(s) and make the requested changes.
+Use Glob and Grep to search the codebase, Read to examine files, and Edit to make changes.
+After making changes, briefly confirm what you changed."""
+            else:
+                prompt = f"""The user is working on a web app.
+
+Their request: {message}
+
+Help them with their request. Use the available tools to search and modify the codebase.
+After making changes, briefly confirm what you changed."""
+
+            system_prompt = """You are a code editor assistant. The user is editing a live web application and may have selected element(s) they want to modify.
+
+Your task:
+1. Find the source file(s) that contain or render the selected element(s)
+2. Make the requested modification(s)
+3. Briefly confirm what you changed
+
+Tips for finding elements:
+- Search for unique text content, class names, or IDs
+- Look in common locations: src/, components/, pages/, app/
+- Elements might be in React, Vue, Svelte, or plain HTML files
+
+Be precise and minimal - only change what's necessary."""
+
+            # Build command
+            cmd = [
+                "claude",
+                "-p", prompt,
+                "--system-prompt", system_prompt,
+                "--dangerously-skip-permissions",
+                "--output-format", "stream-json",
+                "--verbose",
+            ]
+
+            # Handle session persistence
+            # Session IDs are now unique per server run (include server start time)
+            # This avoids conflicts with old Claude CLI sessions after restart
+            if not session_id:
+                session_id = generate_session_id(project_path)
+
+            if is_session_active(session_id):
+                # Continue existing conversation
+                cmd.extend(["--resume", session_id])
+            else:
+                # Start new conversation with this session ID
+                cmd.extend(["--session-id", session_id])
+                mark_session_active(session_id, project_path)
+
+            print(f"[live-editor] Session: {session_id}, Project: {project_path}", flush=True)
+
+            # Send status update
+            await websocket.send_json({
+                "type": "status",
+                "message": "Finding and editing element..."
+            })
+
+            # Start streaming process
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=project_path,
+            )
+
+            # Stream output line by line
+            try:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+
+                    line_str = line.decode().strip()
+                    if not line_str:
+                        continue
+
+                    try:
+                        event = json.loads(line_str)
+                        event_type = event.get("type", "")
+
+                        if event_type == "assistant":
+                            # Text content from Claude - stream as chunks
+                            content = event.get("message", {}).get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    await websocket.send_json({
+                                        "type": "chunk",
+                                        "content": block.get("text", ""),
+                                    })
+
+                        elif event_type == "tool_use":
+                            # Tool being used
+                            await websocket.send_json({
+                                "type": "tool_use",
+                                "tool": event.get("tool", ""),
+                                "input": event.get("input", {}),
+                            })
+
+                        elif event_type == "tool_result":
+                            # Tool result
+                            is_error = event.get("is_error", False)
+                            await websocket.send_json({
+                                "type": "tool_result",
+                                "content": event.get("result", ""),
+                                "is_error": is_error,
+                            })
+
+                        elif event_type == "result":
+                            # Final result - signal completion
+                            await websocket.send_json({
+                                "type": "complete",
+                                "session_id": session_id or "",
+                            })
+
+                    except json.JSONDecodeError:
+                        # Non-JSON output, send as chunk
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "content": line_str,
+                        })
+
+                # Wait for process to complete
+                await proc.wait()
+
+                if proc.returncode != 0:
+                    stderr = await proc.stderr.read()
+                    error_msg = stderr.decode() if stderr else "Unknown error"
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": error_msg,
+                    })
+                else:
+                    # Send complete if not already sent
+                    await websocket.send_json({
+                        "type": "complete",
+                        "session_id": session_id or "",
+                    })
+
+            except Exception as e:
+                proc.kill()
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                })
+
+    except Exception as e:
+        import traceback
+        print(f"[live-editor] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[live-editor] Connection closing", flush=True)
         try:
             await websocket.close()
         except Exception:

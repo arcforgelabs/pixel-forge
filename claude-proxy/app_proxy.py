@@ -25,31 +25,32 @@ SELECTION_SCRIPT = """
 
   // State
   let selectMode = false;
-  let overlay = null;
+  let hoverOverlay = null;
+  let hoverLabel = null;
   let currentTarget = null;
+  let selectedElements = [];  // Array of {element, xpath, overlay, badge}
+  const MAX_SELECTIONS = 10;
 
-  // Create highlight overlay
-  function createOverlay() {
-    if (overlay) return;
-    overlay = document.createElement('div');
-    overlay.id = 'pixel-forge-overlay';
-    overlay.style.cssText = `
+  // Create hover overlay (follows mouse)
+  function createHoverOverlay() {
+    if (hoverOverlay) return;
+    hoverOverlay = document.createElement('div');
+    hoverOverlay.id = 'pixel-forge-hover-overlay';
+    hoverOverlay.style.cssText = `
       position: fixed;
       pointer-events: none;
-      border: 2px solid #3b82f6;
-      background: rgba(59, 130, 246, 0.15);
-      z-index: 2147483647;
+      border: 2px dashed #3b82f6;
+      background: rgba(59, 130, 246, 0.1);
+      z-index: 2147483646;
       transition: all 0.05s ease-out;
       display: none;
       border-radius: 2px;
-      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
     `;
-    document.body.appendChild(overlay);
+    document.body.appendChild(hoverOverlay);
 
-    // Also add a label
-    const label = document.createElement('div');
-    label.id = 'pixel-forge-label';
-    label.style.cssText = `
+    hoverLabel = document.createElement('div');
+    hoverLabel.id = 'pixel-forge-hover-label';
+    hoverLabel.style.cssText = `
       position: fixed;
       background: #3b82f6;
       color: white;
@@ -57,12 +58,75 @@ SELECTION_SCRIPT = """
       font-family: ui-monospace, monospace;
       padding: 2px 6px;
       border-radius: 2px;
-      z-index: 2147483647;
+      z-index: 2147483646;
       pointer-events: none;
       display: none;
       white-space: nowrap;
     `;
-    document.body.appendChild(label);
+    document.body.appendChild(hoverLabel);
+  }
+
+  // Create persistent selection overlay with badge
+  function createSelectionOverlay(element, index) {
+    const overlay = document.createElement('div');
+    overlay.className = 'pixel-forge-selection';
+    overlay.setAttribute('data-pixel-forge-injected', 'true');
+    overlay.style.cssText = `
+      position: fixed;
+      pointer-events: none;
+      border: 2px solid #22c55e;
+      background: rgba(34, 197, 94, 0.15);
+      z-index: 2147483645;
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.3);
+    `;
+    document.body.appendChild(overlay);
+
+    const badge = document.createElement('div');
+    badge.className = 'pixel-forge-badge';
+    badge.setAttribute('data-pixel-forge-injected', 'true');
+    badge.textContent = String(index + 1);
+    badge.style.cssText = `
+      position: fixed;
+      background: #22c55e;
+      color: white;
+      font-size: 10px;
+      font-family: ui-monospace, monospace;
+      font-weight: bold;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2147483647;
+      pointer-events: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    `;
+    document.body.appendChild(badge);
+
+    updateSelectionPosition(element, overlay, badge);
+    return { overlay, badge };
+  }
+
+  // Update position of a selection overlay
+  function updateSelectionPosition(element, overlay, badge) {
+    const rect = element.getBoundingClientRect();
+    overlay.style.top = rect.top + 'px';
+    overlay.style.left = rect.left + 'px';
+    overlay.style.width = rect.width + 'px';
+    overlay.style.height = rect.height + 'px';
+    badge.style.top = (rect.top - 9) + 'px';
+    badge.style.left = (rect.right - 9) + 'px';
+  }
+
+  // Update all selection positions (for scroll/resize)
+  function updateAllPositions() {
+    selectedElements.forEach(sel => {
+      if (sel.element.isConnected) {
+        updateSelectionPosition(sel.element, sel.overlay, sel.badge);
+      }
+    });
   }
 
   // Get XPath for element
@@ -90,52 +154,149 @@ SELECTION_SCRIPT = """
   // Get element description for label
   function getElementLabel(el) {
     let label = el.tagName.toLowerCase();
-    if (el.id) label += `#${el.id}`;
+    if (el.id) label += '#' + el.id;
     if (el.className && typeof el.className === 'string') {
       const classes = el.className.split(' ').filter(c => c).slice(0, 2);
-      if (classes.length) label += `.${classes.join('.')}`;
+      if (classes.length) label += '.' + classes.join('.');
     }
     return label;
   }
 
-  // Position overlay over element
+  // Check if element is already selected
+  function isSelected(element) {
+    const xpath = getXPath(element);
+    return selectedElements.findIndex(sel => sel.xpath === xpath);
+  }
+
+  // Get element data for messaging
+  function getElementData(element) {
+    return {
+      outerHTML: element.outerHTML,
+      innerHTML: element.innerHTML,
+      tagName: element.tagName.toLowerCase(),
+      elementId: element.id || null,
+      classList: [...element.classList],
+      xpath: getXPath(element),
+      textContent: element.textContent?.slice(0, 200) || '',
+      attributes: Array.from(element.attributes).map(a => ({
+        name: a.name,
+        value: a.value
+      })),
+      rect: element.getBoundingClientRect()
+    };
+  }
+
+  // Position hover overlay over element
   function highlightElement(el) {
-    if (!overlay) createOverlay();
+    if (!hoverOverlay) createHoverOverlay();
     const rect = el.getBoundingClientRect();
 
-    overlay.style.top = rect.top + 'px';
-    overlay.style.left = rect.left + 'px';
-    overlay.style.width = rect.width + 'px';
-    overlay.style.height = rect.height + 'px';
-    overlay.style.display = 'block';
-
-    const label = document.getElementById('pixel-forge-label');
-    if (label) {
-      label.textContent = getElementLabel(el);
-      label.style.top = Math.max(0, rect.top - 20) + 'px';
-      label.style.left = rect.left + 'px';
-      label.style.display = 'block';
+    // If element is selected, show different style
+    const selectedIndex = isSelected(el);
+    if (selectedIndex >= 0) {
+      hoverOverlay.style.borderColor = '#ef4444';
+      hoverOverlay.style.background = 'rgba(239, 68, 68, 0.1)';
+      hoverLabel.style.background = '#ef4444';
+      hoverLabel.textContent = 'Click to deselect';
+    } else {
+      hoverOverlay.style.borderColor = '#3b82f6';
+      hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)';
+      hoverLabel.style.background = '#3b82f6';
+      hoverLabel.textContent = getElementLabel(el);
     }
+
+    hoverOverlay.style.top = rect.top + 'px';
+    hoverOverlay.style.left = rect.left + 'px';
+    hoverOverlay.style.width = rect.width + 'px';
+    hoverOverlay.style.height = rect.height + 'px';
+    hoverOverlay.style.display = 'block';
+
+    hoverLabel.style.top = Math.max(0, rect.top - 20) + 'px';
+    hoverLabel.style.left = rect.left + 'px';
+    hoverLabel.style.display = 'block';
 
     currentTarget = el;
   }
 
-  // Hide overlay
-  function hideOverlay() {
-    if (overlay) overlay.style.display = 'none';
-    const label = document.getElementById('pixel-forge-label');
-    if (label) label.style.display = 'none';
+  // Hide hover overlay
+  function hideHoverOverlay() {
+    if (hoverOverlay) hoverOverlay.style.display = 'none';
+    if (hoverLabel) hoverLabel.style.display = 'none';
     currentTarget = null;
+  }
+
+  // Add element to selection
+  function selectElement(element) {
+    if (selectedElements.length >= MAX_SELECTIONS) {
+      console.warn('[pixel-forge] Max selections reached');
+      return;
+    }
+
+    const xpath = getXPath(element);
+    const index = selectedElements.length;
+    const { overlay, badge } = createSelectionOverlay(element, index);
+
+    selectedElements.push({ element, xpath, overlay, badge });
+
+    // Notify parent of selection
+    window.parent.postMessage({
+      type: 'pixel-forge-element-selected',
+      data: getElementData(element)
+    }, '*');
+
+    // Also send updated selection array
+    notifySelectionChange();
+  }
+
+  // Remove element from selection
+  function deselectElement(index) {
+    const sel = selectedElements[index];
+    sel.overlay.remove();
+    sel.badge.remove();
+    selectedElements.splice(index, 1);
+
+    // Renumber remaining badges
+    selectedElements.forEach((s, i) => {
+      s.badge.textContent = String(i + 1);
+    });
+
+    // Notify parent of deselection
+    window.parent.postMessage({
+      type: 'pixel-forge-element-deselected',
+      data: { xpath: sel.xpath, index }
+    }, '*');
+
+    notifySelectionChange();
+  }
+
+  // Clear all selections
+  function clearSelections() {
+    selectedElements.forEach(sel => {
+      sel.overlay.remove();
+      sel.badge.remove();
+    });
+    selectedElements = [];
+    notifySelectionChange();
+  }
+
+  // Notify parent of current selection state
+  function notifySelectionChange() {
+    window.parent.postMessage({
+      type: 'pixel-forge-selection-changed',
+      data: {
+        count: selectedElements.length,
+        elements: selectedElements.map(sel => getElementData(sel.element))
+      }
+    }, '*');
   }
 
   // Handle mouse movement
   function handleMouseMove(e) {
     if (!selectMode) return;
 
-    // Skip our own overlay elements
-    if (e.target.id === 'pixel-forge-overlay' ||
-        e.target.id === 'pixel-forge-label' ||
-        e.target.hasAttribute('data-pixel-forge-injected')) {
+    // Skip our own elements
+    if (e.target.hasAttribute('data-pixel-forge-injected') ||
+        e.target.id?.startsWith('pixel-forge-')) {
       return;
     }
 
@@ -146,10 +307,9 @@ SELECTION_SCRIPT = """
   function handleClick(e) {
     if (!selectMode) return;
 
-    // Skip our own overlay elements
-    if (e.target.id === 'pixel-forge-overlay' ||
-        e.target.id === 'pixel-forge-label' ||
-        e.target.hasAttribute('data-pixel-forge-injected')) {
+    // Skip our own elements
+    if (e.target.hasAttribute('data-pixel-forge-injected') ||
+        e.target.id?.startsWith('pixel-forge-')) {
       return;
     }
 
@@ -158,38 +318,20 @@ SELECTION_SCRIPT = """
     e.stopImmediatePropagation();
 
     const element = currentTarget || e.target;
+    const selectedIndex = isSelected(element);
 
-    // Send to parent frame
-    window.parent.postMessage({
-      type: 'pixel-forge-element-selected',
-      data: {
-        outerHTML: element.outerHTML,
-        innerHTML: element.innerHTML,
-        tagName: element.tagName.toLowerCase(),
-        id: element.id || null,
-        classList: [...element.classList],
-        xpath: getXPath(element),
-        textContent: element.textContent?.slice(0, 200) || '',
-        attributes: Array.from(element.attributes).map(a => ({
-          name: a.name,
-          value: a.value
-        })),
-        rect: element.getBoundingClientRect()
-      }
-    }, '*');
-
-    // Visual feedback
-    overlay.style.background = 'rgba(34, 197, 94, 0.2)';
-    overlay.style.borderColor = '#22c55e';
-    setTimeout(() => {
-      overlay.style.background = 'rgba(59, 130, 246, 0.15)';
-      overlay.style.borderColor = '#3b82f6';
-    }, 200);
+    if (selectedIndex >= 0) {
+      // Deselect
+      deselectElement(selectedIndex);
+    } else {
+      // Select
+      selectElement(element);
+    }
 
     return false;
   }
 
-  // Handle keydown for escape
+  // Handle keydown
   function handleKeyDown(e) {
     if (e.key === 'Escape' && selectMode) {
       window.parent.postMessage({
@@ -203,28 +345,41 @@ SELECTION_SCRIPT = """
     if (e.data.type === 'pixel-forge-toggle-select') {
       selectMode = e.data.enabled;
       if (selectMode) {
-        createOverlay();
+        createHoverOverlay();
         document.body.style.cursor = 'crosshair';
       } else {
-        hideOverlay();
+        hideHoverOverlay();
         document.body.style.cursor = '';
       }
+    } else if (e.data.type === 'pixel-forge-clear-selections') {
+      clearSelections();
+    } else if (e.data.type === 'pixel-forge-deselect') {
+      const xpath = e.data.xpath;
+      const index = selectedElements.findIndex(sel => sel.xpath === xpath);
+      if (index >= 0) deselectElement(index);
     }
   });
 
-  // Add event listeners with capture to intercept before app handlers
+  // Add event listeners
   document.addEventListener('mousemove', handleMouseMove, true);
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
 
+  // Update positions on scroll/resize
+  window.addEventListener('scroll', updateAllPositions, true);
+  window.addEventListener('resize', updateAllPositions);
+
   // Cleanup on unload
   window.addEventListener('beforeunload', () => {
-    if (overlay) overlay.remove();
-    const label = document.getElementById('pixel-forge-label');
-    if (label) label.remove();
+    if (hoverOverlay) hoverOverlay.remove();
+    if (hoverLabel) hoverLabel.remove();
+    selectedElements.forEach(sel => {
+      sel.overlay.remove();
+      sel.badge.remove();
+    });
   });
 
-  console.log('[pixel-forge] Selection script loaded');
+  console.log('[pixel-forge] Selection script v2 loaded (multi-select enabled)');
 })();
 </script>
 """
@@ -391,7 +546,7 @@ async def proxy_websocket(websocket: WebSocket, path: str = ""):
     try:
         target_ws = await websockets.connect(
             target_ws_url,
-            extra_headers={},
+            additional_headers={},
             ping_interval=None,  # Let the target handle pings
         )
 
@@ -444,3 +599,136 @@ async def proxy_websocket(websocket: WebSocket, path: str = ""):
 async def proxy_root(request: Request):
     """Handle root path."""
     return await proxy_http(request, "")
+
+
+# Note: Individual routes removed in favor of catch-all proxy below
+
+
+async def proxy_http_to_target(request: Request, path: str):
+    """Proxy HTTP request to target app without script injection."""
+    target_url = f"{TARGET_APP_URL}/{path}"
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    headers = dict(request.headers)
+    headers.pop('host', None)
+    headers.pop('Host', None)
+    headers['X-Forwarded-For'] = request.client.host if request.client else '127.0.0.1'
+    headers['X-Forwarded-Proto'] = request.url.scheme
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
+            )
+
+            response_headers = dict(response.headers)
+            for header in ['content-encoding', 'content-length', 'transfer-encoding']:
+                response_headers.pop(header, None)
+                response_headers.pop(header.title(), None)
+
+            response_headers['Content-Length'] = str(len(response.content))
+
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=response_headers,
+            )
+
+    except httpx.ConnectError:
+        return Response(content="Cannot connect to target app", status_code=502)
+    except Exception as e:
+        return Response(content=str(e), status_code=500)
+
+
+@router.websocket("/")
+async def proxy_root_websocket(websocket: WebSocket):
+    """
+    Proxy root WebSocket connections for Vite HMR support.
+
+    Vite's HMR client connects to ws://host/?token=... at the root level,
+    even when the app is served through /app/. This handler intercepts
+    those connections and proxies them to the target dev server.
+    """
+    await websocket.accept()
+
+    # Parse target WebSocket URL
+    target_parsed = urlparse(TARGET_APP_URL)
+    ws_scheme = 'wss' if target_parsed.scheme == 'https' else 'ws'
+    target_ws_url = f"{ws_scheme}://{target_parsed.netloc}/"
+
+    print(f"[app-proxy] HMR WebSocket connecting to: {target_ws_url}")
+
+    target_ws = None
+    try:
+        target_ws = await websockets.connect(
+            target_ws_url,
+            additional_headers={},
+            ping_interval=None,
+        )
+
+        async def forward_to_target():
+            """Forward messages from client to target."""
+            try:
+                while True:
+                    data = await websocket.receive()
+                    if 'text' in data:
+                        await target_ws.send(data['text'])
+                    elif 'bytes' in data:
+                        await target_ws.send(data['bytes'])
+            except WebSocketDisconnect:
+                pass
+            except Exception as e:
+                print(f"[app-proxy] HMR Error forwarding to target: {e}")
+
+        async def forward_to_client():
+            """Forward messages from target to client."""
+            try:
+                async for message in target_ws:
+                    if isinstance(message, str):
+                        await websocket.send_text(message)
+                    else:
+                        await websocket.send_bytes(message)
+            except Exception as e:
+                print(f"[app-proxy] HMR Error forwarding to client: {e}")
+
+        # Run both directions concurrently
+        await asyncio.gather(
+            forward_to_target(),
+            forward_to_client(),
+            return_exceptions=True
+        )
+
+    except Exception as e:
+        print(f"[app-proxy] HMR WebSocket error: {e}")
+    finally:
+        if target_ws:
+            await target_ws.close()
+        try:
+            await websocket.close()
+        except:
+            pass
+
+
+# =============================================================================
+# CATCH-ALL PROXY - Must be last! Forwards any unhandled request to target app
+# =============================================================================
+
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def catch_all_proxy(request: Request, path: str = ""):
+    """
+    Catch-all proxy for any path not handled by specific routes.
+
+    This enables the proxy to work with ANY app without needing to
+    configure specific routes for /auth, /api, /src, /@vite, etc.
+    """
+    # Skip paths that are handled by explicit routes
+    if path.startswith("app/") or path == "app":
+        # Let the /app/* routes handle this
+        return await proxy_http(request, path[4:] if path.startswith("app/") else "")
+
+    # Proxy everything else directly to target
+    return await proxy_http_to_target(request, path)
