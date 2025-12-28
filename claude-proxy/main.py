@@ -145,6 +145,81 @@ class AppProxyConfig(BaseModel):
     target_url: str
 
 
+class SaveCodeRequest(BaseModel):
+    code: str
+    project_path: str
+    file_path: str | None = None  # Default: forge/{filename based on stack}
+    stack: str = "html_tailwind"
+
+
+# Stack to file extension mapping
+STACK_EXTENSIONS = {
+    "html_tailwind": (".html", "index.html"),
+    "html_css": (".html", "index.html"),
+    "bootstrap": (".html", "index.html"),
+    "ionic_tailwind": (".html", "index.html"),
+    "react_tailwind": (".tsx", "Component.tsx"),
+    "vue_tailwind": (".vue", "Component.vue"),
+    "svg": (".svg", "graphic.svg"),
+}
+
+
+@app.post("/save-code")
+async def save_code(request: SaveCodeRequest):
+    """Save generated code to a project file."""
+    # Validate project path exists
+    if not os.path.isdir(request.project_path):
+        return {
+            "success": False,
+            "message": f"Project path does not exist: {request.project_path}",
+        }
+
+    # Determine file path
+    if request.file_path:
+        # Use provided file path, but validate for path traversal
+        if ".." in request.file_path:
+            return {
+                "success": False,
+                "message": "Invalid file path: path traversal not allowed",
+            }
+        rel_path = request.file_path
+    else:
+        # Generate default path based on stack
+        ext, default_name = STACK_EXTENSIONS.get(
+            request.stack, (".html", "index.html")
+        )
+        rel_path = f"forge/{default_name}"
+
+    # Build full path
+    full_path = os.path.join(request.project_path, rel_path)
+
+    # Create parent directory if needed
+    parent_dir = os.path.dirname(full_path)
+    os.makedirs(parent_dir, exist_ok=True)
+
+    # Write the file
+    try:
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(request.code)
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to write file: {e}",
+        }
+
+    # Compute URL path (assuming forge/ is served from root)
+    # This depends on how the dev server is configured
+    url_path = "/" + rel_path.lstrip("/")
+
+    return {
+        "success": True,
+        "file_path": full_path,
+        "rel_path": rel_path,
+        "url_path": url_path,
+        "message": f"Saved to {rel_path}",
+    }
+
+
 @app.post("/config/app-proxy")
 async def configure_app_proxy(config: AppProxyConfig):
     """Configure the target URL for the app proxy."""

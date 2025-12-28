@@ -1,6 +1,6 @@
 # VISION.md
 
-**Last Updated**: 2025-12-23
+**Last Updated**: 2025-12-28
 
 ---
 
@@ -27,7 +27,8 @@ Before building, ask: does this make the feedback loop tighter?
 |-------|------|--------|
 | **v0** | SDK that calls Claude API directly | Archived |
 | **v1** | Wrap screenshot-to-code with Claude CLI proxy | Complete |
-| **v2** | Embed dev apps, persistent sessions, real file edits | Planning |
+| **v2** | Embed dev apps, persistent sessions, real file edits | Complete |
+| **v2.1** | Unified modes - Screenshot-to-Code + Live Editor as one experience | Complete |
 
 ---
 
@@ -52,6 +53,43 @@ Before building, ask: does this make the feedback loop tighter?
 - Claude has persistent session (remembers previous changes)
 - Modifies real source files (not generates new code)
 - Uses Claude subscription (not API credits)
+
+---
+
+## v2.1 Vision: Unified Modes
+
+Two modes, one Claude brain.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  pixel-forge                                                │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  [Screenshot-to-Code]  [Live Editor]     ← Mode tabs    ││
+│  ├─────────────────────────────────────────────────────────┤│
+│  │                                                         ││
+│  │  Screenshot-to-Code:                                    ││
+│  │  - Upload image → Generate HTML                         ││
+│  │  - Sidebar: project settings, format selection          ││
+│  │  - Preview generated code                               ││
+│  │  - "Continue in Live Editor" button                     ││
+│  │                                                         ││
+│  │  Live Editor:                                           ││
+│  │  - Embed running app via proxy                          ││
+│  │  - No sidebar (full-width app view)                     ││
+│  │  - Click to select, chat to edit                        ││
+│  │  - Same Claude session continues conversation           ││
+│  │                                                         ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** Both modes benefit from the same persistent Claude session.
+- Screenshot-to-Code generates initial code → Claude knows what it created
+- Live Editor edits code → Claude remembers the context from generation
+- Switching modes doesn't reset Claude's memory
+
+**UX principle:** Mode-specific UI. Screenshot-to-Code needs format settings.
+Live Editor needs maximum screen real estate for the embedded app.
 
 ---
 

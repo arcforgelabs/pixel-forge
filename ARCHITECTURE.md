@@ -1,6 +1,6 @@
 # ARCHITECTURE.md
 
-**Last Updated**: 2025-12-23
+**Last Updated**: 2025-12-28
 
 ---
 
@@ -273,7 +273,7 @@ async def proxy(request: Request, path: str):
 ## ADR-002: Session Persistence Strategy
 
 **Date:** 2025-12-23
-**Status:** Proposed
+**Status:** Implemented (2025-12-27)
 
 ### Context
 

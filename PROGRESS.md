@@ -1,8 +1,8 @@
 # Visual-to-Code Integration Progress
 
 **Project**: Rework visual-to-code fork with Claude Code integration
-**Last Updated**: 2025-12-27
-**Status**: MVP Complete - Claude CLI proxy working
+**Last Updated**: 2025-12-28
+**Status**: Mode Integration Complete (All 3 Phases)
 **Workflow Tier**: Simple (main branch only)
 **Tracking Method**: Document-based (PROGRESS.md + ISSUES.md)
 
@@ -33,9 +33,9 @@ Frontend (localhost:5173) → Proxy (localhost:7001) → Claude CLI → Subscrip
 
 ---
 
-## Next Priority: Visual Editor Mode
+## Complete: Visual Editor Mode (Live Editor v2)
 
-**Status**: 🟡 In Progress (UI done, backend wiring needed)
+**Status**: ✅ Complete (2025-12-27)
 **Goal**: Point at elements in your running app, tell Claude what to change, watch it happen.
 
 This is the core differentiator from screenshot-to-code: editing real apps with persistent context.
@@ -53,36 +53,17 @@ This is the core differentiator from screenshot-to-code: editing real apps with 
 | `/edit-element` endpoint | ✅ Done | `main.py:656` |
 | Project path input | ✅ Done | `test-harness.html` |
 
-### What's Missing
+### All Components Complete
 
-| Component | Complexity | Description |
-|-----------|------------|-------------|
-| ~~Element → Claude endpoint~~ | ~~Low~~ | ✅ Done - `/edit-element` WebSocket endpoint |
-| Session manager | Medium | Persist Claude sessions per project (ADR-002) |
-| ~~Wire test harness to endpoint~~ | ~~Low~~ | ✅ Done - WebSocket integration |
-| ~~Project directory awareness~~ | ~~Low~~ | ✅ Done - Project path input field |
-
-### Implementation Tasks
-
-1. ~~**Create `/edit-element` WebSocket endpoint**~~ ✅ Done
-   - Receives element data + instruction + project path
-   - Builds prompt with element context (outerHTML, XPath, classes)
-   - Calls Claude CLI with project as cwd
-
-2. **Add session persistence** (Medium) - See ADR-002
-   - Generate session ID from project path hash
-   - First request: `--session-id <uuid>`
-   - Subsequent: `--resume <uuid>`
-   - Session manager class to track active sessions
-
-3. ~~**Wire test harness**~~ ✅ Done
-   - WebSocket connection to `/edit-element`
-   - Displays Claude's response
-   - Auto-reloads iframe after successful edit
-
-4. ~~**Project path configuration**~~ ✅ Done
-   - Project path input in test harness
-   - Passed to Claude CLI as working directory
+| Component | Status | File |
+|-----------|--------|------|
+| Element → Claude endpoint | ✅ Done | `/ws/live-editor` in `main.py` |
+| Session manager | ✅ Done | `session_manager.py` (ADR-002 implemented) |
+| Wire test harness to endpoint | ✅ Done | WebSocket integration |
+| Project directory awareness | ✅ Done | Project path input field |
+| Chat UI with streaming | ✅ Done | Live Editor v2 components |
+| Multi-element selection | ✅ Done | `app_proxy.py` SELECTION_SCRIPT |
+| Tool visualization | ✅ Done | `ToolCard.tsx` |
 
 ### Test Harness
 
@@ -101,6 +82,95 @@ Access at: `http://localhost:7001/test-harness.html`
 │                                 │  [Send to Claude]             │
 └─────────────────────────────────┴───────────────────────────────┘
 ```
+
+---
+
+## Complete: Mode Integration
+
+**Status**: ✅ Complete (2025-12-28)
+**Goal**: Seamless transitions between Screenshot-to-Code and Live Editor modes with shared Claude sessions.
+
+Both modes now work as a unified experience:
+- Sidebar only shows in Screenshot-to-Code mode
+- Both modes share the same Claude session per project
+- Users can transition from Screenshot-to-Code → Live Editor naturally
+
+### Phase 1: UI Separation
+
+| Task | Complexity | Status | Description |
+|------|------------|--------|-------------|
+| Hide sidebar in Live Editor mode | 1.2 | ✅ Complete | `App.tsx:409` - sidebar hidden when `activeMode === "live-editor"` |
+| Hide GenerationSettings in Live Editor | 1.0 | ✅ Complete | Inside sidebar, auto-hidden |
+
+### Phase 2: Session Unification
+
+| Task | Complexity | Status | Description |
+|------|------------|--------|-------------|
+| Sync session-store ↔ chat-store | 1.8 | ✅ Complete | chat-store reads from session-store via getters |
+| Pass projectPath to /generate-code | 1.4 | ✅ Complete | session-store now persists sessionId/projectPath |
+| Display "Continuing session..." indicator | 1.2 | ✅ Complete | Green dot on inactive tab when session exists |
+
+### Phase 3: Seamless Transitions
+
+| Task | Complexity | Status | Description |
+|------|------------|--------|-------------|
+| Auto-switch to Live Editor after generation | 1.6 | ✅ Complete | Toast with "Open Live Editor" button after generation |
+| "Edit in Live Editor" button | 1.4 | ✅ Complete | Button in PreviewPane toolbar when project is set |
+
+### Technical Notes
+
+**Why sessions can be shared:**
+- Both `/generate-code` and `/ws/live-editor` use `session_manager.generate_session_id(project_path)`
+- Same project_path = same session ID = same Claude conversation
+- Backend already supports this; frontend stores need unification
+
+**Files to modify:**
+- `App.tsx` - Sidebar/settings visibility by mode
+- `session-store.ts` - Add sync with chat-store
+- `chat-store.ts` - Subscribe to session-store changes
+- `generateCode.ts` - Always send projectPath
+
+---
+
+## Complete: Save Generated Code to Project
+
+**Status**: ✅ Complete (2025-12-28)
+**Goal**: Bridge ideation and integration phases by saving generated code as project assets.
+
+Two-phase workflow vision:
+- **Screenshot-to-Code**: Ideation & generation phase (sandbox, no permanent edits)
+- **Live Editor**: Integration & refinement phase (real app, real edits)
+
+Generated code is saved as a "reference asset" that Claude can use when integrating into the real app.
+
+### Implementation
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| `/save-code` endpoint | ✅ Done | `claude-proxy/main.py` - saves code to project files |
+| Session store updates | ✅ Done | `session-store.ts` - savePath, lastSavedFile tracking |
+| Save utility | ✅ Done | `lib/saveToProject.ts` - API wrapper with stack mapping |
+| PreviewPane buttons | ✅ Done | "Save to Project" and "Save & Edit Live" buttons |
+| ProjectSelector config | ✅ Done | Save path configuration input |
+| LiveEditorPane info | ✅ Done | Settings tab shows last saved file info |
+
+### Stack to File Extension Mapping
+
+| Stack | Extension | Default Filename |
+|-------|-----------|------------------|
+| html_tailwind, html_css, bootstrap, ionic | .html | index.html |
+| react_tailwind | .tsx | Component.tsx |
+| vue_tailwind | .vue | Component.vue |
+| svg | .svg | graphic.svg |
+
+### Workflow
+
+1. Generate code in Screenshot-to-Code (ideation phase)
+2. Click "Save & Edit Live" or "Save to Project"
+3. Code saved to `{project}/forge/{file}` (or configured path)
+4. Live Editor shows actual running app (not the saved HTML)
+5. Claude can reference saved asset when integrating into real app
+6. Same session = Claude knows what it generated
 
 ---
 
@@ -577,9 +647,10 @@ These were created before the MVP and may need revision based on what was learne
 
 ## Next Steps
 
-1. **Live Editor v2** - See below for detailed task tracking
-2. Fix MVP known issues (video quality, thinking text in output)
-3. Future: Evaluate which detailed milestones align with current architecture
+1. ~~**Mode Integration**~~ ✅ Complete - Screenshot-to-Code and Live Editor now unified
+2. ~~**Save Generated Code**~~ ✅ Complete - Bridge ideation and integration phases
+3. Fix remaining MVP issues (video quality - low priority)
+4. Future: Evaluate which detailed milestones align with current architecture
 
 ---
 
