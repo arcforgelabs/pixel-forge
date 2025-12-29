@@ -364,6 +364,7 @@ SELECTION_SCRIPT = """
   document.addEventListener('mousemove', handleMouseMove, true);
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
+  document.addEventListener('mouseleave', hideHoverOverlay);
 
   // Update positions on scroll/resize
   window.addEventListener('scroll', updateAllPositions, true);

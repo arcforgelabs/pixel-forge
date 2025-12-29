@@ -135,9 +135,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Import and include app proxy router
+
+# Static file routes for testing - MUST be registered before catch-all proxy router
+@app.get("/test-harness.html")
+async def serve_test_harness():
+    """Serve the test harness HTML file."""
+    return FileResponse("test-harness.html", media_type="text/html")
+
+
+# Mount test-app as static files - MUST be registered before catch-all proxy router
+app.mount("/test-app", StaticFiles(directory="test-app", html=True), name="test-app")
+
+
+# Import app proxy router and set_target_url function
+# NOTE: Router inclusion moved to end of file - catch-all route must be last!
 from app_proxy import router as app_proxy_router, set_target_url
-app.include_router(app_proxy_router)
 
 
 # Pydantic models for API
@@ -232,17 +244,6 @@ async def get_app_proxy_config():
     """Get the current app proxy configuration."""
     from app_proxy import TARGET_APP_URL
     return {"target_url": TARGET_APP_URL}
-
-
-# Static file routes for testing
-@app.get("/test-harness.html")
-async def serve_test_harness():
-    """Serve the test harness HTML file."""
-    return FileResponse("test-harness.html", media_type="text/html")
-
-
-# Mount test-app as static files
-app.mount("/test-app", StaticFiles(directory="test-app", html=True), name="test-app")
 
 
 # System prompts from screenshot-to-code
@@ -1279,6 +1280,12 @@ Be precise and minimal - only change what's necessary."""
             await websocket.close()
         except Exception:
             pass
+
+
+# =============================================================================
+# APP PROXY ROUTER - Must be LAST because it has a catch-all route!
+# =============================================================================
+app.include_router(app_proxy_router)
 
 
 if __name__ == "__main__":
