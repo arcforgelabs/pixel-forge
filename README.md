@@ -8,40 +8,59 @@ Unified toolkit with SDK, CLI, web app, and automation tools. Uses exact screens
 
 ## 🚀 Quick Start
 
-### Install (Recommended)
+### Full UI (Recommended)
+
+The full UI provides both Screenshot-to-Code and Live Editor modes with chat interface, streaming, and tool visualization.
 
 ```bash
-./install.sh        # Install to ~/.local/bin/pixel-forge
-pixel-forge         # Start server on port 7001
+# Terminal 1: Start the backend proxy
+./install.sh                    # First time only - installs to ~/.local/bin/
+pixel-forge                     # Start backend on port 7001
+
+# Terminal 2: Start the frontend
+cd screenshot-to-code/frontend
+pnpm install                    # First time only
+pnpm dev --port 5174            # Start frontend on port 5174
 ```
 
-Then open: http://localhost:7001/test-harness.html
+Then open: **http://localhost:5174**
 
-### Visual Editor Mode
+On first load, you'll see a project selector modal:
+1. **Project Path**: Full path to your project (e.g., `/home/user/my-app`)
+2. **Dev Server URL**: Your running dev server (e.g., `http://localhost:3000`)
+3. Click **Select Project** to enable Live Editor mode
 
-Point at elements in your running app, tell Claude what to change:
+### Two Modes
 
-1. Start `pixel-forge`
-2. Open the test harness
-3. Enter your dev app URL (e.g., `http://localhost:3000`)
-4. Enter your project path (e.g., `/home/user/my-app`)
-5. Click **Select Mode**, click an element
-6. Type instruction, click **Send to Claude**
+| Mode | Purpose | How to Use |
+|------|---------|------------|
+| **Screenshot to Code** | Generate code from images | Drag/drop screenshot or paste from clipboard |
+| **Live Editor** | Edit your running app | Click Select, click element, describe change |
 
-Claude finds the source file and makes the edit.
+### Minimal Test Harness (Alternative)
 
-### Manual Setup (Development)
+For quick testing without the full UI:
 
 ```bash
-# Terminal 1: Start the Claude CLI proxy
-cd claude-proxy
-pip install -r requirements.txt
-python main.py  # Runs on port 7001
+pixel-forge                     # Start backend
+open http://localhost:7001/test-harness.html
+```
 
-# Terminal 2: Start the frontend (optional, for screenshot-to-code UI)
+This provides basic element selection and Claude integration without the full chat UI.
+
+### Development Setup
+
+```bash
+# Backend (from repo root)
+cd claude-proxy
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python main.py                  # Port 7001
+
+# Frontend (separate terminal)
 cd screenshot-to-code/frontend
-yarn install
-yarn dev  # Opens http://localhost:5173
+pnpm install
+pnpm dev --port 5174            # Port 5174
 ```
 
 ### SDK (For Programmatic Use)

@@ -1,1 +1,23 @@
 node_modules/
+
+# Test output
+app/playwright-report/
+app/test-results/
+results/
+
+# Session/temporary docs
+CLAUDE-CODE-NATIVE.md
+INVESTIGATION-FINDINGS.md
+READY-TO-TEST.md
+SERVICES-RUNNING.md
+SESSION-REVIEW.md
+TEST-RESULTS-SUMMARY.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+.vscode/
