@@ -39,6 +39,25 @@
 
 ---
 
+### Issue: Frontend Stack Modernization (React 18→19, Tailwind 3→4)
+
+**Severity**: Medium
+**Status**: Open
+**Priority**: High — do when next touching frontend
+
+**Problem**: Frontend uses React 18.2 + Tailwind 3.3. Already has shadcn/ui (good), but versions are outdated.
+
+**Modernization steps**:
+1. **React 18 → 19**: Improved hydration, `use()` hook, server components
+2. **Tailwind 3.3 → 4**: CSS-first config, smaller output, `@layer` improvements
+3. **Add motion-primitives**: Animated components for UI polish. See `using-motion-primitives` skill.
+
+**When to do this**: Next time frontend feature work is done. Bundle with feature development, not as standalone refactor.
+
+**Skills reference**: `using-shadcn` (already initialized), `using-motion-primitives`, `using-prompt-kit` (if adding chat/agent UI to Live Editor)
+
+---
+
 ## Completed Spikes
 
 | Spike | Output | Completed |
