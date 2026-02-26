@@ -153,7 +153,7 @@ generate_code_from_image(image3)
 ```
 
 **Hierarchy Files Added**:
-- `/home/x-forge/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json`
+- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json`
 - Updated `visual-to-code.json` overview: 2 → 3 tools
 - Updated `root.json`: 115 → 116 total tools
 
@@ -284,24 +284,24 @@ metrics.log_call("generate_code_from_image", response, {
 ## Files Changed
 
 ### Core Server (Both Locations)
-- `/home/x-forge/repos/visual-to-code/mcp-server/visual_to_code_mcp.py` ✅
-- `/home/x-forge/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py` ✅
+- `/home/samuelrodda/repos/visual-to-code/mcp-server/visual_to_code_mcp.py` ✅
+- `/home/samuelrodda/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py` ✅
 - Backup saved: `visual_to_code_mcp.py.backup`
 - New version: `visual_to_code_mcp_v2.py` (before deployment)
 
 ### Dependencies
-- `/home/x-forge/repos/visual-to-code/mcp-server/requirements.txt` ✅
-- `/home/x-forge/.claude/mcp-servers/visual-to-code/requirements.txt` ✅
+- `/home/samuelrodda/repos/visual-to-code/mcp-server/requirements.txt` ✅
+- `/home/samuelrodda/.claude/mcp-servers/visual-to-code/requirements.txt` ✅
 - Added: `tiktoken>=0.5.0`
 
 ### Hierarchy Files (Lazy-MCP)
-- `/home/x-forge/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json` ✅ (NEW)
-- `/home/x-forge/.claude/lazy-mcp/hierarchy/visual-to-code/visual-to-code.json` ✅ (UPDATED)
-- `/home/x-forge/.claude/lazy-mcp/hierarchy/root.json` ✅ (UPDATED)
+- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json` ✅ (NEW)
+- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/visual-to-code.json` ✅ (UPDATED)
+- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/root.json` ✅ (UPDATED)
 
 ### Documentation
-- `/home/x-forge/repos/visual-to-code/mcp-server/ASSESSMENT.md` ✅
-- `/home/x-forge/repos/visual-to-code/mcp-server/IMPROVEMENTS-V2.md` ✅ (THIS FILE)
+- `/home/samuelrodda/repos/visual-to-code/mcp-server/ASSESSMENT.md` ✅
+- `/home/samuelrodda/repos/visual-to-code/mcp-server/IMPROVEMENTS-V2.md` ✅ (THIS FILE)
 
 ---
 

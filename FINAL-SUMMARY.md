@@ -202,8 +202,8 @@ results/reflex-iterate/test-2-invoice-card/
 ### Structure Verified
 
 **Reflex dist files confirmed at**:
-- `/home/x-forge/repos/reflex/dist/verification/hash.js` ✅
-- `/home/x-forge/repos/reflex/dist/comparison/visual.js` ✅
+- `/home/samuelrodda/repos/reflex/dist/verification/hash.js` ✅
+- `/home/samuelrodda/repos/reflex/dist/comparison/visual.js` ✅
 
 **Exported functions verified**:
 - `export async function verifyHash(...)` at hash.js:60 ✅
@@ -371,7 +371,7 @@ overall_score = (hash_similarity × 0.6) + (pixel_similarity × 0.4)
 export ANTHROPIC_API_KEY="your-key-here"
 
 # Test 1: Single generation
-cd /home/x-forge/repos/visual-to-code
+cd /home/samuelrodda/repos/visual-to-code
 source ~/.venv/bin/activate
 python tools/batch_generate.py examples/ results/test-batch/
 
@@ -468,18 +468,18 @@ python tools/auto_iterate_reflex.py examples/test-2-invoice-card.png --max-itera
 ## Files Created
 
 ### Tools (4)
-- `/home/x-forge/repos/visual-to-code/tools/batch_generate.py`
-- `/home/x-forge/repos/visual-to-code/tools/generate_variants.py`
-- `/home/x-forge/repos/visual-to-code/tools/auto_iterate.py`
-- `/home/x-forge/repos/visual-to-code/tools/auto_iterate_reflex.py` ⭐
+- `/home/samuelrodda/repos/visual-to-code/tools/batch_generate.py`
+- `/home/samuelrodda/repos/visual-to-code/tools/generate_variants.py`
+- `/home/samuelrodda/repos/visual-to-code/tools/auto_iterate.py`
+- `/home/samuelrodda/repos/visual-to-code/tools/auto_iterate_reflex.py` ⭐
 
 ### Documentation (3)
-- `/home/x-forge/repos/visual-to-code/TOOLS-SUMMARY.md`
-- `/home/x-forge/repos/visual-to-code/TESTING-RESULTS.md`
-- `/home/x-forge/repos/visual-to-code/FINAL-SUMMARY.md` (this file)
+- `/home/samuelrodda/repos/visual-to-code/TOOLS-SUMMARY.md`
+- `/home/samuelrodda/repos/visual-to-code/TESTING-RESULTS.md`
+- `/home/samuelrodda/repos/visual-to-code/FINAL-SUMMARY.md` (this file)
 
 ### Previous Session
-- `/home/x-forge/repos/visual-to-code/results/phase1/ANALYSIS.md`
+- `/home/samuelrodda/repos/visual-to-code/results/phase1/ANALYSIS.md`
 
 ---
 

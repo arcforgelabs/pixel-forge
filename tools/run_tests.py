@@ -10,20 +10,20 @@ from pathlib import Path
 import httpx
 
 BACKEND_URL = "http://localhost:7001"
-RESULTS_DIR = Path("/home/x-forge/repos/visual-to-code/results/phase1")
+RESULTS_DIR = Path("/home/samuelrodda/repos/visual-to-code/results/phase1")
 
 # Test configurations - Only Sonnet 4.5
 TESTS = [
     {
         "name": "test-2-sonnet-4.5",
-        "image": "/home/x-forge/repos/visual-to-code/examples/test-2-invoice-card.png",
+        "image": "/home/samuelrodda/repos/visual-to-code/examples/test-2-invoice-card.png",
         "model": "claude-sonnet-4-5-20250929",
         "output": RESULTS_DIR / "sonnet-4.5" / "test-2-output.tsx",
         "description": "Simple Invoice Card with Claude Sonnet 4.5"
     },
     {
         "name": "test-3-sonnet-4.5",
-        "image": "/home/x-forge/repos/visual-to-code/examples/test-3-styled-invoice-card.png",
+        "image": "/home/samuelrodda/repos/visual-to-code/examples/test-3-styled-invoice-card.png",
         "model": "claude-sonnet-4-5-20250929",
         "output": RESULTS_DIR / "sonnet-4.5" / "test-3-output.tsx",
         "description": "Styled Matrix Card with Claude Sonnet 4.5"

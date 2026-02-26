@@ -46,7 +46,7 @@ Add to `~/.claude.json`:
   "mcpServers": {
     "visual-to-code": {
       "command": "python",
-      "args": ["/home/x-forge/repos/visual-to-code/mcp-server/visual_to_code_mcp.py"],
+      "args": ["/home/samuelrodda/repos/visual-to-code/mcp-server/visual_to_code_mcp.py"],
       "env": {}
     }
   }
@@ -62,7 +62,7 @@ Or use Lazy-MCP (recommended):
       "command": "npx",
       "args": ["-y", "lazy-mcp"],
       "env": {
-        "LAZY_MCP_CONFIG": "/home/x-forge/.config/lazy-mcp/config.json"
+        "LAZY_MCP_CONFIG": "/home/samuelrodda/.config/lazy-mcp/config.json"
       }
     }
   }
@@ -76,7 +76,7 @@ Then add to `~/.config/lazy-mcp/config.json`:
   "servers": {
     "visual-to-code": {
       "command": "python",
-      "args": ["/home/x-forge/repos/visual-to-code/mcp-server/visual_to_code_mcp.py"]
+      "args": ["/home/samuelrodda/repos/visual-to-code/mcp-server/visual_to_code_mcp.py"]
     }
   }
 }

@@ -138,5 +138,5 @@ curl -X POST http://localhost:3000/api/generate \
 - **claude-code**: Subagent version (delegation to Claude Code)
 
 Both branches maintained via git worktrees:
-- `/home/x-forge/repos/visual-to-code` → master
-- `/home/x-forge/repos/visual-to-code--claude-code` → claude-code
+- `/home/samuelrodda/repos/visual-to-code` → master
+- `/home/samuelrodda/repos/visual-to-code--claude-code` → claude-code
