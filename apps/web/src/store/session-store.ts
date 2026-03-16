@@ -12,20 +12,20 @@ export interface LiveEditorSessionMeta {
   requestId?: string | null;
 }
 
-interface RecentProject {
+export interface SavedProject {
   path: string;
   name: string;
-  previewUrl?: string;
+  previewUrls: string[]; // Most recent first, max 10
   outputMode?: OutputMode;
   customOutputPath?: string;
   lastOpened: string; // ISO date string
 }
 
 export interface LastSavedFile {
-  filePath: string;   // Full path inside the workspace
-  relPath: string;    // Relative path inside the workspace
-  urlPath: string;    // Backend-served preview path or app-relative path
-  timestamp: string;  // ISO date string
+  filePath: string;
+  relPath: string;
+  urlPath: string;
+  timestamp: string;
 }
 
 interface SessionStore {
@@ -39,8 +39,8 @@ interface SessionStore {
   // Mode switching
   activeMode: ActiveMode;
 
-  // Persisted recent projects
-  recentProjects: RecentProject[];
+  // Persisted projects
+  recentProjects: SavedProject[];
 
   // Output configuration
   outputMode: OutputMode;
@@ -65,18 +65,30 @@ interface SessionStore {
     outputMode: OutputMode,
     customOutputPath?: string | null
   ) => void;
-  setLastSavedFile: (filePath: string, relPath: string, urlPath: string) => void;
+  setLastSavedFile: (
+    filePath: string,
+    relPath: string,
+    urlPath: string
+  ) => void;
+
+  // Helpers
+  getCurrentProjectUrls: () => string[];
 }
 
-// Helper to extract project name from path
 function getProjectName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] || path;
 }
 
+/** Add a URL to the front of a URL list, deduplicating and capping at 10. */
+function pushUrl(urls: string[], url: string): string[] {
+  const filtered = urls.filter((u) => u !== url);
+  return [url, ...filtered].slice(0, 10);
+}
+
 export const useSessionStore = create<SessionStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Current project
       projectPath: null,
       projectName: null,
@@ -87,7 +99,7 @@ export const useSessionStore = create<SessionStore>()(
       // Mode
       activeMode: "screenshot",
 
-      // Recent projects (persisted)
+      // Projects (persisted)
       recentProjects: [],
 
       // Output configuration
@@ -101,21 +113,23 @@ export const useSessionStore = create<SessionStore>()(
         const now = new Date().toISOString();
 
         set((state) => {
-          // Update recent projects list
+          const existing = state.recentProjects.find((p) => p.path === path);
           const filtered = state.recentProjects.filter((p) => p.path !== path);
-          const newRecent: RecentProject = {
+
+          const existingUrls = existing?.previewUrls ?? [];
+          const newUrls = previewUrl
+            ? pushUrl(existingUrls, previewUrl)
+            : existingUrls;
+
+          const project: SavedProject = {
             path,
             name,
-            previewUrl,
-            outputMode: outputMode ?? state.outputMode,
+            previewUrls: newUrls,
+            outputMode: outputMode ?? existing?.outputMode ?? state.outputMode,
             customOutputPath:
               outputMode === "custom"
                 ? customOutputPath || undefined
-                : outputMode
-                  ? undefined
-                  : state.outputMode === "custom"
-                    ? state.customOutputPath || undefined
-                    : undefined,
+                : existing?.customOutputPath,
             lastOpened: now,
           };
 
@@ -125,16 +139,10 @@ export const useSessionStore = create<SessionStore>()(
             previewUrl: previewUrl || null,
             outputMode: outputMode ?? state.outputMode,
             customOutputPath:
-              outputMode === "custom"
-                ? customOutputPath || null
-                : outputMode
-                  ? null
-                  : state.outputMode === "custom"
-                    ? state.customOutputPath
-                    : null,
-            sessionId: null, // Reset session when changing projects
+              outputMode === "custom" ? customOutputPath || null : null,
+            sessionId: null,
             liveEditorSession: null,
-            recentProjects: [newRecent, ...filtered].slice(0, 10), // Keep last 10
+            recentProjects: [project, ...filtered].slice(0, 10),
           };
         });
       },
@@ -152,7 +160,6 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       newSession: () => {
-        // Clear session ID to force new session on next request
         set({ sessionId: null, liveEditorSession: null });
       },
 
@@ -175,22 +182,26 @@ export const useSessionStore = create<SessionStore>()(
 
       setPreviewUrl: (url: string | null) => {
         set((state) => {
-          if (!state.projectPath) {
+          if (!state.projectPath || !url) {
             return { previewUrl: url };
           }
 
+          // Accumulate URL into the project's history
           return {
             previewUrl: url,
             recentProjects: state.recentProjects.map((project) =>
               project.path === state.projectPath
-                ? { ...project, previewUrl: url || undefined }
+                ? { ...project, previewUrls: pushUrl(project.previewUrls, url) }
                 : project
             ),
           };
         });
       },
 
-      setOutputSettings: (outputMode: OutputMode, customOutputPath?: string | null) => {
+      setOutputSettings: (
+        outputMode: OutputMode,
+        customOutputPath?: string | null
+      ) => {
         set((state) => {
           const normalizedCustomPath =
             outputMode === "custom" ? customOutputPath || null : null;
@@ -215,7 +226,11 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      setLastSavedFile: (filePath: string, relPath: string, urlPath: string) => {
+      setLastSavedFile: (
+        filePath: string,
+        relPath: string,
+        urlPath: string
+      ) => {
         set({
           lastSavedFile: {
             filePath,
@@ -225,43 +240,60 @@ export const useSessionStore = create<SessionStore>()(
           },
         });
       },
+
+      // Helpers
+      getCurrentProjectUrls: () => {
+        const state = get();
+        if (!state.projectPath) return [];
+        const project = state.recentProjects.find(
+          (p) => p.path === state.projectPath
+        );
+        return project?.previewUrls ?? [];
+      },
     }),
     {
       name: "pixel-forge-session",
-      version: 2,
-      migrate: (persistedState: unknown) => {
+      version: 3,
+      migrate: (persistedState: unknown, _version: number) => {
         const state = (persistedState ?? {}) as Record<string, unknown>;
 
-        const recentProjects = Array.isArray(state.recentProjects)
-          ? state.recentProjects.map((project) => {
-              if (!project || typeof project !== "object") {
-                return project;
-              }
-
-              const value = project as Record<string, unknown>;
-              const outputMode =
-                value.outputMode === "custom" || value.customOutputPath || value.savePath
-                  ? "custom"
-                  : "scratch";
-
-              return {
-                ...value,
-                previewUrl:
-                  typeof value.previewUrl === "string"
-                    ? value.previewUrl
-                    : typeof value.devServerUrl === "string"
-                      ? value.devServerUrl
-                      : undefined,
-                outputMode,
-                customOutputPath:
-                  typeof value.customOutputPath === "string"
-                    ? value.customOutputPath
-                    : typeof value.savePath === "string"
-                      ? value.savePath
-                      : undefined,
-              };
-            })
+        // Migrate v2 → v3: previewUrl (single) → previewUrls (array)
+        const rawProjects = Array.isArray(state.recentProjects)
+          ? state.recentProjects
           : [];
+
+        const recentProjects = rawProjects.map((raw) => {
+          if (!raw || typeof raw !== "object") return raw;
+          const p = raw as Record<string, unknown>;
+
+          // Already migrated (has previewUrls array)
+          if (Array.isArray(p.previewUrls)) return p;
+
+          // Migrate from single previewUrl or devServerUrl
+          const singleUrl =
+            typeof p.previewUrl === "string"
+              ? p.previewUrl
+              : typeof p.devServerUrl === "string"
+                ? p.devServerUrl
+                : null;
+
+          const outputMode =
+            p.outputMode === "custom" || p.customOutputPath || p.savePath
+              ? "custom"
+              : "scratch";
+
+          return {
+            ...p,
+            previewUrls: singleUrl ? [singleUrl] : [],
+            outputMode,
+            customOutputPath:
+              typeof p.customOutputPath === "string"
+                ? p.customOutputPath
+                : typeof p.savePath === "string"
+                  ? p.savePath
+                  : undefined,
+          };
+        });
 
         return {
           ...state,
@@ -286,7 +318,6 @@ export const useSessionStore = create<SessionStore>()(
           recentProjects,
         };
       },
-      // Persist session state for continuity across page reloads and mode switches
       partialize: (state) => ({
         recentProjects: state.recentProjects,
         sessionId: state.sessionId,

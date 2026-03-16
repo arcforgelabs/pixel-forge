@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertTriangle,
   ArrowLeftRight,
+  ChevronDown,
   Clock,
   FolderOpen,
   Monitor,
@@ -65,6 +66,14 @@ export function LiveEditorPane() {
   const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
   const [authIssue, setAuthIssue] = useState<{ status: number; url: string } | null>(null)
   const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false)
+  const [showUrlHistory, setShowUrlHistory] = useState(false)
+
+  // Get URL history for current project
+  const currentProjectUrls = useSessionStore((s) => {
+    if (!s.projectPath) return []
+    const project = s.recentProjects.find((p) => p.path === s.projectPath)
+    return project?.previewUrls ?? []
+  })
 
   // Get store actions and state
   // Note: sessionId and projectPath are now read from session-store directly
@@ -377,13 +386,49 @@ export function LiveEditorPane() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/50 p-2">
-          <Input
-            value={targetUrl}
-            onChange={(e) => setTargetUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && loadApp()}
-            placeholder="https://example.com or http://field.localhost:3101"
-            className="h-8 min-w-[18rem] flex-1"
-          />
+          <div className="relative flex min-w-[18rem] flex-1 gap-0">
+            <Input
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && loadApp()}
+              placeholder="https://example.com or http://field.localhost:3101"
+              className="h-8 rounded-r-none"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 rounded-l-none border-l-0 px-1.5"
+              onClick={() => setShowUrlHistory(!showUrlHistory)}
+              disabled={currentProjectUrls.length === 0}
+              title="Recent preview URLs"
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+            </Button>
+            {showUrlHistory && currentProjectUrls.length > 0 && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
+                <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-md border border-border bg-popover shadow-lg">
+                  <div className="max-h-48 overflow-y-auto py-1">
+                    {currentProjectUrls.map((url) => (
+                      <button
+                        key={url}
+                        onClick={() => {
+                          setTargetUrl(url)
+                          setShowUrlHistory(false)
+                          void loadApp(url)
+                        }}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted ${
+                          url === targetUrl ? 'bg-muted/60 font-medium' : ''
+                        }`}
+                      >
+                        <span className="truncate">{url}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           <Button variant="outline" size="sm" onClick={() => loadApp()} className="h-8">
             <Play className="w-4 h-4 mr-1" />
             Load
@@ -553,15 +598,15 @@ export function LiveEditorPane() {
                         .map((project) => (
                           <button
                             key={project.path}
-                            onClick={() => handleQuickSwitch(project.path, project.previewUrl)}
+                            onClick={() => handleQuickSwitch(project.path, project.previewUrls[0])}
                             className="flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60"
                           >
                             <FolderOpen className="h-3 w-3 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate font-medium">{project.name}</div>
-                              {project.previewUrl && (
+                              {project.previewUrls[0] && (
                                 <div className="truncate text-muted-foreground">
-                                  {project.previewUrl}
+                                  {project.previewUrls[0]}
                                 </div>
                               )}
                             </div>

@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { HTTP_BACKEND_URL } from "@/config";
 import { useSessionStore } from "@/store/session-store";
-import { FaClock, FaFolder, FaFolderOpen, FaWrench } from "react-icons/fa";
+import { FaClock, FaFolder, FaFolderOpen, FaGlobe, FaWrench } from "react-icons/fa";
 import toast from "react-hot-toast";
 
 type OutputMode = "scratch" | "custom";
@@ -47,14 +47,15 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
     storedCustomOutputPath || ""
   );
   const [isBrowsing, setIsBrowsing] = useState(false);
+  const [expandedProject, setExpandedProject] = useState<string | null>(null);
 
-  // Sync local state when dialog opens and store has values
   useEffect(() => {
     if (open) {
       setProjectPath(storedProjectPath || "");
       setPreviewUrl(storedPreviewUrl || "");
       setOutputMode(storedOutputMode || "scratch");
       setCustomOutputPath(storedCustomOutputPath || "");
+      setExpandedProject(null);
     }
   }, [
     open,
@@ -156,48 +157,92 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl">Open Workspace</DialogTitle>
           <p className="text-sm text-muted-foreground mt-1">
-            Bind Pixel Forge to a local workspace, choose what URL to inspect,
-            and decide whether generated code should stay scratch-only or land
-            in a real repo path.
+            Select a recent project or configure a new workspace.
           </p>
         </DialogHeader>
 
         {/* Recent Projects */}
         {recentProjects.length > 0 && (
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Recent Projects</Label>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
+            <Label className="text-sm font-medium">Projects</Label>
+            <div className="space-y-1 max-h-64 overflow-y-auto">
               {recentProjects.map((project) => (
-                <button
-                  key={project.path}
-                  onClick={() =>
-                    handleSelectProject(
-                      project.path,
-                      project.previewUrl,
-                      project.outputMode || "scratch",
-                      project.customOutputPath || null
-                    )
-                  }
-                  className="w-full flex items-center justify-between p-3 rounded-md border border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <FaFolder className="text-blue-500 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{project.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {project.path}
+                <div key={project.path} className="rounded-md border border-border overflow-hidden">
+                  {/* Project row */}
+                  <button
+                    onClick={() => {
+                      // Open with most recent URL
+                      handleSelectProject(
+                        project.path,
+                        project.previewUrls[0],
+                        project.outputMode || "scratch",
+                        project.customOutputPath || null
+                      );
+                    }}
+                    className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <FaFolder className="text-blue-500 flex-shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium truncate">{project.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {project.path}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0 ml-2">
-                    <FaClock />
-                    {formatDate(project.lastOpened)}
-                  </div>
-                </button>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      {project.previewUrls.length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedProject(
+                              expandedProject === project.path ? null : project.path
+                            );
+                          }}
+                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
+                          title="Show preview URLs"
+                        >
+                          <FaGlobe className="h-3 w-3" />
+                          {project.previewUrls.length}
+                        </button>
+                      )}
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <FaClock className="h-3 w-3" />
+                        {formatDate(project.lastOpened)}
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* Expanded URL list */}
+                  {expandedProject === project.path && project.previewUrls.length > 0 && (
+                    <div className="border-t border-border bg-muted/30 px-3 py-2 space-y-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-1">
+                        Preview URLs
+                      </div>
+                      {project.previewUrls.map((url) => (
+                        <button
+                          key={url}
+                          onClick={() =>
+                            handleSelectProject(
+                              project.path,
+                              url,
+                              project.outputMode || "scratch",
+                              project.customOutputPath || null
+                            )
+                          }
+                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-left hover:bg-muted transition-colors"
+                        >
+                          <FaGlobe className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{url}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -223,13 +268,9 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                 className="shrink-0"
               >
                 <FaFolderOpen className="mr-2" />
-                {isBrowsing ? "Opening..." : "Choose Folder"}
+                {isBrowsing ? "Opening..." : "Browse"}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              A writable local folder for direct edits, request packs, and
-              session continuity.
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -244,10 +285,6 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
               onChange={(e) => setPreviewUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             />
-            <p className="text-xs text-muted-foreground">
-              Any app or website Pixel Forge can load through the proxy. This
-              can be localhost, staging, production, or a third-party site.
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -268,8 +305,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Save generated code under <code>.pixel-forge/generated/</code>{" "}
-                  inside the workspace. Best for prototypes and throwaway
-                  branches.
+                  inside the workspace.
                 </p>
               </button>
               <button
@@ -286,8 +322,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                   Custom Relative Path
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the exact repo-relative file path when the generated
-                  code should land somewhere intentional.
+                  Choose the exact repo-relative file path for generated code.
                 </p>
               </button>
             </div>
@@ -300,17 +335,12 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                 onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
               />
             )}
-            <p className="text-xs text-muted-foreground">
-              Scratch output is kept inside the repo-local <code>.pixel-forge</code>{" "}
-              workspace. Use a custom path only when you want generated code to
-              land in a real tracked location.
-            </p>
           </div>
         </div>
 
         <DialogFooter className="flex gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleSkip}>
-            Skip (Screenshot mode only)
+            Skip (Screenshot only)
           </Button>
           <Button
             onClick={handleSubmit}
