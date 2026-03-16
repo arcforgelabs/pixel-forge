@@ -1041,6 +1041,10 @@ async def proxy_root_websocket(websocket: WebSocket):
 # CATCH-ALL PROXY - Must be last! Forwards any unhandled request to target app
 # =============================================================================
 
+# Paths served by the built frontend — the catch-all must not proxy these.
+_FRONTEND_PATHS = {"assets", "favicon", "brand"}
+
+
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def catch_all_proxy(request: Request, path: str = ""):
     """
@@ -1053,6 +1057,12 @@ async def catch_all_proxy(request: Request, path: str = ""):
     if path.startswith("app/") or path == "app":
         # Let the /app/* routes handle this
         return await proxy_http(request, path[4:] if path.startswith("app/") else "")
+
+    # Skip frontend asset paths — let StaticFiles mounts handle them
+    first_segment = path.split("/", 1)[0] if path else ""
+    if first_segment in _FRONTEND_PATHS:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Not found"}, status_code=404)
 
     # Proxy everything else directly to target
     return await proxy_http_to_target(request, path)

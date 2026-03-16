@@ -447,7 +447,7 @@ export function LiveEditorPane() {
       </div>
 
       {/* Right: Chat & Selection Panel */}
-      <div className="flex w-[clamp(320px,28vw,440px)] min-w-[320px] max-w-[45vw] flex-col overflow-hidden border-l border-border bg-background">
+      <div className="flex w-[clamp(320px,28vw,440px)] min-w-[320px] max-w-[45vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-background">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full overflow-hidden">
           <TabsList className="grid w-full grid-cols-3 m-2 mb-0 flex-shrink-0">
             <TabsTrigger value="chat" className="gap-1">

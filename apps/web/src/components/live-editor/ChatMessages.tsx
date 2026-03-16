@@ -29,8 +29,8 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
   }, [messages, currentStreamContent])
 
   return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1">
-      <div className="min-w-0 space-y-4 p-4">
+    <ScrollArea className="min-h-0 min-w-0 flex-1 [&>div]:!overflow-x-hidden">
+      <div className="min-w-0 max-w-full space-y-4 overflow-hidden p-4">
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
           <div className="py-4">

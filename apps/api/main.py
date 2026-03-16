@@ -150,6 +150,46 @@ app.add_middleware(
 )
 
 
+# ---------------------------------------------------------------------------
+# Built frontend serving (production mode)
+# When apps/web/dist exists, serve the built React app from the backend.
+# All API/WS routes registered below take priority; unmatched GETs fall
+# through to the SPA index.html via StaticFiles(html=True).
+# ---------------------------------------------------------------------------
+from pathlib import Path
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+_INSTALLED_DIST = Path(__file__).resolve().parent / "frontend"
+_SERVING_FRONTEND = False
+
+for _dist_candidate in (_INSTALLED_DIST, _FRONTEND_DIST):
+    if (_dist_candidate / "index.html").is_file():
+        # Serve sub-asset directories explicitly so they take priority over
+        # the catch-all proxy router, which would otherwise eat these paths.
+        for _subdir in ("assets", "favicon", "brand"):
+            _subdir_path = _dist_candidate / _subdir
+            if _subdir_path.is_dir():
+                app.mount(
+                    f"/{_subdir}",
+                    StaticFiles(directory=str(_subdir_path)),
+                    name=f"frontend-{_subdir}",
+                )
+
+        @app.get("/")
+        async def serve_frontend_index():
+            return FileResponse(
+                str(_dist_candidate / "index.html"),
+                media_type="text/html",
+            )
+
+        _SERVING_FRONTEND = True
+        print(f"[pixel-forge] Serving built frontend from {_dist_candidate}")
+        break
+
+if not _SERVING_FRONTEND:
+    print("[pixel-forge] No built frontend found — run 'pnpm build' in apps/web/ or use start-dev.sh")
+
+
 # Static file routes for testing - MUST be registered before catch-all proxy router
 @app.get("/test-harness.html")
 async def serve_test_harness():

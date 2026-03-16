@@ -1,5 +1,7 @@
 #!/bin/bash
-# Install pixel-forge as a local command
+# Install pixel-forge as a self-contained local app
+# Single process: FastAPI serves the built React frontend + API + proxy
+# Managed by a systemd user service — survives terminal close.
 # Usage: ./install.sh
 
 set -e
@@ -7,79 +9,175 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$HOME/.local/lib/pixel-forge"
 BIN_DIR="$HOME/.local/bin"
+WEB_DIR="$SCRIPT_DIR/apps/web"
+
+# Ensure pnpm/node are in PATH
+for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
+    [ -d "$p" ] && case ":$PATH:" in *":$p:"*) ;; *) export PATH="$p:$PATH" ;; esac
+done
 
 echo "Installing pixel-forge..."
 
-# Create directories
+# --- Build frontend ---
+if command -v pnpm &>/dev/null; then
+    echo "Building frontend..."
+    cd "$WEB_DIR"
+    [ -d "node_modules" ] || pnpm install --frozen-lockfile
+    pnpm build
+    echo "Frontend built."
+else
+    echo "Warning: pnpm not found — skipping frontend build."
+    echo "  Install pnpm and re-run, or run 'pnpm build' in apps/web/ manually."
+fi
+
+# --- Install backend ---
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
 
-# Copy API files (not symlink - survives repo moves)
-echo "Copying files to $INSTALL_DIR..."
+echo "Copying API to $INSTALL_DIR..."
+# Clean old files but preserve .venv
+find "$INSTALL_DIR" -maxdepth 1 -not -name '.venv' -not -name "$(basename "$INSTALL_DIR")" -exec rm -rf {} + 2>/dev/null || true
 cp -r "$SCRIPT_DIR/apps/api/"* "$INSTALL_DIR/"
 
-# Create virtual environment if needed
+# --- Bundle built frontend ---
+if [ -f "$WEB_DIR/dist/index.html" ]; then
+    echo "Bundling built frontend..."
+    rm -rf "$INSTALL_DIR/frontend"
+    cp -r "$WEB_DIR/dist" "$INSTALL_DIR/frontend"
+fi
+
+# --- Python venv ---
 if [ ! -d "$INSTALL_DIR/.venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$INSTALL_DIR/.venv"
 fi
 
-# Install dependencies
-echo "Installing dependencies..."
+echo "Installing Python dependencies..."
 "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
 
-# Create launcher script
-cat > "$BIN_DIR/pixel-forge" << 'EOF'
+# --- Launcher script ---
+cat > "$BIN_DIR/pixel-forge" << 'LAUNCHER'
 #!/bin/bash
-# pixel-forge launcher
+# pixel-forge — start or manage the Pixel Forge service
 
 INSTALL_DIR="$HOME/.local/lib/pixel-forge"
-
-# Parse arguments
+SERVICE="pixel-forge"
 PORT="${PIXEL_FORGE_PORT:-7001}"
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --port|-p)
-            PORT="$2"
-            shift 2
-            ;;
-        --help|-h)
-            echo "Usage: pixel-forge [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  -p, --port PORT    Port to run on (default: 7001)"
-            echo "  -h, --help         Show this help"
-            echo ""
-            echo "Open http://127.0.0.1:$PORT/test-harness.html after starting"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
+URL="http://pixel-forge.localhost:$PORT"
 
-cd "$INSTALL_DIR"
-exec "$INSTALL_DIR/.venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port "$PORT"
-EOF
+case "${1:-start}" in
+    start)
+        # Start via systemd if available, otherwise foreground
+        if systemctl --user cat "$SERVICE" &>/dev/null; then
+            systemctl --user start "$SERVICE"
+            echo "Pixel Forge started (systemd). Open: $URL"
+        else
+            echo "Starting Pixel Forge on port $PORT..."
+            cd "$INSTALL_DIR"
+            exec "$INSTALL_DIR/.venv/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT"
+        fi
+        ;;
+    stop)
+        if systemctl --user cat "$SERVICE" &>/dev/null; then
+            systemctl --user stop "$SERVICE"
+            echo "Pixel Forge stopped."
+        else
+            echo "No systemd service found. Kill the process manually."
+        fi
+        ;;
+    restart)
+        "$0" stop
+        sleep 1
+        "$0" start
+        ;;
+    status)
+        if systemctl --user cat "$SERVICE" &>/dev/null; then
+            systemctl --user status "$SERVICE" --no-pager
+        else
+            echo "No systemd service. Checking port $PORT..."
+            ss -tlnp "sport = :$PORT" 2>/dev/null || echo "Not running."
+        fi
+        ;;
+    logs)
+        if systemctl --user cat "$SERVICE" &>/dev/null; then
+            journalctl --user -u "$SERVICE" -f --no-pager
+        else
+            echo "No systemd service logs available."
+        fi
+        ;;
+    open)
+        xdg-open "$URL" 2>/dev/null || echo "Open: $URL"
+        ;;
+    --help|-h)
+        echo "Usage: pixel-forge [start|stop|restart|status|logs|open]"
+        echo ""
+        echo "Commands:"
+        echo "  start     Start the service (default)"
+        echo "  stop      Stop the service"
+        echo "  restart   Restart the service"
+        echo "  status    Show service status"
+        echo "  logs      Tail service logs"
+        echo "  open      Open in browser"
+        echo ""
+        echo "Environment:"
+        echo "  PIXEL_FORGE_PORT  Port (default: 7001)"
+        ;;
+    *)
+        echo "Unknown command: $1 (try: pixel-forge --help)"
+        exit 1
+        ;;
+esac
+LAUNCHER
 
 chmod +x "$BIN_DIR/pixel-forge"
 
-# Install icon
+# --- Systemd user service ---
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_DIR"
+
+cat > "$SYSTEMD_DIR/pixel-forge.service" << UNIT
+[Unit]
+Description=Pixel Forge — Visual App Editor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 7001
+Restart=on-failure
+RestartSec=3
+Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+UNIT
+
+systemctl --user daemon-reload
+systemctl --user enable pixel-forge.service 2>/dev/null || true
+echo "Systemd service installed and enabled."
+
+# --- Icon ---
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 mkdir -p "$ICON_DIR"
 cp "$SCRIPT_DIR/apps/web/public/favicon/main.png" "$ICON_DIR/pixel-forge.png"
-echo "Icon installed to $ICON_DIR/pixel-forge.png"
 
-# Install desktop entry
+# --- Desktop entry ---
 DESKTOP_DIR="$HOME/.local/share/applications"
 mkdir -p "$DESKTOP_DIR"
-cp "$SCRIPT_DIR/pixel-forge.desktop" "$DESKTOP_DIR/pixel-forge.desktop"
-echo "Desktop entry installed to $DESKTOP_DIR/pixel-forge.desktop"
 
-# Refresh icon cache and desktop database (if available)
+cat > "$DESKTOP_DIR/pixel-forge.desktop" << 'DESKTOP'
+[Desktop Entry]
+Name=Pixel Forge
+Comment=Visual app editor — screenshot bootstrap and live editing
+Exec=bash -c 'pixel-forge start; sleep 2; xdg-open http://pixel-forge.localhost:7001'
+Icon=pixel-forge
+Terminal=false
+Type=Application
+Categories=Development;WebDevelopment;
+StartupNotify=true
+DESKTOP
+
 gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 
@@ -87,12 +185,12 @@ echo ""
 echo "Installation complete!"
 echo ""
 echo "Usage:"
-echo "  pixel-forge              # Start backend on port 7001"
-echo "  pixel-forge --port 8080  # Start on custom port"
+echo "  pixel-forge start    # Start the service"
+echo "  pixel-forge stop     # Stop it"
+echo "  pixel-forge open     # Open in browser"
+echo "  pixel-forge logs     # Tail logs"
+echo "  pixel-forge status   # Check status"
 echo ""
-echo "Full UI (backend + frontend):"
-echo "  Launch 'Pixel Forge' from your app menu, or run:"
-echo "  $SCRIPT_DIR/start-dev.sh"
+echo "Or click 'Pixel Forge' in your app menu."
 echo ""
-echo "Make sure ~/.local/bin is in your PATH:"
-echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+echo "For development (hot-reload): ./start-dev.sh"
