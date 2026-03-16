@@ -36,6 +36,7 @@ import toast from 'react-hot-toast'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
 import { SelectedElementsList } from './SelectedElementsList'
+import { ProjectSelector } from '../project-selector/ProjectSelector'
 import { useLiveEditorStore } from './store/chat-store'
 
 type ViewportMode = 'fluid' | 'desktop' | 'phone'
@@ -59,6 +60,7 @@ export function LiveEditorPane() {
   const [activeTab, setActiveTab] = useState('chat')
   const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
   const [authIssue, setAuthIssue] = useState<{ status: number; url: string } | null>(null)
+  const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false)
 
   // Get store actions and state
   // Note: sessionId and projectPath are now read from session-store directly
@@ -262,6 +264,24 @@ export function LiveEditorPane() {
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [addElement, removeElement, selectedElements])
+
+  // Change workspace — confirm if active session exists
+  const handleChangeWorkspace = useCallback(() => {
+    const hasActiveSession = !!useSessionStore.getState().liveEditorSession
+    const hasMessages = useLiveEditorStore.getState().messages.length > 0
+
+    if (hasActiveSession || hasMessages) {
+      const confirmed = window.confirm(
+        'Changing workspace will start a new session. The current session will be closed. Continue?'
+      )
+      if (!confirmed) return
+
+      clearLiveEditorSession()
+      newSession()
+    }
+
+    setShowWorkspaceSelector(true)
+  }, [clearLiveEditorSession, newSession])
 
   // Handle clearing selections from parent (sync to iframe)
   const handleClearElements = useCallback(() => {
@@ -477,7 +497,17 @@ export function LiveEditorPane() {
             >
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium">Workspace</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">Workspace</label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={handleChangeWorkspace}
+                    >
+                      Change
+                    </Button>
+                  </div>
                   <p className="text-sm text-muted-foreground mt-1 font-mono">
                     {projectPath || 'Not set'}
                   </p>
@@ -601,6 +631,12 @@ export function LiveEditorPane() {
         {/* ChatInput rendered OUTSIDE Tabs to avoid Radix initialization issues */}
         {activeTab === 'chat' && <ChatInput />}
       </div>
+
+      {/* Workspace selector dialog */}
+      <ProjectSelector
+        open={showWorkspaceSelector}
+        onOpenChange={setShowWorkspaceSelector}
+      />
     </div>
   )
 }

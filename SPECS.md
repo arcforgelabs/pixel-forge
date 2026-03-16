@@ -7,6 +7,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 1. Live Editor sends selected-element context and attachments into a persistent real agent session without losing continuity on server restart.
 2. Every live-edit request is inspectable and reproducible from a disk-backed request pack instead of giant pasted blobs or process memory.
 3. Pixel Forge sessions show up in Agent Deck so the user can drop into the real session when the chat UI is not enough.
+4. Users can pull visual context from multiple sources into one prompt — select elements from two different URLs and combine them as comparison/reference context for the agent.
 
 # Requirements
 
@@ -43,6 +44,14 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-P-003:` Authenticated staging and production targets must keep login state inside Pixel Forge by binding each browser session to its own proxy target and upstream cookie jar.
 - `REQ-P-004:` Proxy setup from the web app must use credentialed backend calls so the browser-scoped proxy session cookie is actually established before the iframe loads.
 
+### Multi-Source Context
+- `REQ-M-001:` The Live Editor must support two preview sources, each with independent element selection. An "Add Source" button reveals the second source.
+- `REQ-M-002:` The viewer must offer three layout modes: single (default, one source full-width), tabbed (toggle between A and B), and split (A and B side by side).
+- `REQ-M-003:` Each selected element must carry its source URL so the agent knows which site/app the element came from.
+- `REQ-M-004:` The element context builder must group selections by source URL, wrapping each group in a `<source url="...">` block, so the agent can reason about cross-source comparisons.
+- `REQ-M-005:` The proxy must serve two targets concurrently via separate path prefixes (`/app-a/`, `/app-b/`), each with its own upstream client and cookie jar.
+- `REQ-M-006:` Single-source mode remains the default and must not be degraded by multi-source support. Removing the second source returns to single mode cleanly.
+
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
 - `REQ-D-002:` When the agent completes a code edit against a remote preview target, the dispatch prompt must instruct the agent to deploy the changes using whatever deployment process the workspace provides. No standardized deploy convention — the agent infers the deploy method from the workspace.
@@ -67,12 +76,14 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.
+- `[planned]` Multi-source context: dual-iframe layout with source-tagged element selections and dual proxy path prefixes.
 - `[planned]` Screenshot bootstrap will be migrated onto the same session control plane only after the Live Editor loop is proven superior there.
 
 # Open Questions
 
 - `[question]` Do we want Pixel Forge to embed an Agent Deck terminal pane directly, or is surfacing the session identity enough for the next cut?
 - `[question]` Should request-pack retention become content-addressed and deduplicated, or is bounded per-request storage sufficient in practice?
+- `[question]` Should the second source panel support its own independent deploy-aware refresh, or is one shared refresh sufficient?
 
 # Out of Scope
 

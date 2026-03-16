@@ -9,7 +9,7 @@ import asyncio
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
@@ -569,7 +569,12 @@ async def get_proxy_session(session_id: str | None) -> ProxySession | None:
 
 
 def _build_target_url(target_url: str, path: str, query: str = "") -> str:
-    upstream_url = urljoin(f"{target_url.rstrip('/')}/", path)
+    # Resolve against the origin, not the full target path.
+    # The incoming path (after /app/ prefix stripping) is already the full
+    # upstream path the server expects — urljoin against a path-bearing target
+    # URL would double the path component (e.g. /lab/lab/app.css).
+    origin = _target_origin(target_url)
+    upstream_url = f"{origin}/{path.lstrip('/')}" if path else target_url
     if query:
         return f"{upstream_url}?{query}"
     return upstream_url
