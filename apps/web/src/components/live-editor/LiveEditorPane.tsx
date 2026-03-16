@@ -21,6 +21,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertTriangle,
   ArrowLeftRight,
+  Clock,
+  FolderOpen,
   Monitor,
   MousePointer2,
   RefreshCw,
@@ -49,6 +51,8 @@ export function LiveEditorPane() {
     liveEditorSession,
     clearLiveEditorSession,
     setPreviewUrl,
+    recentProjects,
+    setProject,
   } = useSessionStore()
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -283,6 +287,30 @@ export function LiveEditorPane() {
     setShowWorkspaceSelector(true)
   }, [clearLiveEditorSession, newSession])
 
+  // Quick-switch to a recent project
+  const handleQuickSwitch = useCallback((path: string, recentPreviewUrl?: string) => {
+    if (path === projectPath) return
+
+    const hasActiveSession = !!useSessionStore.getState().liveEditorSession
+    const hasMessages = useLiveEditorStore.getState().messages.length > 0
+
+    if (hasActiveSession || hasMessages) {
+      const confirmed = window.confirm(
+        'Switching workspace will start a new session. Continue?'
+      )
+      if (!confirmed) return
+
+      clearLiveEditorSession()
+      newSession()
+    }
+
+    setProject({ path, previewUrl: recentPreviewUrl })
+    if (recentPreviewUrl) {
+      void loadApp(recentPreviewUrl)
+    }
+    toast.success(`Switched to ${path.split('/').pop()}`)
+  }, [projectPath, clearLiveEditorSession, newSession, setProject, loadApp])
+
   // Handle clearing selections from parent (sync to iframe)
   const handleClearElements = useCallback(() => {
     clearElements()
@@ -508,9 +536,39 @@ export function LiveEditorPane() {
                       Change
                     </Button>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-1 font-mono">
+                  <p className="text-sm text-muted-foreground mt-1 font-mono break-all">
                     {projectPath || 'Not set'}
                   </p>
+
+                  {/* Recent projects quick-switch */}
+                  {recentProjects.length > 1 && (
+                    <div className="mt-2 space-y-1">
+                      <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        Recent
+                      </label>
+                      {recentProjects
+                        .filter((p) => p.path !== projectPath)
+                        .slice(0, 5)
+                        .map((project) => (
+                          <button
+                            key={project.path}
+                            onClick={() => handleQuickSwitch(project.path, project.previewUrl)}
+                            className="flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60"
+                          >
+                            <FolderOpen className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium">{project.name}</div>
+                              {project.previewUrl && (
+                                <div className="truncate text-muted-foreground">
+                                  {project.previewUrl}
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm font-medium">Preview URL</label>
