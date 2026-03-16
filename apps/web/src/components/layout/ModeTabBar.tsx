@@ -1,8 +1,8 @@
 import { useSessionStore, ActiveMode } from "@/store/session-store";
-import { Camera, Pencil } from "lucide-react";
+import { Camera, Pencil, Settings } from "lucide-react";
 
 export function ModeTabBar() {
-  const { activeMode, switchMode, projectPath, sessionId, liveEditorSession } =
+  const { activeMode, switchMode, projectPath, sessionId, liveEditorSession, toggleSettingsSidebar } =
     useSessionStore();
 
   const hasActiveSession = !!sessionId || !!liveEditorSession;
@@ -22,15 +22,20 @@ export function ModeTabBar() {
 
   return (
     <div className="flex items-center border-b border-border bg-card/80 backdrop-blur-sm">
-      {/* Brand mark */}
-      <div className="flex items-center gap-2 px-4 py-2 border-r border-border">
+      {/* Brand mark — toggles settings sidebar */}
+      <button
+        onClick={toggleSettingsSidebar}
+        className="flex items-center gap-2 px-4 py-2 border-r border-border hover:bg-muted/60 transition-colors"
+        title="Toggle settings"
+      >
         <div className="flex h-5 w-5 items-center justify-center rounded bg-primary/15">
           <span className="text-xs font-bold text-primary">//</span>
         </div>
         <span className="text-sm font-semibold tracking-tight">
           Pixel Forge
         </span>
-      </div>
+        <Settings className="h-3.5 w-3.5 text-muted-foreground" />
+      </button>
 
       {/* Mode tabs */}
       <div className="flex items-center">

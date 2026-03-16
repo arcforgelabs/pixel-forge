@@ -29,6 +29,9 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { sendMessage, isStreaming, selectedElements } = useLiveEditorStore()
+  const sourceCount = new Set(
+    selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
+  ).size
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,12 +49,12 @@ export function ChatInput() {
     }
   }
 
-  // Auto-resize textarea
+  // Auto-resize textarea (min 24px so it's visible when empty)
   useEffect(() => {
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`
+      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 24), 150)}px`
     }
   }, [input])
 
@@ -142,6 +145,11 @@ export function ChatInput() {
           <span className="text-muted-foreground">
             element{selectedElements.length !== 1 ? 's' : ''} selected
           </span>
+          {sourceCount > 1 && (
+            <span className="text-muted-foreground/70">
+              across {sourceCount} tabs
+            </span>
+          )}
         </div>
       )}
 
@@ -213,7 +221,7 @@ export function ChatInput() {
             onPaste={handlePaste}
             placeholder={
               hasElements
-                ? 'Describe what to change. Attach, drop, or paste files for extra context...'
+                ? 'Describe what to change across the selected elements. Attach, drop, or paste files for extra context...'
                 : 'Select an element first, then attach, drop, or paste context...'
             }
             disabled={isStreaming}

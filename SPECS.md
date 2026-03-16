@@ -7,7 +7,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 1. Live Editor sends selected-element context and attachments into a persistent real agent session without losing continuity on server restart.
 2. Every live-edit request is inspectable and reproducible from a disk-backed request pack instead of giant pasted blobs or process memory.
 3. Pixel Forge sessions show up in Agent Deck so the user can drop into the real session when the chat UI is not enough.
-4. Users can pull visual context from multiple sources into one prompt — select elements from two different URLs and combine them as comparison/reference context for the agent.
+4. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
 
 # Requirements
 
@@ -33,6 +33,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-S-001:` Repo-level operational truth lives in `SPECS.md`; runtime notes in `AGENTS.md` and `CLAUDE.md` must agree with it.
 - `REQ-S-002:` Pixel Forge broker metadata belongs in a small persistent store; bulky artifacts belong on disk outside that metadata path.
 - `REQ-S-003:` Workspace binding, preview target selection, and generated-output destination must stay separate in the product model. Do not collapse them into one misleading "project" field.
+- `REQ-S-004:` Workspace/project metadata and resumable Live Editor session linkage must persist in the Pixel Forge backend store instead of browser localStorage.
 
 ### Git Hygiene
 - `REQ-G-001:` Request packs created inside a target repo must not pollute the user’s normal git status.
@@ -44,13 +45,13 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-P-003:` Authenticated staging and production targets must keep login state inside Pixel Forge by binding each browser session to its own proxy target and upstream cookie jar.
 - `REQ-P-004:` Proxy setup from the web app must use credentialed backend calls so the browser-scoped proxy session cookie is actually established before the iframe loads.
 
-### Multi-Source Context
-- `REQ-M-001:` The Live Editor must support two preview sources, each with independent element selection. An "Add Source" button reveals the second source.
-- `REQ-M-002:` The viewer must offer three layout modes: single (default, one source full-width), tabbed (toggle between A and B), and split (A and B side by side).
-- `REQ-M-003:` Each selected element must carry its source URL so the agent knows which site/app the element came from.
-- `REQ-M-004:` The element context builder must group selections by source URL, wrapping each group in a `<source url="...">` block, so the agent can reason about cross-source comparisons.
-- `REQ-M-005:` The proxy must serve two targets concurrently via separate path prefixes (`/app-a/`, `/app-b/`), each with its own upstream client and cookie jar.
-- `REQ-M-006:` Single-source mode remains the default and must not be degraded by multi-source support. Removing the second source returns to single mode cleanly.
+### Multi-Tab Preview Context
+- `REQ-M-001:` The Live Editor preview layer must support multiple browser-style preview tabs inside one project/chat instance. Adding a tab must not start a new chat thread.
+- `REQ-M-002:` Each preview tab must keep its own proxy/browser session state, including upstream cookie/auth state, so switching tabs restores that tab’s browsing context.
+- `REQ-M-003:` Selected elements must carry explicit preview-tab identity and resolved source URL so the agent can reason about cross-tab comparisons.
+- `REQ-M-004:` The element context builder must group selections by preview tab/source, including tab and URL metadata, while still sending one unified prompt to the agent.
+- `REQ-M-005:` Switching preview tabs must not clear the unified selected-element list. The active iframe only renders overlays for selections that belong to the active tab.
+- `REQ-M-006:` Pixel Forge must not enforce a small fixed preview-tab cap. Practical limits are driven by runtime/browser resources, not a hardcoded product limit.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -60,23 +61,24 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` The deploy-aware feedback loop must close the visual gap between editing code and seeing results on remote preview targets.
-- Why it is the limiter: Without this, editing against staging/production targets is a dead-end — the user edits code but never sees the result without manual intervention outside Pixel Forge.
-- Smallest complete unit to attack it: After agent completion on a remote target, the agent receives a deploy instruction, the chat shows a "Refresh Preview" button, and clicking it cache-busts the iframe without losing auth.
-- Immediate proof target: Edit code against a remote preview URL, see the agent instructed to deploy, click Refresh Preview, and confirm the iframe reloads to the same path with fresh content.
+- `[active]` Preview loading is still modeled as one global URL instead of a reusable browser layer with multiple tab-scoped sessions under one unified Live Editor chat.
+- Why it is the limiter: This blocks Pixel Forge’s key differentiator — selecting and comparing elements across multiple live sources while keeping one coherent project-level editing thread.
+- Smallest complete unit to attack it: One Live Editor thread opens multiple preview tabs, each tab preserves its own proxy session/cookie state, selections from different tabs remain in one list, and the built prompt groups them by tab/source.
+- Immediate proof target: Open two preview tabs, select at least one element from each, switch tabs without losing per-tab overlays/state, send one request, and confirm the request context clearly identifies both sources.
 
 # Current Proof Status
 
-- `[validated]` Live Editor thread metadata now persists outside process memory. Basis: Pixel Forge stores thread state in a SQLite-backed local state file.
+- `[validated]` Live Editor thread metadata now persists outside process memory. Basis: Pixel Forge stores thread state in a shared SQLite-backed local state database.
 - `[validated]` Live Editor request context now lands on disk as request packs under `.pixel-forge/requests`. Basis: the backend writes request packs before dispatch.
 - `[validated]` Pixel Forge now dispatches Live Editor requests into Agent Deck sessions instead of spawning direct `claude -p` processes for that path. Basis: `/ws/live-editor` uses the Agent Deck bridge.
 - `[validated]` Pixel Forge surfaces Agent Deck session identity in the Live Editor UI. Basis: the frontend persists and displays Agent Deck session metadata.
 - `[validated]` Pixel Forge now separates workspace selection, preview URL, and generated output policy in the selector flow. Basis: the selector now binds a workspace, accepts any preview URL, and defaults scratch output to `.pixel-forge/generated/`.
+- `[validated]` Project/workspace metadata and resumable Live Editor session linkage now persist server-side in SQLite under `~/.pixel-forge/pixel-forge.db`. Basis: recent projects, preview URL history, and Live Editor session metadata now load from backend APIs instead of browser localStorage.
 - `[validated]` Pixel Forge now maintains browser-scoped proxy sessions with upstream cookie jars for authenticated targets. Basis: `/config/app-proxy` issues a local proxy-session cookie and the app proxy reuses per-session upstream clients instead of one global stateless target.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.
-- `[planned]` Multi-source context: dual-iframe layout with source-tagged element selections and dual proxy path prefixes.
+- `[unvalidated]` Multi-tab preview context: one unified Live Editor chat with browser-style preview tabs, tab-scoped proxy state, and source-tagged element selections. Basis: now the active product direction, but not yet proven against real multi-tab comparison flows.
 - `[planned]` Screenshot bootstrap will be migrated onto the same session control plane only after the Live Editor loop is proven superior there.
 
 # Open Questions

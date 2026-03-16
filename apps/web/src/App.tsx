@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { generateCode } from "./generateCode";
-import SettingsDialog from "./components/settings/SettingsDialog";
+import SettingsSidebar from "./components/settings/SettingsSidebar";
 import { AppState, CodeGenerationParams, EditorTheme, Settings } from "./types";
 import { usePersistedState } from "./hooks/usePersistedState";
-import { USER_CLOSE_WEB_SOCKET_CODE } from "./constants";
+// USER_CLOSE_WEB_SOCKET_CODE removed — cancelCodeGeneration no longer used
 import { extractHistory } from "./components/history/utils";
 import toast from "react-hot-toast";
 import { Stack } from "./lib/stacks";
@@ -13,13 +13,13 @@ import useBrowserTabIndicator from "./hooks/useBrowserTabIndicator";
 import { useAppStore } from "./store/app-store";
 import { useProjectStore } from "./store/project-store";
 import { useSessionStore } from "./store/session-store";
-import Sidebar from "./components/sidebar/Sidebar";
+// Sidebar removed — screenshot workflow sidebar no longer rendered
 import PreviewPane from "./components/preview/PreviewPane";
-import { GenerationSettings } from "./components/settings/GenerationSettings";
+// GenerationSettings moved into SettingsSidebar
 import StartPane from "./components/start-pane/StartPane";
 import { Commit } from "./components/commits/types";
 import { createCommit } from "./components/commits/utils";
-import GenerateFromText from "./components/generate-from-text/GenerateFromText";
+// GenerateFromText removed — screenshot workflow sidebar no longer rendered
 import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
@@ -34,7 +34,6 @@ function App() {
     referenceImages,
     setReferenceImages,
     initialPrompt,
-    setInitialPrompt,
 
     head,
     commits,
@@ -65,23 +64,28 @@ function App() {
   const {
     sessionId,
     projectPath,
-    projectName,
     activeMode,
+    projectsLoaded,
+    hydrateProjects,
     setSessionId,
     switchMode,
-    liveEditorSession,
   } = useSessionStore();
 
   // Project selector state - show on first load if no project is set
   const [showProjectSelector, setShowProjectSelector] = useState(false);
 
+  useEffect(() => {
+    void hydrateProjects().catch((error) => {
+      console.error("[app] Failed to hydrate projects:", error);
+    });
+  }, [hydrateProjects]);
+
   // Show project selector on first render if no project is configured
   useEffect(() => {
-    // Only show on initial load in INITIAL state with no project
-    if (appState === AppState.INITIAL && !projectPath) {
+    if (projectsLoaded && appState === AppState.INITIAL && !projectPath) {
       setShowProjectSelector(true);
     }
-  }, []);
+  }, [appState, projectPath, projectsLoaded]);
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(
@@ -98,10 +102,6 @@ function App() {
   );
 
   const wsRef = useRef<WebSocket>(null);
-
-  const showSelectAndEditFeature =
-    settings.generatedCodeConfig === Stack.HTML_TAILWIND ||
-    settings.generatedCodeConfig === Stack.HTML_CSS;
 
   // Indicate coding state using the browser tab's favicon and title
   useBrowserTabIndicator(appState === AppState.CODING);
@@ -133,35 +133,6 @@ function App() {
     setInputMode("image");
     setReferenceImages([]);
     setIsImportedFromCode(false);
-  };
-
-  const regenerate = () => {
-    if (head === null) {
-      toast.error(
-        "No current version set. Please contact support via chat or Github."
-      );
-      throw new Error("Regenerate called with no head");
-    }
-
-    // Retrieve the previous command
-    const currentCommit = commits[head];
-    if (currentCommit.type !== "ai_create") {
-      toast.error("Only the first version can be regenerated.");
-      return;
-    }
-
-    // Re-run the create
-    if (inputMode === "image" || inputMode === "video") {
-      doCreate(referenceImages, inputMode);
-    } else {
-      // TODO: Fix this
-      doCreateFromText(initialPrompt);
-    }
-  };
-
-  // Used when the user cancels the code generation
-  const cancelCodeGeneration = () => {
-    wsRef.current?.close?.(USER_CLOSE_WEB_SOCKET_CODE);
   };
 
   // Used for code generation failure as well
@@ -316,19 +287,6 @@ function App() {
     }
   }
 
-  function doCreateFromText(text: string) {
-    // Reset any existing state
-    reset();
-
-    setInputMode("text");
-    setInitialPrompt(text);
-    doGenerateCode({
-      generationType: "create",
-      inputMode: "text",
-      prompt: { text, images: [] },
-    });
-  }
-
   // Subsequent updates
   async function doUpdate(
     updateInstruction: string,
@@ -418,68 +376,22 @@ function App() {
   }
 
   return (
-    <div className="dark:bg-background dark:text-foreground">
+    <div className="dark:bg-background dark:text-foreground flex flex-row h-screen overflow-hidden">
       {/* Project Selector Modal */}
       <ProjectSelector
         open={showProjectSelector}
         onOpenChange={setShowProjectSelector}
       />
 
-      {/* Sidebar - only visible in Screenshot mode */}
-      {activeMode !== "live-editor" && (
-      <div className="lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-96 lg:flex-col">
-        <div className="flex grow flex-col gap-y-3 overflow-y-auto border-r border-border bg-card/50 px-5 dark:text-foreground">
-          {/* Header with access to settings */}
-          <div className="flex items-center justify-between mt-8 mb-1">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/12">
-                <span className="text-sm font-bold text-primary">//</span>
-              </div>
-              <h1 className="text-lg font-semibold tracking-tight">Pixel Forge</h1>
-            </div>
-            <SettingsDialog settings={settings} setSettings={setSettings} />
-          </div>
+      {/* Settings drawer - pushes main content */}
+      <SettingsSidebar
+        settings={settings}
+        setSettings={setSettings}
+        onOpenProjectSelector={() => setShowProjectSelector(true)}
+      />
 
-          {/* Project indicator */}
-          <button
-            onClick={() => setShowProjectSelector(true)}
-            className="flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2 text-sm transition-all hover:border-border hover:bg-background/60"
-          >
-            <span className="text-muted-foreground text-xs">Project</span>
-            <span className="font-medium truncate text-xs">
-              {projectName || "None selected"}
-            </span>
-            {(sessionId || liveEditorSession) && (
-              <span className="forge-status-dot bg-primary ml-auto" title="Session active" />
-            )}
-          </button>
-
-          {/* Generation settings like stack and model */}
-          <GenerationSettings settings={settings} setSettings={setSettings} />
-
-          {/* Show tip link until coding is complete */}
-          {/* {appState !== AppState.CODE_READY && <TipLink />} */}
-
-          {appState === AppState.INITIAL && (
-            <GenerateFromText doCreateFromText={doCreateFromText} />
-          )}
-
-          {/* Rest of the sidebar when we're not in the initial state */}
-          {(appState === AppState.CODING ||
-            appState === AppState.CODE_READY) && (
-            <Sidebar
-              showSelectAndEditFeature={showSelectAndEditFeature}
-              doUpdate={doUpdate}
-              regenerate={regenerate}
-              cancelCodeGeneration={cancelCodeGeneration}
-            />
-          )}
-        </div>
-      </div>
-      )}
-
-      {/* Main content - full width in Live Editor, with sidebar offset in Screenshot mode */}
-      <main className={`flex flex-col h-screen overflow-hidden ${activeMode === "live-editor" ? "" : "lg:pl-96"}`}>
+      {/* Main content */}
+      <main className="flex flex-col flex-1 min-w-0 h-screen overflow-hidden">
         {/* Mode Tab Bar */}
         <ModeTabBar />
 

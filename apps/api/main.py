@@ -32,6 +32,16 @@ from live_editor_threads import (
     get_or_create_live_editor_thread,
     update_live_editor_thread,
 )
+from project_store import (
+    delete_project,
+    list_project_sessions,
+    list_project_urls,
+    list_projects,
+    project_name_for_path,
+    touch_project_url,
+    upsert_project,
+    upsert_session,
+)
 from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
@@ -217,6 +227,7 @@ from app_proxy import (
 class AppProxyConfig(BaseModel):
     target_url: str | None = None
     url: str | None = None
+    session_id: str | None = None
 
 
 class BrowseDirectoryRequest(BaseModel):
@@ -228,6 +239,17 @@ class SaveCodeRequest(BaseModel):
     project_path: str
     file_path: str | None = None  # Default: .pixel-forge/generated/{filename based on stack}
     stack: str = "html_tailwind"
+
+
+class ProjectRequest(BaseModel):
+    path: str
+    name: str | None = None
+    output_mode: Literal["scratch", "custom"] = "scratch"
+    custom_output_path: str | None = None
+
+
+class ProjectUrlRequest(BaseModel):
+    url: str
 
 
 # Stack to file extension mapping
@@ -264,6 +286,87 @@ def resolve_project_file_path(project_path: str, rel_path: str) -> tuple[str, st
         raise ValueError("Invalid file path: path traversal not allowed")
 
     return normalized_rel_path, full_path
+
+
+def serialize_project_url(url_record) -> dict[str, object]:
+    return {
+        "url": url_record.url,
+        "last_used": url_record.last_used,
+        "use_count": url_record.use_count,
+    }
+
+
+def serialize_project(project_record) -> dict[str, object]:
+    return {
+        "path": project_record.path,
+        "name": project_record.name,
+        "output_mode": project_record.output_mode,
+        "custom_output_path": project_record.custom_output_path,
+        "created_at": project_record.created_at,
+        "last_opened": project_record.last_opened,
+        "urls": [serialize_project_url(url_record) for url_record in project_record.urls],
+    }
+
+
+def serialize_session(session_record) -> dict[str, object]:
+    return {
+        "id": session_record.id,
+        "project_path": session_record.project_path,
+        "thread_id": session_record.thread_id,
+        "backend": session_record.backend,
+        "agent_deck_session_id": session_record.agent_deck_session_id,
+        "agent_deck_session_title": session_record.agent_deck_session_title,
+        "created_at": session_record.created_at,
+        "last_active": session_record.last_active,
+    }
+
+
+@app.get("/api/projects")
+async def get_projects():
+    return {"projects": [serialize_project(project) for project in list_projects()]}
+
+
+@app.post("/api/projects")
+async def save_project(request: ProjectRequest):
+    project = upsert_project(
+        request.path,
+        name=request.name or project_name_for_path(request.path),
+        output_mode=request.output_mode,
+        custom_output_path=request.custom_output_path,
+    )
+    return serialize_project(project)
+
+
+@app.delete("/api/projects/{project_path:path}")
+async def remove_project(project_path: str):
+    deleted = delete_project(project_path)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"status": "deleted"}
+
+
+@app.get("/api/projects/{project_path:path}/urls")
+async def get_project_urls(project_path: str):
+    return {"urls": [serialize_project_url(url) for url in list_project_urls(project_path)]}
+
+
+@app.post("/api/projects/{project_path:path}/urls")
+async def add_project_url(project_path: str, request: ProjectUrlRequest):
+    try:
+        urls = touch_project_url(project_path, request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"urls": [serialize_project_url(url) for url in urls]}
+
+
+@app.get("/api/projects/{project_path:path}/sessions")
+async def get_project_sessions(project_path: str):
+    return {
+        "sessions": [
+            serialize_session(session)
+            for session in list_project_sessions(project_path)
+        ]
+    }
 
 
 @app.post("/browse/directory")
@@ -380,7 +483,7 @@ async def configure_app_proxy(
 
     session = await configure_proxy_target(
         target_url,
-        request.cookies.get(PROXY_SESSION_COOKIE),
+        config.session_id or request.cookies.get(PROXY_SESSION_COOKIE),
     )
     response.set_cookie(
         key=PROXY_SESSION_COOKIE,
@@ -406,10 +509,16 @@ async def get_app_proxy_config(request: Request):
 
 
 @app.delete("/config/app-proxy")
-async def clear_app_proxy_config(request: Request, response: Response):
+async def clear_app_proxy_config(
+    request: Request,
+    response: Response,
+    session_id: str | None = None,
+):
     """Clear the current browser-scoped app proxy session."""
-    await clear_proxy_session(request.cookies.get(PROXY_SESSION_COOKIE))
-    response.delete_cookie(key=PROXY_SESSION_COOKIE, path="/")
+    resolved_session_id = session_id or request.cookies.get(PROXY_SESSION_COOKIE)
+    await clear_proxy_session(resolved_session_id)
+    if resolved_session_id == request.cookies.get(PROXY_SESSION_COOKIE):
+        response.delete_cookie(key=PROXY_SESSION_COOKIE, path="/")
     return {"status": "cleared"}
 
 
@@ -1298,6 +1407,7 @@ async def live_editor_chat(websocket: WebSocket):
             thread_id = data.get("thread_id") or data.get("session_id")
             project_path = data.get("project_path", "")
             preview_url = data.get("preview_url", "")
+            agent_type = data.get("agent_type", "claude")
 
             if not attachments and legacy_images:
                 attachments = [
@@ -1336,6 +1446,12 @@ async def live_editor_chat(websocket: WebSocket):
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
+                upsert_project(
+                    project_path,
+                    name=project_name_for_path(project_path),
+                )
+                if preview_url:
+                    touch_project_url(project_path, preview_url)
                 thread = get_or_create_live_editor_thread(
                     project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
@@ -1348,12 +1464,19 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
 
-                session_info = await ensure_agent_deck_session(project_path, thread)
+                session_info = await ensure_agent_deck_session(project_path, thread, agent_type=agent_type)
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                     claude_session_id=session_info.claude_session_id or "",
+                )
+                upsert_session(
+                    project_path,
+                    thread_id=thread.thread_id,
+                    backend=thread.backend,
+                    agent_deck_session_id=session_info.agent_deck_session_id,
+                    agent_deck_session_title=session_info.agent_deck_session_title,
                 )
 
                 request_pack = create_request_pack(
@@ -1432,10 +1555,17 @@ async def live_editor_chat(websocket: WebSocket):
                             }
                         )
 
-                refreshed_session = await ensure_agent_deck_session(project_path, thread)
+                refreshed_session = await ensure_agent_deck_session(project_path, thread, agent_type=agent_type)
                 update_live_editor_thread(
                     thread.thread_id,
                     claude_session_id=refreshed_session.claude_session_id or "",
+                )
+                upsert_session(
+                    project_path,
+                    thread_id=thread.thread_id,
+                    backend=thread.backend,
+                    agent_deck_session_id=refreshed_session.agent_deck_session_id,
+                    agent_deck_session_title=refreshed_session.agent_deck_session_title,
                 )
 
                 await websocket.send_json(

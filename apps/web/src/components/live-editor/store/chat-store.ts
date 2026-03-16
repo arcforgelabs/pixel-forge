@@ -52,6 +52,10 @@ export interface SelectedElement {
   textContent: string
   xpath: string
   outerHTML: string
+  sourceTabId: string
+  sourceTabLabel: string
+  sourceUrl: string
+  pageTitle?: string | null
   timestamp: Date
 }
 
@@ -374,11 +378,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     })
 
     const previewUrl = useSessionStore.getState().previewUrl
+    const agentType = useSessionStore.getState().agentType
     const payload: Record<string, unknown> = {
       message: trimmedContent,
       project_path: projectPath,
       element_context: elementContext,
       preview_url: previewUrl || '',
+      agent_type: agentType || 'claude',
     }
 
     if (hasAttachments) {
@@ -417,8 +423,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   addElement: (element) => {
     const { selectedElements, maxSelectedElements } = get()
 
-    // Check if already selected (by xpath)
-    if (selectedElements.some(e => e.xpath === element.xpath)) {
+    // Check if already selected (by source + xpath)
+    if (selectedElements.some(
+      (e) =>
+        e.sourceTabId === element.sourceTabId
+        && e.sourceUrl === element.sourceUrl
+        && e.xpath === element.xpath
+    )) {
       console.log('[live-editor] Element already selected')
       return
     }
@@ -461,31 +472,57 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       return ''
     }
 
-    if (selectedElements.length === 1) {
-      const el = selectedElements[0]
-      return `<selected-element>
-<tag>${el.tagName}</tag>
-${el.elementId ? `<id>${el.elementId}</id>` : ''}
-${el.classList.length > 0 ? `<classes>${el.classList.join(' ')}</classes>` : ''}
-<xpath>${el.xpath}</xpath>
-<html>
-${el.outerHTML.slice(0, 2000)}${el.outerHTML.length > 2000 ? '... (truncated)' : ''}
-</html>
-</selected-element>`
-    }
+    const groups = new Map<
+      string,
+      {
+        sourceTabId: string
+        sourceTabLabel: string
+        sourceUrl: string
+        pageTitle: string | null
+        elements: SelectedElement[]
+      }
+    >()
 
-    // Multiple elements
-    return selectedElements
-      .map((el, index) => {
-        return `<selected-element index="${index + 1}">
-<tag>${el.tagName}</tag>
-${el.elementId ? `<id>${el.elementId}</id>` : ''}
-${el.classList.length > 0 ? `<classes>${el.classList.join(' ')}</classes>` : ''}
-<xpath>${el.xpath}</xpath>
+    selectedElements.forEach((element) => {
+      const key = `${element.sourceTabId}::${element.sourceUrl}`
+      if (!groups.has(key)) {
+        groups.set(key, {
+          sourceTabId: element.sourceTabId,
+          sourceTabLabel: element.sourceTabLabel,
+          sourceUrl: element.sourceUrl,
+          pageTitle: element.pageTitle ?? null,
+          elements: [],
+        })
+      }
+      groups.get(key)?.elements.push(element)
+    })
+
+    return Array.from(groups.values())
+      .map((group, groupIndex) => {
+        const pageTitleBlock = group.pageTitle
+          ? `\n<title>${group.pageTitle}</title>`
+          : ''
+
+        const elementBlocks = group.elements
+          .map((element, elementIndex) => {
+            const htmlLimit = group.elements.length === 1 && selectedElements.length === 1
+              ? 2000
+              : 1000
+            return `<selected-element index="${elementIndex + 1}" global-index="${selectedElements.findIndex((candidate) => candidate.id === element.id) + 1}">
+<tag>${element.tagName}</tag>
+${element.elementId ? `<id>${element.elementId}</id>` : ''}
+${element.classList.length > 0 ? `<classes>${element.classList.join(' ')}</classes>` : ''}
+<xpath>${element.xpath}</xpath>
 <html>
-${el.outerHTML.slice(0, 1000)}${el.outerHTML.length > 1000 ? '... (truncated)' : ''}
+${element.outerHTML.slice(0, htmlLimit)}${element.outerHTML.length > htmlLimit ? '... (truncated)' : ''}
 </html>
 </selected-element>`
+          })
+          .join('\n\n')
+
+        return `<source index="${groupIndex + 1}" tab-id="${group.sourceTabId}" tab="${group.sourceTabLabel}" url="${group.sourceUrl}">${pageTitleBlock}
+${elementBlocks}
+</source>`
       })
       .join('\n\n')
   },

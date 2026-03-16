@@ -1,5 +1,5 @@
+import { HTTP_BACKEND_URL } from "@/config";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export type ActiveMode = "screenshot" | "live-editor";
 export type OutputMode = "scratch" | "custom";
@@ -15,10 +15,17 @@ export interface LiveEditorSessionMeta {
 export interface SavedProject {
   path: string;
   name: string;
-  previewUrls: string[]; // Most recent first, max 10
+  previewUrls: string[];
   outputMode?: OutputMode;
   customOutputPath?: string;
-  lastOpened: string; // ISO date string
+  lastOpened: string;
+}
+
+export interface ProjectSessionRecord extends LiveEditorSessionMeta {
+  id: number;
+  projectPath: string;
+  createdAt: string;
+  lastActive: string;
 }
 
 export interface LastSavedFile {
@@ -39,8 +46,11 @@ interface SessionStore {
   // Mode switching
   activeMode: ActiveMode;
 
-  // Persisted projects
+  // Server-backed project/session state
   recentProjects: SavedProject[];
+  projectSessions: ProjectSessionRecord[];
+  projectsLoaded: boolean;
+  projectsLoading: boolean;
 
   // Output configuration
   outputMode: OutputMode;
@@ -48,31 +58,67 @@ interface SessionStore {
   lastSavedFile: LastSavedFile | null;
 
   // Actions
+  hydrateProjects: () => Promise<void>;
   setProject: (options: {
     path: string;
     previewUrl?: string;
     outputMode?: OutputMode;
     customOutputPath?: string | null;
-  }) => void;
-  setSessionId: (sessionId: string) => void;
-  setLiveEditorSession: (session: LiveEditorSessionMeta) => void;
+  }) => Promise<void>;
+  setSessionId: (sessionId: string | null) => void;
+  setLiveEditorSession: (session: LiveEditorSessionMeta | null) => void;
   switchMode: (mode: ActiveMode) => void;
   newSession: () => void;
   clearLiveEditorSession: () => void;
   clearProject: () => void;
-  setPreviewUrl: (url: string | null) => void;
+  setPreviewUrl: (url: string | null) => Promise<void>;
   setOutputSettings: (
     outputMode: OutputMode,
     customOutputPath?: string | null
-  ) => void;
+  ) => Promise<void>;
   setLastSavedFile: (
     filePath: string,
     relPath: string,
     urlPath: string
   ) => void;
 
+  // Agent selection
+  agentType: string;
+  setAgentType: (agentType: string) => void;
+
+  // Settings sidebar
+  settingsSidebarOpen: boolean;
+  toggleSettingsSidebar: () => void;
+
   // Helpers
   getCurrentProjectUrls: () => string[];
+}
+
+interface ApiProjectUrl {
+  url: string;
+  last_used: string;
+  use_count: number;
+}
+
+interface ApiProject {
+  path: string;
+  name: string;
+  output_mode: OutputMode;
+  custom_output_path: string | null;
+  created_at: string;
+  last_opened: string;
+  urls: ApiProjectUrl[];
+}
+
+interface ApiSession {
+  id: number;
+  project_path: string;
+  thread_id: string;
+  backend: string;
+  agent_deck_session_id: string | null;
+  agent_deck_session_title: string | null;
+  created_at: string;
+  last_active: string;
 }
 
 function getProjectName(path: string): string {
@@ -80,254 +126,363 @@ function getProjectName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** Add a URL to the front of a URL list, deduplicating and capping at 10. */
-function pushUrl(urls: string[], url: string): string[] {
-  const filtered = urls.filter((u) => u !== url);
-  return [url, ...filtered].slice(0, 10);
+function normalizeProject(project: ApiProject): SavedProject {
+  return {
+    path: project.path,
+    name: project.name,
+    previewUrls: project.urls.map((urlRecord) => urlRecord.url),
+    outputMode: project.output_mode,
+    customOutputPath: project.custom_output_path || undefined,
+    lastOpened: project.last_opened,
+  };
 }
 
-export const useSessionStore = create<SessionStore>()(
-  persist(
-    (set, get) => ({
-      // Current project
+function normalizeSession(session: ApiSession): ProjectSessionRecord {
+  return {
+    id: session.id,
+    projectPath: session.project_path,
+    threadId: session.thread_id,
+    backend: session.backend,
+    agentDeckSessionId: session.agent_deck_session_id,
+    agentDeckSessionTitle: session.agent_deck_session_title,
+    createdAt: session.created_at,
+    lastActive: session.last_active,
+    requestId: null,
+  };
+}
+
+function mergeProject(projects: SavedProject[], project: SavedProject): SavedProject[] {
+  return [project, ...projects.filter((existing) => existing.path !== project.path)];
+}
+
+function mergeSession(
+  sessions: ProjectSessionRecord[],
+  projectPath: string | null,
+  session: LiveEditorSessionMeta | null
+): ProjectSessionRecord[] {
+  if (!projectPath || !session) {
+    return sessions;
+  }
+
+  const now = new Date().toISOString();
+  const existing = sessions.find((entry) => entry.threadId === session.threadId);
+  const merged: ProjectSessionRecord = existing
+    ? {
+        ...existing,
+        ...session,
+        lastActive: now,
+      }
+    : {
+        id: -1,
+        projectPath,
+        createdAt: now,
+        lastActive: now,
+        ...session,
+      };
+
+  return [merged, ...sessions.filter((entry) => entry.threadId !== merged.threadId)];
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
+    credentials: "include",
+    ...init,
+    headers: {
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      message = payload.detail || message;
+    } catch {
+      const text = await response.text();
+      message = text || message;
+    }
+    throw new Error(message);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function fetchProjects(): Promise<SavedProject[]> {
+  const payload = await requestJson<{ projects: ApiProject[] }>("/api/projects");
+  return payload.projects.map(normalizeProject);
+}
+
+async function saveProjectToApi(options: {
+  path: string;
+  name?: string;
+  outputMode: OutputMode;
+  customOutputPath?: string | null;
+}): Promise<SavedProject> {
+  const payload = await requestJson<ApiProject>("/api/projects", {
+    method: "POST",
+    body: JSON.stringify({
+      path: options.path,
+      name: options.name,
+      output_mode: options.outputMode,
+      custom_output_path:
+        options.outputMode === "custom" ? options.customOutputPath || null : null,
+    }),
+  });
+
+  return normalizeProject(payload);
+}
+
+async function fetchProjectUrls(projectPath: string): Promise<string[]> {
+  const payload = await requestJson<{ urls: ApiProjectUrl[] }>(
+    `/api/projects/${encodeURIComponent(projectPath)}/urls`
+  );
+  return payload.urls.map((urlRecord) => urlRecord.url);
+}
+
+async function touchProjectUrl(projectPath: string, url: string): Promise<string[]> {
+  const payload = await requestJson<{ urls: ApiProjectUrl[] }>(
+    `/api/projects/${encodeURIComponent(projectPath)}/urls`,
+    {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }
+  );
+
+  return payload.urls.map((urlRecord) => urlRecord.url);
+}
+
+async function fetchProjectSessions(projectPath: string): Promise<ProjectSessionRecord[]> {
+  const payload = await requestJson<{ sessions: ApiSession[] }>(
+    `/api/projects/${encodeURIComponent(projectPath)}/sessions`
+  );
+  return payload.sessions.map(normalizeSession);
+}
+
+export const useSessionStore = create<SessionStore>()((set, get) => ({
+  // Current project
+  projectPath: null,
+  projectName: null,
+  previewUrl: null,
+  sessionId: null,
+  liveEditorSession: null,
+
+  // Mode
+  activeMode: "screenshot",
+
+  // Server-backed project/session state
+  recentProjects: [],
+  projectSessions: [],
+  projectsLoaded: false,
+  projectsLoading: false,
+
+  // Output configuration
+  outputMode: "scratch",
+  customOutputPath: null,
+  lastSavedFile: null,
+
+  // Agent selection
+  agentType: "claude",
+  setAgentType: (agentType: string) => {
+    set({ agentType });
+  },
+
+  // Settings sidebar
+  settingsSidebarOpen: false,
+  toggleSettingsSidebar: () => {
+    set((state) => ({ settingsSidebarOpen: !state.settingsSidebarOpen }));
+  },
+
+  hydrateProjects: async () => {
+    set({ projectsLoading: true });
+    try {
+      const recentProjects = await fetchProjects();
+      set((state) => {
+        const currentProject = state.projectPath
+          ? recentProjects.find((project) => project.path === state.projectPath)
+          : null;
+
+        return {
+          recentProjects,
+          projectName: currentProject?.name ?? state.projectName,
+          outputMode: currentProject?.outputMode ?? state.outputMode,
+          customOutputPath:
+            currentProject?.customOutputPath ?? state.customOutputPath,
+          projectsLoaded: true,
+          projectsLoading: false,
+        };
+      });
+    } catch (error) {
+      console.error("[session-store] Failed to load projects:", error);
+      set({ projectsLoaded: true, projectsLoading: false });
+      throw error;
+    }
+  },
+
+  setProject: async ({ path, previewUrl, outputMode, customOutputPath }) => {
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      throw new Error("Project path is required");
+    }
+
+    const state = get();
+    const existingProject = state.recentProjects.find(
+      (project) => project.path === trimmedPath
+    );
+    const nextOutputMode = outputMode ?? existingProject?.outputMode ?? state.outputMode;
+    const nextCustomOutputPath =
+      nextOutputMode === "custom"
+        ? customOutputPath ?? existingProject?.customOutputPath ?? state.customOutputPath
+        : null;
+
+    const savedProject = await saveProjectToApi({
+      path: trimmedPath,
+      name: getProjectName(trimmedPath),
+      outputMode: nextOutputMode,
+      customOutputPath: nextCustomOutputPath,
+    });
+
+    const [previewUrls, projectSessions] = await Promise.all([
+      previewUrl?.trim()
+        ? touchProjectUrl(savedProject.path, previewUrl.trim())
+        : fetchProjectUrls(savedProject.path),
+      fetchProjectSessions(savedProject.path),
+    ]);
+
+    const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
+    const currentSession = projectSessions[0] ?? null;
+    const updatedProject: SavedProject = {
+      ...savedProject,
+      previewUrls,
+      lastOpened: new Date().toISOString(),
+    };
+
+    set((currentState) => ({
+      projectPath: savedProject.path,
+      projectName: savedProject.name,
+      previewUrl: currentPreviewUrl,
+      outputMode: savedProject.outputMode || nextOutputMode,
+      customOutputPath: savedProject.customOutputPath ?? null,
+      sessionId: null,
+      liveEditorSession: currentSession,
+      recentProjects: mergeProject(currentState.recentProjects, updatedProject),
+      projectSessions,
+    }));
+  },
+
+  setSessionId: (sessionId) => {
+    set({ sessionId });
+  },
+
+  setLiveEditorSession: (session) => {
+    set((state) => ({
+      liveEditorSession: session,
+      projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+    }));
+  },
+
+  switchMode: (mode) => {
+    set({ activeMode: mode });
+  },
+
+  newSession: () => {
+    set({ sessionId: null, liveEditorSession: null });
+  },
+
+  clearLiveEditorSession: () => {
+    set({ liveEditorSession: null });
+  },
+
+  clearProject: () => {
+    set({
       projectPath: null,
       projectName: null,
       previewUrl: null,
       sessionId: null,
       liveEditorSession: null,
-
-      // Mode
-      activeMode: "screenshot",
-
-      // Projects (persisted)
-      recentProjects: [],
-
-      // Output configuration
       outputMode: "scratch",
       customOutputPath: null,
       lastSavedFile: null,
+      projectSessions: [],
+    });
+  },
 
-      // Actions
-      setProject: ({ path, previewUrl, outputMode, customOutputPath }) => {
-        const name = getProjectName(path);
-        const now = new Date().toISOString();
+  setPreviewUrl: async (url) => {
+    const normalizedUrl = url?.trim() || null;
+    set({ previewUrl: normalizedUrl });
 
-        set((state) => {
-          const existing = state.recentProjects.find((p) => p.path === path);
-          const filtered = state.recentProjects.filter((p) => p.path !== path);
-
-          const existingUrls = existing?.previewUrls ?? [];
-          const newUrls = previewUrl
-            ? pushUrl(existingUrls, previewUrl)
-            : existingUrls;
-
-          const project: SavedProject = {
-            path,
-            name,
-            previewUrls: newUrls,
-            outputMode: outputMode ?? existing?.outputMode ?? state.outputMode,
-            customOutputPath:
-              outputMode === "custom"
-                ? customOutputPath || undefined
-                : existing?.customOutputPath,
-            lastOpened: now,
-          };
-
-          return {
-            projectPath: path,
-            projectName: name,
-            previewUrl: previewUrl || null,
-            outputMode: outputMode ?? state.outputMode,
-            customOutputPath:
-              outputMode === "custom" ? customOutputPath || null : null,
-            sessionId: null,
-            liveEditorSession: null,
-            recentProjects: [project, ...filtered].slice(0, 10),
-          };
-        });
-      },
-
-      setSessionId: (sessionId: string) => {
-        set({ sessionId });
-      },
-
-      setLiveEditorSession: (session: LiveEditorSessionMeta) => {
-        set({ liveEditorSession: session });
-      },
-
-      switchMode: (mode: ActiveMode) => {
-        set({ activeMode: mode });
-      },
-
-      newSession: () => {
-        set({ sessionId: null, liveEditorSession: null });
-      },
-
-      clearLiveEditorSession: () => {
-        set({ liveEditorSession: null });
-      },
-
-      clearProject: () => {
-        set({
-          projectPath: null,
-          projectName: null,
-          previewUrl: null,
-          sessionId: null,
-          liveEditorSession: null,
-          outputMode: "scratch",
-          customOutputPath: null,
-          lastSavedFile: null,
-        });
-      },
-
-      setPreviewUrl: (url: string | null) => {
-        set((state) => {
-          if (!state.projectPath || !url) {
-            return { previewUrl: url };
-          }
-
-          // Accumulate URL into the project's history
-          return {
-            previewUrl: url,
-            recentProjects: state.recentProjects.map((project) =>
-              project.path === state.projectPath
-                ? { ...project, previewUrls: pushUrl(project.previewUrls, url) }
-                : project
-            ),
-          };
-        });
-      },
-
-      setOutputSettings: (
-        outputMode: OutputMode,
-        customOutputPath?: string | null
-      ) => {
-        set((state) => {
-          const normalizedCustomPath =
-            outputMode === "custom" ? customOutputPath || null : null;
-
-          const updatedRecents = state.projectPath
-            ? state.recentProjects.map((project) =>
-                project.path === state.projectPath
-                  ? {
-                      ...project,
-                      outputMode,
-                      customOutputPath: normalizedCustomPath || undefined,
-                    }
-                  : project
-              )
-            : state.recentProjects;
-
-          return {
-            outputMode,
-            customOutputPath: normalizedCustomPath,
-            recentProjects: updatedRecents,
-          };
-        });
-      },
-
-      setLastSavedFile: (
-        filePath: string,
-        relPath: string,
-        urlPath: string
-      ) => {
-        set({
-          lastSavedFile: {
-            filePath,
-            relPath,
-            urlPath,
-            timestamp: new Date().toISOString(),
-          },
-        });
-      },
-
-      // Helpers
-      getCurrentProjectUrls: () => {
-        const state = get();
-        if (!state.projectPath) return [];
-        const project = state.recentProjects.find(
-          (p) => p.path === state.projectPath
-        );
-        return project?.previewUrls ?? [];
-      },
-    }),
-    {
-      name: "pixel-forge-session",
-      version: 3,
-      migrate: (persistedState: unknown, _version: number) => {
-        const state = (persistedState ?? {}) as Record<string, unknown>;
-
-        // Migrate v2 → v3: previewUrl (single) → previewUrls (array)
-        const rawProjects = Array.isArray(state.recentProjects)
-          ? state.recentProjects
-          : [];
-
-        const recentProjects = rawProjects.map((raw) => {
-          if (!raw || typeof raw !== "object") return raw;
-          const p = raw as Record<string, unknown>;
-
-          // Already migrated (has previewUrls array)
-          if (Array.isArray(p.previewUrls)) return p;
-
-          // Migrate from single previewUrl or devServerUrl
-          const singleUrl =
-            typeof p.previewUrl === "string"
-              ? p.previewUrl
-              : typeof p.devServerUrl === "string"
-                ? p.devServerUrl
-                : null;
-
-          const outputMode =
-            p.outputMode === "custom" || p.customOutputPath || p.savePath
-              ? "custom"
-              : "scratch";
-
-          return {
-            ...p,
-            previewUrls: singleUrl ? [singleUrl] : [],
-            outputMode,
-            customOutputPath:
-              typeof p.customOutputPath === "string"
-                ? p.customOutputPath
-                : typeof p.savePath === "string"
-                  ? p.savePath
-                  : undefined,
-          };
-        });
-
-        return {
-          ...state,
-          previewUrl:
-            typeof state.previewUrl === "string"
-              ? state.previewUrl
-              : typeof state.devServerUrl === "string"
-                ? state.devServerUrl
-                : null,
-          outputMode:
-            state.outputMode === "custom" ||
-            typeof state.customOutputPath === "string" ||
-            typeof state.savePath === "string"
-              ? "custom"
-              : "scratch",
-          customOutputPath:
-            typeof state.customOutputPath === "string"
-              ? state.customOutputPath
-              : typeof state.savePath === "string"
-                ? state.savePath
-                : null,
-          recentProjects,
-        };
-      },
-      partialize: (state) => ({
-        recentProjects: state.recentProjects,
-        sessionId: state.sessionId,
-        liveEditorSession: state.liveEditorSession,
-        projectPath: state.projectPath,
-        projectName: state.projectName,
-        previewUrl: state.previewUrl,
-        outputMode: state.outputMode,
-        customOutputPath: state.customOutputPath,
-      }),
+    const { projectPath } = get();
+    if (!projectPath || !normalizedUrl) {
+      return;
     }
-  )
-);
+
+    const previewUrls = await touchProjectUrl(projectPath, normalizedUrl);
+
+    set((state) => ({
+      recentProjects: state.recentProjects.map((project) =>
+        project.path === projectPath
+          ? {
+              ...project,
+              previewUrls,
+              lastOpened: new Date().toISOString(),
+            }
+          : project
+      ),
+    }));
+  },
+
+  setOutputSettings: async (outputMode, customOutputPath) => {
+    const normalizedCustomPath =
+      outputMode === "custom" ? customOutputPath?.trim() || null : null;
+
+    set({
+      outputMode,
+      customOutputPath: normalizedCustomPath,
+    });
+
+    const { projectPath } = get();
+    if (!projectPath) {
+      return;
+    }
+
+    const savedProject = await saveProjectToApi({
+      path: projectPath,
+      name: get().projectName || getProjectName(projectPath),
+      outputMode,
+      customOutputPath: normalizedCustomPath,
+    });
+
+    set((state) => ({
+      recentProjects: state.recentProjects.map((project) =>
+        project.path === savedProject.path
+          ? {
+              ...project,
+              outputMode: savedProject.outputMode,
+              customOutputPath: savedProject.customOutputPath || undefined,
+              lastOpened: savedProject.lastOpened,
+            }
+          : project
+      ),
+    }));
+  },
+
+  setLastSavedFile: (filePath, relPath, urlPath) => {
+    set({
+      lastSavedFile: {
+        filePath,
+        relPath,
+        urlPath,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  },
+
+  getCurrentProjectUrls: () => {
+    const state = get();
+    if (!state.projectPath) return [];
+    const project = state.recentProjects.find(
+      (entry) => entry.path === state.projectPath
+    );
+    return project?.previewUrls ?? [];
+  },
+}));

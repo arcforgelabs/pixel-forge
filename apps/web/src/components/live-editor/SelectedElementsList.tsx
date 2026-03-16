@@ -20,6 +20,9 @@ interface SelectedElementChipProps {
     classList: string[]
     textContent: string
     xpath: string
+    sourceTabId: string
+    sourceTabLabel: string
+    sourceUrl: string
   }
   index: number
   onRemove: () => void
@@ -53,12 +56,18 @@ function SelectedElementChip({
         <span className="font-mono text-xs text-foreground truncate">
           {label}
         </span>
+        <span className="text-[11px] text-primary/80 truncate">
+          {element.sourceTabLabel}
+        </span>
         {preview && (
           <span className="text-xs text-muted-foreground truncate">
             {preview}
             {element.textContent.length > 30 ? '...' : ''}
           </span>
         )}
+        <span className="text-[11px] text-muted-foreground/70 truncate">
+          {element.sourceUrl}
+        </span>
       </div>
 
       {/* Remove button */}
@@ -76,7 +85,12 @@ function SelectedElementChip({
 
 interface SelectedElementsListProps {
   onClearAll?: () => void
-  onRemoveElement?: (id: string, xpath: string) => void
+  onRemoveElement?: (
+    id: string,
+    xpath: string,
+    sourceTabId: string,
+    sourceUrl: string
+  ) => void
 }
 
 export function SelectedElementsList({
@@ -88,9 +102,14 @@ export function SelectedElementsList({
 
   // Use provided handlers or fall back to store-only operations
   const handleClearAll = onClearAll || clearElements
-  const handleRemove = (id: string, xpath: string) => {
+  const handleRemove = (
+    id: string,
+    xpath: string,
+    sourceTabId: string,
+    sourceUrl: string
+  ) => {
     if (onRemoveElement) {
-      onRemoveElement(id, xpath)
+      onRemoveElement(id, xpath, sourceTabId, sourceUrl)
     } else {
       removeElement(id)
     }
@@ -134,7 +153,12 @@ export function SelectedElementsList({
               key={element.id}
               element={element}
               index={index}
-              onRemove={() => handleRemove(element.id, element.xpath)}
+              onRemove={() => handleRemove(
+                element.id,
+                element.xpath,
+                element.sourceTabId,
+                element.sourceUrl
+              )}
             />
           ))}
         </div>

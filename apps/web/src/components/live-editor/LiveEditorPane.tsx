@@ -2,14 +2,8 @@
  * LiveEditorPane Component
  *
  * Main container for the Live Editor feature.
- * Embeds a web app via proxy iframe and provides chat-based editing
- * with Claude, persistent element selection, and tool visualization.
- *
- * Features:
- * - App proxy with script injection for element selection
- * - Multi-element selection with persistent visual highlighting
- * - Full chat interface with streaming responses
- * - Tool execution visualization
+ * The preview/browser layer is tab-based, while chat and selected element
+ * context stay unified at the project level.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -22,62 +16,102 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   ChevronDown,
-  Clock,
-  FolderOpen,
+  Globe2,
   Monitor,
   MousePointer2,
+  Plus,
   RefreshCw,
   Play,
   MessageSquare,
   Layers,
-  Settings,
   Smartphone,
+  X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-// New chat components
 import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
 import { SelectedElementsList } from './SelectedElementsList'
-import { ProjectSelector } from '../project-selector/ProjectSelector'
 import { useLiveEditorStore } from './store/chat-store'
 
 type ViewportMode = 'fluid' | 'desktop' | 'phone'
+
+interface PreviewTab {
+  id: string
+  url: string
+  title: string
+  proxySessionId: string | null
+}
+
+function createPreviewTabId(): string {
+  return `preview-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function getPreviewTabTitle(
+  url: string,
+  title?: string | null,
+  fallbackIndex?: number
+): string {
+  if (title?.trim()) {
+    return title.trim()
+  }
+
+  const trimmedUrl = url.trim()
+  if (!trimmedUrl) {
+    return fallbackIndex ? `Tab ${fallbackIndex}` : 'New Tab'
+  }
+
+  try {
+    const parsed = new URL(trimmedUrl)
+    const suffix = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : ''
+    return `${parsed.hostname}${suffix}`.slice(0, 40)
+  } catch {
+    return trimmedUrl.slice(0, 40)
+  }
+}
+
+function createPreviewTab(url = '', title?: string | null, index?: number): PreviewTab {
+  return {
+    id: createPreviewTabId(),
+    url,
+    title: getPreviewTabTitle(url, title, index),
+    proxySessionId: null,
+  }
+}
 
 export function LiveEditorPane() {
   const {
     projectPath,
     previewUrl,
-    lastSavedFile,
-    liveEditorSession,
-    clearLiveEditorSession,
     setPreviewUrl,
-    recentProjects,
-    setProject,
   } = useSessionStore()
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const targetUrlRef = useRef(previewUrl || '')
   const lastLoadedUrlRef = useRef<string | null>(null)
+  const previewTabsRef = useRef<PreviewTab[]>([])
+  const activeTabIdRef = useRef<string | null>(null)
+  const lastProjectPathRef = useRef<string | null | undefined>(undefined)
+  const internalPreviewUrlRef = useRef<string | null>(null)
+
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
-  const [iframeSrc, setIframeSrc] = useState(previewUrl ? `${HTTP_BACKEND_URL}/app/` : 'about:blank')
+  const [iframeSrc, setIframeSrc] = useState('about:blank')
   const [activeTab, setActiveTab] = useState('chat')
   const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
   const [authIssue, setAuthIssue] = useState<{ status: number; url: string } | null>(null)
-  const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false)
   const [showUrlHistory, setShowUrlHistory] = useState(false)
+  const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>(() => [
+    createPreviewTab('', null, 1),
+  ])
+  const [activePreviewTabId, setActivePreviewTabId] = useState<string | null>(null)
 
-  // Get URL history for current project
-  const currentProjectUrls = useSessionStore((s) => {
-    if (!s.projectPath) return []
-    const project = s.recentProjects.find((p) => p.path === s.projectPath)
+  const currentProjectUrls = useSessionStore((state) => {
+    if (!state.projectPath) return []
+    const project = state.recentProjects.find((entry) => entry.path === state.projectPath)
     return project?.previewUrls ?? []
   })
 
-  // Get store actions and state
-  // Note: sessionId and projectPath are now read from session-store directly
-  // by chat-store, so no sync needed here
   const {
     connect,
     disconnect,
@@ -86,20 +120,27 @@ export function LiveEditorPane() {
     removeElement,
     clearElements,
     selectedElements,
-    newSession,
   } = useLiveEditorStore()
 
-  // Initialize connection on mount
+  useEffect(() => {
+    previewTabsRef.current = previewTabs
+  }, [previewTabs])
+
+  useEffect(() => {
+    activeTabIdRef.current = activePreviewTabId
+  }, [activePreviewTabId])
+
+  useEffect(() => {
+    if (!activePreviewTabId && previewTabs[0]) {
+      setActivePreviewTabId(previewTabs[0].id)
+    }
+  }, [activePreviewTabId, previewTabs])
+
   useEffect(() => {
     connect()
     return () => disconnect()
   }, [connect, disconnect])
 
-  // KNOWN ISSUE: Chat textarea unresponsive after hard refresh
-  // Manual workaround: Switch to Elements/Settings tab, then back to Chat
-  // Root cause: Unknown conflict with iframe's chat interface on initial load
-  // This auto-switch attempt doesn't work reliably - keeping for documentation
-  // TODO: Investigate iframe focus/pointer-events interaction
   useEffect(() => {
     const timer1 = setTimeout(() => setActiveTab('elements'), 500)
     const timer2 = setTimeout(() => setActiveTab('chat'), 600)
@@ -108,8 +149,6 @@ export function LiveEditorPane() {
       clearTimeout(timer2)
     }
   }, [])
-
-  // Note: Project path sync removed - chat-store now reads from session-store directly
 
   useEffect(() => {
     targetUrlRef.current = targetUrl
@@ -120,20 +159,99 @@ export function LiveEditorPane() {
     []
   )
 
-  // Load the preview target into the proxy
+  const getActivePreviewTab = useCallback(() => {
+    if (!activeTabIdRef.current) return null
+    return previewTabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null
+  }, [])
+
+  const syncStorePreviewUrl = useCallback(
+    async (url: string | null) => {
+      const normalizedUrl = url?.trim() || null
+      internalPreviewUrlRef.current = normalizedUrl
+      try {
+        await setPreviewUrl(normalizedUrl)
+      } catch (error) {
+        console.error('[live-editor] Failed to persist preview URL:', error)
+        if (normalizedUrl) {
+          toast.error('Failed to persist preview URL')
+        }
+      }
+    },
+    [setPreviewUrl]
+  )
+
+  const syncActiveTabSelections = useCallback(() => {
+    const activePreviewTab = getActivePreviewTab()
+    if (!activePreviewTab || !iframeRef.current?.contentWindow) {
+      return
+    }
+
+    const xpaths = useLiveEditorStore
+      .getState()
+      .selectedElements
+      .filter(
+        (element) =>
+          element.sourceTabId === activePreviewTab.id
+          && element.sourceUrl === activePreviewTab.url
+      )
+      .map((element) => element.xpath)
+
+    iframeRef.current.contentWindow.postMessage(
+      {
+        type: 'pixel-forge-apply-selections',
+        xpaths,
+      },
+      '*'
+    )
+  }, [getActivePreviewTab])
+
   const loadApp = useCallback(async (
     urlOverride?: string,
-    options?: { persist?: boolean }
+    options?: {
+      persist?: boolean
+      tabId?: string
+      announceSuccess?: boolean
+    }
   ) => {
-    const urlToLoad = (urlOverride || targetUrlRef.current).trim()
-    if (!urlToLoad) return
+    const resolvedTabId = options?.tabId ?? activeTabIdRef.current
+    if (!resolvedTabId) return
+
+    const tab = previewTabsRef.current.find((entry) => entry.id === resolvedTabId) ?? null
+    const urlToLoad = (urlOverride || targetUrlRef.current || tab?.url || '').trim()
+
+    setActivePreviewTabId(resolvedTabId)
+
+    if (!urlToLoad) {
+      setTargetUrl('')
+      setAuthIssue(null)
+      lastLoadedUrlRef.current = null
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry, index) =>
+          entry.id === resolvedTabId
+            ? {
+                ...entry,
+                url: '',
+                title: getPreviewTabTitle('', entry.title, index + 1),
+              }
+            : entry
+        )
+      )
+      setIframeSrc('about:blank')
+      if (options?.persist !== false) {
+        await syncStorePreviewUrl(null)
+      }
+      return
+    }
 
     try {
       const response = await fetch(`${HTTP_BACKEND_URL}/config/app-proxy`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_url: urlToLoad }),
+        body: JSON.stringify({
+          target_url: urlToLoad,
+          session_id: tab?.proxySessionId || undefined,
+        }),
       })
       if (!response.ok) {
         let detail = `HTTP ${response.status}`
@@ -148,64 +266,223 @@ export function LiveEditorPane() {
       }
 
       const data = await response.json()
-      const resolvedTargetUrl = typeof data?.target_url === 'string' ? data.target_url : urlToLoad
+      const resolvedTargetUrl =
+        typeof data?.target_url === 'string' ? data.target_url : urlToLoad
+      const proxySessionId =
+        typeof data?.proxy_session_id === 'string'
+          ? data.proxy_session_id
+          : tab?.proxySessionId || null
 
-      // Clear selections when loading new app
-      clearElements()
       setAuthIssue(null)
       lastLoadedUrlRef.current = resolvedTargetUrl
       setTargetUrl(resolvedTargetUrl)
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry, index) =>
+          entry.id === resolvedTabId
+            ? {
+                ...entry,
+                url: resolvedTargetUrl,
+                proxySessionId,
+                title: getPreviewTabTitle(
+                  resolvedTargetUrl,
+                  entry.title,
+                  index + 1
+                ),
+              }
+            : entry
+        )
+      )
 
-      if (
-        options?.persist !== false &&
-        useSessionStore.getState().previewUrl !== resolvedTargetUrl
-      ) {
-        setPreviewUrl(resolvedTargetUrl)
+      if (options?.persist !== false) {
+        await syncStorePreviewUrl(resolvedTargetUrl)
       }
 
-      // Reload iframe
       setIframeSrc(buildProxyFrameUrl())
 
-      toast.success('App loaded')
+      if (options?.announceSuccess !== false) {
+        toast.success('App loaded')
+      }
     } catch (error) {
       console.error('Failed to configure app proxy:', error)
       toast.error(
         error instanceof Error ? `Failed to load app: ${error.message}` : 'Failed to load app'
       )
     }
-  }, [buildProxyFrameUrl, clearElements, setPreviewUrl])
+  }, [buildProxyFrameUrl, syncStorePreviewUrl])
 
-  // Refresh the iframe with cache busting (harder reload)
+  const activatePreviewTab = useCallback(async (tabId: string) => {
+    const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
+    if (!tab) return
+
+    setActivePreviewTabId(tabId)
+    setTargetUrl(tab.url)
+    setShowUrlHistory(false)
+
+    if (!tab.url) {
+      setIframeSrc('about:blank')
+      lastLoadedUrlRef.current = null
+      await syncStorePreviewUrl(null)
+      return
+    }
+
+    await loadApp(tab.url, {
+      tabId,
+      persist: true,
+      announceSuccess: false,
+    })
+  }, [loadApp, syncStorePreviewUrl])
+
+  const addPreviewTab = useCallback(() => {
+    const nextTab = createPreviewTab('', null, previewTabsRef.current.length + 1)
+    setPreviewTabs((currentTabs) => [...currentTabs, nextTab])
+    setActivePreviewTabId(nextTab.id)
+    setTargetUrl('')
+    setShowUrlHistory(false)
+    setIframeSrc('about:blank')
+    lastLoadedUrlRef.current = null
+    void syncStorePreviewUrl(null)
+  }, [syncStorePreviewUrl])
+
+  const closePreviewTab = useCallback(async (tabId: string) => {
+    const closingIndex = previewTabsRef.current.findIndex((entry) => entry.id === tabId)
+    if (closingIndex < 0) return
+
+    const closingTab = previewTabsRef.current[closingIndex]
+    if (closingTab.proxySessionId) {
+      try {
+        await fetch(
+          `${HTTP_BACKEND_URL}/config/app-proxy?session_id=${encodeURIComponent(closingTab.proxySessionId)}`,
+          {
+            method: 'DELETE',
+            credentials: 'include',
+          }
+        )
+      } catch (error) {
+        console.error('[live-editor] Failed to clear closed proxy tab session:', error)
+      }
+    }
+
+    const remainingTabs = previewTabsRef.current.filter((entry) => entry.id !== tabId)
+    if (remainingTabs.length === 0) {
+      const blankTab = createPreviewTab('', null, 1)
+      previewTabsRef.current = [blankTab]
+      activeTabIdRef.current = blankTab.id
+      setPreviewTabs([blankTab])
+      setActivePreviewTabId(blankTab.id)
+      setTargetUrl('')
+      setIframeSrc('about:blank')
+      lastLoadedUrlRef.current = null
+      await syncStorePreviewUrl(null)
+      return
+    }
+
+    setPreviewTabs(remainingTabs)
+    if (activeTabIdRef.current !== tabId) {
+      return
+    }
+
+    const nextTab = remainingTabs[Math.max(0, closingIndex - 1)] ?? remainingTabs[0]
+    await activatePreviewTab(nextTab.id)
+  }, [activatePreviewTab, syncStorePreviewUrl])
+
   const refreshApp = useCallback(() => {
     if (iframeRef.current && iframeSrc !== 'about:blank') {
-      // Force hard reload by resetting src with cache-busting param
       const currentSrc = iframeRef.current.src.split('?')[0]
       iframeRef.current.src = `${currentSrc}?t=${Date.now()}`
       toast.success('Refreshed', { duration: 1000 })
     }
   }, [iframeSrc])
 
-  // Sync local input when the persisted preview target changes externally.
   useEffect(() => {
-    setTargetUrl(previewUrl || '')
-
-    if (previewUrl) {
-      if (previewUrl !== lastLoadedUrlRef.current) {
-        void loadApp(previewUrl, { persist: false })
-      }
+    if (lastProjectPathRef.current === projectPath) {
       return
     }
 
+    lastProjectPathRef.current = projectPath
+    const initialTab = createPreviewTab(previewUrl || '', null, 1)
+    previewTabsRef.current = [initialTab]
+    activeTabIdRef.current = initialTab.id
+    setPreviewTabs([initialTab])
+    setActivePreviewTabId(initialTab.id)
+    setShowUrlHistory(false)
+    setTargetUrl(initialTab.url)
     lastLoadedUrlRef.current = null
-    setIframeSrc('about:blank')
-  }, [previewUrl, loadApp])
 
-  // Toggle select mode
+    if (initialTab.url) {
+      void loadApp(initialTab.url, {
+        tabId: initialTab.id,
+        persist: false,
+        announceSuccess: false,
+      })
+      return
+    }
+
+    setIframeSrc('about:blank')
+  }, [projectPath, previewUrl, loadApp])
+
+  useEffect(() => {
+    const normalizedPreviewUrl = previewUrl?.trim() || null
+    if (internalPreviewUrlRef.current === normalizedPreviewUrl) {
+      internalPreviewUrlRef.current = null
+      return
+    }
+
+    const activePreviewTab = getActivePreviewTab()
+    if (!activePreviewTab) {
+      return
+    }
+
+    if (!normalizedPreviewUrl) {
+      if (activePreviewTab.url) {
+        setPreviewTabs((currentTabs) =>
+          currentTabs.map((entry, index) =>
+            entry.id === activePreviewTab.id
+              ? {
+                  ...entry,
+                  url: '',
+                  title: getPreviewTabTitle('', entry.title, index + 1),
+                }
+              : entry
+          )
+        )
+      }
+      setTargetUrl('')
+      setIframeSrc('about:blank')
+      lastLoadedUrlRef.current = null
+      return
+    }
+
+    if (normalizedPreviewUrl === activePreviewTab.url) {
+      setTargetUrl(normalizedPreviewUrl)
+      return
+    }
+
+    setPreviewTabs((currentTabs) =>
+      currentTabs.map((entry, index) =>
+        entry.id === activePreviewTab.id
+          ? {
+              ...entry,
+              url: normalizedPreviewUrl,
+              title: getPreviewTabTitle(normalizedPreviewUrl, entry.title, index + 1),
+            }
+          : entry
+      )
+    )
+    setTargetUrl(normalizedPreviewUrl)
+
+    if (normalizedPreviewUrl !== lastLoadedUrlRef.current) {
+      void loadApp(normalizedPreviewUrl, {
+        tabId: activePreviewTab.id,
+        persist: false,
+        announceSuccess: false,
+      })
+    }
+  }, [previewUrl, getActivePreviewTab, loadApp])
+
   const toggleSelectMode = useCallback(() => {
     const newMode = !selectMode
     setSelectMode(newMode)
 
-    // Send message to iframe
     if (iframeRef.current?.contentWindow) {
       iframeRef.current.contentWindow.postMessage(
         {
@@ -223,9 +500,7 @@ export function LiveEditorPane() {
     }
   }, [selectMode])
 
-  // Re-sync selectMode to iframe after it loads (handles navigation, HMR, etc.)
   const handleIframeLoad = useCallback(() => {
-    // Give the injected script time to initialize
     setTimeout(() => {
       if (iframeRef.current?.contentWindow && selectMode) {
         iframeRef.current.contentWindow.postMessage(
@@ -236,91 +511,97 @@ export function LiveEditorPane() {
           '*'
         )
       }
-    }, 100)
-  }, [selectMode])
+      syncActiveTabSelections()
+    }, 120)
+  }, [selectMode, syncActiveTabSelections])
 
-  // Listen for messages from iframe
   useEffect(() => {
-    const handleMessage = (e: MessageEvent) => {
-      if (e.data.type === 'pixel-forge-element-selected') {
-        // Add to store (store handles deduplication)
+    const handleMessage = (event: MessageEvent) => {
+      const activePreviewTab = getActivePreviewTab()
+
+      if (event.data.type === 'pixel-forge-element-selected') {
+        const sourceUrl =
+          typeof event.data.data?.pageUrl === 'string'
+            ? event.data.data.pageUrl
+            : activePreviewTab?.url || targetUrlRef.current
+
         addElement({
-          tagName: e.data.data.tagName,
-          elementId: e.data.data.elementId || e.data.data.id,
-          classList: e.data.data.classList || [],
-          textContent: e.data.data.textContent || '',
-          xpath: e.data.data.xpath,
-          outerHTML: e.data.data.outerHTML,
+          tagName: event.data.data.tagName,
+          elementId: event.data.data.elementId || event.data.data.id,
+          classList: event.data.data.classList || [],
+          textContent: event.data.data.textContent || '',
+          xpath: event.data.data.xpath,
+          outerHTML: event.data.data.outerHTML,
+          sourceTabId: activePreviewTab?.id || 'preview',
+          sourceTabLabel: activePreviewTab?.title || 'Preview',
+          sourceUrl,
+          pageTitle:
+            typeof event.data.data?.pageTitle === 'string'
+              ? event.data.data.pageTitle
+              : activePreviewTab?.title || null,
         })
-      } else if (e.data.type === 'pixel-forge-element-deselected') {
-        // Find and remove from store by xpath
+      } else if (event.data.type === 'pixel-forge-element-deselected') {
+        const sourceUrl =
+          typeof event.data.data?.pageUrl === 'string'
+            ? event.data.data.pageUrl
+            : activePreviewTab?.url || targetUrlRef.current
         const element = selectedElements.find(
-          (el) => el.xpath === e.data.data.xpath
+          (entry) =>
+            entry.xpath === event.data.data.xpath
+            && entry.sourceTabId === activePreviewTab?.id
+            && entry.sourceUrl === sourceUrl
         )
         if (element) {
           removeElement(element.id)
         }
-      } else if (e.data.type === 'pixel-forge-cancel-select') {
+      } else if (event.data.type === 'pixel-forge-cancel-select') {
         setSelectMode(false)
-      } else if (e.data.type === 'pixel-forge-auth-required') {
-        const status = Number(e.data.data?.status || 0)
-        const failingUrl = String(e.data.data?.url || '')
+      } else if (event.data.type === 'pixel-forge-auth-required') {
+        const status = Number(event.data.data?.status || 0)
+        const failingUrl = String(event.data.data?.url || '')
         setAuthIssue({ status, url: failingUrl })
         toast.error(
           status === 401 || status === 403
             ? `Target authentication required (${status}).`
             : 'Target authentication required.'
         )
+      } else if (event.data.type === 'pixel-forge-location-changed') {
+        if (!activePreviewTab) {
+          return
+        }
+
+        const nextUrl =
+          typeof event.data.data?.url === 'string'
+            ? event.data.data.url
+            : activePreviewTab.url
+        const nextTitle =
+          typeof event.data.data?.title === 'string'
+            ? event.data.data.title
+            : activePreviewTab.title
+
+        setPreviewTabs((currentTabs) =>
+          currentTabs.map((entry, index) =>
+            entry.id === activePreviewTab.id
+              ? {
+                  ...entry,
+                  url: nextUrl,
+                  title: getPreviewTabTitle(nextUrl, nextTitle, index + 1),
+                }
+              : entry
+          )
+        )
+        setTargetUrl(nextUrl)
+        if (nextUrl) {
+          lastLoadedUrlRef.current = nextUrl
+        }
+        void syncStorePreviewUrl(nextUrl)
       }
     }
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addElement, removeElement, selectedElements])
+  }, [addElement, getActivePreviewTab, removeElement, selectedElements, syncStorePreviewUrl])
 
-  // Change workspace — confirm if active session exists
-  const handleChangeWorkspace = useCallback(() => {
-    const hasActiveSession = !!useSessionStore.getState().liveEditorSession
-    const hasMessages = useLiveEditorStore.getState().messages.length > 0
-
-    if (hasActiveSession || hasMessages) {
-      const confirmed = window.confirm(
-        'Changing workspace will start a new session. The current session will be closed. Continue?'
-      )
-      if (!confirmed) return
-
-      clearLiveEditorSession()
-      newSession()
-    }
-
-    setShowWorkspaceSelector(true)
-  }, [clearLiveEditorSession, newSession])
-
-  // Quick-switch to a recent project
-  const handleQuickSwitch = useCallback((path: string, recentPreviewUrl?: string) => {
-    if (path === projectPath) return
-
-    const hasActiveSession = !!useSessionStore.getState().liveEditorSession
-    const hasMessages = useLiveEditorStore.getState().messages.length > 0
-
-    if (hasActiveSession || hasMessages) {
-      const confirmed = window.confirm(
-        'Switching workspace will start a new session. Continue?'
-      )
-      if (!confirmed) return
-
-      clearLiveEditorSession()
-      newSession()
-    }
-
-    setProject({ path, previewUrl: recentPreviewUrl })
-    if (recentPreviewUrl) {
-      void loadApp(recentPreviewUrl)
-    }
-    toast.success(`Switched to ${path.split('/').pop()}`)
-  }, [projectPath, clearLiveEditorSession, newSession, setProject, loadApp])
-
-  // Handle clearing selections from parent (sync to iframe)
   const handleClearElements = useCallback(() => {
     clearElements()
     if (iframeRef.current?.contentWindow) {
@@ -331,16 +612,27 @@ export function LiveEditorPane() {
     }
   }, [clearElements])
 
-  // Handle removing a single element (sync to iframe)
-  const handleRemoveElement = useCallback((id: string, xpath: string) => {
+  const handleRemoveElement = useCallback((
+    id: string,
+    xpath: string,
+    sourceTabId: string,
+    sourceUrl: string
+  ) => {
     removeElement(id)
-    if (iframeRef.current?.contentWindow) {
+
+    const activePreviewTab = getActivePreviewTab()
+    if (
+      activePreviewTab
+      && activePreviewTab.id === sourceTabId
+      && activePreviewTab.url === sourceUrl
+      && iframeRef.current?.contentWindow
+    ) {
       iframeRef.current.contentWindow.postMessage(
         { type: 'pixel-forge-deselect', xpath },
         '*'
       )
     }
-  }, [removeElement])
+  }, [getActivePreviewTab, removeElement])
 
   const viewportShellStyle =
     viewportMode === 'phone'
@@ -382,111 +674,166 @@ export function LiveEditorPane() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Left: App Viewer */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-card/60 backdrop-blur-sm px-3 py-1.5">
-          <div className="relative flex min-w-[16rem] flex-1 gap-0">
-            <Input
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && loadApp()}
-              placeholder="Enter preview URL..."
-              className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
-            />
+        <div className="border-b border-border bg-card/60 backdrop-blur-sm">
+          <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
+            {previewTabs.map((tab, index) => (
+              <div
+                key={tab.id}
+                className={`group flex min-w-[10rem] max-w-[16rem] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors ${
+                  tab.id === activePreviewTabId
+                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-border/50 bg-background/40 text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => void activatePreviewTab(tab.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  title={tab.url || tab.title}
+                >
+                  <Globe2 className="h-3.5 w-3.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-medium">
+                      {tab.title || `Tab ${index + 1}`}
+                    </div>
+                    <div className="truncate text-[11px] opacity-80">
+                      {tab.url || 'Blank tab'}
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void closePreviewTab(tab.id)}
+                  className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10"
+                  aria-label={`Close ${tab.title || `Tab ${index + 1}`}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
             <Button
               variant="outline"
               size="sm"
-              className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
-              onClick={() => setShowUrlHistory(!showUrlHistory)}
-              disabled={currentProjectUrls.length === 0}
-              title="Recent preview URLs"
+              onClick={addPreviewTab}
+              className="h-8 shrink-0 border-dashed border-border/60 px-2 text-xs"
+              title="Open another preview tab"
             >
-              <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              New Tab
             </Button>
-            {showUrlHistory && currentProjectUrls.length > 0 && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
-                <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
-                  <div className="max-h-48 overflow-y-auto py-1">
-                    {currentProjectUrls.map((url) => (
-                      <button
-                        key={url}
-                        onClick={() => {
-                          setTargetUrl(url)
-                          setShowUrlHistory(false)
-                          void loadApp(url)
-                        }}
-                        className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
-                          url === targetUrl ? 'bg-primary/5 text-primary' : ''
-                        }`}
-                      >
-                        <span className="truncate">{url}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
           </div>
-          <Button variant="outline" size="sm" onClick={() => loadApp()} className="h-7 gap-1 border-border/60 px-2.5 text-xs">
-            <Play className="h-3 w-3" />
-            Load
-          </Button>
-          <div className="mx-0.5 h-4 w-px bg-border/40" />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshApp}
-            title="Refresh preview"
-            className="h-7 w-7 border-border/60 p-0"
-          >
-            <RefreshCw className="h-3 w-3" />
-          </Button>
-          <Button
-            variant={selectMode ? 'default' : 'outline'}
-            size="sm"
-            onClick={toggleSelectMode}
-            className={`h-7 gap-1 px-2.5 text-xs transition-all ${
-              selectMode
-                ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
-                : 'border-border/60'
-            }`}
-          >
-            <MousePointer2 className="h-3 w-3" />
-            {selectMode ? 'Selecting' : 'Select'}
-          </Button>
 
-          <div className="ml-auto flex items-center gap-1.5">
-            <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
-              {viewportModes.map(({ mode, label, title, icon: Icon }) => (
-                <Button
-                  key={mode}
-                  variant={viewportMode === mode ? 'default' : 'ghost'}
-                  size="sm"
-                  className={`h-6 gap-1 px-2 text-xs ${
-                    viewportMode === mode ? 'bg-primary/15 text-primary shadow-none' : 'text-muted-foreground'
-                  }`}
-                  onClick={() => setViewportMode(mode)}
-                  title={title}
-                >
-                  <Icon className="h-3 w-3" />
-                  <span className="hidden sm:inline">{label}</span>
-                </Button>
-              ))}
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 px-3 py-1.5">
+            <div className="relative flex min-w-[16rem] flex-1 gap-0">
+              <Input
+                value={targetUrl}
+                onChange={(event) => setTargetUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    void loadApp()
+                  }
+                }}
+                placeholder="Enter preview URL..."
+                className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
+                onClick={() => setShowUrlHistory(!showUrlHistory)}
+                disabled={currentProjectUrls.length === 0}
+                title="Recent preview URLs"
+              >
+                <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+              </Button>
+              {showUrlHistory && currentProjectUrls.length > 0 && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
+                  <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
+                    <div className="max-h-48 overflow-y-auto py-1">
+                      {currentProjectUrls.map((url) => (
+                        <button
+                          key={url}
+                          onClick={() => {
+                            setTargetUrl(url)
+                            setShowUrlHistory(false)
+                            void loadApp(url)
+                          }}
+                          className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
+                            url === targetUrl ? 'bg-primary/5 text-primary' : ''
+                          }`}
+                        >
+                          <span className="truncate">{url}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-
-            {/* Connection status */}
-            <div
-              className={`h-1.5 w-1.5 rounded-full transition-colors ${
-                connected ? 'bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.3)]' : 'bg-destructive'
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadApp()}
+              className="h-7 gap-1 border-border/60 px-2.5 text-xs"
+            >
+              <Play className="h-3 w-3" />
+              Load
+            </Button>
+            <div className="mx-0.5 h-4 w-px bg-border/40" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refreshApp}
+              title="Refresh preview"
+              className="h-7 w-7 border-border/60 p-0"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+            <Button
+              variant={selectMode ? 'default' : 'outline'}
+              size="sm"
+              onClick={toggleSelectMode}
+              className={`h-7 gap-1 px-2.5 text-xs transition-all ${
+                selectMode
+                  ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
+                  : 'border-border/60'
               }`}
-              title={connected ? 'Connected' : 'Disconnected'}
-            />
+            >
+              <MousePointer2 className="h-3 w-3" />
+              {selectMode ? 'Selecting' : 'Select'}
+            </Button>
+
+            <div className="ml-auto flex items-center gap-1.5">
+              <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
+                {viewportModes.map(({ mode, label, title, icon: Icon }) => (
+                  <Button
+                    key={mode}
+                    variant={viewportMode === mode ? 'default' : 'ghost'}
+                    size="sm"
+                    className={`h-6 gap-1 px-2 text-xs ${
+                      viewportMode === mode ? 'bg-primary/15 text-primary shadow-none' : 'text-muted-foreground'
+                    }`}
+                    onClick={() => setViewportMode(mode)}
+                    title={title}
+                  >
+                    <Icon className="h-3 w-3" />
+                    <span className="hidden sm:inline">{label}</span>
+                  </Button>
+                ))}
+              </div>
+
+              <div
+                className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                  connected ? 'bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.3)]' : 'bg-destructive'
+                }`}
+                title={connected ? 'Connected' : 'Disconnected'}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Iframe */}
         <div className="flex-1 min-h-0 overflow-auto bg-background/50 p-3">
           {authIssue && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
@@ -528,10 +875,9 @@ export function LiveEditorPane() {
         </div>
       </div>
 
-      {/* Right: Chat & Selection Panel */}
       <div className="flex w-[clamp(320px,26vw,420px)] min-w-[300px] max-w-[42vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-card/50">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full overflow-hidden">
-          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-3 flex-shrink-0 bg-background/50">
+          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
             <TabsTrigger value="chat" className="gap-1.5 text-xs">
               <MessageSquare className="h-3.5 w-3.5" />
               Chat
@@ -545,15 +891,9 @@ export function LiveEditorPane() {
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-1.5 text-xs">
-              <Settings className="h-3.5 w-3.5" />
-              Settings
-            </TabsTrigger>
           </TabsList>
 
-          {/* Tab Content Container */}
-          <div className="flex-1 min-h-0 overflow-hidden mt-2">
-            {/* Chat Tab - only ChatMessages, ChatInput rendered outside */}
+          <div className="mt-2 flex-1 min-h-0 overflow-hidden">
             <TabsContent
               value="chat"
               className="m-0 h-full min-w-0 overflow-hidden"
@@ -561,194 +901,20 @@ export function LiveEditorPane() {
               <ChatMessages onRefreshPreview={refreshApp} />
             </TabsContent>
 
-            {/* Elements Tab */}
             <TabsContent
               value="elements"
-              className="h-full overflow-y-auto m-0 p-3"
+              className="m-0 h-full overflow-y-auto p-3"
             >
               <SelectedElementsList
                 onClearAll={handleClearElements}
                 onRemoveElement={handleRemoveElement}
               />
             </TabsContent>
-
-            {/* Settings Tab */}
-            <TabsContent
-              value="settings"
-              className="h-full overflow-y-auto m-0 p-3"
-            >
-              <div className="space-y-4">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">Workspace</label>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 px-2 text-xs"
-                      onClick={handleChangeWorkspace}
-                    >
-                      Change
-                    </Button>
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1 font-mono break-all">
-                    {projectPath || 'Not set'}
-                  </p>
-
-                  {/* Recent projects quick-switch */}
-                  {recentProjects.length > 1 && (
-                    <div className="mt-2 space-y-1">
-                      <label className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        Recent
-                      </label>
-                      {recentProjects
-                        .filter((p) => p.path !== projectPath)
-                        .slice(0, 5)
-                        .map((project) => (
-                          <button
-                            key={project.path}
-                            onClick={() => handleQuickSwitch(project.path, project.previewUrls[0])}
-                            className="flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/60"
-                          >
-                            <FolderOpen className="h-3 w-3 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium">{project.name}</div>
-                              {project.previewUrls[0] && (
-                                <div className="truncate text-muted-foreground">
-                                  {project.previewUrls[0]}
-                                </div>
-                              )}
-                            </div>
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Preview URL</label>
-                  <p className="text-sm text-muted-foreground mt-1 font-mono">
-                    {targetUrl || 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Connection</label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {connected ? '✓ Connected' : '✗ Disconnected'}
-                  </p>
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Live Editor Backend</label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {liveEditorSession?.backend || 'agent-deck'}
-                  </p>
-                </div>
-                {liveEditorSession && (
-                  <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
-                    <div>
-                      <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Pixel Forge Thread
-                      </label>
-                      <p className="mt-1 break-all font-mono text-xs text-foreground">
-                        {liveEditorSession.threadId}
-                      </p>
-                    </div>
-                    {liveEditorSession.agentDeckSessionTitle && (
-                      <div>
-                        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Agent Deck Session
-                        </label>
-                        <p className="mt-1 font-mono text-xs text-foreground">
-                          {liveEditorSession.agentDeckSessionTitle}
-                        </p>
-                      </div>
-                    )}
-                    {liveEditorSession.agentDeckSessionId && (
-                      <div>
-                        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Agent Deck ID
-                        </label>
-                        <p className="mt-1 break-all font-mono text-xs text-foreground">
-                          {liveEditorSession.agentDeckSessionId}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Last Saved File Info */}
-                {lastSavedFile && (
-                  <div className="pt-4 border-t">
-                    <label className="text-sm font-medium">Last Generated Code</label>
-                    <div className="mt-2 space-y-1">
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium">File:</span>{' '}
-                        <code className="bg-muted px-1 py-0.5 rounded text-xs">
-                          {lastSavedFile.relPath}
-                        </code>
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium">URL:</span>{' '}
-                        <code className="bg-muted px-1 py-0.5 rounded text-xs">
-                          {lastSavedFile.urlPath}
-                        </code>
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium">Saved:</span>{' '}
-                        {new Date(lastSavedFile.timestamp).toLocaleString()}
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      onClick={async () => {
-                        const savedTargetUrl = lastSavedFile.urlPath.startsWith('http')
-                          ? lastSavedFile.urlPath
-                          : `${HTTP_BACKEND_URL}${lastSavedFile.urlPath}`
-
-                        setTargetUrl(savedTargetUrl)
-                        await loadApp(savedTargetUrl)
-                        toast.success('Loaded saved file preview')
-                      }}
-                    >
-                      View Saved File
-                    </Button>
-                  </div>
-                )}
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleClearElements}
-                  disabled={selectedElements.length === 0}
-                >
-                  Clear All Selections
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    clearLiveEditorSession()
-                    newSession()
-                    toast.success('Started a fresh Live Editor thread')
-                  }}
-                >
-                  New Live Thread
-                </Button>
-              </div>
-            </TabsContent>
           </div>
         </Tabs>
 
-        {/* ChatInput rendered OUTSIDE Tabs to avoid Radix initialization issues */}
         {activeTab === 'chat' && <ChatInput />}
       </div>
-
-      {/* Workspace selector dialog */}
-      <ProjectSelector
-        open={showWorkspaceSelector}
-        onOpenChange={setShowWorkspaceSelector}
-      />
     </div>
   )
 }

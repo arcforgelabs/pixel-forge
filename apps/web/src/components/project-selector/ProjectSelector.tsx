@@ -32,7 +32,6 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
     recentProjects,
     setProject,
     clearProject,
-    setOutputSettings,
     outputMode: storedOutputMode,
     customOutputPath: storedCustomOutputPath,
     projectPath: storedProjectPath,
@@ -65,13 +64,13 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
     storedCustomOutputPath,
   ]);
 
-  const handleSelectProject = (
+  const handleSelectProject = async (
     path: string,
     selectedPreviewUrl?: string,
     selectedOutputMode: OutputMode = outputMode,
     selectedCustomOutputPath?: string | null
   ) => {
-    setProject({
+    await setProject({
       path,
       previewUrl: selectedPreviewUrl,
       outputMode: selectedOutputMode,
@@ -80,25 +79,29 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
           ? selectedCustomOutputPath || null
           : null,
     });
-    setOutputSettings(
-      selectedOutputMode,
-      selectedOutputMode === "custom" ? selectedCustomOutputPath || null : null
-    );
     onOpenChange(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (outputMode === "custom" && !customOutputPath.trim()) {
       toast.error("Enter a custom relative output path");
       return;
     }
 
-    if (projectPath.trim()) {
-      handleSelectProject(
+    if (!projectPath.trim()) {
+      return;
+    }
+
+    try {
+      await handleSelectProject(
         projectPath.trim(),
         previewUrl.trim() || undefined,
         outputMode,
         customOutputPath.trim() || null
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to open workspace"
       );
     }
   };
@@ -176,12 +179,18 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                   <button
                     onClick={() => {
                       // Open with most recent URL
-                      handleSelectProject(
+                      void handleSelectProject(
                         project.path,
                         project.previewUrls[0],
                         project.outputMode || "scratch",
                         project.customOutputPath || null
-                      );
+                      ).catch((error) => {
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "Failed to open workspace"
+                        );
+                      });
                     }}
                     className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors text-left"
                   >
@@ -227,12 +236,18 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                         <button
                           key={url}
                           onClick={() =>
-                            handleSelectProject(
+                            void handleSelectProject(
                               project.path,
                               url,
                               project.outputMode || "scratch",
                               project.customOutputPath || null
-                            )
+                            ).catch((error) => {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Failed to open workspace"
+                              );
+                            })
                           }
                           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-left hover:bg-muted transition-colors"
                         >
@@ -258,7 +273,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                 placeholder="/path/to/your/project"
                 value={projectPath}
                 onChange={(e) => setProjectPath(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
               />
               <Button
                 type="button"
@@ -283,7 +298,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
               placeholder="https://example.com or http://field.localhost:3101"
               value={previewUrl}
               onChange={(e) => setPreviewUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
             />
           </div>
 
@@ -332,7 +347,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
                 placeholder="src/generated/landing-page.tsx"
                 value={customOutputPath}
                 onChange={(e) => setCustomOutputPath(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
               />
             )}
           </div>
@@ -343,7 +358,7 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
             Skip (Screenshot only)
           </Button>
           <Button
-            onClick={handleSubmit}
+            onClick={() => void handleSubmit()}
             disabled={
               !projectPath.trim() ||
               (outputMode === "custom" && !customOutputPath.trim())

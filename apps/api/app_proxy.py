@@ -238,8 +238,37 @@ SELECTION_SCRIPT = """
         name: a.name,
         value: a.value
       })),
-      rect: element.getBoundingClientRect()
+      rect: element.getBoundingClientRect(),
+      pageUrl: window.location.href,
+      pageTitle: document.title || null
     };
+  }
+
+  function findElementByXPath(xpath) {
+    if (!xpath) return null;
+    try {
+      const result = document.evaluate(
+        xpath,
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+      return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
+    } catch (error) {
+      console.warn('[pixel-forge] Failed to evaluate xpath', xpath, error);
+      return null;
+    }
+  }
+
+  function notifyLocationChange() {
+    window.parent.postMessage({
+      type: 'pixel-forge-location-changed',
+      data: {
+        url: window.location.href,
+        title: document.title || null
+      }
+    }, '*');
   }
 
   // Position hover overlay over element
@@ -282,7 +311,7 @@ SELECTION_SCRIPT = """
   }
 
   // Add element to selection
-  function selectElement(element) {
+  function selectElement(element, notifyParent = true) {
     if (selectedElements.length >= MAX_SELECTIONS) {
       console.warn('[pixel-forge] Max selections reached');
       return;
@@ -295,17 +324,19 @@ SELECTION_SCRIPT = """
     selectedElements.push({ element, xpath, overlay, badge });
 
     // Notify parent of selection
-    window.parent.postMessage({
-      type: 'pixel-forge-element-selected',
-      data: getElementData(element)
-    }, '*');
+    if (notifyParent) {
+      window.parent.postMessage({
+        type: 'pixel-forge-element-selected',
+        data: getElementData(element)
+      }, '*');
 
-    // Also send updated selection array
-    notifySelectionChange();
+      // Also send updated selection array
+      notifySelectionChange();
+    }
   }
 
   // Remove element from selection
-  function deselectElement(index) {
+  function deselectElement(index, notifyParent = true) {
     const sel = selectedElements[index];
     sel.overlay.remove();
     sel.badge.remove();
@@ -317,22 +348,41 @@ SELECTION_SCRIPT = """
     });
 
     // Notify parent of deselection
-    window.parent.postMessage({
-      type: 'pixel-forge-element-deselected',
-      data: { xpath: sel.xpath, index }
-    }, '*');
+    if (notifyParent) {
+      window.parent.postMessage({
+        type: 'pixel-forge-element-deselected',
+        data: {
+          xpath: sel.xpath,
+          index,
+          pageUrl: window.location.href,
+          pageTitle: document.title || null
+        }
+      }, '*');
 
-    notifySelectionChange();
+      notifySelectionChange();
+    }
   }
 
   // Clear all selections
-  function clearSelections() {
+  function clearSelections(notifyParent = true) {
     selectedElements.forEach(sel => {
       sel.overlay.remove();
       sel.badge.remove();
     });
     selectedElements = [];
-    notifySelectionChange();
+    if (notifyParent) {
+      notifySelectionChange();
+    }
+  }
+
+  function applySelections(xpaths) {
+    clearSelections(false);
+    (xpaths || []).forEach((xpath) => {
+      const element = findElementByXPath(xpath);
+      if (element) {
+        selectElement(element, false);
+      }
+    });
   }
 
   // Notify parent of current selection state
@@ -413,18 +463,43 @@ SELECTION_SCRIPT = """
       const xpath = e.data.xpath;
       const index = selectedElements.findIndex(sel => sel.xpath === xpath);
       if (index >= 0) deselectElement(index);
+    } else if (e.data.type === 'pixel-forge-apply-selections') {
+      applySelections(Array.isArray(e.data.xpaths) ? e.data.xpaths : []);
     }
   });
+
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function(...args) {
+    const result = originalPushState(...args);
+    queueMicrotask(notifyLocationChange);
+    return result;
+  };
+
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function(...args) {
+    const result = originalReplaceState(...args);
+    queueMicrotask(notifyLocationChange);
+    return result;
+  };
 
   // Add event listeners
   document.addEventListener('mousemove', handleMouseMove, true);
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
   document.addEventListener('mouseleave', hideHoverOverlay);
+  window.addEventListener('hashchange', notifyLocationChange);
+  window.addEventListener('popstate', notifyLocationChange);
+  window.addEventListener('load', notifyLocationChange);
 
   // Update positions on scroll/resize
   window.addEventListener('scroll', updateAllPositions, true);
   window.addEventListener('resize', updateAllPositions);
+
+  const titleElement = document.querySelector('title');
+  if (titleElement) {
+    const titleObserver = new MutationObserver(() => notifyLocationChange());
+    titleObserver.observe(titleElement, { childList: true, subtree: true, characterData: true });
+  }
 
   // Cleanup on unload
   window.addEventListener('beforeunload', () => {
@@ -437,6 +512,7 @@ SELECTION_SCRIPT = """
   });
 
   console.log('[pixel-forge] Selection script v2 loaded (multi-select enabled)');
+  notifyLocationChange();
 })();
 </script>
 """

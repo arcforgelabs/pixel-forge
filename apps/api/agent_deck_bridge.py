@@ -116,7 +116,11 @@ async def _start_existing_session(agent_deck_session_id: str) -> None:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to start Agent Deck session")
 
 
-async def _launch_new_session(project_path: str, thread: LiveEditorThreadRecord) -> dict[str, object]:
+async def _launch_new_session(
+    project_path: str,
+    thread: LiveEditorThreadRecord,
+    agent_type: str = "claude",
+) -> dict[str, object]:
     return await _run_json_command(
         [
             "agent-deck",
@@ -125,7 +129,7 @@ async def _launch_new_session(project_path: str, thread: LiveEditorThreadRecord)
             "-no-wait",
             f"-t={_session_title(project_path, thread.thread_id)}",
             f"-g={_group_path(project_path)}",
-            "-c=claude",
+            f"-c={agent_type}",
             project_path,
         ]
     )
@@ -155,6 +159,7 @@ async def _wait_for_claude_session_id(
 async def ensure_agent_deck_session(
     project_path: str,
     thread: LiveEditorThreadRecord,
+    agent_type: str = "claude",
 ) -> AgentDeckSessionInfo:
     payload: dict[str, object]
     agent_deck_session_id = thread.agent_deck_session_id
@@ -163,7 +168,7 @@ async def ensure_agent_deck_session(
         try:
             payload = await session_show(agent_deck_session_id)
         except AgentDeckBridgeError:
-            payload = await _launch_new_session(project_path, thread)
+            payload = await _launch_new_session(project_path, thread, agent_type)
             agent_deck_session_id = str(payload["id"])
         else:
             status = str(payload.get("status") or "")
@@ -171,7 +176,7 @@ async def ensure_agent_deck_session(
                 await _start_existing_session(agent_deck_session_id)
                 payload = await session_show(agent_deck_session_id)
     else:
-        payload = await _launch_new_session(project_path, thread)
+        payload = await _launch_new_session(project_path, thread, agent_type)
         agent_deck_session_id = str(payload["id"])
 
     if not agent_deck_session_id:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
+from state_db import connect as connect_state_db
+from state_db import db_path as state_db_path
+from state_db import legacy_live_editor_db_path
 
 
 _DB_LOCK = threading.Lock()
@@ -25,23 +28,69 @@ class LiveEditorThreadRecord:
     updated_at: str
 
 
-def _state_dir() -> Path:
-    xdg_state_home = os.environ.get("XDG_STATE_HOME")
-    base_dir = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"
-    state_dir = base_dir / "pixel-forge"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir
-
-
 def _db_path() -> Path:
-    return _state_dir() / "live-editor.db"
+    return state_db_path()
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
+    conn = connect_state_db()
     _ensure_schema(conn)
     return conn
+
+
+def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
+    legacy_path = legacy_live_editor_db_path()
+    if legacy_path == _db_path() or not legacy_path.is_file():
+        return
+
+    with sqlite3.connect(legacy_path) as legacy_conn:
+        legacy_conn.row_factory = sqlite3.Row
+        tables = legacy_conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'live_editor_threads'
+            """
+        ).fetchone()
+        if tables is None:
+            return
+
+        rows = legacy_conn.execute(
+            """
+            SELECT thread_id, project_path, backend, agent_deck_session_id,
+                   agent_deck_session_title, claude_session_id, last_request_id,
+                   created_at, updated_at
+            FROM live_editor_threads
+            """
+        ).fetchall()
+
+    for row in rows:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO live_editor_threads (
+                thread_id,
+                project_path,
+                backend,
+                agent_deck_session_id,
+                agent_deck_session_title,
+                claude_session_id,
+                last_request_id,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["thread_id"],
+                str(Path(row["project_path"]).resolve()),
+                row["backend"],
+                row["agent_deck_session_id"],
+                row["agent_deck_session_title"],
+                row["claude_session_id"],
+                row["last_request_id"],
+                row["created_at"],
+                row["updated_at"],
+            ),
+        )
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -68,6 +117,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             )
             """
         )
+        _migrate_legacy_rows(conn)
         conn.commit()
         _DB_INITIALIZED = True
 
