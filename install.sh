@@ -14,9 +14,9 @@ echo "Installing pixel-forge..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
 
-# Copy proxy files (not symlink - survives repo moves)
+# Copy API files (not symlink - survives repo moves)
 echo "Copying files to $INSTALL_DIR..."
-cp -r "$SCRIPT_DIR/claude-proxy/"* "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR/apps/api/"* "$INSTALL_DIR/"
 
 # Create virtual environment if needed
 if [ ! -d "$INSTALL_DIR/.venv" ]; then
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -p, --port PORT    Port to run on (default: 7001)"
             echo "  -h, --help         Show this help"
             echo ""
-            echo "Open http://localhost:$PORT/test-harness.html after starting"
+            echo "Open http://127.0.0.1:$PORT/test-harness.html after starting"
             exit 0
             ;;
         *)
@@ -67,14 +67,32 @@ EOF
 
 chmod +x "$BIN_DIR/pixel-forge"
 
+# Install icon
+ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+mkdir -p "$ICON_DIR"
+cp "$SCRIPT_DIR/apps/web/public/favicon/main.png" "$ICON_DIR/pixel-forge.png"
+echo "Icon installed to $ICON_DIR/pixel-forge.png"
+
+# Install desktop entry
+DESKTOP_DIR="$HOME/.local/share/applications"
+mkdir -p "$DESKTOP_DIR"
+cp "$SCRIPT_DIR/pixel-forge.desktop" "$DESKTOP_DIR/pixel-forge.desktop"
+echo "Desktop entry installed to $DESKTOP_DIR/pixel-forge.desktop"
+
+# Refresh icon cache and desktop database (if available)
+gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+
 echo ""
 echo "Installation complete!"
 echo ""
 echo "Usage:"
-echo "  pixel-forge              # Start on port 7001"
+echo "  pixel-forge              # Start backend on port 7001"
 echo "  pixel-forge --port 8080  # Start on custom port"
 echo ""
-echo "Then open: http://localhost:7001/test-harness.html"
+echo "Full UI (backend + frontend):"
+echo "  Launch 'Pixel Forge' from your app menu, or run:"
+echo "  $SCRIPT_DIR/start-dev.sh"
 echo ""
 echo "Make sure ~/.local/bin is in your PATH:"
 echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""

@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+/**
+ * Pixel Forge Bootstrap CLI
+ *
+ * Simple CLI tool for converting design images to HTML/Tailwind code.
+ * Uses the Pixel Forge SDK for screenshot bootstrap generation.
+ *
+ * Usage:
+ *   pixel-forge-bootstrap <image> [options]
+ */
+
+import { generateFromFile } from '../sdk-node/index.js';
+import { writeFile } from 'fs/promises';
+import { basename, extname } from 'path';
+
+/**
+ * Parse CLI arguments
+ */
+function parseArgs() {
+    const args = process.argv.slice(2);
+
+    if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+        printHelp();
+        process.exit(0);
+    }
+
+    const imagePath = args[0];
+    const output = args.includes('--output') || args.includes('-o')
+        ? args[args.indexOf(args.find(a => a === '--output' || a === '-o')) + 1]
+        : imagePath.replace(extname(imagePath), '.html');
+
+    return { imagePath, output };
+}
+
+/**
+ * Print help message
+ */
+function printHelp() {
+    console.log(`
+Pixel Forge Bootstrap CLI
+
+Convert design images to HTML/Tailwind code using Claude.
+
+Usage:
+  pixel-forge-bootstrap <image> [options]
+
+Options:
+  -o, --output <file>    Output file (default: <image>.html)
+  -h, --help             Show this help
+
+Examples:
+  # Generate code from image
+  pixel-forge-bootstrap design.png
+
+  # Custom output path
+  pixel-forge-bootstrap design.png --output result.html
+
+  # Batch processing
+  for img in designs/*.png; do pixel-forge-bootstrap "$img"; done
+
+Environment:
+  ANTHROPIC_API_KEY    Required for code generation
+
+More info: https://github.com/IAMSamuelRodda/pixel-forge
+`);
+}
+
+/**
+ * Main function
+ */
+async function main() {
+    try {
+        const { imagePath, output } = parseArgs();
+
+        console.log('\n' + '='.repeat(80));
+        console.log('Pixel Forge Bootstrap CLI');
+        console.log('='.repeat(80));
+        console.log(`Image: ${basename(imagePath)}`);
+        console.log(`Output: ${basename(output)}`);
+        console.log('='.repeat(80) + '\n');
+
+        console.log('Generating code...');
+        const startTime = Date.now();
+
+        const result = await generateFromFile(imagePath);
+
+        const duration = (Date.now() - startTime) / 1000;
+
+        // Write output
+        await writeFile(output, result.code);
+
+        console.log('\n' + '='.repeat(80));
+        console.log('✅ Success!');
+        console.log('='.repeat(80));
+        console.log(`Duration: ${duration.toFixed(1)}s`);
+        console.log(`Tokens: ${result.tokens.input} in, ${result.tokens.output} out`);
+        console.log(`Code: ${result.code.length} chars`);
+        console.log(`Saved to: ${output}`);
+        console.log('='.repeat(80) + '\n');
+
+    } catch (error) {
+        console.error('\n' + '='.repeat(80));
+        console.error('❌ Error');
+        console.error('='.repeat(80));
+        console.error(error.message);
+        console.error('='.repeat(80) + '\n');
+
+        if (error.message.includes('ANTHROPIC_API_KEY')) {
+            console.error('Set your API key: export ANTHROPIC_API_KEY="sk-ant-..."\n');
+        }
+
+        process.exit(1);
+    }
+}
+
+main();

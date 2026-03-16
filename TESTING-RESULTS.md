@@ -87,7 +87,7 @@ result = subprocess.run(['node', '-e', eval_script],
 export ANTHROPIC_API_KEY="your-key-here"
 
 # Run automated iteration with reflex evals
-cd /home/samuelrodda/repos/visual-to-code
+cd ~/repos/3-resources/pixel-forge
 source ~/.venv/bin/activate
 python tools/auto_iterate_reflex.py examples/test-2-invoice-card.png --max-iterations 2
 ```
@@ -107,7 +107,7 @@ python tools/auto_iterate_reflex.py examples/test-2-invoice-card.png --max-itera
 
 ## Vision Parameters Discovered
 
-From `/home/samuelrodda/repos/visual-to-code/screenshot-to-code/backend/prompts/__init__.py`:
+From `~/repos/3-resources/pixel-forge/screenshot-to-code/backend/prompts/__init__.py`:
 
 **Line 145 - THE KEY DISCOVERY**:
 ```python

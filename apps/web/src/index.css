@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Image Scanning animation */
+.scanning::after {
+  content: "";
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  width: 5px;
+  height: 100%;
+  background-image: linear-gradient(
+    to right,
+    rgba(19, 161, 14, 0.2),
+    /* Darker matrix green with full transparency */ rgba(19, 161, 14, 0.8)
+      /* The same green with 80% opacity */
+  );
+  animation: scanning 3s ease-in-out infinite;
+}
+
+@keyframes scanning {
+  0%,
+  100% {
+    transform: translateX(0px);
+  }
+  50% {
+    transform: translateX(340px);
+  }
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 30% 94%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    /* Improved contrast for light mode */
+    --muted: 210 25% 93%;
+    --muted-foreground: 215.4 20% 35%;
+
+    --accent: 210 30% 94%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 25% 85%;
+    --input: 214.3 25% 85%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+  }
+  
+  body.dark {
+    background-color: #0a0e14;
+  }
+
+  div[role="presentation"].dark {
+    background-color: #0f1419 !important;
+  }
+
+  iframe {
+    background-color: white !important;
+  }
+
+  /* Arc theme dark mode - cohesive dark blue-gray palette */
+  .dark {
+    /* Backgrounds: #0a0e14 -> #0f1419 -> #1a1f29 */
+    --background: 213 33% 6%;        /* #0a0e14 - primary bg */
+    --foreground: 210 14% 83%;       /* #c9d1d9 - primary text */
+
+    --card: 212 26% 8%;              /* #0f1419 - secondary bg */
+    --card-foreground: 210 14% 83%;
+
+    --popover: 213 20% 10%;          /* #141a21 */
+    --popover-foreground: 210 14% 83%;
+
+    /* Primary action uses arc accent green */
+    --primary: 137 28% 61%;          /* #7eb88e - arc accent */
+    --primary-foreground: 213 33% 6%;
+
+    --secondary: 213 18% 13%;        /* #1a1f29 - tertiary bg */
+    --secondary-foreground: 210 14% 83%;
+
+    --muted: 213 18% 13%;            /* #1a1f29 */
+    --muted-foreground: 212 10% 58%; /* #8b949e - secondary text */
+
+    --accent: 213 18% 13%;
+    --accent-foreground: 210 14% 83%;
+
+    --destructive: 0 62.8% 45%;
+    --destructive-foreground: 210 14% 93%;
+
+    --border: 213 14% 21%;           /* #2d333d */
+    --input: 213 17% 16%;            /* #1e2329 - subtle border */
+    --ring: 137 28% 61%;             /* #7eb88e - arc accent */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

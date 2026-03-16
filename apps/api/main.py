@@ -1,0 +1,1462 @@
+"""
+Pixel Forge API Backend
+
+Routes screenshot bootstrap and live-edit requests through Claude Code CLI
+to use subscription billing instead of raw API credits.
+"""
+
+import asyncio
+import base64
+import io
+import json
+import math
+import mimetypes
+import os
+import tempfile
+from typing import Literal
+from urllib.parse import urlencode
+
+from agent_deck_bridge import (
+    AgentDeckBridgeError,
+    get_last_output,
+    ensure_agent_deck_session,
+    start_agent_deck_send,
+    stream_claude_jsonl,
+)
+from desktop_dialogs import DirectoryBrowseError, browse_for_directory
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from live_editor_threads import (
+    get_or_create_live_editor_thread,
+    update_live_editor_thread,
+)
+from pydantic import BaseModel
+from PIL import Image
+from moviepy import VideoFileClip
+from request_packs import create_request_pack
+
+from session_manager import (
+    generate_session_id,
+    is_session_active,
+    mark_session_active,
+)
+
+# Video processing settings
+TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
+GRID_COLS = 4  # 4 columns in the frame grid
+FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
+
+
+def extract_video_frames(video_data_url: str) -> list[Image.Image]:
+    """Extract frames from a base64-encoded video."""
+    # Decode the base64 URL to get the video bytes
+    video_encoded_data = video_data_url.split(",")[1]
+    video_bytes = base64.b64decode(video_encoded_data)
+
+    mime_type = video_data_url.split(";")[0].split(":")[1]
+    suffix = mimetypes.guess_extension(mime_type)
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as temp_video_file:
+        temp_video_file.write(video_bytes)
+        temp_video_file.flush()
+
+        clip = VideoFileClip(temp_video_file.name)
+        images: list[Image.Image] = []
+        # moviepy 2.x uses n_frames on clip, not reader.nframes
+        total_frames = clip.n_frames if clip.n_frames else int(clip.duration * clip.fps)
+
+        # Calculate frame skip interval
+        frame_skip = max(1, math.ceil(total_frames / TARGET_NUM_FRAMES))
+
+        for i, frame in enumerate(clip.iter_frames()):
+            if i % frame_skip == 0:
+                frame_image = Image.fromarray(frame)
+                images.append(frame_image)
+                if len(images) >= TARGET_NUM_FRAMES:
+                    break
+
+        clip.close()
+        return images
+
+
+def create_frame_grid(frames: list[Image.Image]) -> Image.Image:
+    """Create a grid/mosaic image from video frames."""
+    if not frames:
+        raise ValueError("No frames to create grid from")
+
+    # Resize frames to consistent width while maintaining aspect ratio
+    resized_frames = []
+    for frame in frames:
+        aspect_ratio = frame.height / frame.width
+        new_height = int(FRAME_WIDTH * aspect_ratio)
+        resized = frame.resize((FRAME_WIDTH, new_height), Image.Resampling.LANCZOS)
+        resized_frames.append(resized)
+
+    # Calculate grid dimensions
+    num_frames = len(resized_frames)
+    num_cols = min(GRID_COLS, num_frames)
+    num_rows = math.ceil(num_frames / num_cols)
+
+    # Get max frame height for consistent row heights
+    max_height = max(f.height for f in resized_frames)
+
+    # Create the grid image
+    grid_width = num_cols * FRAME_WIDTH
+    grid_height = num_rows * max_height
+    grid_image = Image.new("RGB", (grid_width, grid_height), color=(30, 30, 30))
+
+    # Paste frames into grid
+    for idx, frame in enumerate(resized_frames):
+        row = idx // num_cols
+        col = idx % num_cols
+        x = col * FRAME_WIDTH
+        y = row * max_height
+        # Center frame vertically in its cell
+        y_offset = (max_height - frame.height) // 2
+        grid_image.paste(frame, (x, y + y_offset))
+
+    return grid_image
+
+
+def process_video_to_image(video_data_url: str) -> str:
+    """Process video into a grid image and save to temp file."""
+    print("Extracting frames from video...", flush=True)
+    frames = extract_video_frames(video_data_url)
+    print(f"Extracted {len(frames)} frames", flush=True)
+
+    print("Creating frame grid...", flush=True)
+    grid_image = create_frame_grid(frames)
+
+    # Save grid to temp file
+    fd, path = tempfile.mkstemp(suffix=".jpg")
+    with os.fdopen(fd, "wb") as f:
+        grid_image.save(f, format="JPEG", quality=90)
+
+    print(f"Saved frame grid to: {path}")
+    return path
+
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[],
+    allow_origin_regex=r"^https?://((?:[a-z0-9-]+\.)?localhost|127\.0\.0\.1)(?::\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Static file routes for testing - MUST be registered before catch-all proxy router
+@app.get("/test-harness.html")
+async def serve_test_harness():
+    """Serve the test harness HTML file."""
+    return FileResponse("test-harness.html", media_type="text/html")
+
+
+# Mount test-app as static files - MUST be registered before catch-all proxy router
+app.mount("/test-app", StaticFiles(directory="test-app", html=True), name="test-app")
+
+
+# Import app proxy router and session helpers
+# NOTE: Router inclusion moved to end of file - catch-all route must be last!
+from app_proxy import (
+    PROXY_SESSION_COOKIE,
+    PROXY_SESSION_TTL_SECONDS,
+    clear_proxy_session,
+    configure_proxy_target,
+    get_proxy_target_url,
+    router as app_proxy_router,
+)
+
+
+# Pydantic models for API
+class AppProxyConfig(BaseModel):
+    target_url: str | None = None
+    url: str | None = None
+
+
+class BrowseDirectoryRequest(BaseModel):
+    initial_path: str | None = None
+
+
+class SaveCodeRequest(BaseModel):
+    code: str
+    project_path: str
+    file_path: str | None = None  # Default: .pixel-forge/generated/{filename based on stack}
+    stack: str = "html_tailwind"
+
+
+# Stack to file extension mapping
+STACK_EXTENSIONS = {
+    "html_tailwind": (".html", "index.html"),
+    "html_css": (".html", "index.html"),
+    "bootstrap": (".html", "index.html"),
+    "ionic_tailwind": (".html", "index.html"),
+    "react_tailwind": (".tsx", "Component.tsx"),
+    "vue_tailwind": (".vue", "Component.vue"),
+    "svg": (".svg", "graphic.svg"),
+}
+
+
+def normalize_project_path(project_path: str) -> str:
+    return os.path.abspath(os.path.expanduser(project_path))
+
+
+def resolve_project_file_path(project_path: str, rel_path: str) -> tuple[str, str]:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_rel_path = rel_path.strip().lstrip("/")
+
+    if not normalized_rel_path:
+        raise ValueError("File path cannot be empty")
+
+    if os.path.isabs(rel_path):
+        raise ValueError("File path must be relative to the workspace")
+
+    full_path = os.path.abspath(
+        os.path.join(normalized_project_path, normalized_rel_path)
+    )
+
+    if os.path.commonpath([normalized_project_path, full_path]) != normalized_project_path:
+        raise ValueError("Invalid file path: path traversal not allowed")
+
+    return normalized_rel_path, full_path
+
+
+@app.post("/browse/directory")
+async def browse_directory(request: BrowseDirectoryRequest):
+    """Open a native folder picker and return the selected directory."""
+    try:
+        selected_path = browse_for_directory(request.initial_path)
+    except DirectoryBrowseError as exc:
+        return {
+            "success": False,
+            "cancelled": False,
+            "message": str(exc),
+        }
+
+    if not selected_path:
+        return {
+            "success": True,
+            "cancelled": True,
+            "path": None,
+        }
+
+    return {
+        "success": True,
+        "cancelled": False,
+        "path": selected_path,
+    }
+
+
+@app.post("/save-code")
+async def save_code(request: SaveCodeRequest):
+    """Save generated code to a project file."""
+    # Validate project path exists
+    normalized_project_path = normalize_project_path(request.project_path)
+    if not os.path.isdir(normalized_project_path):
+        return {
+            "success": False,
+            "message": f"Project path does not exist: {request.project_path}",
+        }
+
+    # Determine file path
+    if request.file_path:
+        rel_path = request.file_path
+    else:
+        # Generate default path based on stack
+        _, default_name = STACK_EXTENSIONS.get(
+            request.stack, (".html", "index.html")
+        )
+        rel_path = f".pixel-forge/generated/{default_name}"
+
+    try:
+        rel_path, full_path = resolve_project_file_path(
+            normalized_project_path, rel_path
+        )
+    except ValueError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+        }
+
+    # Create parent directory if needed
+    parent_dir = os.path.dirname(full_path)
+    os.makedirs(parent_dir, exist_ok=True)
+
+    # Write the file
+    try:
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(request.code)
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to write file: {e}",
+        }
+
+    url_path = f"/preview-file?{urlencode({'project_path': normalized_project_path, 'rel_path': rel_path})}"
+
+    return {
+        "success": True,
+        "file_path": full_path,
+        "rel_path": rel_path,
+        "url_path": url_path,
+        "message": f"Saved to {rel_path}",
+    }
+
+
+@app.get("/preview-file")
+async def preview_saved_file(project_path: str, rel_path: str):
+    """Serve a saved workspace file through the Pixel Forge backend."""
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    try:
+        _, full_path = resolve_project_file_path(normalized_project_path, rel_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="Saved file not found")
+
+    media_type = mimetypes.guess_type(full_path)[0] or "text/plain"
+    return FileResponse(full_path, media_type=media_type)
+
+
+@app.post("/config/app-proxy")
+async def configure_app_proxy(
+    config: AppProxyConfig,
+    request: Request,
+    response: Response,
+):
+    """Configure the target URL for the app proxy."""
+    target_url = (config.target_url or config.url or "").strip()
+    if not target_url:
+        raise HTTPException(status_code=422, detail="target_url is required")
+
+    session = await configure_proxy_target(
+        target_url,
+        request.cookies.get(PROXY_SESSION_COOKIE),
+    )
+    response.set_cookie(
+        key=PROXY_SESSION_COOKIE,
+        value=session.session_id,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+        max_age=PROXY_SESSION_TTL_SECONDS,
+        path="/",
+    )
+    return {
+        "status": "ok",
+        "target_url": session.target_url,
+        "proxy_session_id": session.session_id,
+    }
+
+
+@app.get("/config/app-proxy")
+async def get_app_proxy_config(request: Request):
+    """Get the current app proxy configuration."""
+    target_url = await get_proxy_target_url(request.cookies.get(PROXY_SESSION_COOKIE))
+    return {"target_url": target_url}
+
+
+@app.delete("/config/app-proxy")
+async def clear_app_proxy_config(request: Request, response: Response):
+    """Clear the current browser-scoped app proxy session."""
+    await clear_proxy_session(request.cookies.get(PROXY_SESSION_COOKIE))
+    response.delete_cookie(key=PROXY_SESSION_COOKIE, path="/")
+    return {"status": "cleared"}
+
+
+# Screenshot bootstrap prompts
+SYSTEM_PROMPTS = {
+    "html_tailwind": """You are an expert Tailwind developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using Tailwind, HTML and JS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- Use this script to include Tailwind: <script src="https://cdn.tailwindcss.com"></script>
+- You can use Google Fonts
+- Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link>
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "html_css": """You are an expert CSS developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using CSS, HTML and JS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- You can use Google Fonts
+- Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link>
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "react_tailwind": """You are an expert React/Tailwind developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using React and Tailwind CSS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- Use these script to include React so that it can run on a standalone page:
+    <script src="https://cdn.jsdelivr.net/npm/react@18.0.0/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.0.0/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.js"></script>
+- Use this script to include Tailwind: <script src="https://cdn.tailwindcss.com"></script>
+- You can use Google Fonts
+- Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link>
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "bootstrap": """You are an expert Bootstrap developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using Bootstrap, HTML and JS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- Use this script to include Bootstrap: <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+- You can use Google Fonts
+- Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link>
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "vue_tailwind": """You are an expert Vue/Tailwind developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using Vue and Tailwind CSS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- Use these script to include Vue so that it can run on a standalone page:
+  <script src="https://registry.npmmirror.com/vue/3.3.11/files/dist/vue.global.js"></script>
+- Use this script to include Tailwind: <script src="https://cdn.tailwindcss.com"></script>
+- You can use Google Fonts
+- Font Awesome for icons: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css"></link>
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "ionic_tailwind": """You are an expert Ionic/Tailwind developer
+You take screenshots of a reference web page from the user, and then build single page apps
+using Ionic and Tailwind CSS.
+
+- Make sure the app looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+
+In terms of libraries,
+
+- Use these script to include Ionic so that it can run on a standalone page:
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@ionic/core/dist/ionic/ionic.esm.js"></script>
+    <script nomodule src="https://cdn.jsdelivr.net/npm/@ionic/core/dist/ionic/ionic.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@ionic/core/css/ionic.bundle.css" />
+- Use this script to include Tailwind: <script src="https://cdn.tailwindcss.com"></script>
+- You can use Google Fonts
+
+Return only the full code in <html></html> tags.
+Do not include markdown "```" or "```html" at the start or end.""",
+
+    "svg": """You are an expert at building SVGs.
+You take screenshots of a reference web page from the user, and then build a SVG that looks exactly like the screenshot.
+
+- Make sure the SVG looks exactly like the screenshot.
+- Pay close attention to background color, text color, font size, font family,
+padding, margin, border, etc. Match the colors and sizes exactly.
+- Use the exact text from the screenshot.
+- Do not add comments in the code such as "<!-- Add other navigation links as needed -->" and "<!-- ... other news items ... -->" in place of writing the full code. WRITE THE FULL CODE.
+- Repeat elements as needed to match the screenshot. For example, if there are 15 items, the code should have 15 items. DO NOT LEAVE comments like "<!-- Repeat for each news item -->" or bad things will happen.
+- For images, use placeholder images from https://placehold.co and include a detailed description of the image in the alt text so that an image generation AI can generate the image later.
+- You can use Google Fonts
+
+Return only the full code in <svg></svg> tags.
+Do not include markdown "```" or "```svg" at the start or end.""",
+}
+
+USER_PROMPT = "Generate code for a web page that looks exactly like this."
+SVG_USER_PROMPT = "Generate code for a SVG that looks exactly like this."
+
+
+def extract_html_content(code: str) -> str:
+    """Extract HTML content, removing markdown fences if present."""
+    code = code.strip()
+    if code.startswith("```"):
+        lines = code.split("\n")
+        lines = lines[1:]  # Remove first line
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        code = "\n".join(lines)
+    return code.strip()
+
+
+def save_base64_file(
+    data_url: str,
+    filename: str | None = None,
+    mime_type: str | None = None,
+) -> str:
+    """Save a base64 data URL to a temp file, preserving a useful extension when possible."""
+    if data_url.startswith("data:"):
+        header, data = data_url.split(",", 1)
+        # Extract mime type
+        mime = header.split(":")[1].split(";")[0]
+        suffix = mimetypes.guess_extension(mime) or ""
+        if mime == "image/jpeg":
+            suffix = ".jpg"
+    else:
+        # Fallback for raw base64 without a data URL header
+        data = data_url
+        mime = mime_type or "application/octet-stream"
+        suffix = mimetypes.guess_extension(mime) or ".bin"
+
+    if filename:
+        filename_ext = os.path.splitext(filename)[1]
+        if filename_ext:
+            suffix = filename_ext
+
+    if not suffix:
+        suffix = mimetypes.guess_extension(mime_type or mime) or ".bin"
+
+    # Decode and save
+    file_data = base64.b64decode(data)
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "wb") as f:
+        f.write(file_data)
+    return path
+
+
+def save_base64_image(data_url: str) -> str:
+    """Backward-compatible helper for image-only paths."""
+    return save_base64_file(data_url)
+
+
+def _is_remote_preview(url: str | None) -> bool:
+    """Return True if the preview URL points to a non-localhost target."""
+    if not url:
+        return False
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
+
+
+def build_live_editor_dispatch_prompt(request_file_path: str, *, preview_url: str | None = None) -> str:
+    base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
+
+Start by reading the request file itself, then read every referenced context file before changing code.
+Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+
+    if _is_remote_preview(preview_url):
+        base += f"""
+
+The preview target is a remote deployment at {preview_url}. After completing the code edit, deploy these changes using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar. If no deployment process is found, state that and skip deployment."""
+
+    return base
+
+
+async def generate_with_claude_cli(
+    image_path: str | None,
+    system_prompt: str,
+    user_prompt: str,
+    session_id: str | None = None,
+    project_path: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to generate code from image.
+    Returns (result, session_id).
+    """
+    if image_path:
+        prompt = f"Read the image at {image_path} and {user_prompt}"
+    else:
+        prompt = user_prompt
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--system-prompt", system_prompt,
+        "--dangerously-skip-permissions",
+        "--tools", "Read",
+        "--output-format", "json",
+    ]
+
+    # Handle session persistence
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path or "")
+    else:
+        # Generate new session if project_path provided
+        if project_path:
+            session_id = generate_session_id(project_path)
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path if project_path else None,
+    )
+
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        raise Exception(f"Claude CLI error: {error_msg}")
+
+    # Parse JSON response
+    result = json.loads(stdout.decode())
+    return result.get("result", ""), session_id or ""
+
+
+async def generate_update_with_claude_cli(
+    system_prompt: str,
+    current_code: str,
+    update_instruction: str,
+    session_id: str | None = None,
+    project_path: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to update existing code based on instruction.
+    Returns (result, session_id).
+    """
+    prompt = f"""Here is the current HTML code:
+
+```html
+{current_code}
+```
+
+User request: {update_instruction}
+
+Update the code according to the user's request. Return ONLY the complete updated HTML code, nothing else. Do not include markdown fences. Start with <!DOCTYPE html> or <html> and end with </html>."""
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--system-prompt", system_prompt,
+        "--dangerously-skip-permissions",
+        "--output-format", "json",
+    ]
+
+    # Handle session persistence
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path or "")
+    else:
+        if project_path:
+            session_id = generate_session_id(project_path)
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path if project_path else None,
+    )
+
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        raise Exception(f"Claude CLI error: {error_msg}")
+
+    # Parse JSON response
+    result = json.loads(stdout.decode())
+    return result.get("result", ""), session_id or ""
+
+
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "message": "Pixel Forge API - screenshot bootstrap and live editing via Claude Code",
+    }
+
+
+@app.websocket("/generate-code")
+async def generate_code(websocket: WebSocket):
+    """WebSocket endpoint for screenshot bootstrap in the Pixel Forge web app."""
+    await websocket.accept()
+    print("Incoming websocket connection...", flush=True)
+
+    try:
+        # Receive parameters from frontend
+        print("Waiting for params...", flush=True)
+        params = await websocket.receive_json()
+        print(f"Received params: keys={list(params.keys())}", flush=True)
+
+        # Extract key parameters
+        stack = params.get("generatedCodeConfig", "html_tailwind")
+        input_mode = params.get("inputMode", "image")
+        generation_type = params.get("generationType", "create")
+        history = params.get("history", [])
+
+        # Session parameters (new)
+        session_id = params.get("session_id")
+        project_path = params.get("project_path")
+
+        print(f"Stack: {stack}, InputMode: {input_mode}, GenerationType: {generation_type}", flush=True)
+        print(f"Session: {session_id}, Project: {project_path}", flush=True)
+
+        # Map stack names to our keys
+        stack_map = {
+            "html_tailwind": "html_tailwind",
+            "html_css": "html_css",
+            "react_tailwind": "react_tailwind",
+            "bootstrap": "bootstrap",
+            "vue_tailwind": "vue_tailwind",
+            "ionic_tailwind": "ionic_tailwind",
+            "svg": "svg",
+        }
+        stack_key = stack_map.get(stack, "html_tailwind")
+        system_prompt = SYSTEM_PROMPTS.get(stack_key, SYSTEM_PROMPTS["html_tailwind"])
+        user_prompt = SVG_USER_PROMPT if stack == "svg" else USER_PROMPT
+
+        # Tell frontend we're using 1 variant (Claude CLI mode)
+        await websocket.send_json({"type": "variantCount", "value": "1", "variantIndex": 0})
+
+        # Handle UPDATE requests (Select and update feature)
+        if generation_type == "update" and history:
+            print(f"Processing UPDATE request with {len(history)} history items", flush=True)
+            await websocket.send_json({"type": "status", "value": "Updating code via Claude Code...", "variantIndex": 0})
+
+            # History format:
+            # - Even indices (0, 2, 4...): assistant messages (generated code)
+            # - Odd indices (1, 3, 5...): user messages (update instructions)
+            # The last item is the user's update instruction
+
+            # Get the most recent code (second to last item, which is assistant's code)
+            if len(history) >= 2:
+                current_code = history[-2].get("text", "")
+            else:
+                # Fallback: shouldn't happen but handle gracefully
+                current_code = history[0].get("text", "") if history else ""
+
+            # Get the update instruction (last item)
+            update_instruction = history[-1].get("text", "")
+
+            print(f"Current code length: {len(current_code)}", flush=True)
+            print(f"Update instruction: {update_instruction[:200]}...", flush=True)
+
+            try:
+                # Generate updated code via Claude CLI
+                result, returned_session_id = await generate_update_with_claude_cli(
+                    system_prompt=system_prompt,
+                    current_code=current_code,
+                    update_instruction=update_instruction,
+                    session_id=session_id,
+                    project_path=project_path,
+                )
+
+                # Extract and clean HTML
+                html_code = extract_html_content(result)
+
+                # Send result back to frontend
+                await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
+                await websocket.send_json({
+                    "type": "variantComplete",
+                    "value": "Update complete",
+                    "variantIndex": 0,
+                    "session_id": returned_session_id,
+                })
+
+            except Exception as e:
+                print(f"Update error: {e}", flush=True)
+                raise
+
+        # Handle CREATE requests (initial generation)
+        else:
+            # Extract image/video from prompt
+            prompt_data = params.get("prompt", {})
+            images = prompt_data.get("images", [])
+
+            if not images:
+                await websocket.send_json({"type": "error", "value": "No image provided"})
+                await websocket.close()
+                return
+
+            data_url = images[0]
+
+            # Handle video vs image input
+            if input_mode == "video":
+                await websocket.send_json({"type": "status", "value": "Extracting video frames...", "variantIndex": 0})
+                image_path = process_video_to_image(data_url)
+                # Update user prompt for video context - BE VERY STRICT about output format
+                user_prompt = """These are frames extracted from a video recording of a web page. Generate HTML/Tailwind code that recreates the UI shown.
+
+CRITICAL: Return ONLY the HTML code. Do NOT include any explanation, description, or commentary. Do NOT describe what you see. Start directly with <!DOCTYPE html> or <html> and end with </html>. Nothing else."""
+                await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
+            else:
+                await websocket.send_json({"type": "status", "value": "Generating code via Claude Code...", "variantIndex": 0})
+                # Save image to temp file
+                image_path = save_base64_image(data_url)
+
+            print(f"Saved {'video frames' if input_mode == 'video' else 'image'} to: {image_path}", flush=True)
+
+            try:
+                # Generate code via Claude CLI
+                result, returned_session_id = await generate_with_claude_cli(
+                    image_path=image_path,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    session_id=session_id,
+                    project_path=project_path,
+                )
+
+                # Extract and clean HTML
+                html_code = extract_html_content(result)
+
+                # Send result back to frontend
+                await websocket.send_json({"type": "setCode", "value": html_code, "variantIndex": 0})
+                await websocket.send_json({
+                    "type": "variantComplete",
+                    "value": "Generation complete",
+                    "variantIndex": 0,
+                    "session_id": returned_session_id,
+                })
+
+            finally:
+                # Cleanup temp file
+                if os.path.exists(image_path):
+                    os.unlink(image_path)
+
+    except Exception as e:
+        import traceback
+        print(f"Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({"type": "error", "value": str(e)})
+        except Exception:
+            pass
+
+    finally:
+        print("Closing websocket connection", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+async def edit_element_with_claude_cli(
+    element_html: str,
+    instruction: str,
+    project_path: str,
+    element_xpath: str | None = None,
+    element_classes: list[str] | None = None,
+    session_id: str | None = None,
+) -> tuple[str, str]:
+    """
+    Call Claude CLI to edit an element in a real project.
+    Returns (result, session_id).
+    """
+    # Build context about the element
+    element_context = f"Element HTML:\n```html\n{element_html}\n```"
+    if element_xpath:
+        element_context += f"\n\nXPath: {element_xpath}"
+    if element_classes:
+        element_context += f"\n\nCSS Classes: {', '.join(element_classes)}"
+
+    prompt = f"""The user is pointing at this element in their running web app:
+
+{element_context}
+
+Their request: {instruction}
+
+Find the source file that renders this element and make the requested change.
+Use Glob and Grep to search the codebase, Read to examine files, and Edit to make changes.
+After making changes, briefly confirm what you changed."""
+
+    system_prompt = """You are a code editor assistant. The user has selected an element in their running web application and wants you to modify it.
+
+Your task:
+1. Find the source file that contains or renders this element
+2. Make the requested modification
+3. Confirm what you changed
+
+Tips for finding the element:
+- Search for unique text content, class names, or IDs
+- Look in common locations: src/, components/, pages/, app/
+- The element might be in a React component, Vue component, or plain HTML file
+
+Be precise and minimal - only change what's necessary."""
+
+    cmd = [
+        "claude",
+        "-p", prompt,
+        "--system-prompt", system_prompt,
+        "--dangerously-skip-permissions",
+        "--output-format", "json",
+    ]
+
+    # Handle session persistence
+    # If session_id provided explicitly, try to resume it
+    # Otherwise start fresh (no session persistence by default)
+    if session_id:
+        if is_session_active(session_id):
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+            mark_session_active(session_id, project_path)
+    # else: No session flags = fresh conversation each time
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path,
+    )
+
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode() if stderr else "Unknown error"
+        raise Exception(f"Claude CLI error: {error_msg}")
+
+    # Parse JSON response
+    result = json.loads(stdout.decode())
+    return result.get("result", ""), session_id or ""
+
+
+@app.websocket("/edit-element")
+async def edit_element(websocket: WebSocket):
+    """WebSocket endpoint for element-based editing with Claude."""
+    await websocket.accept()
+    print("[edit-element] Connection opened", flush=True)
+
+    try:
+        # Receive edit request
+        data = await websocket.receive_json()
+        print(f"[edit-element] Received request: {list(data.keys())}", flush=True)
+
+        element = data.get("element", {})
+        instruction = data.get("instruction", "")
+        project_path = data.get("projectPath", "")
+        session_id = data.get("session_id")
+
+        print(f"[edit-element] Session: {session_id}, Project: {project_path}", flush=True)
+
+        # Validate required fields
+        if not element.get("outerHTML"):
+            await websocket.send_json({
+                "type": "error",
+                "message": "No element HTML provided"
+            })
+            return
+
+        if not instruction:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No instruction provided"
+            })
+            return
+
+        if not project_path:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No project path provided"
+            })
+            return
+
+        # Verify project path exists
+        if not os.path.isdir(project_path):
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Project path does not exist: {project_path}"
+            })
+            return
+
+        # Send status update
+        await websocket.send_json({
+            "type": "status",
+            "message": "Finding and editing element..."
+        })
+
+        # Call Claude to edit the element
+        try:
+            result, returned_session_id = await edit_element_with_claude_cli(
+                element_html=element.get("outerHTML", ""),
+                instruction=instruction,
+                project_path=project_path,
+                element_xpath=element.get("xpath"),
+                element_classes=element.get("classList", []),
+                session_id=session_id,
+            )
+
+            await websocket.send_json({
+                "type": "result",
+                "message": result,
+                "session_id": returned_session_id,
+            })
+
+        except Exception as e:
+            print(f"[edit-element] Claude error: {e}", flush=True)
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+
+    except Exception as e:
+        import traceback
+        print(f"[edit-element] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[edit-element] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/chat")
+async def unified_chat(websocket: WebSocket):
+    """
+    Unified chat WebSocket endpoint for all modes.
+    Provides streaming responses with session persistence.
+    """
+    await websocket.accept()
+    print("[ws/chat] Connection opened", flush=True)
+
+    try:
+        while True:
+            # Receive chat message
+            data = await websocket.receive_json()
+            print(f"[ws/chat] Received: {list(data.keys())}", flush=True)
+
+            message = data.get("message", "")
+            context = data.get("context", "")
+            session_id = data.get("session_id")
+            project_path = data.get("project_path", "")
+
+            if not message:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No message provided"
+                })
+                continue
+
+            # Build prompt with context if provided
+            if context:
+                prompt = f"Context:\n{context}\n\nRequest: {message}"
+            else:
+                prompt = message
+
+            # Build command
+            cmd = [
+                "claude",
+                "-p", prompt,
+                "--dangerously-skip-permissions",
+                "--output-format", "stream-json",
+                "--verbose",
+            ]
+
+            # Handle session persistence
+            if session_id:
+                if is_session_active(session_id):
+                    cmd.extend(["--resume", session_id])
+                else:
+                    cmd.extend(["--session-id", session_id])
+                    mark_session_active(session_id, project_path)
+            elif project_path:
+                session_id = generate_session_id(project_path)
+                cmd.extend(["--session-id", session_id])
+                mark_session_active(session_id, project_path)
+
+            print(f"[ws/chat] Session: {session_id}", flush=True)
+
+            # Send session info
+            await websocket.send_json({
+                "type": "session",
+                "session_id": session_id or "",
+            })
+
+            # Start streaming process
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=project_path if project_path else None,
+            )
+
+            # Stream output line by line
+            try:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+
+                    line_str = line.decode().strip()
+                    if not line_str:
+                        continue
+
+                    try:
+                        event = json.loads(line_str)
+                        event_type = event.get("type", "")
+
+                        if event_type == "assistant":
+                            # Text content from Claude
+                            content = event.get("message", {}).get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    await websocket.send_json({
+                                        "type": "text",
+                                        "content": block.get("text", ""),
+                                    })
+
+                        elif event_type == "tool_use":
+                            # Tool being used
+                            await websocket.send_json({
+                                "type": "tool_use",
+                                "tool": event.get("tool", ""),
+                                "input": event.get("input", {}),
+                            })
+
+                        elif event_type == "tool_result":
+                            # Tool result
+                            await websocket.send_json({
+                                "type": "tool_result",
+                                "result": event.get("result", ""),
+                            })
+
+                        elif event_type == "result":
+                            # Final result
+                            await websocket.send_json({
+                                "type": "complete",
+                                "content": event.get("result", ""),
+                                "session_id": session_id or "",
+                            })
+
+                    except json.JSONDecodeError:
+                        # Non-JSON output, send as raw text
+                        await websocket.send_json({
+                            "type": "raw",
+                            "content": line_str,
+                        })
+
+                # Wait for process to complete
+                await proc.wait()
+
+                if proc.returncode != 0:
+                    stderr = await proc.stderr.read()
+                    error_msg = stderr.decode() if stderr else "Unknown error"
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": error_msg,
+                    })
+
+            except Exception as e:
+                proc.kill()
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(e),
+                })
+
+    except Exception as e:
+        import traceback
+        print(f"[ws/chat] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[ws/chat] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/ws/live-editor")
+async def live_editor_chat(websocket: WebSocket):
+    """
+    Live Editor WebSocket endpoint backed by Agent Deck sessions.
+    Stores each request as a disk request pack and dispatches a short prompt
+    into a persistent Agent Deck Claude session for the target project.
+    """
+    await websocket.accept()
+    print("[live-editor] Connection opened", flush=True)
+
+    try:
+        while True:
+            # Receive chat message
+            data = await websocket.receive_json()
+            print(f"[live-editor] Received: {list(data.keys())}", flush=True)
+
+            message = data.get("message", "")
+            element_context = data.get("element_context", "")
+            attachments = data.get("attachments") or []
+            legacy_images = data.get("images") or []
+            thread_id = data.get("thread_id") or data.get("session_id")
+            project_path = data.get("project_path", "")
+            preview_url = data.get("preview_url", "")
+
+            if not attachments and legacy_images:
+                attachments = [
+                    {
+                        "name": f"reference-image-{index + 1}.png",
+                        "mime_type": "image/png",
+                        "data_url": image_data,
+                        "kind": "image",
+                    }
+                    for index, image_data in enumerate(legacy_images)
+                ]
+
+            if not message and not attachments:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No message or attachments provided"
+                })
+                continue
+
+            if not project_path:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "No project path configured"
+                })
+                continue
+
+            # Verify project path exists
+            if not os.path.isdir(project_path):
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Project path does not exist: {project_path}"
+                })
+                continue
+
+            send_proc: asyncio.subprocess.Process | None = None
+
+            try:
+                request_message = message.strip() or "Use the attached reference files as context for this live edit."
+                thread = get_or_create_live_editor_thread(
+                    project_path,
+                    thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
+                )
+
+                await websocket.send_json(
+                    {
+                        "type": "status",
+                        "message": "Resolving Agent Deck session...",
+                    }
+                )
+
+                session_info = await ensure_agent_deck_session(project_path, thread)
+                thread = update_live_editor_thread(
+                    thread.thread_id,
+                    agent_deck_session_id=session_info.agent_deck_session_id,
+                    agent_deck_session_title=session_info.agent_deck_session_title,
+                    claude_session_id=session_info.claude_session_id or "",
+                )
+
+                request_pack = create_request_pack(
+                    project_path,
+                    thread.thread_id,
+                    request_message,
+                    element_context,
+                    attachments,
+                    agent_deck_session_id=session_info.agent_deck_session_id,
+                )
+                thread = update_live_editor_thread(
+                    thread.thread_id,
+                    last_request_id=request_pack.request_id,
+                )
+
+                await websocket.send_json(
+                    {
+                        "type": "session",
+                        "session_id": thread.thread_id,
+                        "backend": thread.backend,
+                        "agent_deck_session_id": session_info.agent_deck_session_id,
+                        "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "request_id": request_pack.request_id,
+                    }
+                )
+                await websocket.send_json(
+                    {
+                        "type": "status",
+                        "message": f"Dispatching request pack {request_pack.relative_directory} to Agent Deck...",
+                    }
+                )
+
+                dispatch_prompt = build_live_editor_dispatch_prompt(
+                    request_pack.relative_request_file,
+                    preview_url=preview_url or None,
+                )
+                jsonl_path = session_info.jsonl_path
+                start_offset = (
+                    jsonl_path.stat().st_size
+                    if jsonl_path and jsonl_path.exists()
+                    else 0
+                )
+
+                send_proc = await start_agent_deck_send(
+                    session_info,
+                    project_path=project_path,
+                    prompt=dispatch_prompt,
+                )
+                send_task = asyncio.create_task(send_proc.communicate())
+
+                stream_stats = None
+                if jsonl_path:
+                    stream_stats = await stream_claude_jsonl(
+                        websocket,
+                        jsonl_path,
+                        start_offset,
+                        send_task,
+                    )
+
+                stdout, stderr = await send_task
+                stdout_text = stdout.decode().strip()
+                stderr_text = stderr.decode().strip()
+
+                if send_proc.returncode != 0:
+                    raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
+
+                if not stream_stats or not stream_stats.streamed_text:
+                    fallback_output = stdout_text or await get_last_output(
+                        session_info.agent_deck_session_id
+                    )
+                    if fallback_output:
+                        await websocket.send_json(
+                            {
+                                "type": "chunk",
+                                "content": fallback_output,
+                            }
+                        )
+
+                refreshed_session = await ensure_agent_deck_session(project_path, thread)
+                update_live_editor_thread(
+                    thread.thread_id,
+                    claude_session_id=refreshed_session.claude_session_id or "",
+                )
+
+                await websocket.send_json(
+                    {
+                        "type": "complete",
+                        "session_id": thread.thread_id,
+                        "backend": thread.backend,
+                        "agent_deck_session_id": session_info.agent_deck_session_id,
+                        "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "request_id": request_pack.request_id,
+                        "is_remote_target": _is_remote_preview(preview_url or None),
+                    }
+                )
+
+            except (AgentDeckBridgeError, ValueError) as e:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": str(e),
+                    }
+                )
+            except Exception as e:
+                if send_proc and send_proc.returncode is None:
+                    send_proc.kill()
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": str(e),
+                    }
+                )
+
+            finally:
+                if send_proc and send_proc.returncode is None:
+                    send_proc.kill()
+
+    except Exception as e:
+        import traceback
+        print(f"[live-editor] Error: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+
+    finally:
+        print("[live-editor] Connection closing", flush=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# =============================================================================
+# APP PROXY ROUTER - Must be LAST because it has a catch-all route!
+# =============================================================================
+app.include_router(app_proxy_router)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7001)

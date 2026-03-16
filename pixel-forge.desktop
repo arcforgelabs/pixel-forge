@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Pixel Forge
+Comment=Visual app editor — screenshot bootstrap and live editing
+Exec=bash -c 'exec "$HOME/repos/3-resources/pixel-forge/start-dev.sh"'
+Icon=pixel-forge
+Terminal=true
+Type=Application
+Categories=Development;WebDevelopment;
+StartupNotify=true

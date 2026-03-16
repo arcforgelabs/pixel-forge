@@ -1,105 +1,30 @@
-# VISION.md
+# Vision
 
-**Last Updated**: 2025-12-28
+Pixel Forge should shorten the loop between seeing a UI problem and changing the real app.
 
----
+## Core Claim
 
-Point at your screen. Tell Claude what to change. Watch it happen.
+Pointing at a live interface is better context than describing it from memory.
 
-Visual feedback is faster than describing code. Claude should see what you see.
+## Product Shape
 
-Before building, ask: does this make the feedback loop tighter?
+```text
+Screenshot mode
+  -> bootstrap a UI idea from an image
 
----
-
-## Core Axioms
-
-1. **Visual > Verbal**: Pointing at an element beats describing it in words
-2. **Context is King**: Claude with project context beats Claude without it
-3. **Subscription > API Credits**: Power users shouldn't pay twice for Claude
-4. **Iterate, Don't Regenerate**: Modify existing code, don't start from scratch
-
----
-
-## The Evolution
-
-| Phase | What | Status |
-|-------|------|--------|
-| **v0** | SDK that calls Claude API directly | Archived |
-| **v1** | Wrap screenshot-to-code with Claude CLI proxy | Complete |
-| **v2** | Embed dev apps, persistent sessions, real file edits | Complete |
-| **v2.1** | Unified modes - Screenshot-to-Code + Live Editor as one experience | Complete |
-
----
-
-## v2 Vision: Visual Code Editor
-
+Live Editor
+  -> load a real running app
+  -> select a real element
+  -> pass that selected context into Claude
+  -> edit the real project
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  pixel-forge                                                │
-│  ┌─────────────────────┐  ┌─────────────────────────────┐  │
-│  │  Your Running App   │  │  Claude (persistent session) │  │
-│  │  localhost:3000     │  │  Full project context        │  │
-│  │                     │  │                              │  │
-│  │  [Select Element]   │  │  "Make this button blue"     │  │
-│  │         ↓           │  │           ↓                  │  │
-│  │  outerHTML captured │  │  Edits src/Button.tsx        │  │
-│  └─────────────────────┘  └─────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key differences from screenshot-to-code:**
-- Embeds your actual running app (not generated HTML preview)
-- Claude has persistent session (remembers previous changes)
-- Modifies real source files (not generates new code)
-- Uses Claude subscription (not API credits)
-
----
-
-## v2.1 Vision: Unified Modes
-
-Two modes, one Claude brain.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  pixel-forge                                                │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │  [Screenshot-to-Code]  [Live Editor]     ← Mode tabs    ││
-│  ├─────────────────────────────────────────────────────────┤│
-│  │                                                         ││
-│  │  Screenshot-to-Code:                                    ││
-│  │  - Upload image → Generate HTML                         ││
-│  │  - Sidebar: project settings, format selection          ││
-│  │  - Preview generated code                               ││
-│  │  - "Continue in Live Editor" button                     ││
-│  │                                                         ││
-│  │  Live Editor:                                           ││
-│  │  - Embed running app via proxy                          ││
-│  │  - No sidebar (full-width app view)                     ││
-│  │  - Click to select, chat to edit                        ││
-│  │  - Same Claude session continues conversation           ││
-│  │                                                         ││
-│  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key insight:** Both modes benefit from the same persistent Claude session.
-- Screenshot-to-Code generates initial code → Claude knows what it created
-- Live Editor edits code → Claude remembers the context from generation
-- Switching modes doesn't reset Claude's memory
-
-**UX principle:** Mode-specific UI. Screenshot-to-Code needs format settings.
-Live Editor needs maximum screen real estate for the embedded app.
-
----
 
 ## Decision Filter
 
-When evaluating features, ask:
+Keep work only if it improves at least one of these:
+- tighter screenshot-to-edit loop
+- better selected-element context
+- clearer project/session continuity
+- less duplicated runtime surface
 
-1. Does this tighten the visual feedback loop?
-2. Does this preserve Claude's context?
-3. Does this work with the user's existing dev setup?
-4. Does this avoid requiring API keys?
-
-If the answer to all four is "yes", build it.
+Reject work that creates a second product boundary or revives legacy nested-app structure.

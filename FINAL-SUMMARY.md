@@ -371,7 +371,7 @@ overall_score = (hash_similarity × 0.6) + (pixel_similarity × 0.4)
 export ANTHROPIC_API_KEY="your-key-here"
 
 # Test 1: Single generation
-cd /home/samuelrodda/repos/visual-to-code
+cd ~/repos/3-resources/pixel-forge
 source ~/.venv/bin/activate
 python tools/batch_generate.py examples/ results/test-batch/
 
@@ -468,18 +468,18 @@ python tools/auto_iterate_reflex.py examples/test-2-invoice-card.png --max-itera
 ## Files Created
 
 ### Tools (4)
-- `/home/samuelrodda/repos/visual-to-code/tools/batch_generate.py`
-- `/home/samuelrodda/repos/visual-to-code/tools/generate_variants.py`
-- `/home/samuelrodda/repos/visual-to-code/tools/auto_iterate.py`
-- `/home/samuelrodda/repos/visual-to-code/tools/auto_iterate_reflex.py` ⭐
+- `~/repos/3-resources/pixel-forge/tools/batch_generate.py`
+- `~/repos/3-resources/pixel-forge/tools/generate_variants.py`
+- `~/repos/3-resources/pixel-forge/tools/auto_iterate.py`
+- `~/repos/3-resources/pixel-forge/tools/auto_iterate_reflex.py` ⭐
 
 ### Documentation (3)
-- `/home/samuelrodda/repos/visual-to-code/TOOLS-SUMMARY.md`
-- `/home/samuelrodda/repos/visual-to-code/TESTING-RESULTS.md`
-- `/home/samuelrodda/repos/visual-to-code/FINAL-SUMMARY.md` (this file)
+- `~/repos/3-resources/pixel-forge/TOOLS-SUMMARY.md`
+- `~/repos/3-resources/pixel-forge/TESTING-RESULTS.md`
+- `~/repos/3-resources/pixel-forge/FINAL-SUMMARY.md` (this file)
 
 ### Previous Session
-- `/home/samuelrodda/repos/visual-to-code/results/phase1/ANALYSIS.md`
+- `~/repos/3-resources/pixel-forge/results/phase1/ANALYSIS.md`
 
 ---
 

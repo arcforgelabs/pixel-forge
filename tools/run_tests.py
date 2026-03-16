@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Programmatic testing of screenshot-to-code with multiple models
+Programmatic testing of Pixel Forge screenshot mode with multiple models
 """
 import asyncio
 import base64
@@ -10,20 +10,21 @@ from pathlib import Path
 import httpx
 
 BACKEND_URL = "http://localhost:7001"
-RESULTS_DIR = Path("/home/samuelrodda/repos/visual-to-code/results/phase1")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RESULTS_DIR = REPO_ROOT / "results" / "phase1"
 
 # Test configurations - Only Sonnet 4.5
 TESTS = [
     {
         "name": "test-2-sonnet-4.5",
-        "image": "/home/samuelrodda/repos/visual-to-code/examples/test-2-invoice-card.png",
+        "image": str(REPO_ROOT / "examples" / "test-2-invoice-card.png"),
         "model": "claude-sonnet-4-5-20250929",
         "output": RESULTS_DIR / "sonnet-4.5" / "test-2-output.tsx",
         "description": "Simple Invoice Card with Claude Sonnet 4.5"
     },
     {
         "name": "test-3-sonnet-4.5",
-        "image": "/home/samuelrodda/repos/visual-to-code/examples/test-3-styled-invoice-card.png",
+        "image": str(REPO_ROOT / "examples" / "test-3-styled-invoice-card.png"),
         "model": "claude-sonnet-4-5-20250929",
         "output": RESULTS_DIR / "sonnet-4.5" / "test-3-output.tsx",
         "description": "Styled Matrix Card with Claude Sonnet 4.5"
@@ -31,7 +32,7 @@ TESTS = [
 ]
 
 async def generate_code(image_path: str, model: str, test_name: str) -> dict:
-    """Call screenshot-to-code backend API to generate code"""
+    """Call the Pixel Forge backend API to generate code."""
     print(f"\n{'='*80}")
     print(f"Running: {test_name}")
     print(f"Image: {Path(image_path).name}")
@@ -94,7 +95,7 @@ async def run_all_tests():
     results = []
 
     print(f"\n{'#'*80}")
-    print(f"# screenshot-to-code Automated Testing")
+    print(f"# Pixel Forge Automated Testing")
     print(f"# Testing 2 images with Claude Sonnet 4.5")
     print(f"{'#'*80}")
 

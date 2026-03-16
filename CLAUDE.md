@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Visual-to-code toolkit: convert screenshots to HTML/Tailwind, or edit running apps via Live Editor.
+Pixel Forge is a visual app editor. Screenshot bootstrap and Live Editor are two modes of the same product.
 
 ## Starting the Full UI
 
@@ -12,14 +12,18 @@ Visual-to-code toolkit: convert screenshots to HTML/Tailwind, or edit running ap
 # Terminal 1: Backend (Claude CLI proxy)
 pixel-forge                     # Runs on port 7001
 
-# Terminal 2: Frontend
-cd screenshot-to-code/frontend
-pnpm dev --port 5174            # Runs on port 5174
+# Terminal 2: Web app
+cd apps/web
+pnpm dev                        # Runs on port 5173
 ```
 
-**Open**: http://localhost:5174
+**Open**: http://pixel-forge.localhost:5173
 
 If `pixel-forge` command not found, run `./install.sh` first.
+
+Visible browser verification must use a maximized browser window sized to the current display. `./start-dev.sh` now auto-opens one when a GUI display is available. Set `PIXEL_FORGE_NO_BROWSER=1` if you only want the services.
+
+`SPECS.md` is the repo constitution. Live Editor now runs through Agent Deck-backed persistent sessions. Each request is written to `.pixel-forge/requests/<request-id>/...` inside the target project before Pixel Forge dispatches a short prompt into the corresponding Agent Deck session.
 
 ## Project Setup (Live Editor Mode)
 
@@ -27,13 +31,13 @@ On first load, a modal asks for:
 - **Project Path**: Absolute path to target project (e.g., `/home/user/repos/my-app`)
 - **Dev Server URL**: Running dev server (e.g., `http://localhost:3000`)
 
-Both are required for Live Editor. Screenshot-to-Code works without them.
+Both are required for Live Editor. Screenshot mode works without them.
 
 ## Two Modes
 
 | Tab | Purpose |
 |-----|---------|
-| **Screenshot to Code** | Generate code from images/screenshots |
+| **Screenshot** | Bootstrap UI from images/screenshots |
 | **Live Editor** | Select elements in running app, describe changes |
 
 ## Live Editor Workflow
@@ -52,10 +56,10 @@ Both are required for Live Editor. Screenshot-to-Code works without them.
 pixel-forge (port 7001)         # FastAPI backend, Claude CLI wrapper
   └── /app/*                    # Proxies target app with selection script injection
   └── /ws/live-editor           # WebSocket for Claude streaming
-  └── /generate-code            # Screenshot-to-code endpoint
+  └── /generate-code            # Screenshot bootstrap endpoint
 
-screenshot-to-code/frontend     # React frontend
-  └── Screenshot to Code tab    # Image upload, code generation
+apps/web                        # React frontend
+  └── Screenshot tab            # Image upload, code generation
   └── Live Editor tab           # Embedded app, element selection, chat
 ```
 

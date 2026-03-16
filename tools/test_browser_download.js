@@ -2,17 +2,20 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
+const REPO_ROOT = path.resolve(__dirname, '..');
+const RESULTS_DIR = path.join(REPO_ROOT, 'results', 'phase1');
+
 const TESTS = [
   {
     name: 'test-2-sonnet-4.5',
-    image: '/home/samuelrodda/repos/visual-to-code/examples/test-2-invoice-card.png',
-    output: '/home/samuelrodda/repos/visual-to-code/results/phase1/sonnet-4.5/test-2-output.tsx',
+    image: path.join(REPO_ROOT, 'examples', 'test-2-invoice-card.png'),
+    output: path.join(RESULTS_DIR, 'sonnet-4.5', 'test-2-output.tsx'),
     description: 'Simple Invoice Card with Claude Sonnet 4.5'
   },
   {
     name: 'test-3-sonnet-4.5',
-    image: '/home/samuelrodda/repos/visual-to-code/examples/test-3-styled-invoice-card.png',
-    output: '/home/samuelrodda/repos/visual-to-code/results/phase1/sonnet-4.5/test-3-output.tsx',
+    image: path.join(REPO_ROOT, 'examples', 'test-3-styled-invoice-card.png'),
+    output: path.join(RESULTS_DIR, 'sonnet-4.5', 'test-3-output.tsx'),
     description: 'Styled Matrix Card with Claude Sonnet 4.5'
   }
 ];
@@ -30,7 +33,7 @@ async function runTest(browser, test, testNumber) {
   try {
     // Navigate to the frontend
     console.log('Navigating to frontend...');
-    await page.goto('http://screenshot-to-code.localhost:5173', {
+    await page.goto('http://pixel-forge.localhost:5173', {
       waitUntil: 'networkidle',
       timeout: 30000
     });
@@ -127,7 +130,7 @@ async function runTest(browser, test, testNumber) {
 
 async function main() {
   console.log('\n' + '#'.repeat(80));
-  console.log('# screenshot-to-code Automated Testing (Download Method)');
+  console.log('# Pixel Forge Automated Testing (Download Method)');
   console.log('# Testing 2 images with Claude Sonnet 4.5');
   console.log('#'.repeat(80));
 
@@ -158,7 +161,7 @@ async function main() {
     }
 
     // Save results summary
-    const summaryPath = '/home/samuelrodda/repos/visual-to-code/results/phase1/test-summary.json';
+    const summaryPath = path.join(RESULTS_DIR, 'test-summary.json');
     fs.writeFileSync(summaryPath, JSON.stringify(results, null, 2));
 
     console.log('\n' + '#'.repeat(80));
