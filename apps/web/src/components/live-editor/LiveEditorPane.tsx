@@ -97,6 +97,7 @@ export function LiveEditorPane() {
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
   const internalPreviewUrlRef = useRef<string | null>(null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
+  const authToastIdsRef = useRef<Record<string, string>>({})
 
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
@@ -608,10 +609,13 @@ export function LiveEditorPane() {
         if (!sourceTab || sourceTab.id === activePreviewTab?.id) {
           setAuthIssue({ status, url: failingUrl })
         }
+        const toastId = `auth-${sourceTab?.id || 'preview'}`
+        authToastIdsRef.current[sourceTab?.id || 'preview'] = toastId
         toast.error(
           status === 401 || status === 403
             ? `Target authentication required (${status}).`
-            : 'Target authentication required.'
+            : 'Target authentication required.',
+          { id: toastId }
         )
       } else if (event.data.type === 'pixel-forge-location-changed') {
         if (!sourceTab) {

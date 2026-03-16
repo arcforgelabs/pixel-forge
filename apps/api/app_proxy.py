@@ -53,12 +53,11 @@ SELECTION_SCRIPT_TEMPLATE = """
   let currentTarget = null;
   let selectedElements = [];  // Array of {element, xpath, overlay, badge}
   const MAX_SELECTIONS = 10;
-  const authFailuresSeen = new Set();
+  let authFailureSeen = false;
 
   function notifyAuthFailure(status, url) {
-    const key = `${status}:${url}`;
-    if (authFailuresSeen.has(key)) return;
-    authFailuresSeen.add(key);
+    if (authFailureSeen) return;
+    authFailureSeen = true;
     window.parent.postMessage({
       type: 'pixel-forge-auth-required',
       data: { status, url }
