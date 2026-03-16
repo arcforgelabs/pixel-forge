@@ -13,6 +13,9 @@ SERVICES-RUNNING.md
 SESSION-REVIEW.md
 TEST-RESULTS-SUMMARY.md
 
+# Pixel Forge runtime
+.pixel-forge/
+
 # Python
 __pycache__/
 *.pyc
