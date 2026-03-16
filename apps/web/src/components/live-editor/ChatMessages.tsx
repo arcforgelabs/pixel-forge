@@ -33,12 +33,15 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
       <div className="min-w-0 max-w-full space-y-4 overflow-hidden p-4">
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
-          <div className="py-4">
-            <p className="text-muted-foreground">
-              Select elements and describe what to change.
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <span className="text-lg font-bold text-primary">//</span>
+            </div>
+            <p className="text-sm font-medium text-foreground/80">
+              Ready to edit
             </p>
-            <p className="text-sm text-muted-foreground/60 mt-2">
-              Claude will find and edit the source files.
+            <p className="mt-1 text-xs text-muted-foreground">
+              Select elements in the preview, then describe your changes.
             </p>
           </div>
         )}
@@ -55,11 +58,11 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
               <ToolCard activity={msg.toolActivity} />
             ) : (
               <div
-                className={
+                className={`forge-msg-enter ${
                   msg.role === 'user'
-                    ? 'max-w-[calc(100%-2rem)] min-w-0 overflow-hidden rounded-2xl bg-primary px-4 py-3 text-primary-foreground shadow-sm'
-                    : 'max-w-[calc(100%-2rem)] min-w-0 overflow-hidden rounded-2xl bg-muted px-4 py-3 shadow-sm'
-                }
+                    ? 'max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-foreground ring-1 ring-primary/20'
+                    : 'max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30'
+                }`}
               >
                 {msg.role === 'assistant' ? (
                   <div className="space-y-2">
@@ -118,24 +121,24 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
 
         {/* Streaming message */}
         {isStreaming && currentStreamContent && (
-          <div className="flex w-full min-w-0 justify-start">
-            <div className="max-w-[calc(100%-2rem)] min-w-0 overflow-hidden rounded-2xl bg-muted px-4 py-3 shadow-sm">
+          <div className="flex w-full min-w-0 justify-start forge-msg-enter">
+            <div className="max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30">
               <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
                 <ReactMarkdown>{currentStreamContent}</ReactMarkdown>
               </div>
-              <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-primary" />
+              <span className="ml-1 inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-primary/70" />
             </div>
           </div>
         )}
 
         {/* Loading indicator */}
         {isStreaming && !currentStreamContent && (
-          <div className="flex w-full min-w-0 justify-start">
-            <div className="max-w-[calc(100%-2rem)] min-w-0 rounded-2xl bg-muted px-4 py-3 shadow-sm">
-              <div className="flex items-center gap-1">
-                <div className="h-2 w-2 animate-bounce rounded-full bg-primary" />
-                <div className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:150ms]" />
-                <div className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:300ms]" />
+          <div className="flex w-full min-w-0 justify-start forge-msg-enter">
+            <div className="max-w-[calc(100%-1.5rem)] min-w-0 rounded-2xl rounded-bl-md bg-accent/50 px-4 py-3 ring-1 ring-border/30">
+              <div className="flex items-center gap-1.5">
+                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60" />
+                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:150ms]" />
+                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:300ms]" />
               </div>
             </div>
           </div>

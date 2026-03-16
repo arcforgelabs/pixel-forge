@@ -428,24 +428,29 @@ function App() {
       {/* Sidebar - only visible in Screenshot mode */}
       {activeMode !== "live-editor" && (
       <div className="lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-96 lg:flex-col">
-        <div className="flex grow flex-col gap-y-2 overflow-y-auto border-r border-border bg-white px-6 dark:bg-card dark:text-foreground">
+        <div className="flex grow flex-col gap-y-3 overflow-y-auto border-r border-border bg-card/50 px-5 dark:text-foreground">
           {/* Header with access to settings */}
-          <div className="flex items-center justify-between mt-10 mb-2">
-            <h1 className="text-2xl ">Pixel Forge</h1>
+          <div className="flex items-center justify-between mt-8 mb-1">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/12">
+                <span className="text-sm font-bold text-primary">//</span>
+              </div>
+              <h1 className="text-lg font-semibold tracking-tight">Pixel Forge</h1>
+            </div>
             <SettingsDialog settings={settings} setSettings={setSettings} />
           </div>
 
           {/* Project indicator */}
           <button
             onClick={() => setShowProjectSelector(true)}
-            className="flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            className="flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2 text-sm transition-all hover:border-border hover:bg-background/60"
           >
-            <span className="text-muted-foreground">Project:</span>
-            <span className="font-medium truncate">
+            <span className="text-muted-foreground text-xs">Project</span>
+            <span className="font-medium truncate text-xs">
               {projectName || "None selected"}
             </span>
             {(sessionId || liveEditorSession) && (
-              <span className="w-2 h-2 rounded-full bg-green-500" title="Session active" />
+              <span className="forge-status-dot bg-primary ml-auto" title="Session active" />
             )}
           </button>
 

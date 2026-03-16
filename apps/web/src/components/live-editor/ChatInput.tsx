@@ -130,13 +130,18 @@ export function ChatInput() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="p-3 border-t border-border flex-shrink-0 isolate relative z-50"
+      className="border-t border-border bg-card/30 p-3 flex-shrink-0 isolate relative z-50"
       style={{ pointerEvents: 'auto' }}
     >
       {/* Element count indicator */}
       {hasElements && (
-        <div className="text-xs text-muted-foreground mb-2">
-          {selectedElements.length} element{selectedElements.length !== 1 ? 's' : ''} selected
+        <div className="mb-2 flex items-center gap-1.5 text-xs">
+          <span className="flex h-4 min-w-4 items-center justify-center rounded bg-primary/15 px-1 font-mono text-[10px] font-semibold text-primary">
+            {selectedElements.length}
+          </span>
+          <span className="text-muted-foreground">
+            element{selectedElements.length !== 1 ? 's' : ''} selected
+          </span>
         </div>
       )}
 
@@ -172,8 +177,8 @@ export function ChatInput() {
       )}
 
       <div
-        className={`relative cursor-text rounded-xl bg-muted transition-colors ${
-          isDragActive ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''
+        className={`relative cursor-text rounded-xl bg-background/60 ring-1 ring-border/40 transition-all ${
+          isDragActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
         }`}
         style={{ pointerEvents: 'auto' }}
         onClick={handleContainerClick}
@@ -240,9 +245,9 @@ export function ChatInput() {
             type="submit"
             size="sm"
             disabled={!canSubmit}
-            className="h-8 w-8 p-0"
+            className="h-7 w-7 rounded-lg p-0 transition-all disabled:opacity-30"
           >
-            <Send className="w-4 h-4" />
+            <Send className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>

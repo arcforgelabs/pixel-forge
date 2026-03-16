@@ -2,110 +2,116 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================================
+   Pixel Forge — Forge Instrument Theme
+   Dark precision-tool aesthetic with forge-glow accent
+   ========================================================================= */
+
 /* Image Scanning animation */
 .scanning::after {
   content: "";
   position: absolute;
-  top: 0px;
-  left: 0px;
+  top: 0;
+  left: 0;
   width: 5px;
   height: 100%;
   background-image: linear-gradient(
     to right,
-    rgba(19, 161, 14, 0.2),
-    /* Darker matrix green with full transparency */ rgba(19, 161, 14, 0.8)
-      /* The same green with 80% opacity */
+    rgba(110, 200, 130, 0.1),
+    rgba(110, 200, 130, 0.6)
   );
   animation: scanning 3s ease-in-out infinite;
 }
 
 @keyframes scanning {
-  0%,
-  100% {
-    transform: translateX(0px);
-  }
-  50% {
-    transform: translateX(340px);
-  }
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(340px); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(110, 200, 130, 0); }
+  50% { box-shadow: 0 0 8px 2px rgba(110, 200, 130, 0.15); }
 }
 
 @layer base {
   :root {
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
-
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
-
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
-
     --primary: 222.2 47.4% 11.2%;
     --primary-foreground: 210 40% 98%;
-
     --secondary: 210 30% 94%;
     --secondary-foreground: 222.2 47.4% 11.2%;
-
-    /* Improved contrast for light mode */
     --muted: 210 25% 93%;
     --muted-foreground: 215.4 20% 35%;
-
     --accent: 210 30% 94%;
     --accent-foreground: 222.2 47.4% 11.2%;
-
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-
     --border: 214.3 25% 85%;
     --input: 214.3 25% 85%;
     --ring: 222.2 84% 4.9%;
-
     --radius: 0.5rem;
+
+    --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   }
-  
+
   body.dark {
-    background-color: #0a0e14;
+    background-color: #080b10;
   }
 
   div[role="presentation"].dark {
-    background-color: #0f1419 !important;
+    background-color: #0c1017 !important;
   }
 
   iframe {
     background-color: white !important;
   }
 
-  /* Arc theme dark mode - cohesive dark blue-gray palette */
+  /* Forge dark — deep charcoal-navy with green forge-glow */
   .dark {
-    /* Backgrounds: #0a0e14 -> #0f1419 -> #1a1f29 */
-    --background: 213 33% 6%;        /* #0a0e14 - primary bg */
-    --foreground: 210 14% 83%;       /* #c9d1d9 - primary text */
+    --background: 216 30% 5%;           /* #080b10 */
+    --foreground: 210 20% 82%;          /* #c5cdd6 */
 
-    --card: 212 26% 8%;              /* #0f1419 - secondary bg */
-    --card-foreground: 210 14% 83%;
+    --card: 215 25% 7.5%;              /* #0c1017 */
+    --card-foreground: 210 20% 82%;
 
-    --popover: 213 20% 10%;          /* #141a21 */
-    --popover-foreground: 210 14% 83%;
+    --popover: 215 22% 9%;             /* #111820 */
+    --popover-foreground: 210 20% 85%;
 
-    /* Primary action uses arc accent green */
-    --primary: 137 28% 61%;          /* #7eb88e - arc accent */
-    --primary-foreground: 213 33% 6%;
+    /* Forge glow — warm green with presence */
+    --primary: 145 42% 58%;            /* #5cb87a — vivid but not neon */
+    --primary-foreground: 216 30% 5%;
 
-    --secondary: 213 18% 13%;        /* #1a1f29 - tertiary bg */
-    --secondary-foreground: 210 14% 83%;
+    --secondary: 215 18% 11%;          /* #161c25 */
+    --secondary-foreground: 210 20% 82%;
 
-    --muted: 213 18% 13%;            /* #1a1f29 */
-    --muted-foreground: 212 10% 58%; /* #8b949e - secondary text */
+    --muted: 215 16% 13%;              /* #1a2029 */
+    --muted-foreground: 212 12% 52%;   /* #788594 */
 
-    --accent: 213 18% 13%;
-    --accent-foreground: 210 14% 83%;
+    --accent: 215 16% 15%;             /* #1e2530 */
+    --accent-foreground: 210 20% 82%;
 
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 210 14% 93%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 210 20% 93%;
 
-    --border: 213 14% 21%;           /* #2d333d */
-    --input: 213 17% 16%;            /* #1e2329 - subtle border */
-    --ring: 137 28% 61%;             /* #7eb88e - arc accent */
+    --border: 215 12% 18%;             /* #272e38 */
+    --input: 215 14% 14%;              /* #1c222b */
+    --ring: 145 42% 58%;
   }
 }
 
@@ -113,7 +119,102 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Subtle noise texture on dark backgrounds */
+  .dark body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    opacity: 0.02;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    pointer-events: none;
+  }
+
+  /* Code and monospace elements */
+  code, pre, .font-mono {
+    font-family: var(--font-mono) !important;
+  }
+}
+
+/* =========================================================================
+   Component refinements
+   ========================================================================= */
+
+@layer components {
+  /* Forge-styled scrollbars */
+  .dark ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: hsl(215 12% 24%);
+    border-radius: 3px;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 12% 30%);
+  }
+
+  /* Animated status dot */
+  .forge-status-dot {
+    @apply h-2 w-2 rounded-full;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* Smooth list item entrance */
+  .forge-animate-in {
+    animation: slide-up 0.2s ease-out both;
+  }
+
+  /* Chat message entrance */
+  .forge-msg-enter {
+    animation: fade-in 0.15s ease-out both;
+  }
+
+  /* Toolbar button active state — forge glow underline */
+  .forge-toolbar-active {
+    position: relative;
+  }
+  .forge-toolbar-active::after {
+    content: "";
+    position: absolute;
+    bottom: -1px;
+    left: 15%;
+    right: 15%;
+    height: 2px;
+    background: hsl(var(--primary));
+    border-radius: 1px;
+    opacity: 0.7;
+  }
+
+  /* Input focus ring — subtle forge glow */
+  .dark input:focus,
+  .dark textarea:focus {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3), 0 0 12px -4px hsl(var(--primary) / 0.15);
+  }
+
+  /* Button hover lift */
+  .dark button:not(:disabled):hover {
+    transition: all 0.15s ease;
+  }
+
+  /* Prose in dark mode — better readability */
+  .dark .prose {
+    --tw-prose-body: hsl(210 20% 82%);
+    --tw-prose-headings: hsl(210 20% 90%);
+    --tw-prose-code: hsl(145 42% 65%);
+    --tw-prose-links: hsl(145 42% 65%);
+    --tw-prose-bold: hsl(210 20% 90%);
   }
 }

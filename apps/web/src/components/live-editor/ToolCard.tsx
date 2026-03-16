@@ -111,41 +111,41 @@ export function ToolCard({ activity }: ToolCardProps) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
-        className={`w-full min-w-0 max-w-[calc(100%-2rem)] overflow-hidden rounded-lg border ${
+        className={`forge-animate-in w-full min-w-0 max-w-[calc(100%-1.5rem)] overflow-hidden rounded-lg ${
           activity.isError
-            ? 'border-red-500/50 bg-red-900/10'
-            : 'border-border bg-muted/50'
+            ? 'bg-destructive/8 ring-1 ring-destructive/20'
+            : 'bg-accent/30 ring-1 ring-border/25'
         }`}
       >
-        <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/80">
+        <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/40">
           {isRunning ? (
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           ) : isComplete ? (
             <CheckCircle2
-              className={`w-4 h-4 ${activity.isError ? 'text-red-500' : 'text-green-500'}`}
+              className={`h-3.5 w-3.5 ${activity.isError ? 'text-destructive' : 'text-primary'}`}
             />
           ) : (
             getToolIcon(activity.tool)
           )}
-          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground">
+          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-muted-foreground">
             {getToolDescription(activity.tool, activity.input, isComplete)}
           </span>
           <ChevronDown
-            className={`w-4 h-4 text-muted-foreground transition-transform ${
+            className={`h-3 w-3 text-muted-foreground/50 transition-transform ${
               open ? 'rotate-180' : ''
             }`}
           />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="px-3 py-2 border-t border-border text-xs">
+          <div className="border-t border-border/20 px-2.5 py-2 text-xs">
             {activity.result && (
-              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground [overflow-wrap:anywhere]">
+              <pre className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
                 {activity.result.slice(0, 2000)}
                 {activity.result.length > 2000 && '\n... (truncated)'}
               </pre>
             )}
             {!activity.result && isRunning && (
-              <span className="text-muted-foreground italic">Running...</span>
+              <span className="text-muted-foreground/60 italic">Running...</span>
             )}
           </div>
         </CollapsibleContent>

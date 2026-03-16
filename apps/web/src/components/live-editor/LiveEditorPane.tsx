@@ -385,29 +385,29 @@ export function LiveEditorPane() {
       {/* Left: App Viewer */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/50 p-2">
-          <div className="relative flex min-w-[18rem] flex-1 gap-0">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-card/60 backdrop-blur-sm px-3 py-1.5">
+          <div className="relative flex min-w-[16rem] flex-1 gap-0">
             <Input
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && loadApp()}
-              placeholder="https://example.com or http://field.localhost:3101"
-              className="h-8 rounded-r-none"
+              placeholder="Enter preview URL..."
+              className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
             />
             <Button
               variant="outline"
               size="sm"
-              className="h-8 rounded-l-none border-l-0 px-1.5"
+              className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
               onClick={() => setShowUrlHistory(!showUrlHistory)}
               disabled={currentProjectUrls.length === 0}
               title="Recent preview URLs"
             >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
             </Button>
             {showUrlHistory && currentProjectUrls.length > 0 && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
-                <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-md border border-border bg-popover shadow-lg">
+                <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
                   <div className="max-h-48 overflow-y-auto py-1">
                     {currentProjectUrls.map((url) => (
                       <button
@@ -417,8 +417,8 @@ export function LiveEditorPane() {
                           setShowUrlHistory(false)
                           void loadApp(url)
                         }}
-                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted ${
-                          url === targetUrl ? 'bg-muted/60 font-medium' : ''
+                        className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
+                          url === targetUrl ? 'bg-primary/5 text-primary' : ''
                         }`}
                       >
                         <span className="truncate">{url}</span>
@@ -429,41 +429,48 @@ export function LiveEditorPane() {
               </>
             )}
           </div>
-          <Button variant="outline" size="sm" onClick={() => loadApp()} className="h-8">
-            <Play className="w-4 h-4 mr-1" />
+          <Button variant="outline" size="sm" onClick={() => loadApp()} className="h-7 gap-1 border-border/60 px-2.5 text-xs">
+            <Play className="h-3 w-3" />
             Load
           </Button>
+          <div className="mx-0.5 h-4 w-px bg-border/40" />
           <Button
             variant="outline"
             size="sm"
             onClick={refreshApp}
-            title="Refresh app"
-            className="h-8"
+            title="Refresh preview"
+            className="h-7 w-7 border-border/60 p-0"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="h-3 w-3" />
           </Button>
           <Button
             variant={selectMode ? 'default' : 'outline'}
             size="sm"
             onClick={toggleSelectMode}
-            className={`h-8 ${selectMode ? 'bg-green-600 hover:bg-green-700' : ''}`}
+            className={`h-7 gap-1 px-2.5 text-xs transition-all ${
+              selectMode
+                ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
+                : 'border-border/60'
+            }`}
           >
-            <MousePointer2 className="w-4 h-4 mr-1" />
+            <MousePointer2 className="h-3 w-3" />
             {selectMode ? 'Selecting' : 'Select'}
           </Button>
 
-          <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-md border border-border bg-background/80 p-1">
+          <div className="ml-auto flex items-center gap-1.5">
+            <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
               {viewportModes.map(({ mode, label, title, icon: Icon }) => (
                 <Button
                   key={mode}
                   variant={viewportMode === mode ? 'default' : 'ghost'}
                   size="sm"
-                  className="h-7 gap-1 px-2"
+                  className={`h-6 gap-1 px-2 text-xs ${
+                    viewportMode === mode ? 'bg-primary/15 text-primary shadow-none' : 'text-muted-foreground'
+                  }`}
                   onClick={() => setViewportMode(mode)}
                   title={title}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <Icon className="h-3 w-3" />
                   <span className="hidden sm:inline">{label}</span>
                 </Button>
               ))}
@@ -471,14 +478,16 @@ export function LiveEditorPane() {
 
             {/* Connection status */}
             <div
-              className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
+              className={`h-1.5 w-1.5 rounded-full transition-colors ${
+                connected ? 'bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.3)]' : 'bg-destructive'
+              }`}
               title={connected ? 'Connected' : 'Disconnected'}
             />
           </div>
         </div>
 
         {/* Iframe */}
-        <div className="flex-1 min-h-0 overflow-auto bg-muted/30 p-4 dark:bg-card/60">
+        <div className="flex-1 min-h-0 overflow-auto bg-background/50 p-3">
           {authIssue && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
               <AlertTriangle className="h-4 w-4 text-amber-300" />
@@ -520,24 +529,24 @@ export function LiveEditorPane() {
       </div>
 
       {/* Right: Chat & Selection Panel */}
-      <div className="flex w-[clamp(320px,28vw,440px)] min-w-[320px] max-w-[45vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-background">
+      <div className="flex w-[clamp(320px,26vw,420px)] min-w-[300px] max-w-[42vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-card/50">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full overflow-hidden">
-          <TabsList className="grid w-full grid-cols-3 m-2 mb-0 flex-shrink-0">
-            <TabsTrigger value="chat" className="gap-1">
-              <MessageSquare className="w-4 h-4" />
+          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-3 flex-shrink-0 bg-background/50">
+            <TabsTrigger value="chat" className="gap-1.5 text-xs">
+              <MessageSquare className="h-3.5 w-3.5" />
               Chat
             </TabsTrigger>
-            <TabsTrigger value="elements" className="gap-1">
-              <Layers className="w-4 h-4" />
+            <TabsTrigger value="elements" className="gap-1.5 text-xs">
+              <Layers className="h-3.5 w-3.5" />
               Elements
               {selectedElements.length > 0 && (
-                <span className="ml-1 bg-green-500 text-white text-xs rounded-full px-1.5">
+                <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                   {selectedElements.length}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-1">
-              <Settings className="w-4 h-4" />
+            <TabsTrigger value="settings" className="gap-1.5 text-xs">
+              <Settings className="h-3.5 w-3.5" />
               Settings
             </TabsTrigger>
           </TabsList>
