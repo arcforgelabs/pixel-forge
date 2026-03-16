@@ -6,10 +6,11 @@ into HTML responses for element inspection.
 """
 
 import asyncio
+import json
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
@@ -37,10 +38,13 @@ PROXY_SESSIONS: dict[str, ProxySession] = {}
 PROXY_SESSIONS_LOCK = asyncio.Lock()
 
 # The selection script that gets injected into HTML responses
-SELECTION_SCRIPT = """
+SELECTION_SCRIPT_TEMPLATE = """
 <script data-pixel-forge-injected="true">
 (function() {
   'use strict';
+
+  const pixelForgeTargetUrl = "__PIXEL_FORGE_TARGET_URL__";
+  const pixelForgeProxyPrefix = "__PIXEL_FORGE_PROXY_PREFIX__";
 
   // State
   let selectMode = false;
@@ -70,6 +74,37 @@ SELECTION_SCRIPT = """
       }
       return response;
     };
+  }
+
+  function getTargetLocationHref() {
+    try {
+      const currentUrl = new URL(window.location.href);
+      if (!pixelForgeTargetUrl || !pixelForgeProxyPrefix) {
+        return currentUrl.href;
+      }
+
+      if (!currentUrl.pathname.startsWith(pixelForgeProxyPrefix)) {
+        return currentUrl.href;
+      }
+
+      const initialTargetUrl = new URL(pixelForgeTargetUrl);
+      const relativePath = currentUrl.pathname.slice(pixelForgeProxyPrefix.length);
+      const hasNonProxyQuery = Array.from(currentUrl.searchParams.keys())
+        .some((key) => !key.startsWith('_pf_'));
+
+      if ((!relativePath || relativePath === '/') && !hasNonProxyQuery && !currentUrl.hash) {
+        return initialTargetUrl.href;
+      }
+
+      const resolvedUrl = new URL(initialTargetUrl.origin);
+      resolvedUrl.pathname = relativePath || initialTargetUrl.pathname || '/';
+      resolvedUrl.search = currentUrl.search;
+      resolvedUrl.hash = currentUrl.hash;
+      return resolvedUrl.href;
+    } catch (error) {
+      console.warn('[pixel-forge] Failed to resolve target location', error);
+      return window.location.href;
+    }
   }
 
   const originalXHROpen = XMLHttpRequest.prototype.open;
@@ -239,7 +274,7 @@ SELECTION_SCRIPT = """
         value: a.value
       })),
       rect: element.getBoundingClientRect(),
-      pageUrl: window.location.href,
+      pageUrl: getTargetLocationHref(),
       pageTitle: document.title || null
     };
   }
@@ -265,7 +300,7 @@ SELECTION_SCRIPT = """
     window.parent.postMessage({
       type: 'pixel-forge-location-changed',
       data: {
-        url: window.location.href,
+        url: getTargetLocationHref(),
         title: document.title || null
       }
     }, '*');
@@ -354,7 +389,7 @@ SELECTION_SCRIPT = """
         data: {
           xpath: sel.xpath,
           index,
-          pageUrl: window.location.href,
+          pageUrl: getTargetLocationHref(),
           pageTitle: document.title || null
         }
       }, '*');
@@ -694,6 +729,7 @@ def _build_forward_headers(request: Request, target_url: str) -> dict[str, str]:
             "content-length",
             "content-encoding",
             "connection",
+            "accept-encoding",
         }:
             continue
         if lower == "origin":
@@ -709,6 +745,7 @@ def _build_forward_headers(request: Request, target_url: str) -> dict[str, str]:
     )
     headers["X-Forwarded-Proto"] = request.url.scheme
     headers["X-Forwarded-Host"] = request.url.netloc
+    headers["Accept-Encoding"] = "identity"
     return headers
 
 
@@ -746,7 +783,36 @@ def _cookie_header_for_target(session: ProxySession, target_url: str) -> str:
     return "; ".join(cookie_pairs)
 
 
-def rewrite_js_imports(js_content: bytes) -> bytes:
+def _proxy_prefix(session_id: str | None) -> str:
+    return f"/app/s/{session_id}" if session_id else "/app"
+
+
+def _extract_session_path(path: str) -> tuple[str | None, str]:
+    normalized = path.lstrip("/")
+    if not normalized.startswith("s/"):
+        return None, path
+
+    parts = normalized.split("/", 2)
+    if len(parts) < 2 or not parts[1]:
+        return None, path
+
+    upstream_path = parts[2] if len(parts) > 2 else ""
+    return parts[1], upstream_path
+
+
+def _filter_proxy_query(query: str) -> str:
+    if not query:
+        return ""
+
+    kept_params = [
+        (key, value)
+        for key, value in parse_qsl(query, keep_blank_values=True)
+        if not key.startswith("_pf_")
+    ]
+    return urlencode(kept_params, doseq=True)
+
+
+def rewrite_js_imports(js_content: bytes, proxy_prefix: str) -> bytes:
     """Rewrite absolute import paths in JavaScript to go through /app/ prefix."""
     import re
     js_str = js_content.decode('utf-8', errors='replace')
@@ -755,66 +821,139 @@ def rewrite_js_imports(js_content: bytes) -> bytes:
     # IMPORTANT: Use negative lookahead (?!app/) to avoid double-rewriting
 
     # Bare imports (side-effect only): import "/@fs/..." or import "/src/..."
-    js_str = re.sub(r'import\s+"(/@[^"]+)"', r'import "/app\1"', js_str)
-    js_str = re.sub(r'import\s+"(/(?!app/)[^/"@][^"]*)"', r'import "/app\1"', js_str)
-    js_str = re.sub(r"import\s+'(/@[^']+)'", r"import '/app\1'", js_str)
-    js_str = re.sub(r"import\s+'(/(?!app/)[^/'@][^']*)'", r"import '/app\1'", js_str)
+    js_str = re.sub(r'import\s+"(/@[^"]+)"', rf'import "{proxy_prefix}\1"', js_str)
+    js_str = re.sub(
+        r'import\s+"(/(?!app/)[^/"@][^"]*)"',
+        rf'import "{proxy_prefix}\1"',
+        js_str,
+    )
+    js_str = re.sub(r"import\s+'(/@[^']+)'", rf"import '{proxy_prefix}\1'", js_str)
+    js_str = re.sub(
+        r"import\s+'(/(?!app/)[^/'@][^']*)'",
+        rf"import '{proxy_prefix}\1'",
+        js_str,
+    )
 
     # Named imports: import ... from "/@vite/..." or from "/src/..."
-    js_str = re.sub(r'from\s*"(/@[^"]+)"', r'from "/app\1"', js_str)
-    js_str = re.sub(r'from\s*"(/(?!app/)[^/"@][^"]*)"', r'from "/app\1"', js_str)
+    js_str = re.sub(r'from\s*"(/@[^"]+)"', rf'from "{proxy_prefix}\1"', js_str)
+    js_str = re.sub(
+        r'from\s*"(/(?!app/)[^/"@][^"]*)"',
+        rf'from "{proxy_prefix}\1"',
+        js_str,
+    )
 
     # Rewrite dynamic imports: import("/@vite/...")
-    js_str = re.sub(r'import\s*\(\s*"(/@[^"]+)"\s*\)', r'import("/app\1")', js_str)
-    js_str = re.sub(r'import\s*\(\s*"(/(?!app/)[^/"@][^"]*)"\s*\)', r'import("/app\1")', js_str)
+    js_str = re.sub(
+        r'import\s*\(\s*"(/@[^"]+)"\s*\)',
+        rf'import("{proxy_prefix}\1")',
+        js_str,
+    )
+    js_str = re.sub(
+        r'import\s*\(\s*"(/(?!app/)[^/"@][^"]*)"\s*\)',
+        rf'import("{proxy_prefix}\1")',
+        js_str,
+    )
 
     # Rewrite single-quoted named imports and dynamic imports
-    js_str = re.sub(r"from\s*'(/@[^']+)'", r"from '/app\1'", js_str)
-    js_str = re.sub(r"from\s*'(/(?!app/)[^/'@][^']*)'", r"from '/app\1'", js_str)
-    js_str = re.sub(r"import\s*\(\s*'(/@[^']+)'\s*\)", r"import('/app\1')", js_str)
-    js_str = re.sub(r"import\s*\(\s*'(/(?!app/)[^/'@][^']*)'\s*\)", r"import('/app\1')", js_str)
+    js_str = re.sub(r"from\s*'(/@[^']+)'", rf"from '{proxy_prefix}\1'", js_str)
+    js_str = re.sub(
+        r"from\s*'(/(?!app/)[^/'@][^']*)'",
+        rf"from '{proxy_prefix}\1'",
+        js_str,
+    )
+    js_str = re.sub(
+        r"import\s*\(\s*'(/@[^']+)'\s*\)",
+        rf"import('{proxy_prefix}\1')",
+        js_str,
+    )
+    js_str = re.sub(
+        r"import\s*\(\s*'(/(?!app/)[^/'@][^']*)'\s*\)",
+        rf"import('{proxy_prefix}\1')",
+        js_str,
+    )
 
     # Rewrite fetch/XHR URLs that use absolute paths
     # new URL("/src/...", import.meta.url) - but not /app/ paths
-    js_str = re.sub(r'new\s+URL\s*\(\s*"(/(?!app/)[^"]+)"', r'new URL("/app\1"', js_str)
-    js_str = re.sub(r"new\s+URL\s*\(\s*'(/(?!app/)[^']+)'", r"new URL('/app\1'", js_str)
+    js_str = re.sub(
+        r'new\s+URL\s*\(\s*"(/(?!app/)[^"]+)"',
+        rf'new URL("{proxy_prefix}\1"',
+        js_str,
+    )
+    js_str = re.sub(
+        r"new\s+URL\s*\(\s*'(/(?!app/)[^']+)'",
+        rf"new URL('{proxy_prefix}\1'",
+        js_str,
+    )
 
     return js_str.encode('utf-8')
 
 
-def inject_script(html_content: bytes) -> bytes:
+def inject_script(html_content: bytes, proxy_prefix: str, target_url: str) -> bytes:
     """Inject selection script into HTML content and rewrite absolute paths."""
     import re
     html_str = html_content.decode('utf-8', errors='replace')
+
+    html_str = re.sub(
+        r"<meta[^>]+http-equiv=['\"]Content-Security-Policy(?:-Report-Only)?['\"][^>]*>\s*",
+        "",
+        html_str,
+        flags=re.IGNORECASE,
+    )
 
     # Rewrite absolute paths to go through /app/ prefix
     # This handles Vite/Webpack style imports like /@vite/client, /src/main.tsx
     # IMPORTANT: Use negative lookahead (?!/app/) to avoid double-rewriting
 
     # 1. Handle src="/" and href="/" attributes (but not protocol-relative // or already /app/)
-    html_str = re.sub(r'(src|href)="(/(?!app/)[^/"@][^"]*)"', r'\1="/app\2"', html_str)
+    html_str = re.sub(
+        r'(src|href)="(/(?!app/)[^/"@][^"]*)"',
+        rf'\1="{proxy_prefix}\2"',
+        html_str,
+    )
 
     # 2. Handle @-prefixed paths in attributes like /@vite/client, /@react-refresh
-    html_str = re.sub(r'(src|href)="(/@[^"]*)"', r'\1="/app\2"', html_str)
+    html_str = re.sub(
+        r'(src|href)="(/@[^"]*)"',
+        rf'\1="{proxy_prefix}\2"',
+        html_str,
+    )
 
     # 3. Handle ES module imports: import ... from "/@vite/..." or from "/src/..."
     # Note: @-prefixed must come first, then regular paths with negative lookahead for /app/
-    html_str = re.sub(r'from\s+"(/@[^"]+)"', r'from "/app\1"', html_str)
-    html_str = re.sub(r'from\s+"(/(?!app/)[^/"@][^"]*)"', r'from "/app\1"', html_str)
+    html_str = re.sub(r'from\s+"(/@[^"]+)"', rf'from "{proxy_prefix}\1"', html_str)
+    html_str = re.sub(
+        r'from\s+"(/(?!app/)[^/"@][^"]*)"',
+        rf'from "{proxy_prefix}\1"',
+        html_str,
+    )
 
     # 4. Handle dynamic imports: import("/@vite/...")
-    html_str = re.sub(r'import\s*\(\s*"(/@[^"]+)"\s*\)', r'import("/app\1")', html_str)
-    html_str = re.sub(r'import\s*\(\s*"(/(?!app/)[^/"@][^"]*)"\s*\)', r'import("/app\1")', html_str)
+    html_str = re.sub(
+        r'import\s*\(\s*"(/@[^"]+)"\s*\)',
+        rf'import("{proxy_prefix}\1")',
+        html_str,
+    )
+    html_str = re.sub(
+        r'import\s*\(\s*"(/(?!app/)[^/"@][^"]*)"\s*\)',
+        rf'import("{proxy_prefix}\1")',
+        html_str,
+    )
+
+    selection_script = (
+        SELECTION_SCRIPT_TEMPLATE
+        .replace('"__PIXEL_FORGE_TARGET_URL__"', json.dumps(target_url))
+        .replace('"__PIXEL_FORGE_PROXY_PREFIX__"', json.dumps(proxy_prefix))
+    )
 
     # Try to inject before </head> first, then </body>, then end of file
     if '</head>' in html_str:
-        html_str = html_str.replace('</head>', SELECTION_SCRIPT + '</head>', 1)
+        html_str = html_str.replace('</head>', selection_script + '</head>', 1)
     elif '</body>' in html_str:
-        html_str = html_str.replace('</body>', SELECTION_SCRIPT + '</body>', 1)
+        html_str = html_str.replace('</body>', selection_script + '</body>', 1)
     elif '</html>' in html_str:
-        html_str = html_str.replace('</html>', SELECTION_SCRIPT + '</html>', 1)
+        html_str = html_str.replace('</html>', selection_script + '</html>', 1)
     else:
-        html_str += SELECTION_SCRIPT
+        html_str += selection_script
 
     return html_str.encode('utf-8')
 
@@ -822,12 +961,18 @@ def inject_script(html_content: bytes) -> bytes:
 @router.api_route("/app/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 async def proxy_http(request: Request, path: str = ""):
     """Proxy HTTP requests to target app and inject selection script."""
-    session = await get_proxy_session(request.cookies.get(PROXY_SESSION_COOKIE))
+    path_session_id, upstream_path = _extract_session_path(path)
+    session = await get_proxy_session(path_session_id or request.cookies.get(PROXY_SESSION_COOKIE))
     target_base_url = session.target_url if session else TARGET_APP_URL
     if not target_base_url:
         return _missing_target_response()
-    target_url = _build_target_url(target_base_url, path, request.url.query)
+    target_url = _build_target_url(
+        target_base_url,
+        upstream_path,
+        _filter_proxy_query(request.url.query),
+    )
     client = session.client if session else _create_proxy_client()
+    proxy_prefix = _proxy_prefix(path_session_id)
 
     try:
         if session:
@@ -851,6 +996,15 @@ async def proxy_http(request: Request, path: str = ""):
             "content-length",
             "transfer-encoding",
             "set-cookie",
+            "content-security-policy",
+            "content-security-policy-report-only",
+            "cross-origin-opener-policy",
+            "cross-origin-embedder-policy",
+            "cross-origin-resource-policy",
+            "x-frame-options",
+            "frame-options",
+            "report-to",
+            "nel",
         ]:
             response_headers.pop(header, None)
             response_headers.pop(header.title(), None)
@@ -860,9 +1014,9 @@ async def proxy_http(request: Request, path: str = ""):
             "content-type", response_headers.get("Content-Type", "")
         )
         if "text/html" in content_type:
-            content = inject_script(content)
-        elif "javascript" in content_type or "application/json" in content_type:
-            content = rewrite_js_imports(content)
+            content = inject_script(content, proxy_prefix, target_url)
+        elif "javascript" in content_type or "ecmascript" in content_type:
+            content = rewrite_js_imports(content, proxy_prefix)
 
         # Update content length
         response_headers["Content-Length"] = str(len(content))
@@ -896,7 +1050,8 @@ async def proxy_websocket(websocket: WebSocket, path: str = ""):
 
     await websocket.accept()
 
-    session = await get_proxy_session(websocket.cookies.get(PROXY_SESSION_COOKIE))
+    path_session_id, upstream_path = _extract_session_path(path)
+    session = await get_proxy_session(path_session_id or websocket.cookies.get(PROXY_SESSION_COOKIE))
     target_base_url = session.target_url if session else TARGET_APP_URL
     if not target_base_url:
         await websocket.close(code=1011, reason="No proxy target configured")
@@ -905,7 +1060,7 @@ async def proxy_websocket(websocket: WebSocket, path: str = ""):
     # Parse target WebSocket URL
     target_parsed = urlparse(target_base_url)
     ws_scheme = 'wss' if target_parsed.scheme == 'https' else 'ws'
-    target_ws_url = f"{ws_scheme}://{target_parsed.netloc}/{path}"
+    target_ws_url = f"{ws_scheme}://{target_parsed.netloc}/{upstream_path}"
 
     print(f"[app-proxy] WebSocket connecting to: {target_ws_url}")
 
@@ -982,11 +1137,16 @@ async def proxy_root(request: Request):
 
 async def proxy_http_to_target(request: Request, path: str):
     """Proxy HTTP request to target app without script injection."""
-    session = await get_proxy_session(request.cookies.get(PROXY_SESSION_COOKIE))
+    path_session_id, upstream_path = _extract_session_path(path)
+    session = await get_proxy_session(path_session_id or request.cookies.get(PROXY_SESSION_COOKIE))
     target_base_url = session.target_url if session else TARGET_APP_URL
     if not target_base_url:
         return Response(content="No proxy target configured", status_code=409)
-    target_url = _build_target_url(target_base_url, path, request.url.query)
+    target_url = _build_target_url(
+        target_base_url,
+        upstream_path,
+        _filter_proxy_query(request.url.query),
+    )
     client = session.client if session else _create_proxy_client()
 
     try:
@@ -1008,6 +1168,15 @@ async def proxy_http_to_target(request: Request, path: str):
             "content-length",
             "transfer-encoding",
             "set-cookie",
+            "content-security-policy",
+            "content-security-policy-report-only",
+            "cross-origin-opener-policy",
+            "cross-origin-embedder-policy",
+            "cross-origin-resource-policy",
+            "x-frame-options",
+            "frame-options",
+            "report-to",
+            "nel",
         ]:
             response_headers.pop(header, None)
             response_headers.pop(header.title(), None)

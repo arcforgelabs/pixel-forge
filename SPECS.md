@@ -61,10 +61,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` Preview loading is still modeled as one global URL instead of a reusable browser layer with multiple tab-scoped sessions under one unified Live Editor chat.
-- Why it is the limiter: This blocks Pixel Forge’s key differentiator — selecting and comparing elements across multiple live sources while keeping one coherent project-level editing thread.
-- Smallest complete unit to attack it: One Live Editor thread opens multiple preview tabs, each tab preserves its own proxy session/cookie state, selections from different tabs remain in one list, and the built prompt groups them by tab/source.
-- Immediate proof target: Open two preview tabs, select at least one element from each, switch tabs without losing per-tab overlays/state, send one request, and confirm the request context clearly identifies both sources.
+- `[active]` Cross-tab selection context is not yet proven end-to-end in one dispatched Live Editor request pack.
+- Why it is the limiter: The browser layer now supports multi-tab comparison, but Pixel Forge’s differentiator only holds if the agent actually receives those grouped cross-tab sources clearly in one prompt.
+- Smallest complete unit to attack it: Select elements from two preview tabs, send one Live Editor request, and inspect the request pack plus agent-facing context for both source groups.
+- Immediate proof target: Open two preview tabs, select at least one element from each, send one request, and confirm the request pack/context builder clearly identifies both sources in one unified dispatch.
 
 # Current Proof Status
 
@@ -75,10 +75,12 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` Pixel Forge now separates workspace selection, preview URL, and generated output policy in the selector flow. Basis: the selector now binds a workspace, accepts any preview URL, and defaults scratch output to `.pixel-forge/generated/`.
 - `[validated]` Project/workspace metadata and resumable Live Editor session linkage now persist server-side in SQLite under `~/.pixel-forge/pixel-forge.db`. Basis: recent projects, preview URL history, and Live Editor session metadata now load from backend APIs instead of browser localStorage.
 - `[validated]` Pixel Forge now maintains browser-scoped proxy sessions with upstream cookie jars for authenticated targets. Basis: `/config/app-proxy` issues a local proxy-session cookie and the app proxy reuses per-session upstream clients instead of one global stateless target.
+- `[validated]` Pixel Forge now maintains multiple mounted preview tabs inside one Live Editor thread, with each tab bound to its own proxy session and active URL state. Basis: browser smoke loaded `https://field.arcforge.au/` and `https://claude.ai/new` in separate tabs and kept the active URL bar on the real target URL rather than the internal proxy URL.
+- `[validated]` Cross-tab element selection now survives tab switches and stays unified in one project-level context list. Basis: browser smoke selected one element from the Claude tab and one from the Field tab, then the Elements pane showed both selections together with their source URLs.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.
-- `[unvalidated]` Multi-tab preview context: one unified Live Editor chat with browser-style preview tabs, tab-scoped proxy state, and source-tagged element selections. Basis: now the active product direction, but not yet proven against real multi-tab comparison flows.
+- `[unvalidated]` Cross-tab dispatch context: one request pack and one agent prompt clearly preserve grouped source metadata for selections gathered from multiple preview tabs. Basis: browser-side tab/session/selection behavior is now proven, but the full dispatch artifact has not yet been inspected.
 - `[planned]` Screenshot bootstrap will be migrated onto the same session control plane only after the Live Editor loop is proven superior there.
 
 # Open Questions

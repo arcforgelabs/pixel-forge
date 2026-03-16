@@ -1,7 +1,6 @@
 /**
  * LiveEditorPane Component
  *
- * Main container for the Live Editor feature.
  * The preview/browser layer is tab-based, while chat and selected element
  * context stay unified at the project level.
  */
@@ -17,20 +16,20 @@ import {
   ArrowLeftRight,
   ChevronDown,
   Globe2,
+  Layers,
+  MessageSquare,
   Monitor,
   MousePointer2,
+  Play,
   Plus,
   RefreshCw,
-  Play,
-  MessageSquare,
-  Layers,
   Smartphone,
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
+import { ChatMessages } from './ChatMessages'
 import { SelectedElementsList } from './SelectedElementsList'
 import { useLiveEditorStore } from './store/chat-store'
 
@@ -41,6 +40,7 @@ interface PreviewTab {
   url: string
   title: string
   proxySessionId: string | null
+  frameSrc: string
 }
 
 function createPreviewTabId(): string {
@@ -70,12 +70,17 @@ function getPreviewTabTitle(
   }
 }
 
+function buildProxyFrameUrl(proxySessionId: string): string {
+  return `${HTTP_BACKEND_URL}/app/s/${encodeURIComponent(proxySessionId)}/?_pf_t=${Date.now()}`
+}
+
 function createPreviewTab(url = '', title?: string | null, index?: number): PreviewTab {
   return {
     id: createPreviewTabId(),
     url,
     title: getPreviewTabTitle(url, title, index),
     proxySessionId: null,
+    frameSrc: 'about:blank',
   }
 }
 
@@ -86,17 +91,15 @@ export function LiveEditorPane() {
     setPreviewUrl,
   } = useSessionStore()
 
-  const iframeRef = useRef<HTMLIFrameElement>(null)
   const targetUrlRef = useRef(previewUrl || '')
-  const lastLoadedUrlRef = useRef<string | null>(null)
   const previewTabsRef = useRef<PreviewTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
   const internalPreviewUrlRef = useRef<string | null>(null)
+  const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
 
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
-  const [iframeSrc, setIframeSrc] = useState('about:blank')
   const [activeTab, setActiveTab] = useState('chat')
   const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
   const [authIssue, setAuthIssue] = useState<{ status: number; url: string } | null>(null)
@@ -154,14 +157,29 @@ export function LiveEditorPane() {
     targetUrlRef.current = targetUrl
   }, [targetUrl])
 
-  const buildProxyFrameUrl = useCallback(
-    () => `${HTTP_BACKEND_URL}/app/?t=${Date.now()}`,
-    []
-  )
-
   const getActivePreviewTab = useCallback(() => {
     if (!activeTabIdRef.current) return null
     return previewTabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null
+  }, [])
+
+  const getPreviewTabById = useCallback((tabId: string) => {
+    return previewTabsRef.current.find((tab) => tab.id === tabId) ?? null
+  }, [])
+
+  const setIframeRef = useCallback((tabId: string, iframe: HTMLIFrameElement | null) => {
+    iframeRefs.current[tabId] = iframe
+  }, [])
+
+  const getTabForMessageSource = useCallback((source: MessageEventSource | null) => {
+    if (!source) return null
+
+    for (const tab of previewTabsRef.current) {
+      if (iframeRefs.current[tab.id]?.contentWindow === source) {
+        return tab
+      }
+    }
+
+    return null
   }, [])
 
   const syncStorePreviewUrl = useCallback(
@@ -180,9 +198,10 @@ export function LiveEditorPane() {
     [setPreviewUrl]
   )
 
-  const syncActiveTabSelections = useCallback(() => {
-    const activePreviewTab = getActivePreviewTab()
-    if (!activePreviewTab || !iframeRef.current?.contentWindow) {
+  const syncTabSelections = useCallback((tabId: string) => {
+    const tab = getPreviewTabById(tabId)
+    const iframe = iframeRefs.current[tabId]
+    if (!tab || !iframe?.contentWindow) {
       return
     }
 
@@ -191,19 +210,36 @@ export function LiveEditorPane() {
       .selectedElements
       .filter(
         (element) =>
-          element.sourceTabId === activePreviewTab.id
-          && element.sourceUrl === activePreviewTab.url
+          element.sourceTabId === tab.id
+          && element.sourceUrl === tab.url
       )
       .map((element) => element.xpath)
 
-    iframeRef.current.contentWindow.postMessage(
+    iframe.contentWindow.postMessage(
       {
         type: 'pixel-forge-apply-selections',
         xpaths,
       },
       '*'
     )
-  }, [getActivePreviewTab])
+  }, [getPreviewTabById])
+
+  const syncAllFrameSelectionModes = useCallback(() => {
+    for (const tab of previewTabsRef.current) {
+      const iframe = iframeRefs.current[tab.id]
+      if (!iframe?.contentWindow) {
+        continue
+      }
+
+      iframe.contentWindow.postMessage(
+        {
+          type: 'pixel-forge-toggle-select',
+          enabled: selectMode && tab.id === activeTabIdRef.current,
+        },
+        '*'
+      )
+    }
+  }, [selectMode])
 
   const loadApp = useCallback(async (
     urlOverride?: string,
@@ -222,21 +258,20 @@ export function LiveEditorPane() {
     setActivePreviewTabId(resolvedTabId)
 
     if (!urlToLoad) {
-      setTargetUrl('')
       setAuthIssue(null)
-      lastLoadedUrlRef.current = null
+      setTargetUrl('')
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry, index) =>
           entry.id === resolvedTabId
             ? {
                 ...entry,
                 url: '',
-                title: getPreviewTabTitle('', entry.title, index + 1),
+                title: getPreviewTabTitle('', null, index + 1),
+                frameSrc: 'about:blank',
               }
             : entry
         )
       )
-      setIframeSrc('about:blank')
       if (options?.persist !== false) {
         await syncStorePreviewUrl(null)
       }
@@ -273,8 +308,11 @@ export function LiveEditorPane() {
           ? data.proxy_session_id
           : tab?.proxySessionId || null
 
+      if (!proxySessionId) {
+        throw new Error('Proxy session was not created')
+      }
+
       setAuthIssue(null)
-      lastLoadedUrlRef.current = resolvedTargetUrl
       setTargetUrl(resolvedTargetUrl)
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry, index) =>
@@ -283,9 +321,10 @@ export function LiveEditorPane() {
                 ...entry,
                 url: resolvedTargetUrl,
                 proxySessionId,
+                frameSrc: buildProxyFrameUrl(proxySessionId),
                 title: getPreviewTabTitle(
                   resolvedTargetUrl,
-                  entry.title,
+                  null,
                   index + 1
                 ),
               }
@@ -297,8 +336,6 @@ export function LiveEditorPane() {
         await syncStorePreviewUrl(resolvedTargetUrl)
       }
 
-      setIframeSrc(buildProxyFrameUrl())
-
       if (options?.announceSuccess !== false) {
         toast.success('App loaded')
       }
@@ -308,7 +345,7 @@ export function LiveEditorPane() {
         error instanceof Error ? `Failed to load app: ${error.message}` : 'Failed to load app'
       )
     }
-  }, [buildProxyFrameUrl, syncStorePreviewUrl])
+  }, [syncStorePreviewUrl])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -316,30 +353,19 @@ export function LiveEditorPane() {
 
     setActivePreviewTabId(tabId)
     setTargetUrl(tab.url)
+    setAuthIssue(null)
     setShowUrlHistory(false)
 
-    if (!tab.url) {
-      setIframeSrc('about:blank')
-      lastLoadedUrlRef.current = null
-      await syncStorePreviewUrl(null)
-      return
-    }
-
-    await loadApp(tab.url, {
-      tabId,
-      persist: true,
-      announceSuccess: false,
-    })
-  }, [loadApp, syncStorePreviewUrl])
+    await syncStorePreviewUrl(tab.url || null)
+  }, [syncStorePreviewUrl])
 
   const addPreviewTab = useCallback(() => {
     const nextTab = createPreviewTab('', null, previewTabsRef.current.length + 1)
     setPreviewTabs((currentTabs) => [...currentTabs, nextTab])
     setActivePreviewTabId(nextTab.id)
     setTargetUrl('')
+    setAuthIssue(null)
     setShowUrlHistory(false)
-    setIframeSrc('about:blank')
-    lastLoadedUrlRef.current = null
     void syncStorePreviewUrl(null)
   }, [syncStorePreviewUrl])
 
@@ -362,6 +388,8 @@ export function LiveEditorPane() {
       }
     }
 
+    delete iframeRefs.current[tabId]
+
     const remainingTabs = previewTabsRef.current.filter((entry) => entry.id !== tabId)
     if (remainingTabs.length === 0) {
       const blankTab = createPreviewTab('', null, 1)
@@ -370,28 +398,55 @@ export function LiveEditorPane() {
       setPreviewTabs([blankTab])
       setActivePreviewTabId(blankTab.id)
       setTargetUrl('')
-      setIframeSrc('about:blank')
-      lastLoadedUrlRef.current = null
+      setAuthIssue(null)
       await syncStorePreviewUrl(null)
       return
     }
 
+    previewTabsRef.current = remainingTabs
     setPreviewTabs(remainingTabs)
+
     if (activeTabIdRef.current !== tabId) {
       return
     }
 
     const nextTab = remainingTabs[Math.max(0, closingIndex - 1)] ?? remainingTabs[0]
-    await activatePreviewTab(nextTab.id)
-  }, [activatePreviewTab, syncStorePreviewUrl])
+    activeTabIdRef.current = nextTab.id
+    setActivePreviewTabId(nextTab.id)
+    setTargetUrl(nextTab.url)
+    setAuthIssue(null)
+    setShowUrlHistory(false)
+    await syncStorePreviewUrl(nextTab.url || null)
+  }, [syncStorePreviewUrl])
 
   const refreshApp = useCallback(() => {
-    if (iframeRef.current && iframeSrc !== 'about:blank') {
-      const currentSrc = iframeRef.current.src.split('?')[0]
-      iframeRef.current.src = `${currentSrc}?t=${Date.now()}`
-      toast.success('Refreshed', { duration: 1000 })
+    const activePreviewTab = getActivePreviewTab()
+    if (!activePreviewTab) {
+      return
     }
-  }, [iframeSrc])
+
+    const iframe = iframeRefs.current[activePreviewTab.id]
+    if (!iframe || iframe.src === 'about:blank') {
+      return
+    }
+
+    try {
+      const nextUrl = new URL(iframe.src)
+      nextUrl.searchParams.set('_pf_t', String(Date.now()))
+      const nextFrameSrc = nextUrl.toString()
+      iframe.src = nextFrameSrc
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry) =>
+          entry.id === activePreviewTab.id
+            ? { ...entry, frameSrc: nextFrameSrc }
+            : entry
+        )
+      )
+      toast.success('Refreshed', { duration: 1000 })
+    } catch (error) {
+      console.error('[live-editor] Failed to refresh active preview tab:', error)
+    }
+  }, [getActivePreviewTab])
 
   useEffect(() => {
     if (lastProjectPathRef.current === projectPath) {
@@ -399,14 +454,16 @@ export function LiveEditorPane() {
     }
 
     lastProjectPathRef.current = projectPath
+    iframeRefs.current = {}
+
     const initialTab = createPreviewTab(previewUrl || '', null, 1)
     previewTabsRef.current = [initialTab]
     activeTabIdRef.current = initialTab.id
     setPreviewTabs([initialTab])
     setActivePreviewTabId(initialTab.id)
     setShowUrlHistory(false)
+    setAuthIssue(null)
     setTargetUrl(initialTab.url)
-    lastLoadedUrlRef.current = null
 
     if (initialTab.url) {
       void loadApp(initialTab.url, {
@@ -414,10 +471,7 @@ export function LiveEditorPane() {
         persist: false,
         announceSuccess: false,
       })
-      return
     }
-
-    setIframeSrc('about:blank')
   }, [projectPath, previewUrl, loadApp])
 
   useEffect(() => {
@@ -440,15 +494,15 @@ export function LiveEditorPane() {
               ? {
                   ...entry,
                   url: '',
-                  title: getPreviewTabTitle('', entry.title, index + 1),
+                  title: getPreviewTabTitle('', null, index + 1),
+                  frameSrc: 'about:blank',
                 }
               : entry
           )
         )
       }
       setTargetUrl('')
-      setIframeSrc('about:blank')
-      lastLoadedUrlRef.current = null
+      setAuthIssue(null)
       return
     }
 
@@ -457,41 +511,21 @@ export function LiveEditorPane() {
       return
     }
 
-    setPreviewTabs((currentTabs) =>
-      currentTabs.map((entry, index) =>
-        entry.id === activePreviewTab.id
-          ? {
-              ...entry,
-              url: normalizedPreviewUrl,
-              title: getPreviewTabTitle(normalizedPreviewUrl, entry.title, index + 1),
-            }
-          : entry
-      )
-    )
     setTargetUrl(normalizedPreviewUrl)
-
-    if (normalizedPreviewUrl !== lastLoadedUrlRef.current) {
-      void loadApp(normalizedPreviewUrl, {
-        tabId: activePreviewTab.id,
-        persist: false,
-        announceSuccess: false,
-      })
-    }
+    void loadApp(normalizedPreviewUrl, {
+      tabId: activePreviewTab.id,
+      persist: false,
+      announceSuccess: false,
+    })
   }, [previewUrl, getActivePreviewTab, loadApp])
+
+  useEffect(() => {
+    syncAllFrameSelectionModes()
+  }, [activePreviewTabId, previewTabs, selectMode, syncAllFrameSelectionModes])
 
   const toggleSelectMode = useCallback(() => {
     const newMode = !selectMode
     setSelectMode(newMode)
-
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: 'pixel-forge-toggle-select',
-          enabled: newMode,
-        },
-        '*'
-      )
-    }
 
     if (newMode) {
       toast.success('Select mode ON - click elements to select', {
@@ -500,30 +534,38 @@ export function LiveEditorPane() {
     }
   }, [selectMode])
 
-  const handleIframeLoad = useCallback(() => {
+  const handleIframeLoad = useCallback((tabId: string) => {
     setTimeout(() => {
-      if (iframeRef.current?.contentWindow && selectMode) {
-        iframeRef.current.contentWindow.postMessage(
-          {
-            type: 'pixel-forge-toggle-select',
-            enabled: true,
-          },
-          '*'
-        )
+      const iframe = iframeRefs.current[tabId]
+      if (!iframe?.contentWindow) {
+        return
       }
-      syncActiveTabSelections()
+
+      iframe.contentWindow.postMessage(
+        {
+          type: 'pixel-forge-toggle-select',
+          enabled: selectMode && tabId === activeTabIdRef.current,
+        },
+        '*'
+      )
+      syncTabSelections(tabId)
     }, 120)
-  }, [selectMode, syncActiveTabSelections])
+  }, [selectMode, syncTabSelections])
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      const sourceTab = getTabForMessageSource(event.source)
       const activePreviewTab = getActivePreviewTab()
 
       if (event.data.type === 'pixel-forge-element-selected') {
+        if (!sourceTab) {
+          return
+        }
+
         const sourceUrl =
           typeof event.data.data?.pageUrl === 'string'
             ? event.data.data.pageUrl
-            : activePreviewTab?.url || targetUrlRef.current
+            : sourceTab.url
 
         addElement({
           tagName: event.data.data.tagName,
@@ -532,23 +574,27 @@ export function LiveEditorPane() {
           textContent: event.data.data.textContent || '',
           xpath: event.data.data.xpath,
           outerHTML: event.data.data.outerHTML,
-          sourceTabId: activePreviewTab?.id || 'preview',
-          sourceTabLabel: activePreviewTab?.title || 'Preview',
+          sourceTabId: sourceTab.id,
+          sourceTabLabel: sourceTab.title || 'Preview',
           sourceUrl,
           pageTitle:
             typeof event.data.data?.pageTitle === 'string'
               ? event.data.data.pageTitle
-              : activePreviewTab?.title || null,
+              : sourceTab.title || null,
         })
       } else if (event.data.type === 'pixel-forge-element-deselected') {
+        if (!sourceTab) {
+          return
+        }
+
         const sourceUrl =
           typeof event.data.data?.pageUrl === 'string'
             ? event.data.data.pageUrl
-            : activePreviewTab?.url || targetUrlRef.current
+            : sourceTab.url
         const element = selectedElements.find(
           (entry) =>
             entry.xpath === event.data.data.xpath
-            && entry.sourceTabId === activePreviewTab?.id
+            && entry.sourceTabId === sourceTab.id
             && entry.sourceUrl === sourceUrl
         )
         if (element) {
@@ -559,29 +605,31 @@ export function LiveEditorPane() {
       } else if (event.data.type === 'pixel-forge-auth-required') {
         const status = Number(event.data.data?.status || 0)
         const failingUrl = String(event.data.data?.url || '')
-        setAuthIssue({ status, url: failingUrl })
+        if (!sourceTab || sourceTab.id === activePreviewTab?.id) {
+          setAuthIssue({ status, url: failingUrl })
+        }
         toast.error(
           status === 401 || status === 403
             ? `Target authentication required (${status}).`
             : 'Target authentication required.'
         )
       } else if (event.data.type === 'pixel-forge-location-changed') {
-        if (!activePreviewTab) {
+        if (!sourceTab) {
           return
         }
 
         const nextUrl =
           typeof event.data.data?.url === 'string'
             ? event.data.data.url
-            : activePreviewTab.url
+            : sourceTab.url
         const nextTitle =
           typeof event.data.data?.title === 'string'
             ? event.data.data.title
-            : activePreviewTab.title
+            : sourceTab.title
 
         setPreviewTabs((currentTabs) =>
           currentTabs.map((entry, index) =>
-            entry.id === activePreviewTab.id
+            entry.id === sourceTab.id
               ? {
                   ...entry,
                   url: nextUrl,
@@ -590,22 +638,22 @@ export function LiveEditorPane() {
               : entry
           )
         )
-        setTargetUrl(nextUrl)
-        if (nextUrl) {
-          lastLoadedUrlRef.current = nextUrl
+
+        if (sourceTab.id === activePreviewTab?.id) {
+          setTargetUrl(nextUrl)
+          void syncStorePreviewUrl(nextUrl)
         }
-        void syncStorePreviewUrl(nextUrl)
       }
     }
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [addElement, getActivePreviewTab, removeElement, selectedElements, syncStorePreviewUrl])
+  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, selectedElements, syncStorePreviewUrl])
 
   const handleClearElements = useCallback(() => {
     clearElements()
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
+    for (const iframe of Object.values(iframeRefs.current)) {
+      iframe?.contentWindow?.postMessage(
         { type: 'pixel-forge-clear-selections' },
         '*'
       )
@@ -616,23 +664,15 @@ export function LiveEditorPane() {
     id: string,
     xpath: string,
     sourceTabId: string,
-    sourceUrl: string
+    _sourceUrl: string
   ) => {
     removeElement(id)
 
-    const activePreviewTab = getActivePreviewTab()
-    if (
-      activePreviewTab
-      && activePreviewTab.id === sourceTabId
-      && activePreviewTab.url === sourceUrl
-      && iframeRef.current?.contentWindow
-    ) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: 'pixel-forge-deselect', xpath },
-        '*'
-      )
-    }
-  }, [getActivePreviewTab, removeElement])
+    iframeRefs.current[sourceTabId]?.contentWindow?.postMessage(
+      { type: 'pixel-forge-deselect', xpath },
+      '*'
+    )
+  }, [removeElement])
 
   const viewportShellStyle =
     viewportMode === 'phone'
@@ -863,13 +903,18 @@ export function LiveEditorPane() {
             className="mx-auto h-full min-h-[28rem] transition-[width,max-width] duration-200 ease-out"
             style={viewportShellStyle}
           >
-            <div className={viewportFrameClassName}>
-              <iframe
-                ref={iframeRef}
-                src={iframeSrc}
-                className="h-full w-full border-0 bg-white"
-                onLoad={handleIframeLoad}
-              />
+            <div className={`${viewportFrameClassName} relative`}>
+              {previewTabs.map((tab) => (
+                <iframe
+                  key={tab.id}
+                  ref={(iframe) => setIframeRef(tab.id, iframe)}
+                  src={tab.frameSrc}
+                  className={`absolute inset-0 h-full w-full border-0 bg-white ${
+                    tab.id === activePreviewTabId ? 'block' : 'hidden'
+                  }`}
+                  onLoad={() => handleIframeLoad(tab.id)}
+                />
+              ))}
             </div>
           </div>
         </div>
