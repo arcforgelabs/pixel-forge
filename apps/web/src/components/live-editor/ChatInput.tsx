@@ -266,13 +266,12 @@ export function ChatInput() {
               title="Attach reference files"
             >
               <Paperclip className="h-4 w-4" />
-              <span className="text-xs">
-                {attachments.length > 0 ? attachments.length : 'Attach'}
-              </span>
+              {attachments.length > 0 && (
+                <span className="text-xs">
+                  {attachments.length}
+                </span>
+              )}
             </Button>
-            <span className="text-xs text-muted-foreground/50 pl-1">
-              {isStreaming ? 'Working...' : 'Enter to send'}
-            </span>
           </div>
           <Button
             type="submit"

@@ -1629,7 +1629,9 @@ export function LiveEditorPane() {
           </div>
         </Tabs>
 
-        {activeTab === 'chat' && <ChatInput />}
+        <div className={activeTab === 'chat' ? 'block' : 'hidden'}>
+          <ChatInput />
+        </div>
       </div>
     </div>
   )
