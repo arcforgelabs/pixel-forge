@@ -11,6 +11,7 @@
  */
 
 import { create } from 'zustand'
+import { WS_BACKEND_URL } from '@/config'
 import { useSessionStore } from '../../../store/session-store'
 
 // ============================================================================
@@ -152,7 +153,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     const { ws } = get()
     if (ws && ws.readyState === WebSocket.OPEN) return
 
-    const wsUrl = `ws://${window.location.hostname}:7001${endpoint}`
+    const wsUrl = endpoint.startsWith('ws://') || endpoint.startsWith('wss://')
+      ? endpoint
+      : `${WS_BACKEND_URL}${endpoint}`
     const newWs = new WebSocket(wsUrl)
 
     newWs.onopen = () => {

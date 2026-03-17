@@ -8,6 +8,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 2. Every live-edit request is inspectable and reproducible from a disk-backed request pack instead of giant pasted blobs or process memory.
 3. Pixel Forge sessions show up in Agent Deck so the user can drop into the real session when the chat UI is not enough.
 4. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
+5. Pixel Forge can launch a sibling Pixel Forge target runtime for self-edit loops without colliding with the controller instance.
 
 # Requirements
 
@@ -55,6 +56,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-M-006:` Pixel Forge must not enforce a small fixed preview-tab cap. Practical limits are driven by runtime/browser resources, not a hardcoded product limit.
 - `REQ-M-007:` In the native shell path, preview tabs must render inside Pixel Forge itself rather than bouncing the user out to separate external browser windows.
 
+### Self-Edit Runtime
+- `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, state DB path, and managed-browser profile path.
+- `REQ-E-002:` Target runtimes must suppress controller-only startup behavior that blocks inspection or invites accidental recursive control loops.
+
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
 - `REQ-D-002:` When the agent completes a code edit against a remote preview target, the dispatch prompt must instruct the agent to deploy the changes using whatever deployment process the workspace provides. No standardized deploy convention — the agent infers the deploy method from the workspace.
@@ -63,10 +68,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` The desktop shell path still needs hardening and default-toolchain cleanup for daily use.
-- Why it is the limiter: Embedded Chromium inside Pixel Forge is now proven, so the product shape is no longer the blocker. Stability now depends on removing stale build-tooling drift and tightening the native-shell runtime path.
-- Smallest complete unit to attack it: Move the frontend off deprecated lint/tooling paths, keep Electron on the current surface API, and make install/build behavior explicit instead of warning-heavy.
-- Immediate proof target: Run clean install/build checks after the tooling upgrade and confirm the native shell still loads a real page and feeds selections into the shared Elements context.
+- `[active]` The embedded-shell runtime still needs hardening for long-running daily use.
+- Why it is the limiter: Controller->target self-edit launching now works, so the structural blocker is gone. The remaining risk is operational stability: repeated reloads, Chromium resource pressure, and the current `--no-sandbox` Linux shell path.
+- Smallest complete unit to attack it: Prove repeated self-edit cycles against a real sibling target, then remove the remaining shell compromises one by one instead of adding more proxy complexity.
+- Immediate proof target: Launch a sibling Pixel Forge target from the controller, survive at least one rebuild/reconnect cycle, and keep shared selection context intact across that loop.
 
 # Current Proof Status
 
@@ -80,10 +85,13 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` Pixel Forge now maintains multiple mounted preview tabs inside one Live Editor thread, with each tab bound to its own proxy session and active URL state. Basis: browser smoke loaded `https://field.arcforge.au/` and `https://claude.ai/new` in separate tabs and kept the active URL bar on the real target URL rather than the internal proxy URL.
 - `[validated]` Cross-tab element selection now survives tab switches and stays unified in one project-level context list. Basis: browser smoke selected one element from the Claude tab and one from the Field tab, then the Elements pane showed both selections together with their source URLs.
 - `[validated]` Pixel Forge now has a native desktop-shell path (`apps/desktop`) that embeds real Chromium-backed preview tabs inside the app chrome. Basis: Electron shell proof loaded a live remote page into the preview pane, switched it to `https://example.com/`, enabled selecting, and the shared Elements context incremented inside the Pixel Forge UI.
+- `[validated]` Pixel Forge can now launch a sibling Pixel Forge target runtime for self-editing without sharing controller ports, DB state, or managed-browser profile state. Basis: the backend local-target launcher allocates isolated runtime settings and the controller opens the returned target URL inside the existing preview-tab system.
+- `[validated]` Target runtimes no longer block self-edit inspection with controller-first startup UI. Basis: target mode suppresses the auto-open project selector, hides the recursive launch control, and labels the runtime as a target instance.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.
 - `[unvalidated]` Cross-tab dispatch context: one request pack and one agent prompt clearly preserve grouped source metadata for selections gathered from multiple preview tabs. Basis: browser-side tab/session/selection behavior is now proven, but the full dispatch artifact has not yet been inspected.
+- `[unvalidated]` Self-edit rebuild resilience: the controller keeps the sibling target tab usable across repeated target rebuilds/restarts. Basis: target launch plumbing exists, but the restart/reconnect loop has not yet been hammered.
 - `[planned]` Screenshot bootstrap will be migrated onto the same session control plane only after the Live Editor loop is proven superior there.
 
 # Open Questions

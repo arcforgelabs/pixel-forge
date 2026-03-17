@@ -23,6 +23,7 @@ import { createCommit } from "./components/commits/utils";
 import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
+import { IS_TARGET_MODE } from "./config";
 
 function App() {
   const {
@@ -82,7 +83,7 @@ function App() {
 
   // Show project selector on first render if no project is configured
   useEffect(() => {
-    if (projectsLoaded && appState === AppState.INITIAL && !projectPath) {
+    if (!IS_TARGET_MODE && projectsLoaded && appState === AppState.INITIAL && !projectPath) {
       setShowProjectSelector(true);
     }
   }, [appState, projectPath, projectsLoaded]);
@@ -379,15 +380,23 @@ function App() {
     <div className="dark:bg-background dark:text-foreground flex flex-row h-screen overflow-hidden">
       {/* Project Selector Modal */}
       <ProjectSelector
-        open={showProjectSelector}
-        onOpenChange={setShowProjectSelector}
+        open={!IS_TARGET_MODE && showProjectSelector}
+        onOpenChange={(nextOpen) => {
+          if (!IS_TARGET_MODE) {
+            setShowProjectSelector(nextOpen);
+          }
+        }}
       />
 
       {/* Settings drawer - pushes main content */}
       <SettingsSidebar
         settings={settings}
         setSettings={setSettings}
-        onOpenProjectSelector={() => setShowProjectSelector(true)}
+        onOpenProjectSelector={() => {
+          if (!IS_TARGET_MODE) {
+            setShowProjectSelector(true);
+          }
+        }}
       />
 
       {/* Main content */}

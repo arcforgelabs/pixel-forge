@@ -15,6 +15,7 @@ FastAPI service
 
 React frontend (apps/web)
   -> owns project selection, chat, selected elements, preview tab strip
+  -> can launch a sibling Pixel Forge target runtime for self-editing
   -> still has a browser-only fallback path:
        localhost/private URLs -> proxy iframe
        remote URLs -> backend-managed Chrome session or native shell when present
@@ -39,11 +40,19 @@ Pixel Forge Desktop Shell (apps/desktop)
 
 Pixel Forge UI (apps/web)
   -> remains the product chrome: tab strip, toolbar, chat, Elements pane
+  -> can spawn a sibling Pixel Forge target runtime from the bound workspace
   -> measures the preview pane bounds
   -> tells the shell which preview tab is active and where the native browser surface should mount
 
+Sibling target runtime
+  -> runs its own FastAPI + Vite stack on isolated localhost ports
+  -> gets its own SQLite state root and managed-browser profile path
+  -> renders inside the controller preview like any other localhost app
+  -> stays visually faithful, but suppresses controller-first startup blocking
+
 FastAPI backend (apps/api)
   -> remains the broker/state plane
+  -> launches sibling Pixel Forge targets on demand
   -> persists projects/sessions/request packs
   -> keeps web fallback preview support for non-shell usage
 ```
@@ -57,6 +66,7 @@ Native Pixel Forge shell
   -> embedded Chromium is the default preview runtime for all URLs
   -> localhost and remote sites share one browser model
   -> one project chat can compare multiple live tabs without opening external browser windows
+  -> one controller instance can launch and inspect sibling target instances for self-editing
 
 FastAPI backend
   -> agent orchestration
@@ -85,6 +95,12 @@ In the ideal shape, the proxy path becomes a compatibility fallback, not the cor
 - Login/auth flows
 - Tab-local DOM state and history
 - Selection overlay injection into the live page
+
+### Sibling Target Layer
+- Isolated localhost target runtime for self-editing
+- Separate API/web ports
+- Separate DB and browser-profile state
+- Target-mode UI guardrails
 
 ### Backend Broker Layer
 - Project/session persistence

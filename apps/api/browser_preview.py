@@ -34,6 +34,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
+from runtime_config import managed_browser_dir
 
 PreviewMode = Literal["proxy", "browser"]
 
@@ -41,7 +42,7 @@ MAX_SELECTIONS = 10
 SNAPSHOT_QUALITY = 65
 SNAPSHOT_WIDTH = 1440
 CDP_READY_TIMEOUT_SECONDS = 15.0
-PIXEL_FORGE_PROFILE_DIR = Path.home() / ".pixel-forge" / "managed-browser"
+PIXEL_FORGE_PROFILE_DIR = managed_browser_dir()
 
 REAL_BROWSER_SELECTION_SCRIPT = f"""
 (() => {{

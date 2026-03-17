@@ -4,15 +4,16 @@ import os
 import sqlite3
 from pathlib import Path
 
+from runtime_config import db_path as runtime_db_path
+from runtime_config import state_dir as runtime_state_dir
+
 
 def state_dir() -> Path:
-    base_dir = Path.home() / ".pixel-forge"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir
+    return runtime_state_dir()
 
 
 def db_path() -> Path:
-    return state_dir() / "pixel-forge.db"
+    return runtime_db_path()
 
 
 def connect() -> sqlite3.Connection:

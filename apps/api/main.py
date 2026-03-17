@@ -47,6 +47,8 @@ from PIL import Image
 from moviepy import VideoFileClip
 from request_packs import create_request_pack
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
+from local_targets import serialize_local_target, start_pixel_forge_target
+from runtime_config import api_port as runtime_api_port
 
 from session_manager import (
     generate_session_id,
@@ -275,6 +277,10 @@ class BrowserPreviewCommandRequest(BaseModel):
     xpaths: list[str] | None = None
 
 
+class LocalTargetStartRequest(BaseModel):
+    project_path: str
+
+
 # Stack to file extension mapping
 STACK_EXTENSIONS = {
     "html_tailwind": (".html", "index.html"),
@@ -390,6 +396,17 @@ async def get_project_sessions(project_path: str):
             for session in list_project_sessions(project_path)
         ]
     }
+
+
+@app.post("/api/local-targets/pixel-forge/start")
+async def start_local_pixel_forge_target(payload: LocalTargetStartRequest):
+    try:
+        record = await asyncio.to_thread(start_pixel_forge_target, payload.project_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return serialize_local_target(record)
 
 
 @app.post("/browse/directory")
@@ -1759,4 +1776,4 @@ app.include_router(app_proxy_router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7001)
+    uvicorn.run(app, host="0.0.0.0", port=runtime_api_port())

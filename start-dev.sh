@@ -13,14 +13,25 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_DIR="$SCRIPT_DIR/apps/api"
 WEB_DIR="$SCRIPT_DIR/apps/web"
-LOG_DIR="$SCRIPT_DIR/.pixel-forge/logs"
-API_URL="http://127.0.0.1:7001"
-WEB_URL="http://pixel-forge.localhost:5173"
-WEB_HEALTH_URL="http://127.0.0.1:5173"
+INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-pixel-forge}"
+API_PORT="${PIXEL_FORGE_API_PORT:-7001}"
+WEB_PORT="${PIXEL_FORGE_WEB_PORT:-5173}"
+WEB_HOST="${PIXEL_FORGE_WEB_HOST:-${INSTANCE_SLUG}.localhost}"
+LOG_DIR="${PIXEL_FORGE_LOG_DIR:-$SCRIPT_DIR/.pixel-forge/logs}"
+API_URL="http://127.0.0.1:${API_PORT}"
+WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
+WEB_HEALTH_URL="http://127.0.0.1:${WEB_PORT}"
 OPEN_BROWSER_SCRIPT="$SCRIPT_DIR/tools/open_visible_browser.sh"
 DESKTOP_DIR="$SCRIPT_DIR/apps/desktop"
+KILL_STALE="${PIXEL_FORGE_KILL_STALE:-1}"
 
 mkdir -p "$LOG_DIR"
+
+export PIXEL_FORGE_INSTANCE_SLUG="$INSTANCE_SLUG"
+export PIXEL_FORGE_API_PORT="$API_PORT"
+export PIXEL_FORGE_WEB_PORT="$WEB_PORT"
+export PIXEL_FORGE_WEB_HOST="$WEB_HOST"
+export VITE_PIXEL_FORGE_TARGET_MODE="${VITE_PIXEL_FORGE_TARGET_MODE:-${PIXEL_FORGE_TARGET_MODE:-0}}"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -28,15 +39,17 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Kill stale Pixel Forge processes on our ports before starting
-for port in 7001 5173; do
-    stale_pid=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
-    if [ -n "$stale_pid" ]; then
-        echo -e "${YELLOW}Killing stale process on port $port (PID: $stale_pid)${NC}"
-        kill "$stale_pid" 2>/dev/null || true
-        sleep 1
-    fi
-done
+if [ "$KILL_STALE" = "1" ]; then
+    # Kill stale Pixel Forge processes on our configured ports before starting
+    for port in "$API_PORT" "$WEB_PORT"; do
+        stale_pid=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
+        if [ -n "$stale_pid" ]; then
+            echo -e "${YELLOW}Killing stale process on port $port (PID: $stale_pid)${NC}"
+            kill "$stale_pid" 2>/dev/null || true
+            sleep 1
+        fi
+    done
+fi
 
 # PIDs for cleanup
 API_PID=""
@@ -54,11 +67,15 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Check dependencies
 if ! command -v claude &> /dev/null; then
-    echo -e "${RED}Error: claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code${NC}"
-    exit 1
+    if [ "${PIXEL_FORGE_TARGET_MODE:-0}" = "1" ]; then
+        echo -e "${YELLOW}Warning: claude CLI not found. Target runtime will boot, but agent-backed flows will not work inside it.${NC}"
+    else
+        echo -e "${RED}Error: claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code${NC}"
+        exit 1
+    fi
 fi
 
-# --- API Backend (port 7001) with auto-reload ---
+# --- API Backend with auto-reload ---
 cd "$API_DIR"
 
 if [ ! -d ".venv" ]; then
@@ -70,7 +87,7 @@ echo "Syncing API Python dependencies..."
 .venv/bin/pip install -q --upgrade -r "$API_DIR/requirements.txt"
 
 echo -e "${YELLOW}Starting API (auto-reload)...${NC}"
-.venv/bin/uvicorn main:app --host 0.0.0.0 --port 7001 --reload \
+.venv/bin/uvicorn main:app --host 0.0.0.0 --port "$API_PORT" --reload \
     --reload-dir "$API_DIR" \
     > "$LOG_DIR/api.log" 2>&1 &
 API_PID=$!
@@ -87,7 +104,7 @@ if ! curl -s "$API_URL/" > /dev/null 2>&1; then
 fi
 echo -e "${GREEN}✓ API on ${API_URL} (auto-reload)${NC}"
 
-# --- Frontend (port 5173) with Vite HMR ---
+# --- Frontend with Vite HMR ---
 cd "$WEB_DIR"
 
 if [ ! -d "node_modules" ]; then

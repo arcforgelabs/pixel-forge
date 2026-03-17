@@ -1,5 +1,6 @@
 import { useSessionStore, ActiveMode } from "@/store/session-store";
 import { Camera, Pencil, Settings } from "lucide-react";
+import { IS_TARGET_MODE } from "@/config";
 
 export function ModeTabBar() {
   const { activeMode, switchMode, projectPath, sessionId, liveEditorSession, toggleSettingsSidebar } =
@@ -34,6 +35,11 @@ export function ModeTabBar() {
         <span className="text-sm font-semibold tracking-tight">
           Pixel Forge
         </span>
+        {IS_TARGET_MODE && (
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+            Target
+          </span>
+        )}
         <Settings className="h-3.5 w-3.5 text-muted-foreground" />
       </button>
 

@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionStore } from '@/store/session-store'
-import { HTTP_BACKEND_URL } from '@/config'
+import { HTTP_BACKEND_URL, IS_TARGET_MODE, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -64,6 +64,22 @@ interface BrowserPreviewLoadResponse {
 }
 
 type PreviewLoadResponse = LivePreviewLoadResponse | BrowserPreviewLoadResponse
+
+interface LocalPixelForgeTargetResponse {
+  kind: 'pixel-forge'
+  project_path: string
+  instance_slug: string
+  api_port: number
+  web_port: number
+  web_host: string
+  api_url: string
+  web_url: string
+  state_dir: string
+  log_file: string
+  pid: number | null
+  target_mode: boolean
+  already_running: boolean
+}
 
 interface BrowserPreviewEvent {
   type:
@@ -188,6 +204,7 @@ export function LiveEditorPane() {
     createPreviewTab('', null, 1),
   ])
   const [activePreviewTabId, setActivePreviewTabId] = useState<string | null>(null)
+  const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
 
   const currentProjectUrls = useSessionStore((state) => {
     if (!state.projectPath) return []
@@ -619,6 +636,63 @@ export function LiveEditorPane() {
     }
   }, [sendBrowserCommand, syncStorePreviewUrl, updateEmbeddedPreviewBounds])
 
+  const openUrlInPreviewTab = useCallback(async (
+    url: string,
+    options?: {
+      title?: string | null
+      announceSuccess?: boolean
+    }
+  ) => {
+    const normalizedUrl = url.trim()
+    if (!normalizedUrl) {
+      return null
+    }
+
+    const existingTab = previewTabsRef.current.find((entry) => entry.url === normalizedUrl)
+    if (existingTab) {
+      await activatePreviewTab(existingTab.id)
+      await loadApp(normalizedUrl, {
+        tabId: existingTab.id,
+        persist: true,
+        announceSuccess: options?.announceSuccess,
+      })
+      return existingTab.id
+    }
+
+    const activePreviewTab = getActivePreviewTab()
+    if (activePreviewTab && !activePreviewTab.url && activePreviewTab.mode === null) {
+      setTargetUrl(normalizedUrl)
+      await loadApp(normalizedUrl, {
+        tabId: activePreviewTab.id,
+        persist: true,
+        announceSuccess: options?.announceSuccess,
+      })
+      return activePreviewTab.id
+    }
+
+    const nextTab = createPreviewTab(
+      normalizedUrl,
+      options?.title ?? null,
+      previewTabsRef.current.length + 1
+    )
+    const nextTabs = [...previewTabsRef.current, nextTab]
+    previewTabsRef.current = nextTabs
+    activeTabIdRef.current = nextTab.id
+    setPreviewTabs(nextTabs)
+    setActivePreviewTabId(nextTab.id)
+    setTargetUrl(normalizedUrl)
+    setAuthIssue(null)
+    setShowUrlHistory(false)
+
+    await loadApp(normalizedUrl, {
+      tabId: nextTab.id,
+      persist: true,
+      announceSuccess: options?.announceSuccess,
+    })
+
+    return nextTab.id
+  }, [activatePreviewTab, getActivePreviewTab, loadApp])
+
   const addPreviewTab = useCallback(() => {
     const nextTab = createPreviewTab('', null, previewTabsRef.current.length + 1)
     setPreviewTabs((currentTabs) => [...currentTabs, nextTab])
@@ -628,6 +702,44 @@ export function LiveEditorPane() {
     setShowUrlHistory(false)
     void syncStorePreviewUrl(null)
   }, [syncStorePreviewUrl])
+
+  const launchPixelForgeTarget = useCallback(async () => {
+    if (!projectPath) {
+      toast.error('Select a project before launching a Pixel Forge target')
+      return
+    }
+
+    setIsLaunchingPixelForgeTarget(true)
+    try {
+      const record = await requestPreviewJson<LocalPixelForgeTargetResponse>(
+        '/api/local-targets/pixel-forge/start',
+        {
+          method: 'POST',
+          body: JSON.stringify({ project_path: projectPath }),
+        }
+      )
+
+      await openUrlInPreviewTab(record.web_url, {
+        title: 'Pixel Forge Target',
+        announceSuccess: false,
+      })
+
+      toast.success(
+        record.already_running
+          ? 'Pixel Forge target reconnected'
+          : 'Pixel Forge target launched'
+      )
+    } catch (error) {
+      console.error('[live-editor] Failed to launch Pixel Forge target:', error)
+      toast.error(
+        error instanceof Error
+          ? `Failed to launch Pixel Forge target: ${error.message}`
+          : 'Failed to launch Pixel Forge target'
+      )
+    } finally {
+      setIsLaunchingPixelForgeTarget(false)
+    }
+  }, [openUrlInPreviewTab, projectPath])
 
   const closePreviewTab = useCallback(async (tabId: string) => {
     const closingIndex = previewTabsRef.current.findIndex((entry) => entry.id === tabId)
@@ -1160,7 +1272,7 @@ export function LiveEditorPane() {
       }
     }
 
-    const wsUrl = `ws://${window.location.hostname}:7001/ws/live-preview`
+    const wsUrl = `${WS_BACKEND_URL}/ws/live-preview`
     const ws = new WebSocket(wsUrl)
 
     ws.onmessage = (event) => {
@@ -1381,6 +1493,19 @@ export function LiveEditorPane() {
               <Play className="h-3 w-3" />
               Load
             </Button>
+            {projectPath && !IS_TARGET_MODE && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void launchPixelForgeTarget()}
+                disabled={isLaunchingPixelForgeTarget}
+                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
+                title="Launch this workspace as a sibling Pixel Forge target for self-editing"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
+                {isLaunchingPixelForgeTarget ? 'Launching...' : 'Run Pixel Forge'}
+              </Button>
+            )}
             <div className="mx-0.5 h-4 w-px bg-border/40" />
             <Button
               variant="outline"

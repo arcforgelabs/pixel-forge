@@ -12,6 +12,7 @@ import OutputSettingsSection from "./OutputSettingsSection";
 import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
+import { IS_TARGET_MODE } from "@/config";
 import {
   X,
   FolderOpen,
@@ -92,21 +93,31 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               <FolderOpen className="h-3.5 w-3.5" />
               Project
             </div>
-            <button
-              onClick={() => {
-                onOpenProjectSelector();
-                toggleSettingsSidebar();
-              }}
-              className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2 text-sm transition-all hover:border-border hover:bg-background/60"
-            >
-              <span className="text-muted-foreground text-xs">Project</span>
-              <span className="font-medium truncate text-xs">
-                {projectName || "None selected"}
-              </span>
-              {(sessionId || liveEditorSession) && (
-                <span className="forge-status-dot bg-primary ml-auto" title="Session active" />
-              )}
-            </button>
+            {IS_TARGET_MODE ? (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+                <div className="text-muted-foreground">Runtime</div>
+                <div className="mt-1 font-medium text-foreground">Sibling target instance</div>
+                <div className="mt-1 text-muted-foreground">
+                  Controlled from another Pixel Forge window.
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  onOpenProjectSelector();
+                  toggleSettingsSidebar();
+                }}
+                className="flex w-full items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2 text-sm transition-all hover:border-border hover:bg-background/60"
+              >
+                <span className="text-muted-foreground text-xs">Project</span>
+                <span className="font-medium truncate text-xs">
+                  {projectName || "None selected"}
+                </span>
+                {(sessionId || liveEditorSession) && (
+                  <span className="forge-status-dot bg-primary ml-auto" title="Session active" />
+                )}
+              </button>
+            )}
 
             {previewUrl && (
               <div className="px-1">
