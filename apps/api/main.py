@@ -985,10 +985,51 @@ def _selection_tunnel_file(project_path: str, request_id: str) -> Path:
     return tunnel_path
 
 
+def _selection_source_summary(
+    selection_tunnel: dict[str, object] | None,
+) -> list[tuple[str | None, str, int]]:
+    if not isinstance(selection_tunnel, dict):
+        return []
+
+    raw_selections = selection_tunnel.get("selections")
+    if not isinstance(raw_selections, list):
+        return []
+
+    grouped: list[tuple[str | None, str, int]] = []
+    counts: dict[tuple[str | None, str], int] = {}
+    order: list[tuple[str | None, str]] = []
+
+    for entry in raw_selections:
+        if not isinstance(entry, dict):
+            continue
+
+        source_url = str(entry.get("sourceUrl") or "").strip()
+        if not source_url:
+            continue
+
+        source_label_raw = entry.get("sourceTabLabel")
+        source_label = (
+            str(source_label_raw).strip()
+            if isinstance(source_label_raw, str) and str(source_label_raw).strip()
+            else None
+        )
+        key = (source_label, source_url)
+        if key not in counts:
+            counts[key] = 0
+            order.append(key)
+        counts[key] += 1
+
+    for key in order:
+        grouped.append((key[0], key[1], counts[key]))
+
+    return grouped
+
+
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
     preview_url: str | None = None,
+    selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
     self_edit_safe_mode: bool = False,
 ) -> str:
@@ -1002,13 +1043,31 @@ Make the smallest correct change, avoid AskUserQuestion for this request, and fi
 
 If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
 
+    selection_sources = _selection_source_summary(selection_tunnel)
+    if len(selection_sources) > 1:
+        source_lines = "\n".join(
+            f"- {label or 'Preview'} ({count} selection{'s' if count != 1 else ''}) at {url}"
+            for label, url, count in selection_sources
+        )
+        base += f"""
+
+Selections span multiple preview sources. Use the grouped sources in the request pack as the source of truth for target-vs-reference context, and do not collapse them into one preview URL:
+{source_lines}"""
+
     if self_edit_safe_mode:
         base += """
 
 This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
 Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
 
+    should_emit_remote_deploy_note = False
     if _is_remote_preview(preview_url):
+        if not selection_sources:
+            should_emit_remote_deploy_note = True
+        elif len(selection_sources) == 1:
+            should_emit_remote_deploy_note = selection_sources[0][1] == preview_url
+
+    if should_emit_remote_deploy_note:
         base += f"""
 
 The preview target is a remote deployment at {preview_url}. After completing the code edit, deploy these changes using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar. If no deployment process is found, state that and skip deployment."""
@@ -1789,6 +1848,7 @@ async def live_editor_chat(websocket: WebSocket):
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
                     preview_url=preview_url or None,
+                    selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     selection_tunnel_url=(
                         f"http://pixel-forge.localhost:{runtime_api_port()}/api/live-editor/selection-tunnel?"
                         + urlencode(
