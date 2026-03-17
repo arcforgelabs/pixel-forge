@@ -1,9 +1,8 @@
 /**
  * LiveEditorPane Component
  *
- * The preview layer routes each tab to the best adapter automatically:
- * localhost/private targets stay on the injected proxy, while remote sites
- * run in a managed real Chrome session.
+ * Live Editor preview is shell-first: every inspected page should render inside
+ * Pixel Forge's embedded Chromium surface rather than through a proxy iframe.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -48,13 +47,6 @@ interface PreviewTab {
   snapshotDataUrl: string | null
 }
 
-interface LivePreviewLoadResponse {
-  mode: 'proxy'
-  target_url: string
-  proxy_session_id: string
-  frame_src: string
-}
-
 interface BrowserPreviewLoadResponse {
   mode: 'browser'
   target_url: string
@@ -62,8 +54,6 @@ interface BrowserPreviewLoadResponse {
   title: string
   snapshot_data_url: string | null
 }
-
-type PreviewLoadResponse = LivePreviewLoadResponse | BrowserPreviewLoadResponse
 
 interface LocalPixelForgeTargetResponse {
   kind: 'pixel-forge'
@@ -123,16 +113,6 @@ function getPreviewTabTitle(
   } catch {
     return trimmedUrl.slice(0, 40)
   }
-}
-
-function resolveFrameSrc(frameSrc: string): string {
-  if (!frameSrc) {
-    return 'about:blank'
-  }
-  if (frameSrc.startsWith('http://') || frameSrc.startsWith('https://')) {
-    return frameSrc
-  }
-  return `${HTTP_BACKEND_URL}${frameSrc}`
 }
 
 function createPreviewTab(url = '', title?: string | null, index?: number): PreviewTab {
@@ -495,58 +475,16 @@ export function LiveEditorPane() {
 
     try {
       const desktopPreview = desktopPreviewRef.current
-      if (desktopPreview) {
-        const data = await desktopPreview.load({
-          tabId: resolvedTabId,
-          url: urlToLoad,
-        })
-        const resolvedTargetUrl = data.target_url
-
-        setAuthIssue(null)
-        setTargetUrl(resolvedTargetUrl)
-        setPreviewTabs((currentTabs) =>
-          currentTabs.map((entry, index) =>
-            entry.id === resolvedTabId
-              ? {
-                  ...entry,
-                  mode: 'browser',
-                  url: resolvedTargetUrl,
-                  title: getPreviewTabTitle(resolvedTargetUrl, data.title, index + 1),
-                  proxySessionId: null,
-                  browserTabId: data.browser_tab_id,
-                  frameSrc: 'about:blank',
-                  snapshotDataUrl: null,
-                }
-              : entry
-          )
+      if (!desktopPreview) {
+        throw new Error(
+          'Live Editor preview requires the Pixel Forge desktop shell. Open the app from the dock or run `pixel-forge open`.'
         )
-
-        if (options?.persist !== false) {
-          await syncStorePreviewUrl(resolvedTargetUrl)
-        }
-
-        window.setTimeout(() => {
-          void updateEmbeddedPreviewBounds()
-          void syncTabSelections(resolvedTabId)
-          void syncAllPreviewSelectionModes()
-        }, 150)
-
-        if (options?.announceSuccess !== false) {
-          toast.success('Loaded in embedded Chromium')
-        }
-        return
       }
 
-      const data = await requestPreviewJson<PreviewLoadResponse>('/api/live-preview/load', {
-        method: 'POST',
-        body: JSON.stringify({
-          target_url: urlToLoad,
-          proxy_session_id: tab?.proxySessionId || undefined,
-          browser_tab_id: tab?.browserTabId || undefined,
-          preferred_mode: 'auto',
-        }),
+      const data = await desktopPreview.load({
+        tabId: resolvedTabId,
+        url: urlToLoad,
       })
-
       const resolvedTargetUrl = data.target_url
 
       setAuthIssue(null)
@@ -555,19 +493,6 @@ export function LiveEditorPane() {
         currentTabs.map((entry, index) => {
           if (entry.id !== resolvedTabId) {
             return entry
-          }
-
-          if (data.mode === 'proxy') {
-            return {
-              ...entry,
-              mode: 'proxy',
-              url: resolvedTargetUrl,
-              title: getPreviewTabTitle(resolvedTargetUrl, null, index + 1),
-              proxySessionId: data.proxy_session_id,
-              browserTabId: null,
-              frameSrc: resolveFrameSrc(data.frame_src),
-              snapshotDataUrl: null,
-            }
           }
 
           return {
@@ -587,31 +512,28 @@ export function LiveEditorPane() {
         await syncStorePreviewUrl(resolvedTargetUrl)
       }
 
-      if (data.mode === 'browser' && data.browser_tab_id) {
+      if (data.browser_tab_id) {
         await sendBrowserCommand(data.browser_tab_id, 'focus')
       }
 
       window.setTimeout(() => {
+        void updateEmbeddedPreviewBounds()
         void syncTabSelections(resolvedTabId)
         void syncAllPreviewSelectionModes()
       }, 150)
 
       if (options?.announceSuccess !== false) {
-        toast.success(
-          data.mode === 'browser'
-            ? hasEmbeddedBrowserPreview
-              ? 'Loaded in embedded Chromium'
-              : 'Loaded in managed browser'
-            : 'App loaded'
-        )
+        toast.success('Loaded in embedded Chromium')
       }
     } catch (error) {
       console.error('[live-editor] Failed to load preview target:', error)
-      toast.error(
-        error instanceof Error ? `Failed to load app: ${error.message}` : 'Failed to load app'
-      )
+      if (options?.announceSuccess !== false) {
+        toast.error(
+          error instanceof Error ? `Failed to load app: ${error.message}` : 'Failed to load app'
+        )
+      }
     }
-  }, [hasEmbeddedBrowserPreview, sendBrowserCommand, syncAllPreviewSelectionModes, syncStorePreviewUrl, syncTabSelections, updateEmbeddedPreviewBounds])
+  }, [sendBrowserCommand, syncAllPreviewSelectionModes, syncStorePreviewUrl, syncTabSelections, updateEmbeddedPreviewBounds])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -1374,6 +1296,8 @@ export function LiveEditorPane() {
   ]
 
   const activePreviewTab = getActivePreviewTab()
+  const previewUnavailableMessage =
+    'Live Editor preview runs inside the Pixel Forge desktop shell. Use the dock icon or run `pixel-forge open`.'
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -1488,6 +1412,7 @@ export function LiveEditorPane() {
               variant="outline"
               size="sm"
               onClick={() => void loadApp()}
+              disabled={!hasEmbeddedBrowserPreview}
               className="h-7 gap-1 border-border/60 px-2.5 text-xs"
             >
               <Play className="h-3 w-3" />
@@ -1498,7 +1423,7 @@ export function LiveEditorPane() {
                 variant="outline"
                 size="sm"
                 onClick={() => void launchPixelForgeTarget()}
-                disabled={isLaunchingPixelForgeTarget}
+                disabled={!hasEmbeddedBrowserPreview || isLaunchingPixelForgeTarget}
                 className="h-7 gap-1 border-border/60 px-2.5 text-xs"
                 title="Launch this workspace as a sibling Pixel Forge target for self-editing"
               >
@@ -1512,6 +1437,7 @@ export function LiveEditorPane() {
               size="sm"
               onClick={() => void refreshApp()}
               title="Refresh preview"
+              disabled={!hasEmbeddedBrowserPreview}
               className="h-7 w-7 border-border/60 p-0"
             >
               <RefreshCw className="h-3 w-3" />
@@ -1532,6 +1458,7 @@ export function LiveEditorPane() {
               variant={selectMode ? 'default' : 'outline'}
               size="sm"
               onClick={toggleSelectMode}
+              disabled={!hasEmbeddedBrowserPreview}
               className={`h-7 gap-1 px-2.5 text-xs transition-all ${
                 selectMode
                   ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
@@ -1543,13 +1470,9 @@ export function LiveEditorPane() {
             </Button>
 
             <div className="ml-auto flex items-center gap-1.5">
-              {activePreviewTab?.mode && (
+              {hasEmbeddedBrowserPreview && (
                 <div className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                  {activePreviewTab.mode === 'browser'
-                    ? hasEmbeddedBrowserPreview
-                      ? 'Embedded Chromium'
-                      : 'Managed Chrome'
-                    : 'Proxy'}
+                  Embedded Chromium
                 </div>
               )}
               <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
@@ -1611,6 +1534,18 @@ export function LiveEditorPane() {
             style={viewportShellStyle}
           >
             <div className={`${viewportFrameClassName} relative`}>
+              {!hasEmbeddedBrowserPreview && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background p-6">
+                  <div className="max-w-lg rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
+                    <div className="text-sm font-medium text-foreground">
+                      Pixel Forge Desktop is required for Live Editor preview
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {previewUnavailableMessage}
+                    </p>
+                  </div>
+                </div>
+              )}
               {previewTabs.some((tab) => tab.mode === 'proxy') && (
                 <>
                   {previewTabs.map((tab) => (
@@ -1627,68 +1562,11 @@ export function LiveEditorPane() {
                 </>
               )}
 
-              {activePreviewTab?.mode !== 'proxy' && (
-                hasEmbeddedBrowserPreview ? (
-                  <div
-                    ref={previewHostRef}
-                    className="absolute inset-0 bg-white"
-                  />
-                ) : (
-                  <div className="absolute inset-0 flex flex-col overflow-hidden bg-background">
-                    <div className="flex items-center justify-between border-b border-border/60 bg-card/70 px-4 py-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-foreground">
-                          Managed browser preview
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {activePreviewTab?.url || 'Load a remote URL to open a real Chrome tab'}
-                        </div>
-                      </div>
-                      {activePreviewTab?.browserTabId && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void focusManagedBrowser()}
-                          className="h-8 border-border/60 text-xs"
-                        >
-                          Focus Browser
-                        </Button>
-                      )}
-                    </div>
-
-                    <div className="relative flex-1 bg-[#060709]">
-                      {activePreviewTab?.snapshotDataUrl ? (
-                        <img
-                          src={activePreviewTab.snapshotDataUrl}
-                          alt={activePreviewTab.title || 'Managed browser snapshot'}
-                          className="h-full w-full object-contain"
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center p-6">
-                          <div className="max-w-md rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
-                            <div className="text-sm font-medium text-foreground">
-                              This tab is running in managed Chrome
-                            </div>
-                            <p className="mt-2 text-sm text-muted-foreground">
-                              Interact with the real browser window for login flows and complex apps.
-                              Pixel Forge will still capture selections into this project chat.
-                            </p>
-                            {activePreviewTab?.browserTabId && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void focusManagedBrowser()}
-                                className="mt-4 border-border/60 text-xs"
-                              >
-                                Bring browser to front
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
+              {hasEmbeddedBrowserPreview && activePreviewTab?.mode !== 'proxy' && (
+                <div
+                  ref={previewHostRef}
+                  className="absolute inset-0 bg-white"
+                />
               )}
             </div>
           </div>

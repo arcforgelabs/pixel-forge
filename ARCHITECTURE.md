@@ -16,18 +16,17 @@ FastAPI service
 React frontend (apps/web)
   -> owns project selection, chat, selected elements, preview tab strip
   -> can launch a sibling Pixel Forge target runtime for self-editing
-  -> still has a browser-only fallback path:
-       localhost/private URLs -> proxy iframe
-       remote URLs -> backend-managed Chrome session or native shell when present
+  -> treats the native shell as the only supported Live Editor preview runtime
+  -> exposes a browser-only fallback only as a debug/service surface, not as product-equivalent preview
 
 Agent Deck
   -> persistent agent runtime per Live Editor thread
 ```
 
 Truth:
-- The existing browser-only app can keep working for localhost and simple flows.
-- A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites.
-- Proxying or iframe tricks are not a durable answer for auth-heavy sites like Claude or Google.
+- The desktop shell is the product path.
+- A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites or faithful localhost self-edit targets.
+- Proxying or iframe tricks are not a durable answer for auth-heavy sites, HMR-heavy localhost apps, or sibling-instance self-edit flows.
 
 ## Transition Architecture
 
@@ -54,7 +53,7 @@ FastAPI backend (apps/api)
   -> remains the broker/state plane
   -> launches sibling Pixel Forge targets on demand
   -> persists projects/sessions/request packs
-  -> keeps web fallback preview support for non-shell usage
+  -> may keep compatibility preview code internally, but the product surface routes preview through the shell
 ```
 
 This is the current build direction.
@@ -78,7 +77,7 @@ Agent Deck
   -> persistent coding session
 ```
 
-In the ideal shape, the proxy path becomes a compatibility fallback, not the core preview architecture.
+In the ideal shape, the proxy path disappears from the user-facing preview workflow entirely.
 
 ## Layer Ownership
 
@@ -111,5 +110,5 @@ In the ideal shape, the proxy path becomes a compatibility fallback, not the cor
 ## Non-Goals
 
 - Pretending the browser-only web app can become a full embedded Chromium host
-- Treating the proxy path as the long-term answer for third-party authenticated sites
+- Treating the proxy path as a product-equivalent answer for localhost or third-party preview
 - Rebuilding Agent Deck inside Pixel Forge

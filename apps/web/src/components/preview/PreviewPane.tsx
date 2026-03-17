@@ -51,6 +51,7 @@ function PreviewPane({ doUpdate, reset, settings }: Props) {
     outputMode,
     customOutputPath,
     setLastSavedFile,
+    setPreviewUrl,
   } = useSessionStore();
 
   const [isSaving, setIsSaving] = useState(false);
@@ -139,24 +140,8 @@ function PreviewPane({ doUpdate, reset, settings }: Props) {
         return;
       }
 
-      // 3. Configure app proxy to point to the chosen preview target
-      const response = await fetch(`${HTTP_BACKEND_URL}/config/app-proxy`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_url: resolvedPreviewUrl }),
-      });
-      if (!response.ok) {
-        let detail = `HTTP ${response.status}`;
-        try {
-          const errorData = await response.json();
-          detail = errorData.detail || detail;
-        } catch {
-          const errorText = await response.text();
-          detail = errorText || detail;
-        }
-        throw new Error(detail);
-      }
+      // 3. Persist the chosen preview target for the embedded browser runtime
+      await setPreviewUrl(resolvedPreviewUrl);
 
       // 4. Toast success and switch mode
       toast.success(`Saved to ${result.relPath}`);

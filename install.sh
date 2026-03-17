@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install pixel-forge as a self-contained local app
-# Single process: FastAPI serves the built React frontend + API + proxy
+# FastAPI serves the built React frontend + API; the desktop shell owns preview UX
 # Managed by a systemd user service — survives terminal close.
 # Usage: ./install.sh
 
@@ -124,10 +124,13 @@ case "${1:-start}" in
         fi
         ;;
     open)
+        exec pixel-forge-shell
+        ;;
+    open-web)
         xdg-open "$URL" 2>/dev/null || echo "Open: $URL"
         ;;
     --help|-h)
-        echo "Usage: pixel-forge [start|stop|restart|status|logs|open]"
+        echo "Usage: pixel-forge [start|stop|restart|status|logs|open|open-web]"
         echo ""
         echo "Commands:"
         echo "  start     Start the service (default)"
@@ -135,7 +138,8 @@ case "${1:-start}" in
         echo "  restart   Restart the service"
         echo "  status    Show service status"
         echo "  logs      Tail service logs"
-        echo "  open      Open in browser"
+        echo "  open      Open the desktop shell"
+        echo "  open-web  Open the raw web UI in a browser"
         echo ""
         echo "Environment:"
         echo "  PIXEL_FORGE_PORT  Port (default: 7001)"
@@ -192,6 +196,8 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 7001
 Restart=on-failure
 RestartSec=3
+KillMode=mixed
+TimeoutStopSec=8
 Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
@@ -233,7 +239,8 @@ echo ""
 echo "Usage:"
 echo "  pixel-forge start    # Start the service"
 echo "  pixel-forge stop     # Stop it"
-echo "  pixel-forge open     # Open in browser"
+echo "  pixel-forge open     # Open the desktop shell"
+echo "  pixel-forge open-web # Open the raw web UI"
 echo "  pixel-forge-shell    # Open the desktop shell"
 echo "  pixel-forge logs     # Tail logs"
 echo "  pixel-forge status   # Check status"

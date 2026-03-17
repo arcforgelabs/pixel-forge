@@ -24,6 +24,7 @@ WEB_HEALTH_URL="http://127.0.0.1:${WEB_PORT}"
 OPEN_BROWSER_SCRIPT="$SCRIPT_DIR/tools/open_visible_browser.sh"
 DESKTOP_DIR="$SCRIPT_DIR/apps/desktop"
 KILL_STALE="${PIXEL_FORGE_KILL_STALE:-1}"
+USE_DESKTOP_SHELL="${PIXEL_FORGE_USE_DESKTOP_SHELL:-1}"
 
 mkdir -p "$LOG_DIR"
 
@@ -133,7 +134,7 @@ echo -e "${GREEN}✓ Frontend on ${WEB_URL} (HMR)${NC}"
 
 # --- Open browser or desktop shell ---
 if [ "${PIXEL_FORGE_NO_BROWSER:-0}" != "1" ]; then
-    if [ "${PIXEL_FORGE_USE_DESKTOP_SHELL:-0}" = "1" ]; then
+    if [ "$USE_DESKTOP_SHELL" = "1" ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
         if [ ! -d "$DESKTOP_DIR/node_modules" ]; then
             echo "Installing desktop shell dependencies..."
             pnpm --dir "$DESKTOP_DIR" install
