@@ -1380,7 +1380,7 @@ export function LiveEditorPane() {
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 px-3 py-1.5">
-            <div className="relative flex min-w-[16rem] flex-1 gap-0">
+            <div className="relative z-20 flex min-w-[16rem] flex-1 gap-0">
               <Input
                 value={targetUrl}
                 onChange={(event) => setTargetUrl(event.target.value)}
@@ -1405,7 +1405,7 @@ export function LiveEditorPane() {
               {showUrlHistory && currentProjectUrls.length > 0 && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
-                  <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
+                  <div className="absolute bottom-full left-0 z-20 mb-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
                     <div className="max-h-48 overflow-y-auto py-1">
                       {currentProjectUrls.map((url) => (
                         <button

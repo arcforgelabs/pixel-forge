@@ -54,7 +54,9 @@ export function ChatInput() {
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 28), 384)}px`
+      const nextHeight = Math.min(Math.max(textarea.scrollHeight, 28), 384)
+      textarea.style.height = `${nextHeight}px`
+      textarea.style.overflowY = textarea.scrollHeight > 384 ? 'auto' : 'hidden'
     }
   }, [input])
 
@@ -246,14 +248,10 @@ export function ChatInput() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={
-              hasElements
-                ? 'Describe what to change across the selected elements. Attach, drop, or paste files for extra context...'
-                : 'Select an element first, then attach, drop, or paste context...'
-            }
+            placeholder="Type here..."
             disabled={isStreaming}
             rows={1}
-            className="w-full resize-none bg-transparent text-[15px] leading-relaxed focus:outline-none disabled:opacity-50 placeholder:text-muted-foreground/60 relative z-10"
+            className="w-full resize-none overflow-y-hidden bg-transparent text-[15px] leading-relaxed focus:outline-none disabled:opacity-50 placeholder:text-muted-foreground/60 relative z-10"
             style={{ pointerEvents: 'auto' }}
           />
         </div>
@@ -273,7 +271,7 @@ export function ChatInput() {
               </span>
             </Button>
             <span className="text-xs text-muted-foreground/50 pl-1">
-              {isStreaming ? 'Claude is working...' : 'Enter to send, drop files, or paste images'}
+              {isStreaming ? 'Working...' : 'Enter to send'}
             </span>
           </div>
           <Button
