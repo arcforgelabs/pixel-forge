@@ -115,7 +115,35 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     })
   }
 
-  function createSelectionOverlay(element, index) {
+  function normalizeGlobalIndex(value, fallbackIndex) {
+    const numericValue = Number(value)
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return Math.round(numericValue)
+    }
+    return fallbackIndex
+  }
+
+  function normalizeAppliedSelections(selections) {
+    return (selections || []).flatMap((entry, index) => {
+      if (typeof entry === 'string') {
+        return [{
+          xpath: entry,
+          globalIndex: index + 1,
+        }]
+      }
+
+      if (!entry || typeof entry !== 'object' || typeof entry.xpath !== 'string') {
+        return []
+      }
+
+      return [{
+        xpath: entry.xpath,
+        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1),
+      }]
+    })
+  }
+
+  function createSelectionOverlay(element, globalIndex) {
     const overlay = document.createElement('div')
     overlay.style.cssText = `
       position: fixed;
@@ -129,7 +157,7 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     document.body.appendChild(overlay)
 
     const badge = document.createElement('div')
-    badge.textContent = String(index + 1)
+    badge.textContent = String(globalIndex)
     badge.style.cssText = `
       position: fixed;
       background: #22c55e;
@@ -220,14 +248,14 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     })
   }
 
-  async function selectElement(element, notifyParent = true) {
+  async function selectElement(element, notifyParent = true, globalIndex) {
     if (selectedElements.length >= MAX_SELECTIONS) {
       return
     }
     const xpath = getXPath(element)
-    const index = selectedElements.length
-    const { overlay, badge } = createSelectionOverlay(element, index)
-    selectedElements.push({ element, xpath, overlay, badge })
+    const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1)
+    const { overlay, badge } = createSelectionOverlay(element, resolvedGlobalIndex)
+    selectedElements.push({ element, xpath, overlay, badge, globalIndex: resolvedGlobalIndex })
     if (notifyParent) {
       emit('browser-element-selected', getElementData(element))
     }
@@ -239,9 +267,6 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     selected.overlay.remove()
     selected.badge.remove()
     selectedElements.splice(index, 1)
-    selectedElements.forEach((entry, entryIndex) => {
-      entry.badge.textContent = String(entryIndex + 1)
-    })
     if (notifyParent) {
       emit('browser-element-deselected', {
         xpath: selected.xpath,
@@ -266,12 +291,12 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     }
   }
 
-  async function applySelections(xpaths) {
+  async function applySelections(selections) {
     await clearSelections(false)
-    for (const xpath of xpaths || []) {
-      const element = findElementByXPath(xpath)
+    for (const selection of normalizeAppliedSelections(selections)) {
+      const element = findElementByXPath(selection.xpath)
       if (element) {
-        await selectElement(element, false)
+        await selectElement(element, false, selection.globalIndex)
       }
     }
   }
@@ -357,7 +382,13 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
     }
 
     if (command.type === 'apply-selections') {
-      await applySelections(Array.isArray(command.xpaths) ? command.xpaths : [])
+      await applySelections(
+        Array.isArray(command.selections)
+          ? command.selections
+          : Array.isArray(command.xpaths)
+            ? command.xpaths
+            : []
+      )
     }
   })
 

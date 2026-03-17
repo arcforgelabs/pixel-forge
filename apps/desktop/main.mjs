@@ -320,7 +320,7 @@ app.whenReady().then(() => {
   ipcMain.handle('pixel-forge-preview:apply-selections', async (_event, payload) => {
     return sendPreviewCommand(String(payload?.tabId || ''), {
       type: 'apply-selections',
-      xpaths: Array.isArray(payload?.xpaths) ? payload.xpaths : [],
+      selections: Array.isArray(payload?.selections) ? payload.selections : [],
     })
   })
 

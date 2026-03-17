@@ -167,7 +167,35 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }});
   }}
 
-  function createSelectionOverlay(element, index) {{
+  function normalizeGlobalIndex(value, fallbackIndex) {{
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue > 0) {{
+      return Math.round(numericValue);
+    }}
+    return fallbackIndex;
+  }}
+
+  function normalizeAppliedSelections(selections) {{
+    return (selections || []).flatMap((entry, index) => {{
+      if (typeof entry === 'string') {{
+        return [{{
+          xpath: entry,
+          globalIndex: index + 1
+        }}];
+      }}
+
+      if (!entry || typeof entry !== 'object' || typeof entry.xpath !== 'string') {{
+        return [];
+      }}
+
+      return [{{
+        xpath: entry.xpath,
+        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1)
+      }}];
+    }});
+  }}
+
+  function createSelectionOverlay(element, globalIndex) {{
     const overlay = document.createElement('div');
     overlay.style.cssText = `
       position: fixed;
@@ -181,7 +209,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     document.body.appendChild(overlay);
 
     const badge = document.createElement('div');
-    badge.textContent = String(index + 1);
+    badge.textContent = String(globalIndex);
     badge.style.cssText = `
       position: fixed;
       background: #22c55e;
@@ -270,16 +298,16 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }});
   }}
 
-  async function selectElement(element, notifyParent = true) {{
+  async function selectElement(element, notifyParent = true, globalIndex) {{
     if (selectedElements.length >= MAX_SELECTIONS) {{
       console.warn('[pixel-forge] Max selections reached');
       return;
     }}
 
     const xpath = getXPath(element);
-    const index = selectedElements.length;
-    const {{ overlay, badge }} = createSelectionOverlay(element, index);
-    selectedElements.push({{ element, xpath, overlay, badge }});
+    const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
+    const {{ overlay, badge }} = createSelectionOverlay(element, resolvedGlobalIndex);
+    selectedElements.push({{ element, xpath, overlay, badge, globalIndex: resolvedGlobalIndex }});
 
     if (notifyParent) {{
       await emit('browser-element-selected', getElementData(element));
@@ -293,10 +321,6 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     selected.overlay.remove();
     selected.badge.remove();
     selectedElements.splice(index, 1);
-
-    selectedElements.forEach((entry, entryIndex) => {{
-      entry.badge.textContent = String(entryIndex + 1);
-    }});
 
     if (notifyParent) {{
       await emit('browser-element-deselected', {{
@@ -322,12 +346,12 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }}
   }}
 
-  async function applySelections(xpaths) {{
+  async function applySelections(selections) {{
     await clearSelections(false);
-    for (const xpath of xpaths || []) {{
-      const element = findElementByXPath(xpath);
+    for (const selection of normalizeAppliedSelections(selections)) {{
+      const element = findElementByXPath(selection.xpath);
       if (element) {{
-        await selectElement(element, false);
+        await selectElement(element, false, selection.globalIndex);
       }}
     }}
   }}
@@ -409,8 +433,8 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       }}
       return true;
     }},
-    async applySelections(xpaths) {{
-      await applySelections(Array.isArray(xpaths) ? xpaths : []);
+    async applySelections(selections) {{
+      await applySelections(Array.isArray(selections) ? selections : []);
       return true;
     }},
     async ping() {{
@@ -623,9 +647,9 @@ class ManagedBrowserPreviewManager:
         await self._invoke_bridge(tab.page, "deselect", xpath)
         return tab
 
-    async def apply_selections(self, browser_tab_id: str, xpaths: list[str]) -> ManagedBrowserTab:
+    async def apply_selections(self, browser_tab_id: str, selections: list[Any]) -> ManagedBrowserTab:
         tab = self._get_tab(browser_tab_id)
-        await self._invoke_bridge(tab.page, "applySelections", xpaths)
+        await self._invoke_bridge(tab.page, "applySelections", selections)
         return tab
 
     async def close_tab(self, browser_tab_id: str) -> None:

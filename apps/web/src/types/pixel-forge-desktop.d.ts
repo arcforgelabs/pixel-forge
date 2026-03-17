@@ -6,6 +6,11 @@ export interface PixelForgeBrowserPreviewResponse {
   snapshot_data_url: string | null
 }
 
+export interface PixelForgeAppliedSelection {
+  xpath: string
+  globalIndex: number
+}
+
 export interface PixelForgeDesktopPreviewAPI {
   load(payload: { tabId: string; url: string }): Promise<PixelForgeBrowserPreviewResponse>
   activate(tabId: string): Promise<{ ok: true }>
@@ -15,7 +20,7 @@ export interface PixelForgeDesktopPreviewAPI {
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>
   clearSelections(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   deselect(tabId: string, xpath: string): Promise<PixelForgeBrowserPreviewResponse>
-  applySelections(tabId: string, xpaths: string[]): Promise<PixelForgeBrowserPreviewResponse>
+  applySelections(tabId: string, selections: PixelForgeAppliedSelection[]): Promise<PixelForgeBrowserPreviewResponse>
   setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }>
   hide(): Promise<{ ok: true }>
 }

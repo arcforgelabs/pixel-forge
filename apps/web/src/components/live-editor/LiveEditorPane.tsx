@@ -88,6 +88,11 @@ interface BrowserPreviewEvent {
   data?: Record<string, unknown>
 }
 
+interface AppliedSelection {
+  xpath: string
+  globalIndex: number
+}
+
 function createPreviewTabId(): string {
   return `preview-${Math.random().toString(36).slice(2, 10)}`
 }
@@ -309,8 +314,13 @@ export function LiveEditorPane() {
         if (action === 'apply') {
           return await desktopPreview.applySelections(
             browserTabId,
-            Array.isArray(payload?.xpaths)
-              ? payload.xpaths.filter((entry): entry is string => typeof entry === 'string')
+            Array.isArray(payload?.selections)
+              ? payload.selections.filter((entry): entry is AppliedSelection =>
+                Boolean(entry)
+                && typeof entry === 'object'
+                && typeof entry.xpath === 'string'
+                && Number.isFinite(entry.globalIndex)
+              )
               : []
           )
         }
@@ -344,15 +354,18 @@ export function LiveEditorPane() {
       return
     }
 
-    const xpaths = useLiveEditorStore
+    const selections = useLiveEditorStore
       .getState()
       .selectedElements
-      .filter(
-        (element) =>
-          element.sourceTabId === tab.id
-          && element.sourceUrl === tab.url
-      )
-      .map((element) => element.xpath)
+      .flatMap((element, globalIndex) => (
+        element.sourceTabId === tab.id
+        && element.sourceUrl === tab.url
+          ? [{
+              xpath: element.xpath,
+              globalIndex: globalIndex + 1,
+            }]
+          : []
+      ))
 
     if (tab.mode === 'proxy') {
       const iframe = iframeRefs.current[tabId]
@@ -363,7 +376,7 @@ export function LiveEditorPane() {
       iframe.contentWindow.postMessage(
         {
           type: 'pixel-forge-apply-selections',
-          xpaths,
+          selections,
         },
         '*'
       )
@@ -371,9 +384,15 @@ export function LiveEditorPane() {
     }
 
     if (tab.mode === 'browser' && tab.browserTabId) {
-      await sendBrowserCommand(tab.browserTabId, 'apply', { xpaths })
+      await sendBrowserCommand(tab.browserTabId, 'apply', { selections })
     }
   }, [getPreviewTabById, sendBrowserCommand])
+
+  useEffect(() => {
+    void Promise.all(
+      previewTabsRef.current.map((tab) => syncTabSelections(tab.id))
+    )
+  }, [selectedElements, syncTabSelections])
 
   const syncAllPreviewSelectionModes = useCallback(async () => {
     await Promise.all(

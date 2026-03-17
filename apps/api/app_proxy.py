@@ -156,8 +156,36 @@ SELECTION_SCRIPT_TEMPLATE = """
     document.body.appendChild(hoverLabel);
   }
 
+  function normalizeGlobalIndex(value, fallbackIndex) {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return Math.round(numericValue);
+    }
+    return fallbackIndex;
+  }
+
+  function normalizeAppliedSelections(selections) {
+    return (selections || []).flatMap((entry, index) => {
+      if (typeof entry === 'string') {
+        return [{
+          xpath: entry,
+          globalIndex: index + 1
+        }];
+      }
+
+      if (!entry || typeof entry !== 'object' || typeof entry.xpath !== 'string') {
+        return [];
+      }
+
+      return [{
+        xpath: entry.xpath,
+        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1)
+      }];
+    });
+  }
+
   // Create persistent selection overlay with badge
-  function createSelectionOverlay(element, index) {
+  function createSelectionOverlay(element, globalIndex) {
     const overlay = document.createElement('div');
     overlay.className = 'pixel-forge-selection';
     overlay.setAttribute('data-pixel-forge-injected', 'true');
@@ -175,7 +203,7 @@ SELECTION_SCRIPT_TEMPLATE = """
     const badge = document.createElement('div');
     badge.className = 'pixel-forge-badge';
     badge.setAttribute('data-pixel-forge-injected', 'true');
-    badge.textContent = String(index + 1);
+    badge.textContent = String(globalIndex);
     badge.style.cssText = `
       position: fixed;
       background: #22c55e;
@@ -345,17 +373,17 @@ SELECTION_SCRIPT_TEMPLATE = """
   }
 
   // Add element to selection
-  function selectElement(element, notifyParent = true) {
+  function selectElement(element, notifyParent = true, globalIndex) {
     if (selectedElements.length >= MAX_SELECTIONS) {
       console.warn('[pixel-forge] Max selections reached');
       return;
     }
 
     const xpath = getXPath(element);
-    const index = selectedElements.length;
-    const { overlay, badge } = createSelectionOverlay(element, index);
+    const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
+    const { overlay, badge } = createSelectionOverlay(element, resolvedGlobalIndex);
 
-    selectedElements.push({ element, xpath, overlay, badge });
+    selectedElements.push({ element, xpath, overlay, badge, globalIndex: resolvedGlobalIndex });
 
     // Notify parent of selection
     if (notifyParent) {
@@ -375,11 +403,6 @@ SELECTION_SCRIPT_TEMPLATE = """
     sel.overlay.remove();
     sel.badge.remove();
     selectedElements.splice(index, 1);
-
-    // Renumber remaining badges
-    selectedElements.forEach((s, i) => {
-      s.badge.textContent = String(i + 1);
-    });
 
     // Notify parent of deselection
     if (notifyParent) {
@@ -409,12 +432,12 @@ SELECTION_SCRIPT_TEMPLATE = """
     }
   }
 
-  function applySelections(xpaths) {
+  function applySelections(selections) {
     clearSelections(false);
-    (xpaths || []).forEach((xpath) => {
-      const element = findElementByXPath(xpath);
+    normalizeAppliedSelections(selections).forEach((selection) => {
+      const element = findElementByXPath(selection.xpath);
       if (element) {
-        selectElement(element, false);
+        selectElement(element, false, selection.globalIndex);
       }
     });
   }
@@ -498,7 +521,13 @@ SELECTION_SCRIPT_TEMPLATE = """
       const index = selectedElements.findIndex(sel => sel.xpath === xpath);
       if (index >= 0) deselectElement(index);
     } else if (e.data.type === 'pixel-forge-apply-selections') {
-      applySelections(Array.isArray(e.data.xpaths) ? e.data.xpaths : []);
+      applySelections(
+        Array.isArray(e.data.selections)
+          ? e.data.selections
+          : Array.isArray(e.data.xpaths)
+            ? e.data.xpaths
+            : []
+      );
     }
   });
 

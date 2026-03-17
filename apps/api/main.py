@@ -262,6 +262,11 @@ class LivePreviewLoadRequest(BaseModel):
     preferred_mode: Literal["auto", "proxy", "browser"] = "auto"
 
 
+class AppliedSelectionRequest(BaseModel):
+    xpath: str
+    globalIndex: int
+
+
 class BrowserPreviewCommandRequest(BaseModel):
     browser_tab_id: str
     action: Literal[
@@ -275,6 +280,7 @@ class BrowserPreviewCommandRequest(BaseModel):
     enabled: bool | None = None
     xpath: str | None = None
     xpaths: list[str] | None = None
+    selections: list[AppliedSelectionRequest] | None = None
 
 
 class LocalTargetStartRequest(BaseModel):
@@ -632,7 +638,15 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
         elif payload.action == "apply":
             tab = await MANAGED_BROWSER_PREVIEW.apply_selections(
                 payload.browser_tab_id,
-                payload.xpaths or [],
+                [
+                    {
+                        "xpath": selection.xpath,
+                        "globalIndex": selection.globalIndex,
+                    }
+                    for selection in (payload.selections or [])
+                ]
+                or payload.xpaths
+                or [],
             )
         elif payload.action == "refresh":
             tab = await MANAGED_BROWSER_PREVIEW.refresh_tab(payload.browser_tab_id)
