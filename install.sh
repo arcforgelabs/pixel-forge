@@ -221,6 +221,7 @@ Terminal=false
 Type=Application
 Categories=Development;WebDevelopment;
 StartupNotify=true
+StartupWMClass=pixel-forge-desktop
 DESKTOP
 
 gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true

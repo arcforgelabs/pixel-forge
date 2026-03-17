@@ -6,6 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SHELL_URL = process.env.PIXEL_FORGE_SHELL_URL || 'http://pixel-forge.localhost:7001'
 const PREVIEW_PARTITION = 'persist:pixel-forge-preview'
 
+app.setName('Pixel Forge')
+
 let mainWindow = null
 let activePreviewTabId = null
 let previewVisible = false
