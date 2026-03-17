@@ -38,7 +38,6 @@ from runtime_config import managed_browser_dir
 
 PreviewMode = Literal["proxy", "browser"]
 
-MAX_SELECTIONS = 10
 SNAPSHOT_QUALITY = 65
 SNAPSHOT_WIDTH = 1440
 CDP_READY_TIMEOUT_SECONDS = 15.0
@@ -56,8 +55,6 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   let hoverLabel = null;
   let currentTarget = null;
   let selectedElements = [];
-  const MAX_SELECTIONS = {MAX_SELECTIONS};
-
   async function emit(type, data = {{}}) {{
     try {{
       if (typeof window.__pixelForgeEmit !== 'function') {{
@@ -299,11 +296,6 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   }}
 
   async function selectElement(element, notifyParent = true, globalIndex) {{
-    if (selectedElements.length >= MAX_SELECTIONS) {{
-      console.warn('[pixel-forge] Max selections reached');
-      return;
-    }}
-
     const xpath = getXPath(element);
     const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
     const {{ overlay, badge }} = createSelectionOverlay(element, resolvedGlobalIndex);

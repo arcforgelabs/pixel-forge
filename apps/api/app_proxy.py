@@ -52,7 +52,6 @@ SELECTION_SCRIPT_TEMPLATE = """
   let hoverLabel = null;
   let currentTarget = null;
   let selectedElements = [];  // Array of {element, xpath, overlay, badge}
-  const MAX_SELECTIONS = 10;
   let authFailureSeen = false;
 
   function notifyAuthFailure(status, url) {
@@ -374,11 +373,6 @@ SELECTION_SCRIPT_TEMPLATE = """
 
   // Add element to selection
   function selectElement(element, notifyParent = true, globalIndex) {
-    if (selectedElements.length >= MAX_SELECTIONS) {
-      console.warn('[pixel-forge] Max selections reached');
-      return;
-    }
-
     const xpath = getXPath(element);
     const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
     const { overlay, badge } = createSelectionOverlay(element, resolvedGlobalIndex);

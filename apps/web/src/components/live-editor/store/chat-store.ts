@@ -73,7 +73,6 @@ interface LiveEditorChatStore {
 
   // Selection state (task_2_3)
   selectedElements: SelectedElement[]
-  maxSelectedElements: number
 
   // NOTE: projectPath and Live Editor broker session metadata are read from session-store
 
@@ -139,7 +138,6 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   ws: null,
   connected: false,
   selectedElements: [],
-  maxSelectedElements: 10,
 
   // Getters - read from session-store for Live Editor session management
   getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
@@ -428,7 +426,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   // -------------------------------------------------------------------------
 
   addElement: (element) => {
-    const { selectedElements, maxSelectedElements } = get()
+    const { selectedElements } = get()
 
     // Check if already selected (by source + xpath)
     if (selectedElements.some(
@@ -438,12 +436,6 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
         && e.xpath === element.xpath
     )) {
       console.log('[live-editor] Element already selected')
-      return
-    }
-
-    // Enforce max limit
-    if (selectedElements.length >= maxSelectedElements) {
-      console.warn(`[live-editor] Max ${maxSelectedElements} elements allowed`)
       return
     }
 

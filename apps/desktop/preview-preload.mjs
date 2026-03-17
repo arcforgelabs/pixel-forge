@@ -1,7 +1,5 @@
 import { ipcRenderer } from 'electron'
 
-const MAX_SELECTIONS = 10
-
 function emit(type, data = {}) {
   ipcRenderer.send('pixel-forge-preview:event', { type, data })
 }
@@ -249,9 +247,6 @@ if (!window.__pixelForgeSelectionBridgeLoaded) {
   }
 
   async function selectElement(element, notifyParent = true, globalIndex) {
-    if (selectedElements.length >= MAX_SELECTIONS) {
-      return
-    }
     const xpath = getXPath(element)
     const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1)
     const { overlay, badge } = createSelectionOverlay(element, resolvedGlobalIndex)
