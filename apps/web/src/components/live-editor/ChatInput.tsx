@@ -54,7 +54,7 @@ export function ChatInput() {
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 24), 150)}px`
+      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 28), 384)}px`
     }
   }, [input])
 
@@ -133,7 +133,7 @@ export function ChatInput() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="border-t border-border bg-card/30 p-3 flex-shrink-0 isolate relative z-50"
+      className="p-3 pb-4 flex-shrink-0 isolate relative z-50"
       style={{ pointerEvents: 'auto' }}
     >
       {/* Element count indicator */}
@@ -185,10 +185,37 @@ export function ChatInput() {
       )}
 
       <div
-        className={`relative cursor-text rounded-xl bg-background/60 ring-1 ring-border/40 transition-all ${
+        className={`relative cursor-text rounded-[20px] bg-background border border-transparent transition-all ${
           isDragActive ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
         }`}
-        style={{ pointerEvents: 'auto' }}
+        style={{
+          ...({ pointerEvents: 'auto' } as React.CSSProperties),
+          boxShadow: isDragActive
+            ? undefined
+            : '0 0.25rem 1.25rem hsl(0 0% 0% / 3.5%), 0 0 0 0.5px hsl(0 0% 50% / 15%)',
+        }}
+        onMouseEnter={(e) => {
+          if (!isDragActive) {
+            e.currentTarget.style.boxShadow =
+              '0 0.25rem 1.25rem hsl(0 0% 0% / 3.5%), 0 0 0 0.5px hsl(0 0% 50% / 30%)'
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isDragActive) {
+            e.currentTarget.style.boxShadow =
+              '0 0.25rem 1.25rem hsl(0 0% 0% / 3.5%), 0 0 0 0.5px hsl(0 0% 50% / 15%)'
+          }
+        }}
+        onFocusCapture={(e) => {
+          e.currentTarget.style.boxShadow =
+            '0 0.25rem 1.25rem hsl(0 0% 0% / 7.5%), 0 0 0 0.5px hsl(0 0% 50% / 30%)'
+        }}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) {
+            e.currentTarget.style.boxShadow =
+              '0 0.25rem 1.25rem hsl(0 0% 0% / 3.5%), 0 0 0 0.5px hsl(0 0% 50% / 15%)'
+          }
+        }}
         onClick={handleContainerClick}
         onDragOver={(e) => {
           e.preventDefault()
@@ -212,7 +239,7 @@ export function ChatInput() {
           onChange={handleFileInputChange}
           className="hidden"
         />
-        <div className="px-3 pt-3 pb-2">
+        <div className="px-4 pt-3.5 pb-2">
           <textarea
             ref={textareaRef}
             value={input}
@@ -226,11 +253,11 @@ export function ChatInput() {
             }
             disabled={isStreaming}
             rows={1}
-            className="w-full resize-none bg-transparent text-sm focus:outline-none disabled:opacity-50 placeholder:text-muted-foreground/60 relative z-10"
+            className="w-full resize-none bg-transparent text-[15px] leading-relaxed focus:outline-none disabled:opacity-50 placeholder:text-muted-foreground/60 relative z-10"
             style={{ pointerEvents: 'auto' }}
           />
         </div>
-        <div className="flex justify-between items-center px-2 pb-2">
+        <div className="flex justify-between items-center px-3 pb-3">
           <div className="flex items-center gap-2">
             <Button
               type="button"
