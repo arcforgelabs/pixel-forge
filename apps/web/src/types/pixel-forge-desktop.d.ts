@@ -8,12 +8,31 @@ export interface PixelForgeBrowserPreviewResponse {
 
 export interface PixelForgeAppliedSelection {
   id: string
+  selectorKind: 'dom' | 'region'
+  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'unknown'
+  pageKey: string
   xpath: string
   globalIndex: number
   tagName: string
   elementId: string | null
   classList: string[]
   textSample: string
+  rootXPath: string | null
+  rootTagName: string | null
+  rootElementId: string | null
+  rootClassList: string[]
+  region: {
+    x: number
+    y: number
+    width: number
+    height: number
+    normalizedX: number
+    normalizedY: number
+    normalizedWidth: number
+    normalizedHeight: number
+    anchorX: number
+    anchorY: number
+  } | null
 }
 
 export interface PixelForgeDesktopPreviewAPI {
@@ -24,7 +43,7 @@ export interface PixelForgeDesktopPreviewAPI {
   close(tabId: string): Promise<{ ok: true }>
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>
   clearSelections(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
-  deselect(tabId: string, xpath: string): Promise<PixelForgeBrowserPreviewResponse>
+  deselect(tabId: string, selectionId: string): Promise<PixelForgeBrowserPreviewResponse>
   applySelections(tabId: string, selections: PixelForgeAppliedSelection[]): Promise<PixelForgeBrowserPreviewResponse>
   setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }>
   hide(): Promise<{ ok: true }>

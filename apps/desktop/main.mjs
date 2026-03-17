@@ -176,6 +176,33 @@ function sendPreviewCommand(tabId, command) {
   }
 }
 
+async function capturePreviewRegion(tabId, rect) {
+  const view = previewViews.get(tabId)
+  if (!view) {
+    throw new Error(`Unknown preview tab: ${tabId}`)
+  }
+
+  const bounds = sanitizeBounds(rect)
+  if (bounds.width <= 0 || bounds.height <= 0) {
+    return null
+  }
+
+  const image = await view.webContents.capturePage(bounds)
+  let output = image
+  const size = output.getSize()
+  const maxDimension = 420
+  if (size.width > maxDimension || size.height > maxDimension) {
+    const scale = Math.min(maxDimension / size.width, maxDimension / size.height)
+    output = output.resize({
+      width: Math.max(1, Math.round(size.width * scale)),
+      height: Math.max(1, Math.round(size.height * scale)),
+    })
+  }
+
+  const jpeg = output.toJPEG(80)
+  return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1680,
@@ -313,6 +340,7 @@ app.whenReady().then(() => {
   ipcMain.handle('pixel-forge-preview:deselect', async (_event, payload) => {
     return sendPreviewCommand(String(payload?.tabId || ''), {
       type: 'deselect',
+      selectionId: String(payload?.selectionId || ''),
       xpath: String(payload?.xpath || ''),
     })
   })
@@ -322,6 +350,14 @@ app.whenReady().then(() => {
       type: 'apply-selections',
       selections: Array.isArray(payload?.selections) ? payload.selections : [],
     })
+  })
+
+  ipcMain.handle('pixel-forge-preview:capture-region', async (event, rect) => {
+    const tabId = webContentsTabIds.get(event.sender.id)
+    if (!tabId) {
+      throw new Error('Unknown preview sender')
+    }
+    return capturePreviewRegion(tabId, rect)
   })
 
   ipcMain.on('pixel-forge-preview:event', (event, payload) => {

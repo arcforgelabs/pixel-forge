@@ -40,8 +40,20 @@ Pixel Forge Desktop Shell (apps/desktop)
 Pixel Forge UI (apps/web)
   -> remains the product chrome: tab strip, toolbar, chat, Elements pane
   -> can spawn a sibling Pixel Forge target runtime from the bound workspace
+  -> owns the shared selection list and request-pack tunnel metadata
   -> measures the preview pane bounds
   -> tells the shell which preview tab is active and where the native browser surface should mount
+
+Selection engine
+  -> auto-detects DOM vs region selection based on the live preview substrate
+  -> keeps durable selection ids and page/view identity
+  -> reconciles overlays back onto the live DOM or surface when that view returns
+  -> captures bounded visual evidence for spatial selections
+
+Selection tunnel
+  -> freezes selected state into request-pack artifacts on disk
+  -> exposes that frozen state through a local API/CLI for the working agent
+  -> lets the agent inspect Pixel Forge-forged selection context without replaying auth or navigation
 
 Sibling target runtime
   -> runs its own FastAPI + Vite stack on isolated localhost ports
@@ -87,13 +99,14 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 - Shared selection list
 - Chat UI
 - Request dispatch controls
+- Selection tunnel assembly
 
 ### Native Browser Layer
 - Real page loading
 - Cookies/storage/service workers
 - Login/auth flows
 - Tab-local DOM state and history
-- Selection overlay injection into the live page
+- Automatic DOM-vs-region selection overlay injection into the live page
 
 ### Sibling Target Layer
 - Isolated localhost target runtime for self-editing
@@ -104,6 +117,7 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 ### Backend Broker Layer
 - Project/session persistence
 - Request packs
+- Selection tunnel API/CLI surface
 - Live Editor dispatch into Agent Deck
 - Generated file writes
 

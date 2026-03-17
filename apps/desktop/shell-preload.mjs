@@ -15,8 +15,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
       ipcRenderer.invoke('pixel-forge-preview:set-select-mode', { tabId, enabled }),
     clearSelections: (tabId) =>
       ipcRenderer.invoke('pixel-forge-preview:clear-selections', { tabId }),
-    deselect: (tabId, xpath) =>
-      ipcRenderer.invoke('pixel-forge-preview:deselect', { tabId, xpath }),
+    deselect: (tabId, selectionId) =>
+      ipcRenderer.invoke('pixel-forge-preview:deselect', { tabId, selectionId }),
     applySelections: (tabId, selections) =>
       ipcRenderer.invoke('pixel-forge-preview:apply-selections', { tabId, selections }),
     setBounds: (bounds) => ipcRenderer.invoke('pixel-forge-preview:set-bounds', bounds),

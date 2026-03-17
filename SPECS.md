@@ -9,6 +9,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 3. Pixel Forge sessions show up in Agent Deck so the user can drop into the real session when the chat UI is not enough.
 4. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
 5. Pixel Forge can launch a sibling Pixel Forge target runtime for self-edit loops without colliding with the controller instance.
+6. Selected-element context must stay truthful across DOM and canvas-like preview surfaces, and the working agent must be able to inspect the frozen selected state without replaying the browser path manually.
 
 # Requirements
 
@@ -56,6 +57,17 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-M-006:` Pixel Forge must not enforce a small fixed preview-tab cap. Practical limits are driven by runtime/browser resources, not a hardcoded product limit.
 - `REQ-M-007:` In the native shell path, preview tabs must render inside Pixel Forge itself rather than bouncing the user out to separate external browser windows.
 
+### Selection Engine
+- `REQ-X-001:` Pixel Forge must choose the selection strategy automatically from the live preview substrate instead of exposing selector-mode choice as a default user workflow.
+- `REQ-X-002:` DOM-like targets must preserve semantic selectors and DOM excerpts; canvas-like targets must preserve spatial region anchors and visual evidence instead of fake DOM references.
+- `REQ-X-003:` Selection identity must be stable by Pixel Forge selection id, not only by xpath, so renumbering, removal, and cross-tab reconciliation stay truthful.
+- `REQ-X-004:` Visual overlays must reattach only when the selected target's page/view identity and substrate match the current live preview state.
+
+### Agent Selection Tunnel
+- `REQ-U-001:` Each Live Editor request pack must include a structured frozen selection tunnel artifact in addition to human-readable selected-elements markup.
+- `REQ-U-002:` Pixel Forge must expose a local selection-tunnel inspection path that an agent can use without replaying login, navigation, or view reconstruction.
+- `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute.
+
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, state DB path, and managed-browser profile path.
 - `REQ-E-002:` Target runtimes must suppress controller-only startup behavior that blocks inspection or invites accidental recursive control loops.
@@ -68,10 +80,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` The embedded-shell runtime still needs hardening for long-running daily use.
-- Why it is the limiter: Controller->target self-edit launching now works, so the structural blocker is gone. The remaining risk is operational stability: repeated reloads, Chromium resource pressure, and the current `--no-sandbox` Linux shell path.
-- Smallest complete unit to attack it: Prove repeated self-edit cycles against a real sibling target, then remove the remaining shell compromises one by one instead of adding more proxy complexity.
-- Immediate proof target: Launch a sibling Pixel Forge target from the controller, survive at least one rebuild/reconnect cycle, and keep shared selection context intact across that loop.
+- `[active]` The new selection engine and selection tunnel need real-world proof across hybrid and hostile preview surfaces.
+- Why it is the limiter: Pixel Forge can now keep shared selection state across tabs and view churn, but the product still rises or falls on whether those selections stay truthful on canvas-heavy apps, auth-heavy sites, and self-edit targets.
+- Smallest complete unit to attack it: Prove automatic DOM-vs-region selection plus frozen tunnel inspection against one DOM page and one canvas-like page inside the shell, then hammer a real target that mixes both.
+- Immediate proof target: Select one normal DOM element and one canvas-like region, confirm both survive into the request pack as inspectable tunnel artifacts, and confirm the overlay engine only reattaches them on the matching view.
 
 # Current Proof Status
 
@@ -88,6 +100,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` The product preview path now treats embedded Chromium as the only supported Live Editor surface. Basis: the launcher defaults to the shell, `Save & Edit Live` now hands URLs straight to Live Editor state instead of configuring the proxy, and the browser-only Live Editor path now blocks with a shell-required message.
 - `[validated]` Pixel Forge can now launch a sibling Pixel Forge target runtime for self-editing without sharing controller ports, DB state, or managed-browser profile state. Basis: the backend local-target launcher allocates isolated runtime settings and the controller opens the returned target URL inside the existing preview-tab system.
 - `[validated]` Target runtimes no longer block self-edit inspection with controller-first startup UI. Basis: target mode suppresses the auto-open project selector, auto-binds the launched workspace as the current project, hides the recursive launch control, and labels the runtime as a target instance.
+- `[validated]` Live Editor request packs now include a structured `selection-tunnel.json` artifact and can expose it back through a local API/CLI path. Basis: request-pack smoke created the tunnel file, registered it in the manifest, and the backend now serves `/api/live-editor/selection-tunnel`.
+- `[validated]` Pixel Forge now stores screenshot evidence alongside selection context so non-DOM selections can carry frozen visual state into the request pack. Basis: the shell selection bridge now captures bounded image crops during selection and the frontend includes them as request-pack attachments.
+- `[unvalidated]` Automatic selector routing is good enough across real hybrid DOM/canvas/WebGL apps, not just synthetic cases. Basis: implemented in the shell selection engine, but not yet hammered against a wider hostile sample.
+- `[unvalidated]` The selection tunnel gives working agents enough frozen context to avoid replaying third-party auth or deep navigation in practice. Basis: file/API/CLI path now exists, but it has not yet been exercised by a real agent workflow end to end.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.

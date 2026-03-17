@@ -13,6 +13,10 @@
 import { create } from 'zustand'
 import { WS_BACKEND_URL } from '@/config'
 import { useSessionStore } from '../../../store/session-store'
+import {
+  buildSelectionArtifacts,
+  type SelectionRecord,
+} from '../selection-engine'
 
 // ============================================================================
 // Types
@@ -45,18 +49,7 @@ export interface ChatMessage {
   isRemoteComplete?: boolean
 }
 
-export interface SelectedElement {
-  id: string
-  tagName: string
-  elementId: string | null  // The element's actual id attribute
-  classList: string[]
-  textContent: string
-  xpath: string
-  outerHTML: string
-  sourceTabId: string
-  sourceTabLabel: string
-  sourceUrl: string
-  pageTitle?: string | null
+export interface SelectedElement extends SelectionRecord {
   timestamp: Date
 }
 
@@ -84,12 +77,16 @@ interface LiveEditorChatStore {
   newSession: () => void
 
   // Actions - Selection
-  addElement: (element: Omit<SelectedElement, 'id' | 'timestamp'>) => void
+  addElement: (element: Omit<SelectedElement, 'timestamp'>) => void
   removeElement: (id: string) => void
   clearElements: () => void
 
   // Helpers
-  buildElementContext: () => string
+  buildSelectionPayload: () => {
+    elementContext: string
+    selectionTunnel: { selections: ReturnType<typeof buildSelectionArtifacts>['tunnel']['selections'] }
+    selectionAttachments: ChatAttachment[]
+  }
 
   // Getters for session state (reads from session-store)
   getSessionId: () => string | null
@@ -327,7 +324,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   // -------------------------------------------------------------------------
 
   sendMessage: (content: string, attachments: ChatAttachment[] = []) => {
-    const { ws, messages, buildElementContext, getSessionId, getProjectPath } = get()
+    const {
+      ws,
+      messages,
+      buildSelectionPayload,
+      getSessionId,
+      getProjectPath,
+    } = get()
     const trimmedContent = content.trim()
     const hasAttachments = attachments.length > 0
 
@@ -361,7 +364,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     }
 
     // Build element context
-    const elementContext = buildElementContext()
+    const {
+      elementContext,
+      selectionTunnel,
+      selectionAttachments,
+    } = buildSelectionPayload()
+    const requestAttachments = [...selectionAttachments, ...attachments]
     const userVisibleContent =
       trimmedContent ||
       buildAttachmentSummary(attachments)
@@ -392,13 +400,17 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       agent_type: agentType || 'claude',
     }
 
-    if (hasAttachments) {
-      payload.attachments = attachments.map((attachment) => ({
+    if (requestAttachments.length > 0) {
+      payload.attachments = requestAttachments.map((attachment) => ({
         name: attachment.name,
         mime_type: attachment.mimeType,
         data_url: attachment.dataUrl,
         kind: attachment.kind,
       }))
+    }
+
+    if (selectionTunnel.selections.length > 0) {
+      payload.selection_tunnel = selectionTunnel
     }
 
     if (sessionId) {
@@ -428,20 +440,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   addElement: (element) => {
     const { selectedElements } = get()
 
-    // Check if already selected (by source + xpath)
-    if (selectedElements.some(
-      (e) =>
-        e.sourceTabId === element.sourceTabId
-        && e.sourceUrl === element.sourceUrl
-        && e.xpath === element.xpath
-    )) {
+    if (selectedElements.some((entry) => entry.id === element.id)) {
       console.log('[live-editor] Element already selected')
       return
     }
 
     const newElement: SelectedElement = {
       ...element,
-      id: generateId(),
       timestamp: new Date(),
     }
 
@@ -464,65 +469,27 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   // Context Building
   // -------------------------------------------------------------------------
 
-  buildElementContext: () => {
+  buildSelectionPayload: () => {
     const { selectedElements } = get()
 
     if (selectedElements.length === 0) {
-      return ''
+      return {
+        elementContext: '',
+        selectionTunnel: { selections: [] },
+        selectionAttachments: [],
+      }
     }
-
-    const groups = new Map<
-      string,
-      {
-        sourceTabId: string
-        sourceTabLabel: string
-        sourceUrl: string
-        pageTitle: string | null
-        elements: SelectedElement[]
-      }
-    >()
-
-    selectedElements.forEach((element) => {
-      const key = `${element.sourceTabId}::${element.sourceUrl}`
-      if (!groups.has(key)) {
-        groups.set(key, {
-          sourceTabId: element.sourceTabId,
-          sourceTabLabel: element.sourceTabLabel,
-          sourceUrl: element.sourceUrl,
-          pageTitle: element.pageTitle ?? null,
-          elements: [],
-        })
-      }
-      groups.get(key)?.elements.push(element)
-    })
-
-    return Array.from(groups.values())
-      .map((group, groupIndex) => {
-        const pageTitleBlock = group.pageTitle
-          ? `\n<title>${group.pageTitle}</title>`
-          : ''
-
-        const elementBlocks = group.elements
-          .map((element, elementIndex) => {
-            const htmlLimit = group.elements.length === 1 && selectedElements.length === 1
-              ? 2000
-              : 1000
-            return `<selected-element index="${elementIndex + 1}" global-index="${selectedElements.findIndex((candidate) => candidate.id === element.id) + 1}">
-<tag>${element.tagName}</tag>
-${element.elementId ? `<id>${element.elementId}</id>` : ''}
-${element.classList.length > 0 ? `<classes>${element.classList.join(' ')}</classes>` : ''}
-<xpath>${element.xpath}</xpath>
-<html>
-${element.outerHTML.slice(0, htmlLimit)}${element.outerHTML.length > htmlLimit ? '... (truncated)' : ''}
-</html>
-</selected-element>`
-          })
-          .join('\n\n')
-
-        return `<source index="${groupIndex + 1}" tab-id="${group.sourceTabId}" tab="${group.sourceTabLabel}" url="${group.sourceUrl}">${pageTitleBlock}
-${elementBlocks}
-</source>`
-      })
-      .join('\n\n')
+    const artifacts = buildSelectionArtifacts(selectedElements)
+    return {
+      elementContext: artifacts.elementContext,
+      selectionTunnel: artifacts.tunnel,
+      selectionAttachments: artifacts.attachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        dataUrl: attachment.dataUrl,
+        kind: attachment.kind,
+      })),
+    }
   },
 }))

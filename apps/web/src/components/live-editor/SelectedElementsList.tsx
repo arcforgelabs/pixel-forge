@@ -15,6 +15,8 @@ import { useLiveEditorStore } from './store/chat-store'
 interface SelectedElementChipProps {
   element: {
     id: string
+    selectorKind: 'dom' | 'region'
+    surfaceKind: string
     tagName: string
     elementId: string | null
     classList: string[]
@@ -34,11 +36,16 @@ function SelectedElementChip({
   onRemove,
 }: SelectedElementChipProps) {
   // Build display label
-  let label = element.tagName
-  if (element.elementId) {
-    label += `#${element.elementId}`
-  } else if (element.classList.length > 0) {
-    label += `.${element.classList.slice(0, 2).join('.')}`
+  let label =
+    element.selectorKind === 'region'
+      ? `${element.surfaceKind} region`
+      : element.tagName
+  if (element.selectorKind !== 'region') {
+    if (element.elementId) {
+      label += `#${element.elementId}`
+    } else if (element.classList.length > 0) {
+      label += `.${element.classList.slice(0, 2).join('.')}`
+    }
   }
 
   // Truncate text content for preview
@@ -87,7 +94,6 @@ interface SelectedElementsListProps {
   onClearAll?: () => void
   onRemoveElement?: (
     id: string,
-    xpath: string,
     sourceTabId: string,
     sourceUrl: string
   ) => void
@@ -104,12 +110,11 @@ export function SelectedElementsList({
   const handleClearAll = onClearAll || clearElements
   const handleRemove = (
     id: string,
-    xpath: string,
     sourceTabId: string,
     sourceUrl: string
   ) => {
     if (onRemoveElement) {
-      onRemoveElement(id, xpath, sourceTabId, sourceUrl)
+      onRemoveElement(id, sourceTabId, sourceUrl)
     } else {
       removeElement(id)
     }
@@ -155,7 +160,6 @@ export function SelectedElementsList({
               index={index}
               onRemove={() => handleRemove(
                 element.id,
-                element.xpath,
                 element.sourceTabId,
                 element.sourceUrl
               )}

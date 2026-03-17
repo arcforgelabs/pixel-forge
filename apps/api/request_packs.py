@@ -29,6 +29,8 @@ class RequestPack:
     relative_manifest_file: str
     selected_elements_file: Path | None
     relative_selected_elements_file: str | None
+    selection_tunnel_file: Path | None
+    relative_selection_tunnel_file: str | None
     attachment_paths: list[Path]
     relative_attachment_paths: list[str]
 
@@ -130,6 +132,7 @@ def create_request_pack(
     attachments: list[dict[str, str]],
     *,
     agent_deck_session_id: str | None = None,
+    selection_tunnel: dict[str, object] | None = None,
 ) -> RequestPack:
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
@@ -142,6 +145,18 @@ def create_request_pack(
         selected_path = pack_dir / "selected-elements.xml"
         selected_path.write_text(element_context.strip() + "\n", encoding="utf-8")
         relative_selected_path = str(selected_path.relative_to(Path(project_path).resolve()))
+
+    selection_tunnel_path: Path | None = None
+    relative_selection_tunnel_path: str | None = None
+    if selection_tunnel:
+        selection_tunnel_path = pack_dir / "selection-tunnel.json"
+        selection_tunnel_path.write_text(
+            json.dumps(selection_tunnel, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        relative_selection_tunnel_path = str(
+            selection_tunnel_path.relative_to(Path(project_path).resolve())
+        )
 
     attachment_paths: list[Path] = []
     relative_attachment_paths: list[str] = []
@@ -197,6 +212,16 @@ def create_request_pack(
                 f"- Read `{relative_selected_path}` for the selected element context captured from the running app.",
             ]
         )
+    if relative_selection_tunnel_path:
+        request_sections.extend(
+            [
+                "",
+                "## Selection Tunnel",
+                "",
+                f"- Read `{relative_selection_tunnel_path}` for the structured frozen selection state Pixel Forge captured.",
+                "- Use it when you need the exact selected target context without replaying the browser path manually.",
+            ]
+        )
     if relative_attachment_paths:
         request_sections.extend(
             [
@@ -218,6 +243,7 @@ def create_request_pack(
                 "agent_deck_session_id": agent_deck_session_id,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
+                "selection_tunnel_file": relative_selection_tunnel_path,
                 "attachments": attachment_manifest,
                 "created_at": pack_dir.stat().st_mtime,
             },
@@ -239,6 +265,8 @@ def create_request_pack(
         relative_manifest_file=str(manifest_file.relative_to(Path(project_path).resolve())),
         selected_elements_file=selected_path,
         relative_selected_elements_file=relative_selected_path,
+        selection_tunnel_file=selection_tunnel_path,
+        relative_selection_tunnel_file=relative_selection_tunnel_path,
         attachment_paths=attachment_paths,
         relative_attachment_paths=relative_attachment_paths,
     )

@@ -13,6 +13,7 @@ import math
 import mimetypes
 import os
 import tempfile
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -265,11 +266,19 @@ class LivePreviewLoadRequest(BaseModel):
 class AppliedSelectionRequest(BaseModel):
     id: str
     xpath: str
+    selectorKind: Literal["dom", "region"] = "dom"
+    surfaceKind: str = "dom"
+    pageKey: str = ""
     globalIndex: int
     tagName: str
     elementId: str | None = None
     classList: list[str] = []
     textSample: str = ""
+    rootXPath: str | None = None
+    rootTagName: str | None = None
+    rootElementId: str | None = None
+    rootClassList: list[str] = []
+    region: dict[str, float] | None = None
 
 
 class BrowserPreviewCommandRequest(BaseModel):
@@ -283,6 +292,7 @@ class BrowserPreviewCommandRequest(BaseModel):
         "refresh",
     ]
     enabled: bool | None = None
+    selectionId: str | None = None
     xpath: str | None = None
     xpaths: list[str] | None = None
     selections: list[AppliedSelectionRequest] | None = None
@@ -634,11 +644,11 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
         elif payload.action == "clear":
             tab = await MANAGED_BROWSER_PREVIEW.clear_selections(payload.browser_tab_id)
         elif payload.action == "deselect":
-            if not payload.xpath:
-                raise HTTPException(status_code=422, detail="xpath is required")
+            if not payload.selectionId and not payload.xpath:
+                raise HTTPException(status_code=422, detail="selectionId or xpath is required")
             tab = await MANAGED_BROWSER_PREVIEW.deselect_xpath(
                 payload.browser_tab_id,
-                payload.xpath,
+                payload.selectionId or payload.xpath or "",
             )
         elif payload.action == "apply":
             tab = await MANAGED_BROWSER_PREVIEW.apply_selections(
@@ -646,12 +656,20 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
                 [
                     {
                         "id": selection.id,
+                        "selectorKind": selection.selectorKind,
+                        "surfaceKind": selection.surfaceKind,
+                        "pageKey": selection.pageKey,
                         "xpath": selection.xpath,
                         "globalIndex": selection.globalIndex,
                         "tagName": selection.tagName,
                         "elementId": selection.elementId,
                         "classList": selection.classList,
                         "textSample": selection.textSample,
+                        "rootXPath": selection.rootXPath,
+                        "rootTagName": selection.rootTagName,
+                        "rootElementId": selection.rootElementId,
+                        "rootClassList": selection.rootClassList,
+                        "region": selection.region,
                     }
                     for selection in (payload.selections or [])
                 ]
@@ -672,6 +690,34 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
 async def close_browser_preview_tab(browser_tab_id: str):
     await MANAGED_BROWSER_PREVIEW.close_tab(browser_tab_id)
     return {"status": "closed"}
+
+
+@app.get("/api/live-editor/selection-tunnel")
+async def read_selection_tunnel(
+    project_path: str,
+    request_id: str,
+    selection_id: str | None = None,
+):
+    tunnel_path = _selection_tunnel_file(project_path, request_id)
+    payload = json.loads(tunnel_path.read_text(encoding="utf-8"))
+
+    if selection_id:
+        selections = payload.get("selections")
+        if not isinstance(selections, list):
+            raise HTTPException(status_code=404, detail="Selection tunnel is empty")
+        selection = next(
+            (
+                entry
+                for entry in selections
+                if isinstance(entry, dict) and entry.get("id") == selection_id
+            ),
+            None,
+        )
+        if selection is None:
+            raise HTTPException(status_code=404, detail="Selection not found")
+        return selection
+
+    return payload
 
 
 @app.websocket("/ws/live-preview")
@@ -911,11 +957,35 @@ def _is_remote_preview(url: str | None) -> bool:
     return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
 
 
-def build_live_editor_dispatch_prompt(request_file_path: str, *, preview_url: str | None = None) -> str:
+def _selection_tunnel_file(project_path: str, request_id: str) -> Path:
+    project_root = Path(normalize_project_path(project_path)).resolve()
+    request_root = (project_root / ".pixel-forge" / "requests").resolve()
+    tunnel_path = (request_root / request_id / "selection-tunnel.json").resolve()
+
+    if os.path.commonpath([str(request_root), str(tunnel_path)]) != str(request_root):
+        raise HTTPException(status_code=400, detail="Invalid request_id")
+
+    if not tunnel_path.exists():
+        raise HTTPException(status_code=404, detail="Selection tunnel not found")
+
+    return tunnel_path
+
+
+def build_live_editor_dispatch_prompt(
+    request_file_path: str,
+    *,
+    preview_url: str | None = None,
+    selection_tunnel_url: str | None = None,
+) -> str:
     base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
 
 Start by reading the request file itself, then read every referenced context file before changing code.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+
+    if selection_tunnel_url:
+        base += f"""
+
+If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
 
     if _is_remote_preview(preview_url):
         base += f"""
@@ -1573,6 +1643,7 @@ async def live_editor_chat(websocket: WebSocket):
 
             message = data.get("message", "")
             element_context = data.get("element_context", "")
+            selection_tunnel = data.get("selection_tunnel")
             attachments = data.get("attachments") or []
             legacy_images = data.get("images") or []
             thread_id = data.get("thread_id") or data.get("session_id")
@@ -1657,6 +1728,7 @@ async def live_editor_chat(websocket: WebSocket):
                     element_context,
                     attachments,
                     agent_deck_session_id=session_info.agent_deck_session_id,
+                    selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                 )
                 thread = update_live_editor_thread(
                     thread.thread_id,
@@ -1683,6 +1755,17 @@ async def live_editor_chat(websocket: WebSocket):
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
                     preview_url=preview_url or None,
+                    selection_tunnel_url=(
+                        f"http://pixel-forge.localhost:{runtime_api_port()}/api/live-editor/selection-tunnel?"
+                        + urlencode(
+                            {
+                                "project_path": project_path,
+                                "request_id": request_pack.request_id,
+                            }
+                        )
+                        if request_pack.relative_selection_tunnel_file
+                        else None
+                    ),
                 )
                 jsonl_path = session_info.jsonl_path
                 start_offset = (

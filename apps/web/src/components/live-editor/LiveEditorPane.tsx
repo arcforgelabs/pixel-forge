@@ -32,6 +32,10 @@ import { ChatInput } from './ChatInput'
 import { ChatMessages } from './ChatMessages'
 import { SelectedElementsList } from './SelectedElementsList'
 import { useLiveEditorStore } from './store/chat-store'
+import {
+  type SelectionRecord,
+  type SelectionRegion,
+} from './selection-engine'
 
 type ViewportMode = 'fluid' | 'desktop' | 'phone'
 type PreviewMode = 'proxy' | 'browser' | null
@@ -90,33 +94,154 @@ interface BrowserPreviewEvent {
 
 interface AppliedSelection {
   id: string
+  selectorKind: 'dom' | 'region'
+  surfaceKind: SelectionRecord['surfaceKind']
+  pageKey: string
   xpath: string
   globalIndex: number
   tagName: string
   elementId: string | null
   classList: string[]
   textSample: string
+  rootXPath: string | null
+  rootTagName: string | null
+  rootElementId: string | null
+  rootClassList: string[]
+  region: SelectionRegion | null
 }
 
 function toAppliedSelection(
-  element: {
-    id: string
-    xpath: string
-    tagName: string
-    elementId: string | null
-    classList: string[]
-    textContent: string
-  },
+  element: SelectionRecord,
   globalIndex: number
 ): AppliedSelection {
   return {
     id: element.id,
+    selectorKind: element.selectorKind,
+    surfaceKind: element.surfaceKind,
+    pageKey: element.pageKey,
     xpath: element.xpath,
     globalIndex,
     tagName: element.tagName,
     elementId: element.elementId,
     classList: element.classList,
     textSample: element.textContent.replace(/\s+/g, ' ').trim().slice(0, 120),
+    rootXPath: element.rootXPath,
+    rootTagName: element.rootTagName,
+    rootElementId: element.rootElementId,
+    rootClassList: element.rootClassList,
+    region: element.region,
+  }
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : []
+}
+
+function parseSelectionRegion(value: unknown): SelectionRegion | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const region = value as Record<string, unknown>
+  const numericKeys = [
+    'x',
+    'y',
+    'width',
+    'height',
+    'normalizedX',
+    'normalizedY',
+    'normalizedWidth',
+    'normalizedHeight',
+    'anchorX',
+    'anchorY',
+  ] as const
+  for (const key of numericKeys) {
+    if (!Number.isFinite(Number(region[key]))) {
+      return null
+    }
+  }
+
+  return {
+    x: Number(region.x),
+    y: Number(region.y),
+    width: Number(region.width),
+    height: Number(region.height),
+    normalizedX: Number(region.normalizedX),
+    normalizedY: Number(region.normalizedY),
+    normalizedWidth: Number(region.normalizedWidth),
+    normalizedHeight: Number(region.normalizedHeight),
+    anchorX: Number(region.anchorX),
+    anchorY: Number(region.anchorY),
+  }
+}
+
+function parsePreviewSelectionData(
+  data: Record<string, unknown>,
+  sourceTab: Pick<PreviewTab, 'id' | 'title' | 'url'>
+): Omit<SelectionRecord, 'timestamp'> | null {
+  const selectionId = typeof data.selectionId === 'string' ? data.selectionId : ''
+  const selectorKind = data.selectorKind === 'region' ? 'region' : 'dom'
+  const surfaceKind =
+    typeof data.surfaceKind === 'string'
+      ? data.surfaceKind as SelectionRecord['surfaceKind']
+      : selectorKind === 'region'
+        ? 'unknown'
+        : 'dom'
+  const xpath = typeof data.xpath === 'string' ? data.xpath : ''
+  const rootXPath = typeof data.rootXPath === 'string' ? data.rootXPath : null
+
+  if (!selectionId) {
+    return null
+  }
+
+  if (selectorKind === 'dom' && !xpath) {
+    return null
+  }
+
+  if (selectorKind === 'region' && !rootXPath) {
+    return null
+  }
+
+  const sourceUrl =
+    typeof data.pageUrl === 'string'
+      ? data.pageUrl
+      : sourceTab.url
+
+  return {
+    id: selectionId,
+    selectorKind,
+    surfaceKind,
+    pageKey:
+      typeof data.pageKey === 'string' && data.pageKey.trim()
+        ? data.pageKey
+        : sourceUrl,
+    tagName: typeof data.tagName === 'string' ? data.tagName : 'div',
+    elementId:
+      typeof data.elementId === 'string'
+        ? data.elementId
+        : null,
+    classList: toStringArray(data.classList),
+    textContent: typeof data.textContent === 'string' ? data.textContent : '',
+    xpath,
+    outerHTML: typeof data.outerHTML === 'string' ? data.outerHTML : '',
+    rootXPath,
+    rootTagName: typeof data.rootTagName === 'string' ? data.rootTagName : null,
+    rootElementId: typeof data.rootElementId === 'string' ? data.rootElementId : null,
+    rootClassList: toStringArray(data.rootClassList),
+    region: parseSelectionRegion(data.region),
+    previewDataUrl:
+      typeof data.previewDataUrl === 'string'
+        ? data.previewDataUrl
+        : null,
+    sourceTabId: sourceTab.id,
+    sourceTabLabel: sourceTab.title || 'Preview',
+    sourceUrl,
+    pageTitle:
+      typeof data.pageTitle === 'string'
+        ? data.pageTitle
+        : sourceTab.title || null,
   }
 }
 
@@ -336,7 +461,7 @@ export function LiveEditorPane() {
           return await desktopPreview.clearSelections(browserTabId)
         }
         if (action === 'deselect') {
-          return await desktopPreview.deselect(browserTabId, String(payload?.xpath || ''))
+          return await desktopPreview.deselect(browserTabId, String(payload?.selectionId || ''))
         }
         if (action === 'apply') {
           return await desktopPreview.applySelections(
@@ -346,6 +471,9 @@ export function LiveEditorPane() {
                 Boolean(entry)
                 && typeof entry === 'object'
                 && typeof entry.id === 'string'
+                && (entry.selectorKind === 'dom' || entry.selectorKind === 'region')
+                && typeof entry.surfaceKind === 'string'
+                && typeof entry.pageKey === 'string'
                 && typeof entry.xpath === 'string'
                 && Number.isFinite(entry.globalIndex)
                 && typeof entry.tagName === 'string'
@@ -353,6 +481,11 @@ export function LiveEditorPane() {
                 && Array.isArray(entry.classList)
                 && entry.classList.every((value: unknown) => typeof value === 'string')
                 && typeof entry.textSample === 'string'
+                && (entry.rootXPath === null || typeof entry.rootXPath === 'string')
+                && (entry.rootTagName === null || typeof entry.rootTagName === 'string')
+                && (entry.rootElementId === null || typeof entry.rootElementId === 'string')
+                && Array.isArray(entry.rootClassList)
+                && entry.rootClassList.every((value: unknown) => typeof value === 'string')
               )
               : []
           )
@@ -1003,41 +1136,25 @@ export function LiveEditorPane() {
         if (!sourceTab) {
           return
         }
-
-        const sourceUrl =
-          typeof event.data.data?.pageUrl === 'string'
-            ? event.data.data.pageUrl
-            : sourceTab.url
-
-        addElement({
-          tagName: event.data.data.tagName,
-          elementId: event.data.data.elementId || event.data.data.id,
-          classList: event.data.data.classList || [],
-          textContent: event.data.data.textContent || '',
-          xpath: event.data.data.xpath,
-          outerHTML: event.data.data.outerHTML,
-          sourceTabId: sourceTab.id,
-          sourceTabLabel: sourceTab.title || 'Preview',
-          sourceUrl,
-          pageTitle:
-            typeof event.data.data?.pageTitle === 'string'
-              ? event.data.data.pageTitle
-              : sourceTab.title || null,
-        })
+        const selection = parsePreviewSelectionData(
+          event.data.data || {},
+          sourceTab
+        )
+        if (selection) {
+          addElement(selection)
+        }
       } else if (event.data.type === 'pixel-forge-element-deselected') {
         if (!sourceTab) {
           return
         }
-
-        const sourceUrl =
-          typeof event.data.data?.pageUrl === 'string'
-            ? event.data.data.pageUrl
-            : sourceTab.url
         const element = selectedElementsRef.current.find(
           (entry) =>
-            entry.xpath === event.data.data.xpath
-            && entry.sourceTabId === sourceTab.id
-            && entry.sourceUrl === sourceUrl
+            entry.id === event.data.data?.selectionId
+            || (
+              typeof event.data.data?.xpath === 'string'
+              && entry.xpath === event.data.data.xpath
+              && entry.sourceTabId === sourceTab.id
+            )
         )
         if (element) {
           removeElement(element.id)
@@ -1146,45 +1263,23 @@ export function LiveEditorPane() {
 
     if (payload.type === 'browser-element-selected') {
       const data = payload.data || {}
-      const sourceUrl =
-        typeof data.pageUrl === 'string'
-          ? data.pageUrl
-          : sourceTab.url
-
-      addElement({
-        tagName: typeof data.tagName === 'string' ? data.tagName : 'div',
-        elementId:
-          typeof data.elementId === 'string'
-            ? data.elementId
-            : null,
-        classList: Array.isArray(data.classList)
-          ? data.classList.filter((entry): entry is string => typeof entry === 'string')
-          : [],
-        textContent: typeof data.textContent === 'string' ? data.textContent : '',
-        xpath: typeof data.xpath === 'string' ? data.xpath : '',
-        outerHTML: typeof data.outerHTML === 'string' ? data.outerHTML : '',
-        sourceTabId: sourceTab.id,
-        sourceTabLabel: sourceTab.title || 'Browser',
-        sourceUrl,
-        pageTitle:
-          typeof data.pageTitle === 'string'
-            ? data.pageTitle
-            : sourceTab.title || null,
-      })
+      const selection = parsePreviewSelectionData(data, sourceTab)
+      if (selection) {
+        addElement(selection)
+      }
       return
     }
 
     if (payload.type === 'browser-element-deselected') {
       const data = payload.data || {}
-      const sourceUrl =
-        typeof data.pageUrl === 'string'
-          ? data.pageUrl
-          : sourceTab.url
       const element = selectedElementsRef.current.find(
         (entry) =>
-          entry.xpath === data.xpath
-          && entry.sourceTabId === sourceTab.id
-          && entry.sourceUrl === sourceUrl
+          entry.id === data.selectionId
+          || (
+            typeof data.xpath === 'string'
+            && entry.xpath === data.xpath
+            && entry.sourceTabId === sourceTab.id
+          )
       )
       if (element) {
         removeElement(element.id)
@@ -1194,6 +1289,16 @@ export function LiveEditorPane() {
 
     if (payload.type === 'browser-select-cancelled') {
       setSelectMode(false)
+      return
+    }
+
+    if (payload.type === 'browser-selection-cleared') {
+      const toRemove = selectedElementsRef.current
+        .filter((entry) => entry.sourceTabId === sourceTab.id)
+        .map((entry) => entry.id)
+      for (const selectionId of toRemove) {
+        removeElement(selectionId)
+      }
       return
     }
 
@@ -1275,7 +1380,6 @@ export function LiveEditorPane() {
 
   const handleRemoveElement = useCallback((
     id: string,
-    xpath: string,
     sourceTabId: string,
     _sourceUrl: string
   ) => {
@@ -1288,14 +1392,14 @@ export function LiveEditorPane() {
 
     if (sourceTab.mode === 'proxy') {
       iframeRefs.current[sourceTabId]?.contentWindow?.postMessage(
-        { type: 'pixel-forge-deselect', xpath },
+        { type: 'pixel-forge-deselect', selectionId: id },
         '*'
       )
       return
     }
 
     if (sourceTab.mode === 'browser' && sourceTab.browserTabId) {
-      void sendBrowserCommand(sourceTab.browserTabId, 'deselect', { xpath })
+      void sendBrowserCommand(sourceTab.browserTabId, 'deselect', { selectionId: id })
     }
   }, [getPreviewTabById, removeElement, sendBrowserCommand])
 
