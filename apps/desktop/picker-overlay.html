@@ -86,7 +86,8 @@
             activeIndex = index
             render()
           })
-          button.addEventListener('click', () => {
+          button.addEventListener('pointerdown', (event) => {
+            event.preventDefault()
             window.pixelForgeOverlay.select(item.value)
           })
           list.appendChild(button)

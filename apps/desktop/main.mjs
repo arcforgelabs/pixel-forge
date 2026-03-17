@@ -15,6 +15,7 @@ let previewBounds = { x: 0, y: 0, width: 0, height: 0 }
 let attachedPreviewView = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
+let pickerOverlaySettling = false
 
 const previewViews = new Map()
 const webContentsTabIds = new Map()
@@ -43,6 +44,7 @@ function sanitizeBounds(bounds) {
 }
 
 function closePickerOverlay(result = null) {
+  pickerOverlaySettling = true
   if (pickerOverlayResolver) {
     pickerOverlayResolver(result)
     pickerOverlayResolver = null
@@ -54,6 +56,9 @@ function closePickerOverlay(result = null) {
     return
   }
   pickerOverlayWindow = null
+  queueMicrotask(() => {
+    pickerOverlaySettling = false
+  })
 }
 
 function applyPreviewView() {
@@ -316,7 +321,11 @@ async function showPickListOverlay(payload) {
   })
 
   pickerOverlayWindow.on('blur', () => {
-    closePickerOverlay(null)
+    setTimeout(() => {
+      if (!pickerOverlaySettling) {
+        closePickerOverlay(null)
+      }
+    }, 80)
   })
   pickerOverlayWindow.on('closed', () => {
     pickerOverlayWindow = null
