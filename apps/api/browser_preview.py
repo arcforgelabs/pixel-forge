@@ -54,6 +54,8 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   let hoverOverlay = null;
   let hoverLabel = null;
   let currentTarget = null;
+  let hoverTargets = [];
+  let hoverTargetIndex = 0;
   let selectedElements = [];
   let desiredSelections = [];
   let reconcileFrame = null;
@@ -115,6 +117,79 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       if (classes.length) label += '.' + classes.join('.');
     }}
     return label;
+  }}
+
+  function getElementParent(element) {{
+    if (!(element instanceof Element)) {{
+      return null;
+    }}
+
+    if (element.parentElement instanceof Element) {{
+      return element.parentElement;
+    }}
+
+    const root = typeof element.getRootNode === 'function'
+      ? element.getRootNode()
+      : null;
+    if (root instanceof ShadowRoot && root.host instanceof Element) {{
+      return root.host;
+    }}
+
+    return null;
+  }}
+
+  function getAncestorTargets(element) {{
+    const targets = [];
+    let current = element;
+
+    while (current instanceof Element) {{
+      if (
+        !current.hasAttribute('data-pixel-forge-injected')
+        && isElementVisiblyRenderable(current)
+      ) {{
+        targets.push(current);
+      }}
+      current = getElementParent(current);
+    }}
+
+    return targets;
+  }}
+
+  function buildHoverLabel(label) {{
+    if (hoverTargets.length <= 1) {{
+      return label;
+    }}
+    return `${{label}} ${{hoverTargetIndex + 1}}/${{hoverTargets.length}}`;
+  }}
+
+  function setCurrentHoverTarget(element) {{
+    if (!(element instanceof Element)) {{
+      hideHoverOverlay();
+      return;
+    }}
+
+    highlightElement(element);
+  }}
+
+  function setHoverTarget(element) {{
+    hoverTargets = getAncestorTargets(element);
+    hoverTargetIndex = 0;
+    setCurrentHoverTarget(hoverTargets[0] || element);
+  }}
+
+  function cycleHoverTarget() {{
+    if (hoverTargets.length <= 1) {{
+      return false;
+    }}
+
+    const nextIndex = Math.min(hoverTargetIndex + 1, hoverTargets.length - 1);
+    if (nextIndex === hoverTargetIndex) {{
+      return false;
+    }}
+
+    hoverTargetIndex = nextIndex;
+    setCurrentHoverTarget(hoverTargets[hoverTargetIndex]);
+    return true;
   }}
 
   function createHoverOverlay() {{
@@ -327,6 +402,8 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     if (hoverOverlay) hoverOverlay.style.display = 'none';
     if (hoverLabel) hoverLabel.style.display = 'none';
     currentTarget = null;
+    hoverTargets = [];
+    hoverTargetIndex = 0;
   }}
 
   function getElementData(element) {{
@@ -431,7 +508,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       hoverOverlay.style.borderColor = '#3b82f6';
       hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)';
       hoverLabel.style.background = '#3b82f6';
-      hoverLabel.textContent = getElementLabel(element);
+      hoverLabel.textContent = buildHoverLabel(getElementLabel(element));
     }}
 
     hoverOverlay.style.top = rect.top + 'px';
@@ -533,10 +610,23 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   function handleMouseMove(event) {{
     if (!selectMode) return;
     if (!(event.target instanceof Element)) return;
-    highlightElement(event.target);
+    if (event.target.hasAttribute('data-pixel-forge-injected')) return;
+    setHoverTarget(event.target);
   }}
 
   function handleKeyDown(event) {{
+    if (
+      event.code === 'ControlLeft'
+      && selectMode
+      && !event.repeat
+      && currentTarget
+    ) {{
+      event.preventDefault();
+      event.stopPropagation();
+      cycleHoverTarget();
+      return;
+    }}
+
     if (event.key === 'Escape' && selectMode) {{
       selectMode = false;
       document.body.style.cursor = '';

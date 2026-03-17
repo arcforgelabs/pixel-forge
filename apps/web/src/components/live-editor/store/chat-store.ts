@@ -60,6 +60,8 @@ export interface SelectedElement extends SelectionRecord {
   timestamp: Date
 }
 
+const MAX_SELECTION_HISTORY = 100
+
 interface LiveEditorChatStore {
   // Chat state
   messages: ChatMessage[]
@@ -76,6 +78,8 @@ interface LiveEditorChatStore {
 
   // Selection state (task_2_3)
   selectedElements: SelectedElement[]
+  selectionUndoStack: SelectedElement[][]
+  selectionRedoStack: SelectedElement[][]
 
   // NOTE: projectPath and Live Editor broker session metadata are read from session-store
 
@@ -89,7 +93,11 @@ interface LiveEditorChatStore {
   // Actions - Selection
   addElement: (element: Omit<SelectedElement, 'timestamp'>) => void
   removeElement: (id: string) => void
+  removeElements: (ids: string[]) => void
+  replaceElement: (id: string, element: Omit<SelectedElement, 'timestamp'>) => void
   clearElements: () => void
+  undoSelectionChange: () => void
+  redoSelectionChange: () => void
 
   // Helpers
   buildSelectionPayload: () => {
@@ -132,6 +140,28 @@ function buildAttachmentSummary(attachments: ChatAttachment[]): string {
   return `Attached ${imageCount} image${imageCount === 1 ? '' : 's'} and ${fileCount} file${fileCount === 1 ? '' : 's'}.`
 }
 
+function cloneSelectedElement(element: SelectedElement): SelectedElement {
+  return {
+    ...element,
+    classList: [...element.classList],
+    rootClassList: [...element.rootClassList],
+    region: element.region ? { ...element.region } : null,
+    timestamp: new Date(element.timestamp),
+  }
+}
+
+function cloneSelectionState(elements: SelectedElement[]): SelectedElement[] {
+  return elements.map(cloneSelectedElement)
+}
+
+function pushUndoSnapshot(
+  history: SelectedElement[][],
+  snapshot: SelectedElement[]
+): SelectedElement[][] {
+  const nextHistory = [...history, cloneSelectionState(snapshot)]
+  return nextHistory.slice(-MAX_SELECTION_HISTORY)
+}
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -148,6 +178,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   ws: null,
   connected: false,
   selectedElements: [],
+  selectionUndoStack: [],
+  selectionRedoStack: [],
 
   // Getters - read from session-store for Live Editor session management
   getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
@@ -543,6 +575,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       currentSelectionCount: 0,
       currentRequestId: null,
       selectedElements: [],
+      selectionUndoStack: [],
+      selectionRedoStack: [],
     })
   },
 
@@ -551,7 +585,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   // -------------------------------------------------------------------------
 
   addElement: (element) => {
-    const { selectedElements } = get()
+    const { selectedElements, selectionUndoStack } = get()
 
     if (selectedElements.some((entry) => entry.id === element.id)) {
       console.log('[live-editor] Element already selected')
@@ -563,17 +597,105 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       timestamp: new Date(),
     }
 
-    set({ selectedElements: [...selectedElements, newElement] })
+    set({
+      selectedElements: [...selectedElements, newElement],
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: [],
+    })
   },
 
   removeElement: (id: string) => {
-    set((state) => ({
-      selectedElements: state.selectedElements.filter((e) => e.id !== id),
-    }))
+    const { selectedElements, selectionUndoStack } = get()
+    if (!selectedElements.some((entry) => entry.id === id)) {
+      return
+    }
+
+    set({
+      selectedElements: selectedElements.filter((entry) => entry.id !== id),
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: [],
+    })
+  },
+
+  removeElements: (ids: string[]) => {
+    const idSet = new Set(ids)
+    if (idSet.size === 0) {
+      return
+    }
+
+    const { selectedElements, selectionUndoStack } = get()
+    const nextSelections = selectedElements.filter((entry) => !idSet.has(entry.id))
+    if (nextSelections.length === selectedElements.length) {
+      return
+    }
+
+    set({
+      selectedElements: nextSelections,
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: [],
+    })
+  },
+
+  replaceElement: (id, element) => {
+    const { selectedElements, selectionUndoStack } = get()
+    const targetIndex = selectedElements.findIndex((entry) => entry.id === id)
+    if (targetIndex < 0) {
+      return
+    }
+
+    const nextSelections = cloneSelectionState(selectedElements)
+    nextSelections[targetIndex] = {
+      ...element,
+      id,
+      timestamp: new Date(),
+    }
+
+    set({
+      selectedElements: nextSelections,
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: [],
+    })
   },
 
   clearElements: () => {
-    set({ selectedElements: [] })
+    const { selectedElements, selectionUndoStack } = get()
+    if (selectedElements.length === 0) {
+      return
+    }
+
+    set({
+      selectedElements: [],
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: [],
+    })
+  },
+
+  undoSelectionChange: () => {
+    const { selectionUndoStack, selectionRedoStack, selectedElements } = get()
+    if (selectionUndoStack.length === 0) {
+      return
+    }
+
+    const previousSnapshot = selectionUndoStack[selectionUndoStack.length - 1]
+    set({
+      selectedElements: cloneSelectionState(previousSnapshot),
+      selectionUndoStack: selectionUndoStack.slice(0, -1),
+      selectionRedoStack: pushUndoSnapshot(selectionRedoStack, selectedElements),
+    })
+  },
+
+  redoSelectionChange: () => {
+    const { selectionUndoStack, selectionRedoStack, selectedElements } = get()
+    if (selectionRedoStack.length === 0) {
+      return
+    }
+
+    const nextSnapshot = selectionRedoStack[selectionRedoStack.length - 1]
+    set({
+      selectedElements: cloneSelectionState(nextSnapshot),
+      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+      selectionRedoStack: selectionRedoStack.slice(0, -1),
+    })
   },
 
   // Note: setProjectPath removed - use useSessionStore.setProject() instead

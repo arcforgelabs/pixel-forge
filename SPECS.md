@@ -62,6 +62,9 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-X-002:` DOM-like targets must preserve semantic selectors and DOM excerpts; canvas-like targets must preserve spatial region anchors and visual evidence instead of fake DOM references.
 - `REQ-X-003:` Selection identity must be stable by Pixel Forge selection id, not only by xpath, so renumbering, removal, and cross-tab reconciliation stay truthful.
 - `REQ-X-004:` Visual overlays must reattach only when the selected target's page/view identity and substrate match the current live preview state.
+- `REQ-X-005:` While select mode is active on DOM-like targets, pressing `Left Ctrl` with the pointer held still must cycle the proposed hover target upward through ancestor containers, and any mouse movement must reset that cycle back to the immediate hovered target.
+- `REQ-X-006:` While select mode is active on an already selected DOM-like target, holding `Ctrl+Shift` over that selection must preview promotion to the next ancestor container in a distinct transitional state, and clicking must replace that saved selection in place instead of removing and re-adding it.
+- `REQ-X-007:` Pixel Forge must support undo and redo for selection-engine mutations so selection add/remove/clear/promote mistakes can be reversed without rebuilding the whole prompt manually.
 
 ### Agent Selection Tunnel
 - `REQ-U-001:` Each Live Editor request pack must include a structured frozen selection tunnel artifact in addition to human-readable selected-elements markup.
@@ -83,10 +86,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` Pixel Forge self-edit runs can still cut off their own in-flight chat stream if the agent applies an install/restart to the controller before the request completes.
-- Why it is the limiter: self-edit is a core flywheel for the product, and losing the controller stream mid-run makes Pixel Forge look unreliable exactly when it is supposed to improve itself.
-- Smallest complete unit to attack it: make self-edit requests controller-safe by default, keep install/restart out of the active run, and prove the chat reaches a clean completion state while the repo changes are still fully applied.
-- Immediate proof target: dispatch a Pixel Forge self-edit request, confirm the request pack and dispatch prompt forbid controller restart, and confirm the run can reach completion without losing the in-app transcript.
+- `[active]` The selection correction loop is still too brittle when the user needs a parent container instead of a tiny child or needs to recover from a mistaken selection without rebuilding the whole context set.
+- Why it is the limiter: Pixel Forge’s core value is truthful visual context assembly. If correcting one bad selection is awkward, the whole multi-tab selection workflow feels fragile.
+- Smallest complete unit to attack it: keep ancestor-cycle hover targeting, add in-place promotion for existing selections, and add undo/redo at the shared selection-store boundary so correction is reversible.
+- Immediate proof target: prove yellow promotion preview appears over a selected target, prove the same selection id is promoted to its parent on click, and prove store-level undo/redo restores exact selection order.
 
 # Current Proof Status
 
@@ -106,7 +109,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[unvalidated]` Pixel Forge self-edit requests now stay controller-safe through completion instead of restarting the active broker mid-stream. Basis: request-pack and dispatch-prompt guardrails exist, but the full self-edit loop has not yet been re-proven end to end.
 - `[validated]` Live Editor request packs now include a structured `selection-tunnel.json` artifact and can expose it back through a local API/CLI path. Basis: request-pack smoke created the tunnel file, registered it in the manifest, and the backend now serves `/api/live-editor/selection-tunnel`.
 - `[validated]` Pixel Forge now stores screenshot evidence alongside selection context so non-DOM selections can carry frozen visual state into the request pack. Basis: the shell selection bridge now captures bounded image crops during selection and the frontend includes them as request-pack attachments.
+- `[validated]` Selected DOM targets can now be promoted upward in place without losing their selection slot, and the shell preview shows that promotion as a yellow transitional preview before commit. Basis: Electron smoke selected a child button, showed `Promote to div#parent` with yellow badge state on `Ctrl+Shift`, then emitted `browser-element-updated` with the same selection id retargeted to the parent xpath.
+- `[validated]` Selection add/remove/clear/promote mutations now support undo and redo in the controller state. Basis: store regression tests prove replace/remove/clear restore the exact selection order and ids through undo/redo.
 - `[unvalidated]` Automatic selector routing is good enough across real hybrid DOM/canvas/WebGL apps, not just synthetic cases. Basis: implemented in the shell selection engine, but not yet hammered against a wider hostile sample.
+- `[validated]` Ancestor-cycle hover selection now moves upward through visible DOM ancestors while the pointer stays still and resets back to the direct hovered target on movement. Basis: shell smoke on nested markup showed child `1/3`, parent `2/3`, then reset to the child after mouse movement.
 - `[unvalidated]` The selection tunnel gives working agents enough frozen context to avoid replaying third-party auth or deep navigation in practice. Basis: file/API/CLI path now exists, but it has not yet been exercised by a real agent workflow end to end.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
@@ -120,6 +126,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[question]` Do we want Pixel Forge to embed an Agent Deck terminal pane directly, or is surfacing the session identity enough for the next cut?
 - `[question]` Should request-pack retention become content-addressed and deduplicated, or is bounded per-request storage sufficient in practice?
 - `[question]` Should the second source panel support its own independent deploy-aware refresh, or is one shared refresh sufficient?
+- `[question]` When we add behind-the-pixel probing later, should it stay on a separate modifier chord from ancestor cycling or become an explicit advanced selection sub-mode?
 
 # Out of Scope
 

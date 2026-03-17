@@ -51,6 +51,8 @@ SELECTION_SCRIPT_TEMPLATE = """
   let hoverOverlay = null;
   let hoverLabel = null;
   let currentTarget = null;
+  let hoverTargets = [];
+  let hoverTargetIndex = 0;
   let selectedElements = [];  // Array of {element, xpath, overlay, badge}
   let desiredSelections = [];
   let reconcileFrame = null;
@@ -370,6 +372,79 @@ SELECTION_SCRIPT_TEMPLATE = """
     return label;
   }
 
+  function getElementParent(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    if (element.parentElement instanceof Element) {
+      return element.parentElement;
+    }
+
+    const root = typeof element.getRootNode === 'function'
+      ? element.getRootNode()
+      : null;
+    if (root instanceof ShadowRoot && root.host instanceof Element) {
+      return root.host;
+    }
+
+    return null;
+  }
+
+  function getAncestorTargets(element) {
+    const targets = [];
+    let current = element;
+
+    while (current instanceof Element) {
+      if (
+        !current.hasAttribute('data-pixel-forge-injected')
+        && isElementVisiblyRenderable(current)
+      ) {
+        targets.push(current);
+      }
+      current = getElementParent(current);
+    }
+
+    return targets;
+  }
+
+  function buildHoverLabel(label) {
+    if (hoverTargets.length <= 1) {
+      return label;
+    }
+    return `${label} ${hoverTargetIndex + 1}/${hoverTargets.length}`;
+  }
+
+  function setCurrentHoverTarget(element) {
+    if (!(element instanceof Element)) {
+      hideHoverOverlay();
+      return;
+    }
+
+    highlightElement(element);
+  }
+
+  function setHoverTarget(element) {
+    hoverTargets = getAncestorTargets(element);
+    hoverTargetIndex = 0;
+    setCurrentHoverTarget(hoverTargets[0] || element);
+  }
+
+  function cycleHoverTarget() {
+    if (hoverTargets.length <= 1) {
+      return false;
+    }
+
+    const nextIndex = Math.min(hoverTargetIndex + 1, hoverTargets.length - 1);
+    if (nextIndex === hoverTargetIndex) {
+      return false;
+    }
+
+    hoverTargetIndex = nextIndex;
+    setCurrentHoverTarget(hoverTargets[hoverTargetIndex]);
+    return true;
+  }
+
   // Check if element is already selected
   function isSelected(element) {
     const xpath = getXPath(element);
@@ -504,7 +579,7 @@ SELECTION_SCRIPT_TEMPLATE = """
       hoverOverlay.style.borderColor = '#3b82f6';
       hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)';
       hoverLabel.style.background = '#3b82f6';
-      hoverLabel.textContent = getElementLabel(el);
+      hoverLabel.textContent = buildHoverLabel(getElementLabel(el));
     }
 
     hoverOverlay.style.top = rect.top + 'px';
@@ -525,6 +600,8 @@ SELECTION_SCRIPT_TEMPLATE = """
     if (hoverOverlay) hoverOverlay.style.display = 'none';
     if (hoverLabel) hoverLabel.style.display = 'none';
     currentTarget = null;
+    hoverTargets = [];
+    hoverTargetIndex = 0;
   }
 
   // Add element to selection
@@ -615,7 +692,7 @@ SELECTION_SCRIPT_TEMPLATE = """
       return;
     }
 
-    highlightElement(e.target);
+    setHoverTarget(e.target);
   }
 
   // Handle click
@@ -648,6 +725,18 @@ SELECTION_SCRIPT_TEMPLATE = """
 
   // Handle keydown
   function handleKeyDown(e) {
+    if (
+      e.code === 'ControlLeft' &&
+      selectMode &&
+      !e.repeat &&
+      currentTarget
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      cycleHoverTarget();
+      return;
+    }
+
     if (e.key === 'Escape' && selectMode) {
       window.parent.postMessage({
         type: 'pixel-forge-cancel-select'

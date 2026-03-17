@@ -67,6 +67,13 @@ export function installSelectionBridge({ emit, captureRegion }) {
   let hoverOverlay = null
   let hoverLabel = null
   let currentTarget = null
+  let hoverTargets = []
+  let hoverTargetIndex = 0
+  let hoverClientX = 0
+  let hoverClientY = 0
+  let lastPointerElement = null
+  let keyboardState = { ctrl: false, shift: false }
+  let promotionSourceSelectionKey = null
   let selectedElements = []
   let desiredSelections = []
   let reconcileFrame = null
@@ -148,6 +155,9 @@ export function installSelectionBridge({ emit, captureRegion }) {
     if (hoverOverlay) hoverOverlay.style.display = 'none'
     if (hoverLabel) hoverLabel.style.display = 'none'
     currentTarget = null
+    hoverTargets = []
+    hoverTargetIndex = 0
+    clearPromotionSourceHighlight()
   }
 
   function updateSelectionPosition(rect, overlay, badge) {
@@ -265,6 +275,63 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   function selectionKey(selection) {
     return String(selection?.id || selection?.xpath || '')
+  }
+
+  function setSelectionTone(overlay, badge, tone = 'selected') {
+    const palette = tone === 'promotion'
+      ? {
+          border: '#f59e0b',
+          background: 'rgba(245, 158, 11, 0.12)',
+          shadow: 'rgba(245, 158, 11, 0.28)',
+          badge: '#f59e0b',
+        }
+      : {
+          border: '#22c55e',
+          background: 'rgba(34, 197, 94, 0.15)',
+          shadow: 'rgba(34, 197, 94, 0.3)',
+          badge: '#22c55e',
+        }
+
+    overlay.style.borderColor = palette.border
+    overlay.style.background = palette.background
+    overlay.style.boxShadow = `0 0 0 1px ${palette.shadow}`
+    badge.style.background = palette.badge
+  }
+
+  function clearPromotionSourceHighlight() {
+    if (!promotionSourceSelectionKey) {
+      return
+    }
+
+    const entry = selectedElements.find(
+      (selected) => selected.selectionKey === promotionSourceSelectionKey
+    )
+    if (entry) {
+      setSelectionTone(entry.overlay, entry.badge, 'selected')
+    }
+    promotionSourceSelectionKey = null
+  }
+
+  function highlightPromotionSource(selectionKeyValue) {
+    if (!selectionKeyValue) {
+      clearPromotionSourceHighlight()
+      return
+    }
+
+    if (promotionSourceSelectionKey && promotionSourceSelectionKey !== selectionKeyValue) {
+      clearPromotionSourceHighlight()
+    }
+
+    const entry = selectedElements.find(
+      (selected) => selected.selectionKey === selectionKeyValue
+    )
+    if (!entry) {
+      promotionSourceSelectionKey = null
+      return
+    }
+
+    setSelectionTone(entry.overlay, entry.badge, 'promotion')
+    promotionSourceSelectionKey = selectionKeyValue
   }
 
   function isElementVisiblyRenderable(element) {
@@ -398,11 +465,8 @@ export function installSelectionBridge({ emit, captureRegion }) {
     overlay.style.cssText = `
       position: fixed;
       pointer-events: none;
-      border: 2px solid #22c55e;
-      background: rgba(34, 197, 94, 0.15);
       z-index: 2147483645;
       border-radius: 4px;
-      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.3);
     `
     document.body.appendChild(overlay)
 
@@ -411,7 +475,6 @@ export function installSelectionBridge({ emit, captureRegion }) {
     badge.textContent = String(globalIndex)
     badge.style.cssText = `
       position: fixed;
-      background: #22c55e;
       color: white;
       font-size: 10px;
       font-family: ui-monospace, monospace;
@@ -428,6 +491,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
     `
     document.body.appendChild(badge)
 
+    setSelectionTone(overlay, badge, 'selected')
     updateSelectionPosition(rect, overlay, badge)
     return { overlay, badge }
   }
@@ -494,6 +558,169 @@ export function installSelectionBridge({ emit, captureRegion }) {
       }
     }
     return label
+  }
+
+  function getElementParent(element) {
+    if (!(element instanceof Element)) {
+      return null
+    }
+
+    if (element.parentElement instanceof Element) {
+      return element.parentElement
+    }
+
+    const root = typeof element.getRootNode === 'function'
+      ? element.getRootNode()
+      : null
+    if (root instanceof ShadowRoot && root.host instanceof Element) {
+      return root.host
+    }
+
+    return null
+  }
+
+  function getAncestorTargets(element) {
+    const targets = []
+    let current = element
+
+    while (current instanceof Element) {
+      if (
+        !current.hasAttribute('data-pixel-forge-injected')
+        && isElementVisiblyRenderable(current)
+      ) {
+        targets.push(current)
+      }
+      current = getElementParent(current)
+    }
+
+    return targets
+  }
+
+  function buildHoverLabel(label) {
+    if (hoverTargets.length <= 1) {
+      return label
+    }
+    return `${label} ${hoverTargetIndex + 1}/${hoverTargets.length}`
+  }
+
+  function setCurrentHoverTarget(element) {
+    if (!(element instanceof Element)) {
+      hideHoverOverlay()
+      return
+    }
+
+    const classification = classifySelectionTarget(element)
+    currentTarget = {
+      element,
+      selectorKind: classification.selectorKind,
+      hoverRect: classification.hoverRect,
+      label: buildHoverLabel(classification.label),
+      clientX: hoverClientX,
+      clientY: hoverClientY,
+      promotionSourceSelectionId: null,
+    }
+    highlightCandidate(currentTarget)
+  }
+
+  function setHoverTarget(element, clientX, clientY) {
+    hoverClientX = clientX
+    hoverClientY = clientY
+    hoverTargets = getAncestorTargets(element)
+    hoverTargetIndex = 0
+    setCurrentHoverTarget(hoverTargets[0] || element)
+  }
+
+  function cycleHoverTarget() {
+    if (hoverTargets.length <= 1) {
+      return false
+    }
+
+    const nextIndex = Math.min(hoverTargetIndex + 1, hoverTargets.length - 1)
+    if (nextIndex === hoverTargetIndex) {
+      return false
+    }
+
+    hoverTargetIndex = nextIndex
+    setCurrentHoverTarget(hoverTargets[hoverTargetIndex])
+    return true
+  }
+
+  function getRenderedSelectionEntryAtPoint(element, clientX, clientY) {
+    const index = findRenderedSelectionIndex(element, clientX, clientY)
+    if (index < 0) {
+      return null
+    }
+    return {
+      entry: selectedElements[index],
+      index,
+    }
+  }
+
+  function buildPromotionCandidate(entry, clientX, clientY) {
+    if (!entry || entry.selection.selectorKind !== 'dom') {
+      return null
+    }
+
+    const baseElement = entry.element instanceof Element
+      ? entry.element
+      : resolveSelection(entry.selection)?.element
+    if (!(baseElement instanceof Element)) {
+      return null
+    }
+
+    const ancestors = getAncestorTargets(baseElement)
+    const nextAncestor = ancestors[1]
+    if (!(nextAncestor instanceof Element)) {
+      return null
+    }
+
+    const classification = classifySelectionTarget(nextAncestor)
+    const targetElement =
+      classification.selectorKind === 'region' && classification.surfaceElement
+        ? classification.surfaceElement
+        : nextAncestor
+
+    return {
+      element: targetElement,
+      selectorKind: classification.selectorKind,
+      hoverRect: classification.hoverRect,
+      label: `Promote to ${classification.label}`,
+      clientX,
+      clientY,
+      promotionSourceSelectionId: entry.selection.id,
+    }
+  }
+
+  function refreshHoverTargetFromPointer() {
+    if (!selectMode || !(lastPointerElement instanceof Element)) {
+      clearPromotionSourceHighlight()
+      return
+    }
+
+    if (keyboardState.ctrl && keyboardState.shift) {
+      const selectedMatch = getRenderedSelectionEntryAtPoint(
+        lastPointerElement,
+        hoverClientX,
+        hoverClientY
+      )
+
+      if (selectedMatch) {
+        const promotionCandidate = buildPromotionCandidate(
+          selectedMatch.entry,
+          hoverClientX,
+          hoverClientY
+        )
+        if (promotionCandidate) {
+          highlightPromotionSource(selectedMatch.entry.selectionKey)
+          currentTarget = promotionCandidate
+          highlightCandidate(promotionCandidate)
+          return
+        }
+      }
+    }
+
+    clearPromotionSourceHighlight()
+    setHoverTarget(lastPointerElement, hoverClientX, hoverClientY)
   }
 
   function isMeaningfulDomElement(element) {
@@ -669,12 +896,12 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
   }
 
-  async function buildSelectionDescriptor(element, clientX, clientY) {
+  async function buildSelectionDescriptor(element, clientX, clientY, selectionId = generateSelectionId()) {
     const classification = classifySelectionTarget(element)
     if (classification.selectorKind === 'region' && classification.surfaceElement) {
-      return buildRegionSelection(classification.surfaceElement, clientX, clientY)
+      return buildRegionSelection(classification.surfaceElement, clientX, clientY, selectionId)
     }
-    return buildDomSelection(element)
+    return buildDomSelection(element, selectionId)
   }
 
   function findRenderedSelectionIndex(element, clientX, clientY) {
@@ -770,20 +997,27 @@ export function installSelectionBridge({ emit, captureRegion }) {
     createHoverOverlay()
     if (!hoverOverlay || !hoverLabel) return
 
-    const selectedIndex = candidate.selectorKind === 'region'
-      ? selectedElements.findIndex((entry) => entry.lastRect && rectContainsPoint(entry.lastRect, candidate.clientX, candidate.clientY))
-      : findRenderedSelectionIndex(candidate.element, candidate.clientX, candidate.clientY)
-
-    if (selectedIndex >= 0) {
-      hoverOverlay.style.borderColor = '#ef4444'
-      hoverOverlay.style.background = 'rgba(239, 68, 68, 0.1)'
-      hoverLabel.style.background = '#ef4444'
-      hoverLabel.textContent = 'Click to deselect'
-    } else {
-      hoverOverlay.style.borderColor = '#3b82f6'
-      hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)'
-      hoverLabel.style.background = '#3b82f6'
+    if (candidate.promotionSourceSelectionId) {
+      hoverOverlay.style.borderColor = '#f59e0b'
+      hoverOverlay.style.background = 'rgba(245, 158, 11, 0.12)'
+      hoverLabel.style.background = '#f59e0b'
       hoverLabel.textContent = candidate.label
+    } else {
+      const selectedIndex = candidate.selectorKind === 'region'
+        ? selectedElements.findIndex((entry) => entry.lastRect && rectContainsPoint(entry.lastRect, candidate.clientX, candidate.clientY))
+        : findRenderedSelectionIndex(candidate.element, candidate.clientX, candidate.clientY)
+
+      if (selectedIndex >= 0) {
+        hoverOverlay.style.borderColor = '#ef4444'
+        hoverOverlay.style.background = 'rgba(239, 68, 68, 0.1)'
+        hoverLabel.style.background = '#ef4444'
+        hoverLabel.textContent = 'Click to deselect'
+      } else {
+        hoverOverlay.style.borderColor = '#3b82f6'
+        hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)'
+        hoverLabel.style.background = '#3b82f6'
+        hoverLabel.textContent = candidate.label
+      }
     }
 
     hoverOverlay.style.top = `${candidate.hoverRect.top}px`
@@ -851,9 +1085,43 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
   }
 
+  async function replaceResolvedSelection(index, selection, notifyParent = true) {
+    const selected = selectedElements[index]
+    if (!selected) {
+      return
+    }
+
+    const resolved = resolveSelection(selection)
+    if (!resolved) {
+      return
+    }
+
+    removeRenderedSelection(selected)
+    const globalIndex = selected.globalIndex
+    const { overlay, badge } = createSelectionOverlay(resolved.rect, globalIndex)
+
+    selectedElements[index] = {
+      selectionKey: selectionKey(selection),
+      selection,
+      element: resolved.element,
+      xpath: selection.xpath,
+      overlay,
+      badge,
+      lastRect: resolved.rect,
+      globalIndex,
+    }
+
+    if (notifyParent) {
+      await emitSelectionEvent('browser-element-updated', selection)
+    }
+  }
+
   async function deselectElement(index, notifyParent = true) {
     const selected = selectedElements[index]
     if (!selected) return
+    if (selected.selectionKey === promotionSourceSelectionKey) {
+      promotionSourceSelectionKey = null
+    }
     removeRenderedSelection(selected)
     selectedElements.splice(index, 1)
     if (notifyParent) {
@@ -863,6 +1131,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   async function clearSelections(notifyParent = true) {
     desiredSelections = []
+    promotionSourceSelectionKey = null
     for (const selected of selectedElements) {
       removeRenderedSelection(selected)
     }
@@ -891,6 +1160,38 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return false
     }
 
+    if (event.ctrlKey && event.shiftKey && currentTarget?.promotionSourceSelectionId) {
+      const selectedIndex = selectedElements.findIndex(
+        (entry) => entry.selection.id === currentTarget.promotionSourceSelectionId
+      )
+      if (selectedIndex >= 0) {
+        const selection = await buildSelectionDescriptor(
+          element,
+          event.clientX,
+          event.clientY,
+          currentTarget.promotionSourceSelectionId
+        )
+        await replaceResolvedSelection(selectedIndex, selection)
+        const updatedEntry = selectedElements[selectedIndex]
+        if (updatedEntry) {
+          const promotedCandidate = buildPromotionCandidate(
+            updatedEntry,
+            event.clientX,
+            event.clientY
+          )
+          if (promotedCandidate) {
+            highlightPromotionSource(updatedEntry.selectionKey)
+            currentTarget = promotedCandidate
+            highlightCandidate(promotedCandidate)
+            return false
+          }
+        }
+        clearPromotionSourceHighlight()
+        refreshHoverTargetFromPointer()
+      }
+      return false
+    }
+
     const selectedIndex = findRenderedSelectionIndex(element, event.clientX, event.clientY)
     if (selectedIndex >= 0) {
       await deselectElement(selectedIndex)
@@ -904,20 +1205,49 @@ export function installSelectionBridge({ emit, captureRegion }) {
   function handleMouseMove(event) {
     if (!selectMode) return
     if (!(event.target instanceof Element)) return
-
-    const classification = classifySelectionTarget(event.target)
-    currentTarget = {
-      element: event.target,
-      selectorKind: classification.selectorKind,
-      hoverRect: classification.hoverRect,
-      label: classification.label,
-      clientX: event.clientX,
-      clientY: event.clientY,
-    }
-    highlightCandidate(currentTarget)
+    if (event.target.hasAttribute('data-pixel-forge-injected')) return
+    lastPointerElement = event.target
+    hoverClientX = event.clientX
+    hoverClientY = event.clientY
+    refreshHoverTargetFromPointer()
   }
 
   function handleKeyDown(event) {
+    if (event.key === 'Shift') {
+      keyboardState.shift = true
+      if (selectMode && keyboardState.ctrl) {
+        event.preventDefault()
+        event.stopPropagation()
+        refreshHoverTargetFromPointer()
+      }
+      return
+    }
+
+    if (
+      event.code === 'ControlLeft'
+      && selectMode
+      && !event.repeat
+      && currentTarget
+      && !event.shiftKey
+      && !keyboardState.shift
+    ) {
+      keyboardState.ctrl = true
+      event.preventDefault()
+      event.stopPropagation()
+      cycleHoverTarget()
+      return
+    }
+
+    if (event.key === 'Control') {
+      keyboardState.ctrl = true
+      if (selectMode && keyboardState.shift) {
+        event.preventDefault()
+        event.stopPropagation()
+        refreshHoverTargetFromPointer()
+      }
+      return
+    }
+
     if (event.key === 'Escape' && selectMode) {
       selectMode = false
       document.body.style.cursor = ''
@@ -926,6 +1256,23 @@ export function installSelectionBridge({ emit, captureRegion }) {
         pageUrl: window.location.href,
         pageTitle: document.title || null,
       })
+    }
+  }
+
+  function handleKeyUp(event) {
+    if (event.key === 'Shift') {
+      keyboardState.shift = false
+      if (promotionSourceSelectionKey) {
+        refreshHoverTargetFromPointer()
+      }
+      return
+    }
+
+    if (event.key === 'Control') {
+      keyboardState.ctrl = false
+      if (promotionSourceSelectionKey) {
+        refreshHoverTargetFromPointer()
+      }
     }
   }
 
@@ -952,6 +1299,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
   document.addEventListener('mousemove', handleMouseMove, true)
   document.addEventListener('click', handleClick, true)
   document.addEventListener('keydown', handleKeyDown, true)
+  document.addEventListener('keyup', handleKeyUp, true)
   document.addEventListener('mouseleave', hideHoverOverlay)
   window.addEventListener('hashchange', () => {
     notifyLocationChange()
@@ -1017,6 +1365,8 @@ export function installSelectionBridge({ emit, captureRegion }) {
   return {
     setSelectMode(enabled) {
       selectMode = Boolean(enabled)
+      keyboardState = { ctrl: false, shift: false }
+      lastPointerElement = null
       if (selectMode) {
         createHoverOverlay()
         if (document.body) {

@@ -80,6 +80,7 @@ interface BrowserPreviewEvent {
     | 'browser-location-changed'
     | 'browser-tab-snapshot'
     | 'browser-element-selected'
+    | 'browser-element-updated'
     | 'browser-element-deselected'
     | 'browser-selection-cleared'
     | 'browser-select-cancelled'
@@ -314,6 +315,19 @@ async function requestPreviewJson<T>(path: string, init?: RequestInit): Promise<
   return response.json() as Promise<T>
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  if (target.isContentEditable) {
+    return true
+  }
+
+  const editable = target.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')
+  return editable instanceof HTMLElement
+}
+
 export function LiveEditorPane() {
   const {
     projectPath,
@@ -359,11 +373,19 @@ export function LiveEditorPane() {
     connected,
     addElement,
     removeElement,
+    removeElements,
+    replaceElement,
     clearElements,
+    undoSelectionChange,
+    redoSelectionChange,
     selectedElements,
+    selectionUndoStack,
+    selectionRedoStack,
   } = useLiveEditorStore()
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
+  const canUndoSelections = selectionUndoStack.length > 0
+  const canRedoSelections = selectionRedoStack.length > 0
 
   useEffect(() => {
     selectedElementsRef.current = selectedElements
@@ -400,6 +422,31 @@ export function LiveEditorPane() {
   useEffect(() => {
     targetUrlRef.current = targetUrl
   }, [targetUrl])
+
+  useEffect(() => {
+    const handleSelectionHistoryShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || isEditableTarget(event.target)) {
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        undoSelectionChange()
+        return
+      }
+
+      if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        event.preventDefault()
+        redoSelectionChange()
+      }
+    }
+
+    window.addEventListener('keydown', handleSelectionHistoryShortcut)
+    return () => {
+      window.removeEventListener('keydown', handleSelectionHistoryShortcut)
+    }
+  }, [redoSelectionChange, undoSelectionChange])
 
   const getActivePreviewTab = useCallback(() => {
     if (!activeTabIdRef.current) return null
@@ -1210,6 +1257,17 @@ export function LiveEditorPane() {
         if (selection) {
           addElement(selection)
         }
+      } else if (event.data.type === 'pixel-forge-element-updated') {
+        if (!sourceTab) {
+          return
+        }
+        const selection = parsePreviewSelectionData(
+          event.data.data || {},
+          sourceTab
+        )
+        if (selection) {
+          replaceElement(selection.id, selection)
+        }
       } else if (event.data.type === 'pixel-forge-element-deselected') {
         if (!sourceTab) {
           return
@@ -1277,7 +1335,7 @@ export function LiveEditorPane() {
 
     window.addEventListener('message', handleProxyMessage)
     return () => window.removeEventListener('message', handleProxyMessage)
-  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, syncStorePreviewUrl])
+  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, replaceElement, syncStorePreviewUrl])
 
   const handleBrowserPreviewEvent = useCallback((payload: BrowserPreviewEvent) => {
     const sourceTab = getPreviewTabByBrowserId(payload.browser_tab_id)
@@ -1337,6 +1395,15 @@ export function LiveEditorPane() {
       return
     }
 
+    if (payload.type === 'browser-element-updated') {
+      const data = payload.data || {}
+      const selection = parsePreviewSelectionData(data, sourceTab)
+      if (selection) {
+        replaceElement(selection.id, selection)
+      }
+      return
+    }
+
     if (payload.type === 'browser-element-deselected') {
       const data = payload.data || {}
       const element = selectedElementsRef.current.find(
@@ -1363,9 +1430,7 @@ export function LiveEditorPane() {
       const toRemove = selectedElementsRef.current
         .filter((entry) => entry.sourceTabId === sourceTab.id)
         .map((entry) => entry.id)
-      for (const selectionId of toRemove) {
-        removeElement(selectionId)
-      }
+      removeElements(toRemove)
       return
     }
 
@@ -1401,7 +1466,7 @@ export function LiveEditorPane() {
           : 'Managed browser tab was closed. Reload the URL to reopen it.'
       )
     }
-  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, removeElement, syncStorePreviewUrl, syncTabSelections])
+  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, removeElement, removeElements, replaceElement, syncStorePreviewUrl, syncTabSelections])
 
   useEffect(() => {
     if (desktopPreviewRef.current) {
@@ -1469,6 +1534,14 @@ export function LiveEditorPane() {
       void sendBrowserCommand(sourceTab.browserTabId, 'deselect', { selectionId: id })
     }
   }, [getPreviewTabById, removeElement, sendBrowserCommand])
+
+  const handleUndoSelections = useCallback(() => {
+    undoSelectionChange()
+  }, [undoSelectionChange])
+
+  const handleRedoSelections = useCallback(() => {
+    redoSelectionChange()
+  }, [redoSelectionChange])
 
   const focusManagedBrowser = useCallback(async () => {
     const activePreviewTab = getActivePreviewTab()
@@ -1829,6 +1902,10 @@ export function LiveEditorPane() {
               <SelectedElementsList
                 onClearAll={handleClearElements}
                 onRemoveElement={handleRemoveElement}
+                onUndo={handleUndoSelections}
+                onRedo={handleRedoSelections}
+                canUndo={canUndoSelections}
+                canRedo={canRedoSelections}
               />
             </TabsContent>
           </div>
