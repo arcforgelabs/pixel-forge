@@ -7,8 +7,13 @@ export interface PixelForgeBrowserPreviewResponse {
 }
 
 export interface PixelForgeAppliedSelection {
+  id: string
   xpath: string
   globalIndex: number
+  tagName: string
+  elementId: string | null
+  classList: string[]
+  textSample: string
 }
 
 export interface PixelForgeDesktopPreviewAPI {

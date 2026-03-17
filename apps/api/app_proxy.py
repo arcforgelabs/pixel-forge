@@ -52,6 +52,9 @@ SELECTION_SCRIPT_TEMPLATE = """
   let hoverLabel = null;
   let currentTarget = null;
   let selectedElements = [];  // Array of {element, xpath, overlay, badge}
+  let desiredSelections = [];
+  let reconcileFrame = null;
+  let domObserver = null;
   let authFailureSeen = false;
 
   function notifyAuthFailure(status, url) {
@@ -125,6 +128,7 @@ SELECTION_SCRIPT_TEMPLATE = """
     if (hoverOverlay) return;
     hoverOverlay = document.createElement('div');
     hoverOverlay.id = 'pixel-forge-hover-overlay';
+    hoverOverlay.setAttribute('data-pixel-forge-injected', 'true');
     hoverOverlay.style.cssText = `
       position: fixed;
       pointer-events: none;
@@ -139,6 +143,7 @@ SELECTION_SCRIPT_TEMPLATE = """
 
     hoverLabel = document.createElement('div');
     hoverLabel.id = 'pixel-forge-hover-label';
+    hoverLabel.setAttribute('data-pixel-forge-injected', 'true');
     hoverLabel.style.cssText = `
       position: fixed;
       background: #3b82f6;
@@ -167,8 +172,13 @@ SELECTION_SCRIPT_TEMPLATE = """
     return (selections || []).flatMap((entry, index) => {
       if (typeof entry === 'string') {
         return [{
+          id: entry,
           xpath: entry,
-          globalIndex: index + 1
+          globalIndex: index + 1,
+          tagName: '',
+          elementId: null,
+          classList: [],
+          textSample: ''
         }];
       }
 
@@ -177,10 +187,91 @@ SELECTION_SCRIPT_TEMPLATE = """
       }
 
       return [{
+        id: typeof entry.id === 'string' ? entry.id : entry.xpath,
         xpath: entry.xpath,
-        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1)
+        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1),
+        tagName: typeof entry.tagName === 'string' ? entry.tagName : '',
+        elementId: typeof entry.elementId === 'string' ? entry.elementId : null,
+        classList: Array.isArray(entry.classList)
+          ? entry.classList.filter((value) => typeof value === 'string')
+          : [],
+        textSample: typeof entry.textSample === 'string'
+          ? entry.textSample.replace(/\\s+/g, ' ').trim().slice(0, 120)
+          : ''
       }];
     });
+  }
+
+  function normalizeTextSample(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+  }
+
+  function selectionKey(selection) {
+    return String(selection?.id || selection?.xpath || '');
+  }
+
+  function isElementVisiblyRenderable(element) {
+    if (!(element instanceof Element) || !element.isConnected) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function matchesSelectionFingerprint(element, selection) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+
+    if (selection.tagName && element.tagName.toLowerCase() !== selection.tagName) {
+      return false;
+    }
+
+    if (selection.elementId && element.id !== selection.elementId) {
+      return false;
+    }
+
+    if (selection.classList.length > 0) {
+      const matchedClasses = selection.classList.filter((className) => element.classList.contains(className)).length;
+      if (!selection.elementId && matchedClasses === 0) {
+        return false;
+      }
+    }
+
+    const expectedText = normalizeTextSample(selection.textSample);
+    if (expectedText) {
+      const actualText = normalizeTextSample(element.textContent);
+      const expectedPrefix = expectedText.slice(0, 48);
+      if (!actualText || !actualText.includes(expectedPrefix)) {
+        return false;
+      }
+    }
+
+    return isElementVisiblyRenderable(element);
+  }
+
+  function resolveSelectionElement(selection) {
+    const element = findElementByXPath(selection.xpath);
+    if (!element) {
+      return null;
+    }
+
+    return matchesSelectionFingerprint(element, selection) ? element : null;
+  }
+
+  function removeRenderedSelection(entry) {
+    entry.overlay.remove();
+    entry.badge.remove();
+  }
+
+  function shouldIgnoreMutationNode(node) {
+    return node instanceof Element && node.hasAttribute('data-pixel-forge-injected');
   }
 
   // Create persistent selection overlay with badge
@@ -285,6 +376,71 @@ SELECTION_SCRIPT_TEMPLATE = """
     return selectedElements.findIndex(sel => sel.xpath === xpath);
   }
 
+  function scheduleSelectionReconcile() {
+    if (reconcileFrame !== null) {
+      return;
+    }
+
+    reconcileFrame = window.requestAnimationFrame(() => {
+      reconcileFrame = null;
+      reconcileDesiredSelections();
+    });
+  }
+
+  function reconcileDesiredSelections() {
+    const desiredByKey = new Map(desiredSelections.map((selection) => [selectionKey(selection), selection]));
+    const nextRenderedSelections = [];
+
+    for (const entry of selectedElements) {
+      const desiredSelection = desiredByKey.get(entry.selectionKey);
+      if (!desiredSelection) {
+        removeRenderedSelection(entry);
+        continue;
+      }
+
+      const resolvedElement = resolveSelectionElement(desiredSelection);
+      if (!resolvedElement) {
+        removeRenderedSelection(entry);
+        continue;
+      }
+
+      if (entry.element !== resolvedElement) {
+        removeRenderedSelection(entry);
+        continue;
+      }
+
+      entry.globalIndex = normalizeGlobalIndex(desiredSelection.globalIndex, entry.globalIndex);
+      entry.badge.textContent = String(entry.globalIndex);
+      updateSelectionPosition(entry.element, entry.overlay, entry.badge);
+      nextRenderedSelections.push(entry);
+    }
+
+    selectedElements = nextRenderedSelections;
+
+    for (const desiredSelection of desiredSelections) {
+      const key = selectionKey(desiredSelection);
+      if (selectedElements.some((entry) => entry.selectionKey === key)) {
+        continue;
+      }
+
+      const resolvedElement = resolveSelectionElement(desiredSelection);
+      if (!resolvedElement) {
+        continue;
+      }
+
+      const globalIndex = normalizeGlobalIndex(desiredSelection.globalIndex, selectedElements.length + 1);
+      const { overlay, badge } = createSelectionOverlay(resolvedElement, globalIndex);
+      selectedElements.push({
+        selectionKey: key,
+        element: resolvedElement,
+        xpath: desiredSelection.xpath,
+        overlay,
+        badge,
+        globalIndex,
+      });
+    }
+  }
+
   // Get element data for messaging
   function getElementData(element) {
     return {
@@ -294,7 +450,7 @@ SELECTION_SCRIPT_TEMPLATE = """
       elementId: element.id || null,
       classList: [...element.classList],
       xpath: getXPath(element),
-      textContent: element.textContent?.slice(0, 200) || '',
+      textContent: normalizeTextSample(element.textContent).slice(0, 200),
       attributes: Array.from(element.attributes).map(a => ({
         name: a.name,
         value: a.value
@@ -372,12 +528,19 @@ SELECTION_SCRIPT_TEMPLATE = """
   }
 
   // Add element to selection
-  function selectElement(element, notifyParent = true, globalIndex) {
+  function selectElement(element, notifyParent = true, selection = null) {
     const xpath = getXPath(element);
-    const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
+    const resolvedGlobalIndex = normalizeGlobalIndex(selection?.globalIndex, selectedElements.length + 1);
     const { overlay, badge } = createSelectionOverlay(element, resolvedGlobalIndex);
 
-    selectedElements.push({ element, xpath, overlay, badge, globalIndex: resolvedGlobalIndex });
+    selectedElements.push({
+      selectionKey: selectionKey(selection || { xpath }),
+      element,
+      xpath,
+      overlay,
+      badge,
+      globalIndex: resolvedGlobalIndex,
+    });
 
     // Notify parent of selection
     if (notifyParent) {
@@ -416,9 +579,9 @@ SELECTION_SCRIPT_TEMPLATE = """
 
   // Clear all selections
   function clearSelections(notifyParent = true) {
+    desiredSelections = [];
     selectedElements.forEach(sel => {
-      sel.overlay.remove();
-      sel.badge.remove();
+      removeRenderedSelection(sel);
     });
     selectedElements = [];
     if (notifyParent) {
@@ -427,13 +590,8 @@ SELECTION_SCRIPT_TEMPLATE = """
   }
 
   function applySelections(selections) {
-    clearSelections(false);
-    normalizeAppliedSelections(selections).forEach((selection) => {
-      const element = findElementByXPath(selection.xpath);
-      if (element) {
-        selectElement(element, false, selection.globalIndex);
-      }
-    });
+    desiredSelections = normalizeAppliedSelections(selections);
+    reconcileDesiredSelections();
   }
 
   // Notify parent of current selection state
@@ -512,8 +670,10 @@ SELECTION_SCRIPT_TEMPLATE = """
       clearSelections();
     } else if (e.data.type === 'pixel-forge-deselect') {
       const xpath = e.data.xpath;
+      desiredSelections = desiredSelections.filter((selection) => selection.xpath !== xpath);
       const index = selectedElements.findIndex(sel => sel.xpath === xpath);
       if (index >= 0) deselectElement(index);
+      scheduleSelectionReconcile();
     } else if (e.data.type === 'pixel-forge-apply-selections') {
       applySelections(
         Array.isArray(e.data.selections)
@@ -528,14 +688,20 @@ SELECTION_SCRIPT_TEMPLATE = """
   const originalPushState = history.pushState.bind(history);
   history.pushState = function(...args) {
     const result = originalPushState(...args);
-    queueMicrotask(notifyLocationChange);
+    queueMicrotask(() => {
+      notifyLocationChange();
+      scheduleSelectionReconcile();
+    });
     return result;
   };
 
   const originalReplaceState = history.replaceState.bind(history);
   history.replaceState = function(...args) {
     const result = originalReplaceState(...args);
-    queueMicrotask(notifyLocationChange);
+    queueMicrotask(() => {
+      notifyLocationChange();
+      scheduleSelectionReconcile();
+    });
     return result;
   };
 
@@ -544,13 +710,53 @@ SELECTION_SCRIPT_TEMPLATE = """
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
   document.addEventListener('mouseleave', hideHoverOverlay);
-  window.addEventListener('hashchange', notifyLocationChange);
-  window.addEventListener('popstate', notifyLocationChange);
-  window.addEventListener('load', notifyLocationChange);
+  window.addEventListener('hashchange', () => {
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  });
+  window.addEventListener('popstate', () => {
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  });
+  window.addEventListener('load', () => {
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  });
 
   // Update positions on scroll/resize
   window.addEventListener('scroll', updateAllPositions, true);
-  window.addEventListener('resize', updateAllPositions);
+  window.addEventListener('resize', () => {
+    updateAllPositions();
+    scheduleSelectionReconcile();
+  });
+
+  if (!domObserver && document.documentElement) {
+    domObserver = new MutationObserver((mutations) => {
+      const shouldReconcile = mutations.some((mutation) => {
+        if (mutation.type === 'attributes') {
+          return !shouldIgnoreMutationNode(mutation.target);
+        }
+
+        if (shouldIgnoreMutationNode(mutation.target)) {
+          return false;
+        }
+
+        return [...mutation.addedNodes, ...mutation.removedNodes].some(
+          (node) => !shouldIgnoreMutationNode(node)
+        );
+      });
+
+      if (shouldReconcile) {
+        scheduleSelectionReconcile();
+      }
+    });
+    domObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+    });
+  }
 
   const titleElement = document.querySelector('title');
   if (titleElement) {
@@ -570,6 +776,7 @@ SELECTION_SCRIPT_TEMPLATE = """
 
   console.log('[pixel-forge] Selection script v2 loaded (multi-select enabled)');
   notifyLocationChange();
+  scheduleSelectionReconcile();
 })();
 </script>
 """

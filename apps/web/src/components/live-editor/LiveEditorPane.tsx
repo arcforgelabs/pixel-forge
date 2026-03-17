@@ -89,8 +89,35 @@ interface BrowserPreviewEvent {
 }
 
 interface AppliedSelection {
+  id: string
   xpath: string
   globalIndex: number
+  tagName: string
+  elementId: string | null
+  classList: string[]
+  textSample: string
+}
+
+function toAppliedSelection(
+  element: {
+    id: string
+    xpath: string
+    tagName: string
+    elementId: string | null
+    classList: string[]
+    textContent: string
+  },
+  globalIndex: number
+): AppliedSelection {
+  return {
+    id: element.id,
+    xpath: element.xpath,
+    globalIndex,
+    tagName: element.tagName,
+    elementId: element.elementId,
+    classList: element.classList,
+    textSample: element.textContent.replace(/\s+/g, ' ').trim().slice(0, 120),
+  }
 }
 
 function createPreviewTabId(): string {
@@ -318,8 +345,14 @@ export function LiveEditorPane() {
               ? payload.selections.filter((entry): entry is AppliedSelection =>
                 Boolean(entry)
                 && typeof entry === 'object'
+                && typeof entry.id === 'string'
                 && typeof entry.xpath === 'string'
                 && Number.isFinite(entry.globalIndex)
+                && typeof entry.tagName === 'string'
+                && (entry.elementId === null || typeof entry.elementId === 'string')
+                && Array.isArray(entry.classList)
+                && entry.classList.every((value: unknown) => typeof value === 'string')
+                && typeof entry.textSample === 'string'
               )
               : []
           )
@@ -359,10 +392,8 @@ export function LiveEditorPane() {
       .selectedElements
       .flatMap((element, globalIndex) => (
         element.sourceTabId === tab.id
-        && element.sourceUrl === tab.url
           ? [{
-              xpath: element.xpath,
-              globalIndex: globalIndex + 1,
+              ...toAppliedSelection(element, globalIndex + 1),
             }]
           : []
       ))

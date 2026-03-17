@@ -55,6 +55,9 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   let hoverLabel = null;
   let currentTarget = null;
   let selectedElements = [];
+  let desiredSelections = [];
+  let reconcileFrame = null;
+  let domObserver = null;
   async function emit(type, data = {{}}) {{
     try {{
       if (typeof window.__pixelForgeEmit !== 'function') {{
@@ -117,6 +120,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   function createHoverOverlay() {{
     if (hoverOverlay) return;
     hoverOverlay = document.createElement('div');
+    hoverOverlay.setAttribute('data-pixel-forge-injected', 'true');
     hoverOverlay.style.cssText = `
       position: fixed;
       pointer-events: none;
@@ -130,6 +134,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     document.body.appendChild(hoverOverlay);
 
     hoverLabel = document.createElement('div');
+    hoverLabel.setAttribute('data-pixel-forge-injected', 'true');
     hoverLabel.style.cssText = `
       position: fixed;
       background: #3b82f6;
@@ -176,8 +181,13 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     return (selections || []).flatMap((entry, index) => {{
       if (typeof entry === 'string') {{
         return [{{
+          id: entry,
           xpath: entry,
-          globalIndex: index + 1
+          globalIndex: index + 1,
+          tagName: '',
+          elementId: null,
+          classList: [],
+          textSample: ''
         }}];
       }}
 
@@ -186,14 +196,96 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       }}
 
       return [{{
+        id: typeof entry.id === 'string' ? entry.id : entry.xpath,
         xpath: entry.xpath,
-        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1)
+        globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1),
+        tagName: typeof entry.tagName === 'string' ? entry.tagName : '',
+        elementId: typeof entry.elementId === 'string' ? entry.elementId : null,
+        classList: Array.isArray(entry.classList)
+          ? entry.classList.filter((value) => typeof value === 'string')
+          : [],
+        textSample: typeof entry.textSample === 'string'
+          ? entry.textSample.replace(/\\s+/g, ' ').trim().slice(0, 120)
+          : ''
       }}];
     }});
   }}
 
+  function normalizeTextSample(value) {{
+    return String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+  }}
+
+  function selectionKey(selection) {{
+    return String(selection?.id || selection?.xpath || '');
+  }}
+
+  function isElementVisiblyRenderable(element) {{
+    if (!(element instanceof Element) || !element.isConnected) {{
+      return false;
+    }}
+
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {{
+      return false;
+    }}
+
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }}
+
+  function matchesSelectionFingerprint(element, selection) {{
+    if (!(element instanceof Element)) {{
+      return false;
+    }}
+
+    if (selection.tagName && element.tagName.toLowerCase() !== selection.tagName) {{
+      return false;
+    }}
+
+    if (selection.elementId && element.id !== selection.elementId) {{
+      return false;
+    }}
+
+    if (selection.classList.length > 0) {{
+      const matchedClasses = selection.classList.filter((className) => element.classList.contains(className)).length;
+      if (!selection.elementId && matchedClasses === 0) {{
+        return false;
+      }}
+    }}
+
+    const expectedText = normalizeTextSample(selection.textSample);
+    if (expectedText) {{
+      const actualText = normalizeTextSample(element.textContent);
+      const expectedPrefix = expectedText.slice(0, 48);
+      if (!actualText || !actualText.includes(expectedPrefix)) {{
+        return false;
+      }}
+    }}
+
+    return isElementVisiblyRenderable(element);
+  }}
+
+  function resolveSelectionElement(selection) {{
+    const element = findElementByXPath(selection.xpath);
+    if (!element) {{
+      return null;
+    }}
+
+    return matchesSelectionFingerprint(element, selection) ? element : null;
+  }}
+
+  function removeRenderedSelection(entry) {{
+    entry.overlay.remove();
+    entry.badge.remove();
+  }}
+
+  function shouldIgnoreMutationNode(node) {{
+    return node instanceof Element && node.hasAttribute('data-pixel-forge-injected');
+  }}
+
   function createSelectionOverlay(element, globalIndex) {{
     const overlay = document.createElement('div');
+    overlay.setAttribute('data-pixel-forge-injected', 'true');
     overlay.style.cssText = `
       position: fixed;
       pointer-events: none;
@@ -206,6 +298,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     document.body.appendChild(overlay);
 
     const badge = document.createElement('div');
+    badge.setAttribute('data-pixel-forge-injected', 'true');
     badge.textContent = String(globalIndex);
     badge.style.cssText = `
       position: fixed;
@@ -244,7 +337,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       elementId: element.id || null,
       classList: [...element.classList],
       xpath: getXPath(element),
-      textContent: element.textContent?.slice(0, 200) || '',
+      textContent: normalizeTextSample(element.textContent).slice(0, 200),
       attributes: Array.from(element.attributes).map((attribute) => ({{
         name: attribute.name,
         value: attribute.value
@@ -258,6 +351,71 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   function isSelected(element) {{
     const xpath = getXPath(element);
     return selectedElements.findIndex((sel) => sel.xpath === xpath);
+  }}
+
+  function scheduleSelectionReconcile() {{
+    if (reconcileFrame !== null) {{
+      return;
+    }}
+
+    reconcileFrame = window.requestAnimationFrame(() => {{
+      reconcileFrame = null;
+      reconcileDesiredSelections();
+    }});
+  }}
+
+  function reconcileDesiredSelections() {{
+    const desiredByKey = new Map(desiredSelections.map((selection) => [selectionKey(selection), selection]));
+    const nextRenderedSelections = [];
+
+    for (const entry of selectedElements) {{
+      const desiredSelection = desiredByKey.get(entry.selectionKey);
+      if (!desiredSelection) {{
+        removeRenderedSelection(entry);
+        continue;
+      }}
+
+      const resolvedElement = resolveSelectionElement(desiredSelection);
+      if (!resolvedElement) {{
+        removeRenderedSelection(entry);
+        continue;
+      }}
+
+      if (entry.element !== resolvedElement) {{
+        removeRenderedSelection(entry);
+        continue;
+      }}
+
+      entry.globalIndex = normalizeGlobalIndex(desiredSelection.globalIndex, entry.globalIndex);
+      entry.badge.textContent = String(entry.globalIndex);
+      updateSelectionPosition(entry.element, entry.overlay, entry.badge);
+      nextRenderedSelections.push(entry);
+    }}
+
+    selectedElements = nextRenderedSelections;
+
+    for (const desiredSelection of desiredSelections) {{
+      const key = selectionKey(desiredSelection);
+      if (selectedElements.some((entry) => entry.selectionKey === key)) {{
+        continue;
+      }}
+
+      const resolvedElement = resolveSelectionElement(desiredSelection);
+      if (!resolvedElement) {{
+        continue;
+      }}
+
+      const globalIndex = normalizeGlobalIndex(desiredSelection.globalIndex, selectedElements.length + 1);
+      const {{ overlay, badge }} = createSelectionOverlay(resolvedElement, globalIndex);
+      selectedElements.push({{
+        selectionKey: key,
+        element: resolvedElement,
+        xpath: desiredSelection.xpath,
+        overlay,
+        badge,
+        globalIndex,
+      }});
+    }}
   }}
 
   function highlightElement(element) {{
@@ -295,11 +453,18 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }});
   }}
 
-  async function selectElement(element, notifyParent = true, globalIndex) {{
+  async function selectElement(element, notifyParent = true, selection = null) {{
     const xpath = getXPath(element);
-    const resolvedGlobalIndex = normalizeGlobalIndex(globalIndex, selectedElements.length + 1);
+    const resolvedGlobalIndex = normalizeGlobalIndex(selection?.globalIndex, selectedElements.length + 1);
     const {{ overlay, badge }} = createSelectionOverlay(element, resolvedGlobalIndex);
-    selectedElements.push({{ element, xpath, overlay, badge, globalIndex: resolvedGlobalIndex }});
+    selectedElements.push({{
+      selectionKey: selectionKey(selection || {{ xpath }}),
+      element,
+      xpath,
+      overlay,
+      badge,
+      globalIndex: resolvedGlobalIndex,
+    }});
 
     if (notifyParent) {{
       await emit('browser-element-selected', getElementData(element));
@@ -325,9 +490,9 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   }}
 
   async function clearSelections(notifyParent = true) {{
+    desiredSelections = [];
     selectedElements.forEach((selected) => {{
-      selected.overlay.remove();
-      selected.badge.remove();
+      removeRenderedSelection(selected);
     }});
     selectedElements = [];
     if (notifyParent) {{
@@ -339,13 +504,8 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   }}
 
   async function applySelections(selections) {{
-    await clearSelections(false);
-    for (const selection of normalizeAppliedSelections(selections)) {{
-      const element = findElementByXPath(selection.xpath);
-      if (element) {{
-        await selectElement(element, false, selection.globalIndex);
-      }}
-    }}
+    desiredSelections = normalizeAppliedSelections(selections);
+    reconcileDesiredSelections();
   }}
 
   async function handleClick(event) {{
@@ -391,14 +551,20 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   const originalPushState = history.pushState.bind(history);
   history.pushState = function(...args) {{
     const result = originalPushState(...args);
-    queueMicrotask(notifyLocationChange);
+    queueMicrotask(() => {{
+      notifyLocationChange();
+      scheduleSelectionReconcile();
+    }});
     return result;
   }};
 
   const originalReplaceState = history.replaceState.bind(history);
   history.replaceState = function(...args) {{
     const result = originalReplaceState(...args);
-    queueMicrotask(notifyLocationChange);
+    queueMicrotask(() => {{
+      notifyLocationChange();
+      scheduleSelectionReconcile();
+    }});
     return result;
   }};
 
@@ -419,10 +585,12 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       return true;
     }},
     async deselect(xpath) {{
+      desiredSelections = desiredSelections.filter((selection) => selection.xpath !== xpath);
       const index = selectedElements.findIndex((entry) => entry.xpath === xpath);
       if (index >= 0) {{
         await deselectElement(index, false);
       }}
+      scheduleSelectionReconcile();
       return true;
     }},
     async applySelections(selections) {{
@@ -441,11 +609,51 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
   document.addEventListener('mouseleave', hideHoverOverlay);
-  window.addEventListener('hashchange', notifyLocationChange);
-  window.addEventListener('popstate', notifyLocationChange);
-  window.addEventListener('load', notifyLocationChange);
+  window.addEventListener('hashchange', () => {{
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  }});
+  window.addEventListener('popstate', () => {{
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  }});
+  window.addEventListener('load', () => {{
+    notifyLocationChange();
+    scheduleSelectionReconcile();
+  }});
   window.addEventListener('scroll', updateAllPositions, true);
-  window.addEventListener('resize', updateAllPositions);
+  window.addEventListener('resize', () => {{
+    updateAllPositions();
+    scheduleSelectionReconcile();
+  }});
+
+  if (!domObserver && document.documentElement) {{
+    domObserver = new MutationObserver((mutations) => {{
+      const shouldReconcile = mutations.some((mutation) => {{
+        if (mutation.type === 'attributes') {{
+          return !shouldIgnoreMutationNode(mutation.target);
+        }}
+
+        if (shouldIgnoreMutationNode(mutation.target)) {{
+          return false;
+        }}
+
+        return [...mutation.addedNodes, ...mutation.removedNodes].some(
+          (node) => !shouldIgnoreMutationNode(node)
+        );
+      }});
+
+      if (shouldReconcile) {{
+        scheduleSelectionReconcile();
+      }}
+    }});
+    domObserver.observe(document.documentElement, {{
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+    }});
+  }}
 
   const titleElement = document.querySelector('title');
   if (titleElement) {{
@@ -454,6 +662,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
   }}
 
   notifyLocationChange();
+  scheduleSelectionReconcile();
 }})();
 """
 

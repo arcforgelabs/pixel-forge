@@ -263,8 +263,13 @@ class LivePreviewLoadRequest(BaseModel):
 
 
 class AppliedSelectionRequest(BaseModel):
+    id: str
     xpath: str
     globalIndex: int
+    tagName: str
+    elementId: str | None = None
+    classList: list[str] = []
+    textSample: str = ""
 
 
 class BrowserPreviewCommandRequest(BaseModel):
@@ -640,8 +645,13 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
                 payload.browser_tab_id,
                 [
                     {
+                        "id": selection.id,
                         "xpath": selection.xpath,
                         "globalIndex": selection.globalIndex,
+                        "tagName": selection.tagName,
+                        "elementId": selection.elementId,
+                        "classList": selection.classList,
+                        "textSample": selection.textSample,
                     }
                     for selection in (payload.selections or [])
                 ]
