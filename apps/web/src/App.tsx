@@ -24,6 +24,7 @@ import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { IS_TARGET_MODE, TARGET_PROJECT_PATH } from "./config";
+import type { PixelForgeDesktopBootstrapState } from "./types/pixel-forge-desktop";
 
 function App() {
   const {
@@ -75,12 +76,73 @@ function App() {
 
   // Project selector state - show on first load if no project is set
   const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [desktopBootstrapState, setDesktopBootstrapState] =
+    useState<PixelForgeDesktopBootstrapState | null>(null);
+  const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!window.pixelForgeDesktop?.app) {
+      setDesktopBootstrapLoaded(true);
+      return;
+    }
+
+    void window.pixelForgeDesktop.app
+      .consumeBootstrapState()
+      .then((state) => {
+        setDesktopBootstrapState(state);
+      })
+      .catch((error) => {
+        console.error("[app] Failed to consume desktop bootstrap state:", error);
+      })
+      .finally(() => {
+        setDesktopBootstrapLoaded(true);
+      });
+  }, []);
 
   useEffect(() => {
     void hydrateProjects().catch((error) => {
       console.error("[app] Failed to hydrate projects:", error);
     });
   }, [hydrateProjects]);
+
+  useEffect(() => {
+    if (!desktopBootstrapLoaded || !desktopBootstrapState || !projectsLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        if (desktopBootstrapState.projectPath) {
+          await setProject({
+            path: desktopBootstrapState.projectPath,
+            previewUrl: desktopBootstrapState.previewUrl || undefined,
+          });
+        }
+
+        if (!cancelled && desktopBootstrapState.activeMode) {
+          switchMode(desktopBootstrapState.activeMode);
+        }
+      } catch (error) {
+        console.error("[app] Failed to restore desktop bootstrap state:", error);
+      } finally {
+        if (!cancelled) {
+          setDesktopBootstrapState(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    desktopBootstrapLoaded,
+    desktopBootstrapState,
+    projectsLoaded,
+    setProject,
+    switchMode,
+  ]);
 
   useEffect(() => {
     if (!IS_TARGET_MODE || !TARGET_PROJECT_PATH || !projectsLoaded || projectPath) {

@@ -957,6 +957,20 @@ def _is_remote_preview(url: str | None) -> bool:
     return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
 
 
+def _is_pixel_forge_workspace(project_path: str | None) -> bool:
+    if not project_path:
+        return False
+
+    project_root = Path(normalize_project_path(project_path))
+    required_paths = (
+        "start-dev.sh",
+        "apps/api/main.py",
+        "apps/web/package.json",
+        "apps/desktop/package.json",
+    )
+    return all((project_root / relative_path).exists() for relative_path in required_paths)
+
+
 def _selection_tunnel_file(project_path: str, request_id: str) -> Path:
     project_root = Path(normalize_project_path(project_path)).resolve()
     request_root = (project_root / ".pixel-forge" / "requests").resolve()
@@ -976,6 +990,7 @@ def build_live_editor_dispatch_prompt(
     *,
     preview_url: str | None = None,
     selection_tunnel_url: str | None = None,
+    self_edit_safe_mode: bool = False,
 ) -> str:
     base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
 
@@ -986,6 +1001,12 @@ Make the smallest correct change, avoid AskUserQuestion for this request, and fi
         base += f"""
 
 If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
+
+    if self_edit_safe_mode:
+        base += """
+
+This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
+Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
 
     if _is_remote_preview(preview_url):
         base += f"""
@@ -1688,6 +1709,13 @@ async def live_editor_chat(websocket: WebSocket):
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
+                self_edit_safe_mode = _is_pixel_forge_workspace(project_path)
+                selection_count = 0
+                if isinstance(selection_tunnel, dict):
+                    raw_selections = selection_tunnel.get("selections")
+                    if isinstance(raw_selections, list):
+                        selection_count = len(raw_selections)
+
                 upsert_project(
                     project_path,
                     name=project_name_for_path(project_path),
@@ -1729,6 +1757,10 @@ async def live_editor_chat(websocket: WebSocket):
                     attachments,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
+                    extra_working_rules=[
+                        "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
+                        "- Leave install/restart activation for after the request completes. Use verification commands that do not replace the running controller.",
+                    ] if self_edit_safe_mode else None,
                 )
                 thread = update_live_editor_thread(
                     thread.thread_id,
@@ -1743,6 +1775,8 @@ async def live_editor_chat(websocket: WebSocket):
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
                         "request_id": request_pack.request_id,
+                        "selection_count": selection_count,
+                        "self_edit_safe_mode": self_edit_safe_mode,
                     }
                 )
                 await websocket.send_json(
@@ -1766,6 +1800,7 @@ async def live_editor_chat(websocket: WebSocket):
                         if request_pack.relative_selection_tunnel_file
                         else None
                     ),
+                    self_edit_safe_mode=self_edit_safe_mode,
                 )
                 jsonl_path = session_info.jsonl_path
                 start_offset = (
@@ -1830,6 +1865,8 @@ async def live_editor_chat(websocket: WebSocket):
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
                         "request_id": request_pack.request_id,
+                        "selection_count": selection_count,
+                        "self_edit_safe_mode": self_edit_safe_mode,
                         "is_remote_target": _is_remote_preview(preview_url or None),
                     }
                 )

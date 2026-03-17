@@ -8,6 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$HOME/.local/lib/pixel-forge"
+BACKUP_DIR="$HOME/.local/lib/pixel-forge.rollback"
 BIN_DIR="$HOME/.local/bin"
 WEB_DIR="$SCRIPT_DIR/apps/web"
 DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
@@ -16,6 +17,22 @@ DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
     [ -d "$p" ] && case ":$PATH:" in *":$p:"*) ;; *) export PATH="$p:$PATH" ;; esac
 done
+
+backup_install_dir() {
+    if [ ! -d "$INSTALL_DIR" ]; then
+        return
+    fi
+
+    rm -rf "$BACKUP_DIR"
+    mkdir -p "$BACKUP_DIR"
+
+    shopt -s dotglob nullglob
+    for item in "$INSTALL_DIR"/*; do
+        [ "$(basename "$item")" = ".venv" ] && continue
+        cp -a "$item" "$BACKUP_DIR/"
+    done
+    shopt -u dotglob nullglob
+}
 
 echo "Installing pixel-forge..."
 
@@ -34,6 +51,9 @@ fi
 # --- Install backend ---
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
+
+echo "Backing up current install to $BACKUP_DIR..."
+backup_install_dir
 
 echo "Copying API to $INSTALL_DIR..."
 # Clean old files but preserve .venv
@@ -79,6 +99,7 @@ cat > "$BIN_DIR/pixel-forge" << 'LAUNCHER'
 # pixel-forge — start or manage the Pixel Forge service
 
 INSTALL_DIR="$HOME/.local/lib/pixel-forge"
+BACKUP_DIR="$HOME/.local/lib/pixel-forge.rollback"
 SERVICE="pixel-forge"
 PORT="${PIXEL_FORGE_PORT:-7001}"
 URL="http://pixel-forge.localhost:$PORT"
@@ -108,6 +129,18 @@ case "${1:-start}" in
         sleep 1
         "$0" start
         ;;
+    rollback)
+        if [ ! -d "$BACKUP_DIR" ]; then
+            echo "No rollback build available."
+            exit 1
+        fi
+        "$0" stop
+        mkdir -p "$INSTALL_DIR"
+        find "$INSTALL_DIR" -maxdepth 1 -not -name '.venv' -not -name "$(basename "$INSTALL_DIR")" -exec rm -rf {} + 2>/dev/null || true
+        cp -a "$BACKUP_DIR"/. "$INSTALL_DIR"/
+        "$0" start
+        echo "Pixel Forge rolled back to the previous installed build."
+        ;;
     status)
         if systemctl --user cat "$SERVICE" &>/dev/null; then
             systemctl --user status "$SERVICE" --no-pager
@@ -134,12 +167,13 @@ case "${1:-start}" in
         exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/selection_tunnel_cli.py" "$@"
         ;;
     --help|-h)
-        echo "Usage: pixel-forge [start|stop|restart|status|logs|open|open-web|tunnel]"
+        echo "Usage: pixel-forge [start|stop|restart|rollback|status|logs|open|open-web|tunnel]"
         echo ""
         echo "Commands:"
         echo "  start     Start the service (default)"
         echo "  stop      Stop the service"
         echo "  restart   Restart the service"
+        echo "  rollback  Restore the previous installed build"
         echo "  status    Show service status"
         echo "  logs      Tail service logs"
         echo "  open      Open the desktop shell"
@@ -246,6 +280,7 @@ echo "  pixel-forge start    # Start the service"
 echo "  pixel-forge stop     # Stop it"
 echo "  pixel-forge open     # Open the desktop shell"
 echo "  pixel-forge open-web # Open the raw web UI"
+echo "  pixel-forge rollback # Restore the previous installed build"
 echo "  pixel-forge tunnel --project <path> --request <id>"
 echo "  pixel-forge-shell    # Open the desktop shell"
 echo "  pixel-forge logs     # Tail logs"

@@ -17,6 +17,11 @@ import {
   buildSelectionArtifacts,
   type SelectionRecord,
 } from '../selection-engine'
+import {
+  buildCompletionSummary,
+  summarizeBackendStatus,
+  summarizeToolStatus,
+} from '../chat-status'
 
 // ============================================================================
 // Types
@@ -41,12 +46,14 @@ export interface ChatAttachment {
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'system'
   content: string
   attachments?: ChatAttachment[]
   timestamp: Date
   toolActivity?: ToolActivity
   isRemoteComplete?: boolean
+  systemTone?: 'info' | 'success' | 'error'
+  canApplyControllerUpdate?: boolean
 }
 
 export interface SelectedElement extends SelectionRecord {
@@ -59,6 +66,9 @@ interface LiveEditorChatStore {
   isStreaming: boolean
   currentStreamContent: string
   currentTool: ToolActivity | null
+  currentStatusMessage: string
+  currentSelectionCount: number
+  currentRequestId: string | null
 
   // Connection state
   ws: WebSocket | null
@@ -132,6 +142,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   isStreaming: false,
   currentStreamContent: '',
   currentTool: null,
+  currentStatusMessage: '',
+  currentSelectionCount: 0,
+  currentRequestId: null,
   ws: null,
   connected: false,
   selectedElements: [],
@@ -166,6 +179,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           // Streaming text content
           set((state) => ({
             currentStreamContent: state.currentStreamContent + data.content,
+            currentStatusMessage: state.currentStatusMessage || 'Receiving agent response...',
           }))
           break
 
@@ -179,6 +193,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           }
           set((state) => ({
             currentTool: toolActivity,
+            currentStatusMessage: summarizeToolStatus(
+              toolActivity.tool,
+              toolActivity.input,
+              'running'
+            ),
             messages: [
               ...state.messages,
               {
@@ -210,7 +229,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
                   }
                 : msg
             )
-            set({ messages: updatedMessages, currentTool: null })
+            set({
+              messages: updatedMessages,
+              currentTool: null,
+              currentStatusMessage: summarizeToolStatus(
+                currentTool.tool,
+                currentTool.input,
+                data.is_error ? 'error' : 'complete'
+              ),
+            })
           }
           break
         }
@@ -219,6 +246,30 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           // Response complete
           const { currentStreamContent, messages: msgs } = get()
           const isRemoteTarget = !!data.is_remote_target
+          const isSelfEditSafeMode = !!data.self_edit_safe_mode
+          const requestId =
+            typeof data.request_id === 'string' && data.request_id
+              ? data.request_id
+              : get().currentRequestId
+          const selectionCount =
+            Number.isFinite(Number(data.selection_count))
+              ? Number(data.selection_count)
+              : get().currentSelectionCount
+          const completionMessage: ChatMessage = {
+            id: generateId(),
+            role: 'system',
+            content: buildCompletionSummary({
+              requestId,
+              selectionCount,
+              selfEditSafeMode: isSelfEditSafeMode,
+              isRemoteTarget,
+            }),
+            timestamp: new Date(),
+            isRemoteComplete: isRemoteTarget || undefined,
+            systemTone: 'success',
+            canApplyControllerUpdate: isSelfEditSafeMode || undefined,
+          }
+
           if (currentStreamContent) {
             set({
               messages: [
@@ -228,29 +279,26 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
                   role: 'assistant',
                   content: currentStreamContent,
                   timestamp: new Date(),
-                  isRemoteComplete: isRemoteTarget || undefined,
                 },
+                completionMessage,
               ],
               currentStreamContent: '',
               isStreaming: false,
+              currentStatusMessage: '',
+              currentSelectionCount: 0,
+              currentRequestId: null,
             })
-          } else if (isRemoteTarget) {
-            // No streamed content but remote target — add a refresh prompt message
+          } else {
             set({
               messages: [
                 ...get().messages,
-                {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: 'Code changes complete. Deploy may be in progress — refresh the preview when ready.',
-                  timestamp: new Date(),
-                  isRemoteComplete: true,
-                },
+                completionMessage,
               ],
               isStreaming: false,
+              currentStatusMessage: '',
+              currentSelectionCount: 0,
+              currentRequestId: null,
             })
-          } else {
-            set({ isStreaming: false })
           }
           if (data.session_id) {
             useSessionStore.getState().setLiveEditorSession({
@@ -275,6 +323,16 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               requestId: data.request_id ?? null,
             })
           }
+          set({
+            currentRequestId:
+              typeof data.request_id === 'string' && data.request_id
+                ? data.request_id
+                : get().currentRequestId,
+            currentSelectionCount:
+              Number.isFinite(Number(data.selection_count))
+                ? Number(data.selection_count)
+                : get().currentSelectionCount,
+          })
           break
         }
 
@@ -291,19 +349,59 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             ],
             isStreaming: false,
             currentStreamContent: '',
+            currentStatusMessage: '',
+            currentSelectionCount: 0,
+            currentRequestId: null,
           })
           break
 
         case 'status':
-          // Status updates (e.g., "Finding element...")
-          // Could add to a separate statusMessage state if needed
-          console.log('[live-editor] Status:', data.message)
+          set({
+            currentStatusMessage: summarizeBackendStatus(
+              typeof data.message === 'string' ? data.message : ''
+            ),
+          })
           break
       }
     }
 
     newWs.onclose = () => {
-      set({ ws: null, connected: false })
+      const {
+        isStreaming,
+        currentStreamContent,
+        messages,
+      } = get()
+
+      if (isStreaming) {
+        const nextMessages = [...messages]
+        if (currentStreamContent) {
+          nextMessages.push({
+            id: generateId(),
+            role: 'assistant',
+            content: currentStreamContent,
+            timestamp: new Date(),
+          })
+        }
+        nextMessages.push({
+          id: generateId(),
+          role: 'system',
+          content: 'Live Editor connection closed before completion.',
+          timestamp: new Date(),
+          systemTone: 'error',
+        })
+        set({
+          ws: null,
+          connected: false,
+          isStreaming: false,
+          currentStreamContent: '',
+          currentStatusMessage: '',
+          currentSelectionCount: 0,
+          currentRequestId: null,
+          messages: nextMessages,
+        })
+      } else {
+        set({ ws: null, connected: false })
+      }
       console.log('[live-editor] WebSocket disconnected')
     }
 
@@ -388,6 +486,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       ],
       isStreaming: true,
       currentStreamContent: '',
+      currentStatusMessage:
+        selectionTunnel.selections.length > 0
+          ? `Preparing request with ${selectionTunnel.selections.length} selection${selectionTunnel.selections.length === 1 ? '' : 's'}...`
+          : 'Preparing live edit request...',
+      currentSelectionCount: selectionTunnel.selections.length,
+      currentRequestId: null,
     })
 
     const previewUrl = useSessionStore.getState().previewUrl
@@ -421,7 +525,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], currentStreamContent: '' })
+    set({
+      messages: [],
+      currentStreamContent: '',
+      currentStatusMessage: '',
+      currentSelectionCount: 0,
+      currentRequestId: null,
+    })
   },
 
   newSession: () => {
@@ -429,6 +539,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     set({
       messages: [],
       currentStreamContent: '',
+      currentStatusMessage: '',
+      currentSelectionCount: 0,
+      currentRequestId: null,
       selectedElements: [],
     })
   },

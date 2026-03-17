@@ -133,6 +133,7 @@ def create_request_pack(
     *,
     agent_deck_session_id: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
+    extra_working_rules: list[str] | None = None,
 ) -> RequestPack:
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
@@ -188,6 +189,14 @@ def create_request_pack(
     ]
     if agent_deck_session_id:
         request_sections.append(f"- Agent Deck Session ID: `{agent_deck_session_id}`")
+    working_rules = [
+        "- Read this request pack before changing code.",
+        "- Make the smallest correct change.",
+        "- Do not use AskUserQuestion for this request. Make the smallest reasonable assumption and state it in the final confirmation if needed.",
+        "- Briefly confirm what you changed when you are done.",
+    ]
+    if extra_working_rules:
+        working_rules.extend(extra_working_rules)
     request_sections.extend(
         [
             "",
@@ -197,10 +206,7 @@ def create_request_pack(
             "",
             "## Working Rules",
             "",
-            "- Read this request pack before changing code.",
-            "- Make the smallest correct change.",
-            "- Do not use AskUserQuestion for this request. Make the smallest reasonable assumption and state it in the final confirmation if needed.",
-            "- Briefly confirm what you changed when you are done.",
+            *working_rules,
         ]
     )
     if relative_selected_path:

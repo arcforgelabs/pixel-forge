@@ -71,6 +71,9 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, state DB path, and managed-browser profile path.
 - `REQ-E-002:` Target runtimes must suppress controller-only startup behavior that blocks inspection or invites accidental recursive control loops.
+- `REQ-E-003:` A Pixel Forge self-edit request must not restart or replace the active Pixel Forge controller before the current live-edit stream finishes.
+- `REQ-E-004:` Self-edit activation should stage repo changes first and leave install/restart activation to an explicit post-run step rather than cutting off the in-flight broker session.
+- `REQ-E-005:` The installed controller path must keep at least one rollback build so a broken self-update can be reverted quickly.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -80,10 +83,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` The new selection engine and selection tunnel need real-world proof across hybrid and hostile preview surfaces.
-- Why it is the limiter: Pixel Forge can now keep shared selection state across tabs and view churn, but the product still rises or falls on whether those selections stay truthful on canvas-heavy apps, auth-heavy sites, and self-edit targets.
-- Smallest complete unit to attack it: Prove automatic DOM-vs-region selection plus frozen tunnel inspection against one DOM page and one canvas-like page inside the shell, then hammer a real target that mixes both.
-- Immediate proof target: Select one normal DOM element and one canvas-like region, confirm both survive into the request pack as inspectable tunnel artifacts, and confirm the overlay engine only reattaches them on the matching view.
+- `[active]` Pixel Forge self-edit runs can still cut off their own in-flight chat stream if the agent applies an install/restart to the controller before the request completes.
+- Why it is the limiter: self-edit is a core flywheel for the product, and losing the controller stream mid-run makes Pixel Forge look unreliable exactly when it is supposed to improve itself.
+- Smallest complete unit to attack it: make self-edit requests controller-safe by default, keep install/restart out of the active run, and prove the chat reaches a clean completion state while the repo changes are still fully applied.
+- Immediate proof target: dispatch a Pixel Forge self-edit request, confirm the request pack and dispatch prompt forbid controller restart, and confirm the run can reach completion without losing the in-app transcript.
 
 # Current Proof Status
 
@@ -100,6 +103,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` The product preview path now treats embedded Chromium as the only supported Live Editor surface. Basis: the launcher defaults to the shell, `Save & Edit Live` now hands URLs straight to Live Editor state instead of configuring the proxy, and the browser-only Live Editor path now blocks with a shell-required message.
 - `[validated]` Pixel Forge can now launch a sibling Pixel Forge target runtime for self-editing without sharing controller ports, DB state, or managed-browser profile state. Basis: the backend local-target launcher allocates isolated runtime settings and the controller opens the returned target URL inside the existing preview-tab system.
 - `[validated]` Target runtimes no longer block self-edit inspection with controller-first startup UI. Basis: target mode suppresses the auto-open project selector, auto-binds the launched workspace as the current project, hides the recursive launch control, and labels the runtime as a target instance.
+- `[unvalidated]` Pixel Forge self-edit requests now stay controller-safe through completion instead of restarting the active broker mid-stream. Basis: request-pack and dispatch-prompt guardrails exist, but the full self-edit loop has not yet been re-proven end to end.
 - `[validated]` Live Editor request packs now include a structured `selection-tunnel.json` artifact and can expose it back through a local API/CLI path. Basis: request-pack smoke created the tunnel file, registered it in the manifest, and the backend now serves `/api/live-editor/selection-tunnel`.
 - `[validated]` Pixel Forge now stores screenshot evidence alongside selection context so non-DOM selections can carry frozen visual state into the request pack. Basis: the shell selection bridge now captures bounded image crops during selection and the frontend includes them as request-pack attachments.
 - `[unvalidated]` Automatic selector routing is good enough across real hybrid DOM/canvas/WebGL apps, not just synthetic cases. Basis: implemented in the shell selection engine, but not yet hammered against a wider hostile sample.

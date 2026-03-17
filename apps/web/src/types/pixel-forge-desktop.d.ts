@@ -59,11 +59,23 @@ export interface PixelForgeDesktopOverlayAPI {
   }): Promise<string | null>
 }
 
+export interface PixelForgeDesktopBootstrapState {
+  projectPath: string | null
+  previewUrl: string | null
+  activeMode: 'screenshot' | 'live-editor' | null
+}
+
+export interface PixelForgeDesktopAppAPI {
+  applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
+  consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
+}
+
 declare global {
   interface Window {
     pixelForgeDesktop?: {
       preview: PixelForgeDesktopPreviewAPI
       overlay: PixelForgeDesktopOverlayAPI
+      app: PixelForgeDesktopAppAPI
     }
   }
 }

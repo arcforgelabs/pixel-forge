@@ -318,6 +318,7 @@ export function LiveEditorPane() {
   const {
     projectPath,
     previewUrl,
+    activeMode,
     setPreviewUrl,
   } = useSessionStore()
 
@@ -332,6 +333,7 @@ export function LiveEditorPane() {
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
   const desktopOverlayRef = useRef(window.pixelForgeDesktop?.overlay ?? null)
+  const desktopAppRef = useRef(window.pixelForgeDesktop?.app ?? null)
 
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
@@ -753,6 +755,35 @@ export function LiveEditorPane() {
 
     setShowUrlHistory((current) => !current)
   }, [currentProjectUrls, loadApp, targetUrl])
+
+  const applyControllerUpdate = useCallback(async () => {
+    const desktopApp = desktopAppRef.current
+    if (!desktopApp) {
+      toast.error('Applying controller updates requires the Pixel Forge desktop shell.')
+      return
+    }
+    if (!projectPath) {
+      toast.error('No project is selected.')
+      return
+    }
+
+    const toastId = toast.loading('Loading updated Pixel Forge build...')
+    try {
+      await desktopApp.applyControllerUpdate({
+        projectPath,
+        previewUrl,
+        activeMode,
+      })
+      toast.dismiss(toastId)
+    } catch (error) {
+      toast.dismiss(toastId)
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to load updated Pixel Forge build'
+      )
+    }
+  }, [activeMode, previewUrl, projectPath])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -1785,7 +1816,10 @@ export function LiveEditorPane() {
               value="chat"
               className="m-0 h-full min-w-0 overflow-hidden"
             >
-              <ChatMessages onRefreshPreview={() => void refreshApp()} />
+              <ChatMessages
+                onRefreshPreview={() => void refreshApp()}
+                onApplyControllerUpdate={() => void applyControllerUpdate()}
+              />
             </TabsContent>
 
             <TabsContent

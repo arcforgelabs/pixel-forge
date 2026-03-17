@@ -25,4 +25,10 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
   overlay: {
     pickList: (payload) => ipcRenderer.invoke('pixel-forge-overlay:pick-list', payload),
   },
+  app: {
+    applyControllerUpdate: (payload) =>
+      ipcRenderer.invoke('pixel-forge-app:apply-controller-update', payload),
+    consumeBootstrapState: () =>
+      ipcRenderer.invoke('pixel-forge-app:consume-bootstrap-state'),
+  },
 })

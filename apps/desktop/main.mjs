@@ -1,4 +1,5 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,6 +17,7 @@ let attachedPreviewView = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
+let pendingBootstrapState = null
 
 const previewViews = new Map()
 const webContentsTabIds = new Map()
@@ -151,6 +153,86 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function sanitizeBootstrapState(payload) {
+  return {
+    projectPath:
+      typeof payload?.projectPath === 'string' && payload.projectPath.trim()
+        ? payload.projectPath.trim()
+        : null,
+    previewUrl:
+      typeof payload?.previewUrl === 'string' && payload.previewUrl.trim()
+        ? payload.previewUrl.trim()
+        : null,
+    activeMode:
+      payload?.activeMode === 'live-editor' || payload?.activeMode === 'screenshot'
+        ? payload.activeMode
+        : null,
+  }
+}
+
+function runShellCommand(command, cwd) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('bash', ['-lc', command], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+
+    proc.on('error', reject)
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr })
+        return
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `Command failed: ${command}`))
+    })
+  })
+}
+
+async function waitForShellReady(timeoutMs = 90000) {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(SHELL_URL, { cache: 'no-store' })
+      if (response.ok) {
+        return
+      }
+    } catch {
+      // Retry until the service is ready again.
+    }
+    await sleep(1000)
+  }
+
+  throw new Error('Pixel Forge did not come back after update.')
+}
+
+async function applyControllerUpdate(projectPath, bootstrapState) {
+  const sanitizedState = sanitizeBootstrapState(bootstrapState)
+  if (!sanitizedState.projectPath) {
+    throw new Error('projectPath is required')
+  }
+
+  pendingBootstrapState = sanitizedState
+  await runShellCommand('./install.sh && pixel-forge restart', sanitizedState.projectPath)
+  await waitForShellReady()
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.webContents.loadURL(SHELL_URL)
+  }
+
+  return { ok: true }
 }
 
 async function settleAbortedNavigation(view, fallbackUrl) {
@@ -507,6 +589,19 @@ app.whenReady().then(() => {
 
   ipcMain.handle('pixel-forge-overlay:pick-list', async (_event, payload) => {
     return showPickListOverlay(payload)
+  })
+
+  ipcMain.handle('pixel-forge-app:apply-controller-update', async (_event, payload) => {
+    return applyControllerUpdate(
+      typeof payload?.projectPath === 'string' ? payload.projectPath : '',
+      payload,
+    )
+  })
+
+  ipcMain.handle('pixel-forge-app:consume-bootstrap-state', async () => {
+    const state = pendingBootstrapState
+    pendingBootstrapState = null
+    return state
   })
 
   ipcMain.on('pixel-forge-overlay:list-selected', (_event, value) => {

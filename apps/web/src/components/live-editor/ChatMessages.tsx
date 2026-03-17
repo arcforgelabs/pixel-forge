@@ -13,14 +13,23 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
 import { ToolCard } from './ToolCard'
-import { FileText, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileText, RefreshCw } from 'lucide-react'
 
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
+  onApplyControllerUpdate?: () => void
 }
 
-export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
-  const { messages, isStreaming, currentStreamContent } = useLiveEditorStore()
+export function ChatMessages({
+  onRefreshPreview,
+  onApplyControllerUpdate,
+}: ChatMessagesProps) {
+  const {
+    messages,
+    isStreaming,
+    currentStreamContent,
+    currentStatusMessage,
+  } = useLiveEditorStore()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll to bottom when messages change
@@ -56,6 +65,46 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
           >
             {msg.role === 'tool' && msg.toolActivity ? (
               <ToolCard activity={msg.toolActivity} />
+            ) : msg.role === 'system' ? (
+              <div className="flex w-full justify-center">
+                <div
+                  className={`max-w-[calc(100%-1.5rem)] rounded-2xl px-3 py-2 text-xs ${
+                    msg.systemTone === 'error'
+                      ? 'border border-destructive/25 bg-destructive/10 text-destructive-foreground'
+                      : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {msg.systemTone === 'error' ? (
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                    )}
+                    <span className="break-words [overflow-wrap:anywhere]">{msg.content}</span>
+                  </div>
+                  {msg.isRemoteComplete && onRefreshPreview && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
+                      onClick={onRefreshPreview}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Refresh Preview
+                    </Button>
+                  )}
+                  {msg.canApplyControllerUpdate && onApplyControllerUpdate && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                      onClick={onApplyControllerUpdate}
+                    >
+                      Load Updated Pixel Forge
+                    </Button>
+                  )}
+                </div>
+              </div>
             ) : (
               <div
                 className={`forge-msg-enter ${
@@ -126,6 +175,11 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
               <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
                 <ReactMarkdown>{currentStreamContent}</ReactMarkdown>
               </div>
+              {currentStatusMessage && (
+                <p className="mt-2 text-[11px] text-muted-foreground/80">
+                  {currentStatusMessage}
+                </p>
+              )}
               <span className="ml-1 inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-primary/70" />
             </div>
           </div>
@@ -140,6 +194,11 @@ export function ChatMessages({ onRefreshPreview }: ChatMessagesProps) {
                 <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:150ms]" />
                 <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:300ms]" />
               </div>
+              {currentStatusMessage && (
+                <p className="mt-2 text-[11px] text-muted-foreground/80">
+                  {currentStatusMessage}
+                </p>
+              )}
             </div>
           </div>
         )}
