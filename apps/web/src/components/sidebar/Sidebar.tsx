@@ -87,6 +87,8 @@ function Sidebar({
     head &&
     commits[head] &&
     commits[head].variants[commits[head].selectedVariantIndex].errorMessage;
+  const selectedVariantIndex =
+    head && commits[head] ? commits[head].selectedVariantIndex : null;
 
   // Focus on the update instruction textarea when a variant is complete
   useEffect(() => {
@@ -101,7 +103,7 @@ function Sidebar({
   // Reset error expanded state when variant changes
   useEffect(() => {
     setIsErrorExpanded(false);
-  }, [head, commits[head || ""]?.selectedVariantIndex]);
+  }, [head, selectedVariantIndex]);
 
   return (
     <>

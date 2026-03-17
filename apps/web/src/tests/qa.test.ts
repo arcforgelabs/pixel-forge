@@ -1,4 +1,5 @@
 import puppeteer, { Browser, Page, ElementHandle } from "puppeteer";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { Stack } from "../lib/stacks";
 import { CodeGenerationModel } from "../lib/models";
 

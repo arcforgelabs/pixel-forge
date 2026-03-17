@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { type CSSProperties, useState, useEffect, useMemo, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "react-hot-toast";
 import { URLS } from "../urls";
 import ScreenRecorder from "./recording/ScreenRecorder";
 import { ScreenRecorderState } from "../types";
 
-const baseStyle = {
+const baseStyle: CSSProperties = {
   flex: 1,
   width: "80%",
   margin: "0 auto",
@@ -22,15 +22,15 @@ const baseStyle = {
   transition: "border .24s ease-in-out",
 };
 
-const focusedStyle = {
+const focusedStyle: CSSProperties = {
   borderColor: "#2196f3",
 };
 
-const acceptStyle = {
+const acceptStyle: CSSProperties = {
   borderColor: "#00e676",
 };
 
-const rejectStyle = {
+const rejectStyle: CSSProperties = {
   borderColor: "#ff1744",
 };
 
@@ -187,9 +187,8 @@ function ImageUpload({ setReferenceImages }: Props) {
   return (
     <section className="container">
       {screenRecorderState === ScreenRecorderState.INITIAL && (
-        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
         <div
-          {...getRootProps({ style: style as any })}
+          {...getRootProps({ style })}
           onDoubleClick={open}
           tabIndex={0}
           className="cursor-pointer focus:ring-2 focus:ring-primary focus:ring-offset-2 bg-muted/50 dark:bg-secondary border-border text-muted-foreground"

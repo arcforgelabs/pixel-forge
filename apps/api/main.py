@@ -46,6 +46,7 @@ from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
 from request_packs import create_request_pack
+from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
 
 from session_manager import (
     generate_session_id,
@@ -250,6 +251,28 @@ class ProjectRequest(BaseModel):
 
 class ProjectUrlRequest(BaseModel):
     url: str
+
+
+class LivePreviewLoadRequest(BaseModel):
+    target_url: str
+    proxy_session_id: str | None = None
+    browser_tab_id: str | None = None
+    preferred_mode: Literal["auto", "proxy", "browser"] = "auto"
+
+
+class BrowserPreviewCommandRequest(BaseModel):
+    browser_tab_id: str
+    action: Literal[
+        "focus",
+        "set_select_mode",
+        "clear",
+        "deselect",
+        "apply",
+        "refresh",
+    ]
+    enabled: bool | None = None
+    xpath: str | None = None
+    xpaths: list[str] | None = None
 
 
 # Stack to file extension mapping
@@ -520,6 +543,113 @@ async def clear_app_proxy_config(
     if resolved_session_id == request.cookies.get(PROXY_SESSION_COOKIE):
         response.delete_cookie(key=PROXY_SESSION_COOKIE, path="/")
     return {"status": "cleared"}
+
+
+def _build_proxy_frame_src(proxy_session_id: str) -> str:
+    return f"/app/s/{proxy_session_id}/?_pf_t={int(asyncio.get_running_loop().time() * 1000)}"
+
+
+@app.post("/api/live-preview/load")
+async def load_live_preview(
+    payload: LivePreviewLoadRequest,
+    request: Request,
+    response: Response,
+):
+    target_url = payload.target_url.strip()
+    if not target_url:
+        raise HTTPException(status_code=422, detail="target_url is required")
+
+    preview_mode = resolve_preview_mode(target_url, payload.preferred_mode)
+
+    if preview_mode == "proxy":
+        session = await configure_proxy_target(
+            target_url,
+            payload.proxy_session_id or request.cookies.get(PROXY_SESSION_COOKIE),
+        )
+        response.set_cookie(
+            key=PROXY_SESSION_COOKIE,
+            value=session.session_id,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            max_age=PROXY_SESSION_TTL_SECONDS,
+            path="/",
+        )
+        return {
+            "mode": "proxy",
+            "target_url": session.target_url,
+            "proxy_session_id": session.session_id,
+            "frame_src": _build_proxy_frame_src(session.session_id),
+        }
+
+    try:
+        tab = await MANAGED_BROWSER_PREVIEW.load_tab(
+            target_url,
+            browser_tab_id=payload.browser_tab_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return await MANAGED_BROWSER_PREVIEW.tab_payload(tab.id)
+
+
+@app.post("/api/live-preview/browser/command")
+async def browser_preview_command(payload: BrowserPreviewCommandRequest):
+    try:
+        if payload.action == "focus":
+            tab = await MANAGED_BROWSER_PREVIEW.focus_tab(payload.browser_tab_id)
+        elif payload.action == "set_select_mode":
+            tab = await MANAGED_BROWSER_PREVIEW.set_select_mode(
+                payload.browser_tab_id,
+                bool(payload.enabled),
+            )
+        elif payload.action == "clear":
+            tab = await MANAGED_BROWSER_PREVIEW.clear_selections(payload.browser_tab_id)
+        elif payload.action == "deselect":
+            if not payload.xpath:
+                raise HTTPException(status_code=422, detail="xpath is required")
+            tab = await MANAGED_BROWSER_PREVIEW.deselect_xpath(
+                payload.browser_tab_id,
+                payload.xpath,
+            )
+        elif payload.action == "apply":
+            tab = await MANAGED_BROWSER_PREVIEW.apply_selections(
+                payload.browser_tab_id,
+                payload.xpaths or [],
+            )
+        elif payload.action == "refresh":
+            tab = await MANAGED_BROWSER_PREVIEW.refresh_tab(payload.browser_tab_id)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported browser command")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return await MANAGED_BROWSER_PREVIEW.tab_payload(tab.id)
+
+
+@app.delete("/api/live-preview/browser/{browser_tab_id}")
+async def close_browser_preview_tab(browser_tab_id: str):
+    await MANAGED_BROWSER_PREVIEW.close_tab(browser_tab_id)
+    return {"status": "closed"}
+
+
+@app.websocket("/ws/live-preview")
+async def live_preview_websocket(websocket: WebSocket):
+    await websocket.accept()
+    queue = MANAGED_BROWSER_PREVIEW.subscribe()
+    try:
+        while True:
+            event = await queue.get()
+            await websocket.send_text(json.dumps(event))
+    except Exception:
+        pass
+    finally:
+        MANAGED_BROWSER_PREVIEW.unsubscribe(queue)
+
+
+@app.on_event("shutdown")
+async def shutdown_managed_browser_preview():
+    await MANAGED_BROWSER_PREVIEW.shutdown()
 
 
 # Screenshot bootstrap prompts

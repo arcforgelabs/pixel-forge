@@ -1,8 +1,9 @@
 /**
  * LiveEditorPane Component
  *
- * The preview/browser layer is tab-based, while chat and selected element
- * context stay unified at the project level.
+ * The preview layer routes each tab to the best adapter automatically:
+ * localhost/private targets stay on the injected proxy, while remote sites
+ * run in a managed real Chrome session.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -34,13 +35,51 @@ import { SelectedElementsList } from './SelectedElementsList'
 import { useLiveEditorStore } from './store/chat-store'
 
 type ViewportMode = 'fluid' | 'desktop' | 'phone'
+type PreviewMode = 'proxy' | 'browser' | null
 
 interface PreviewTab {
   id: string
   url: string
   title: string
+  mode: PreviewMode
   proxySessionId: string | null
+  browserTabId: string | null
   frameSrc: string
+  snapshotDataUrl: string | null
+}
+
+interface LivePreviewLoadResponse {
+  mode: 'proxy'
+  target_url: string
+  proxy_session_id: string
+  frame_src: string
+}
+
+interface BrowserPreviewLoadResponse {
+  mode: 'browser'
+  target_url: string
+  browser_tab_id: string
+  title: string
+  snapshot_data_url: string | null
+}
+
+type PreviewLoadResponse = LivePreviewLoadResponse | BrowserPreviewLoadResponse
+
+interface BrowserPreviewEvent {
+  type:
+    | 'browser-location-changed'
+    | 'browser-tab-snapshot'
+    | 'browser-element-selected'
+    | 'browser-element-deselected'
+    | 'browser-selection-cleared'
+    | 'browser-select-cancelled'
+    | 'browser-tab-closed'
+    | 'browser-load-failed'
+  browser_tab_id: string
+  url?: string
+  title?: string
+  snapshot_data_url?: string | null
+  data?: Record<string, unknown>
 }
 
 function createPreviewTabId(): string {
@@ -70,8 +109,14 @@ function getPreviewTabTitle(
   }
 }
 
-function buildProxyFrameUrl(proxySessionId: string): string {
-  return `${HTTP_BACKEND_URL}/app/s/${encodeURIComponent(proxySessionId)}/?_pf_t=${Date.now()}`
+function resolveFrameSrc(frameSrc: string): string {
+  if (!frameSrc) {
+    return 'about:blank'
+  }
+  if (frameSrc.startsWith('http://') || frameSrc.startsWith('https://')) {
+    return frameSrc
+  }
+  return `${HTTP_BACKEND_URL}${frameSrc}`
 }
 
 function createPreviewTab(url = '', title?: string | null, index?: number): PreviewTab {
@@ -79,9 +124,41 @@ function createPreviewTab(url = '', title?: string | null, index?: number): Prev
     id: createPreviewTabId(),
     url,
     title: getPreviewTabTitle(url, title, index),
+    mode: null,
     proxySessionId: null,
+    browserTabId: null,
     frameSrc: 'about:blank',
+    snapshotDataUrl: null,
   }
+}
+
+async function requestPreviewJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
+    credentials: 'include',
+    ...init,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.headers || {}),
+    },
+  })
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const payload = await response.json()
+      if (typeof payload?.detail === 'string') {
+        message = payload.detail
+      }
+    } catch {
+      const text = await response.text()
+      if (text) {
+        message = text
+      }
+    }
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
 }
 
 export function LiveEditorPane() {
@@ -98,6 +175,8 @@ export function LiveEditorPane() {
   const internalPreviewUrlRef = useRef<string | null>(null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
+  const previewHostRef = useRef<HTMLDivElement | null>(null)
+  const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
 
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
@@ -125,6 +204,12 @@ export function LiveEditorPane() {
     clearElements,
     selectedElements,
   } = useLiveEditorStore()
+  const selectedElementsRef = useRef(selectedElements)
+  const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
+
+  useEffect(() => {
+    selectedElementsRef.current = selectedElements
+  }, [selectedElements])
 
   useEffect(() => {
     previewTabsRef.current = previewTabs
@@ -167,6 +252,10 @@ export function LiveEditorPane() {
     return previewTabsRef.current.find((tab) => tab.id === tabId) ?? null
   }, [])
 
+  const getPreviewTabByBrowserId = useCallback((browserTabId: string) => {
+    return previewTabsRef.current.find((tab) => tab.browserTabId === browserTabId) ?? null
+  }, [])
+
   const setIframeRef = useCallback((tabId: string, iframe: HTMLIFrameElement | null) => {
     iframeRefs.current[tabId] = iframe
   }, [])
@@ -199,10 +288,62 @@ export function LiveEditorPane() {
     [setPreviewUrl]
   )
 
-  const syncTabSelections = useCallback((tabId: string) => {
+  const sendBrowserCommand = useCallback(async (
+    browserTabId: string,
+    action: 'focus' | 'set_select_mode' | 'clear' | 'deselect' | 'apply' | 'refresh',
+    payload?: Record<string, unknown>
+  ) => {
+    const desktopPreview = desktopPreviewRef.current
+    if (desktopPreview) {
+      try {
+        if (action === 'focus') {
+          await desktopPreview.focus(browserTabId)
+          return null
+        }
+        if (action === 'set_select_mode') {
+          return await desktopPreview.setSelectMode(browserTabId, Boolean(payload?.enabled))
+        }
+        if (action === 'clear') {
+          return await desktopPreview.clearSelections(browserTabId)
+        }
+        if (action === 'deselect') {
+          return await desktopPreview.deselect(browserTabId, String(payload?.xpath || ''))
+        }
+        if (action === 'apply') {
+          return await desktopPreview.applySelections(
+            browserTabId,
+            Array.isArray(payload?.xpaths)
+              ? payload.xpaths.filter((entry): entry is string => typeof entry === 'string')
+              : []
+          )
+        }
+        if (action === 'refresh') {
+          return await desktopPreview.refresh(browserTabId)
+        }
+      } catch (error) {
+        console.error(`[live-editor] Embedded preview command failed (${action})`, error)
+        return null
+      }
+    }
+
+    try {
+      return await requestPreviewJson<BrowserPreviewLoadResponse>('/api/live-preview/browser/command', {
+        method: 'POST',
+        body: JSON.stringify({
+          browser_tab_id: browserTabId,
+          action,
+          ...(payload || {}),
+        }),
+      })
+    } catch (error) {
+      console.error(`[live-editor] Browser preview command failed (${action})`, error)
+      return null
+    }
+  }, [])
+
+  const syncTabSelections = useCallback(async (tabId: string) => {
     const tab = getPreviewTabById(tabId)
-    const iframe = iframeRefs.current[tabId]
-    if (!tab || !iframe?.contentWindow) {
+    if (!tab) {
       return
     }
 
@@ -216,31 +357,83 @@ export function LiveEditorPane() {
       )
       .map((element) => element.xpath)
 
-    iframe.contentWindow.postMessage(
-      {
-        type: 'pixel-forge-apply-selections',
-        xpaths,
-      },
-      '*'
-    )
-  }, [getPreviewTabById])
-
-  const syncAllFrameSelectionModes = useCallback(() => {
-    for (const tab of previewTabsRef.current) {
-      const iframe = iframeRefs.current[tab.id]
+    if (tab.mode === 'proxy') {
+      const iframe = iframeRefs.current[tabId]
       if (!iframe?.contentWindow) {
-        continue
+        return
       }
 
       iframe.contentWindow.postMessage(
         {
-          type: 'pixel-forge-toggle-select',
-          enabled: selectMode && tab.id === activeTabIdRef.current,
+          type: 'pixel-forge-apply-selections',
+          xpaths,
         },
         '*'
       )
+      return
     }
-  }, [selectMode])
+
+    if (tab.mode === 'browser' && tab.browserTabId) {
+      await sendBrowserCommand(tab.browserTabId, 'apply', { xpaths })
+    }
+  }, [getPreviewTabById, sendBrowserCommand])
+
+  const syncAllPreviewSelectionModes = useCallback(async () => {
+    await Promise.all(
+      previewTabsRef.current.map(async (tab) => {
+        const enabled = selectMode && tab.id === activeTabIdRef.current
+
+        if (tab.mode === 'proxy') {
+          const iframe = iframeRefs.current[tab.id]
+          if (!iframe?.contentWindow) {
+            return
+          }
+
+          iframe.contentWindow.postMessage(
+            {
+              type: 'pixel-forge-toggle-select',
+              enabled,
+            },
+            '*'
+          )
+          return
+        }
+
+        if (tab.mode === 'browser' && tab.browserTabId) {
+          await sendBrowserCommand(tab.browserTabId, 'set_select_mode', { enabled })
+        }
+      })
+    )
+  }, [selectMode, sendBrowserCommand])
+
+  const updateEmbeddedPreviewBounds = useCallback(async () => {
+    const desktopPreview = desktopPreviewRef.current
+    if (!desktopPreview) {
+      return
+    }
+
+    const activePreviewTab = getActivePreviewTab()
+    const host = previewHostRef.current
+
+    if (!activePreviewTab || activePreviewTab.mode !== 'browser' || !activePreviewTab.browserTabId || !host) {
+      await desktopPreview.hide()
+      return
+    }
+
+    const rect = host.getBoundingClientRect()
+    if (rect.width < 1 || rect.height < 1) {
+      await desktopPreview.hide()
+      return
+    }
+
+    await desktopPreview.activate(activePreviewTab.browserTabId)
+    await desktopPreview.setBounds({
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    })
+  }, [getActivePreviewTab])
 
   const loadApp = useCallback(async (
     urlOverride?: string,
@@ -268,7 +461,11 @@ export function LiveEditorPane() {
                 ...entry,
                 url: '',
                 title: getPreviewTabTitle('', null, index + 1),
+                mode: null,
                 frameSrc: 'about:blank',
+                snapshotDataUrl: null,
+                proxySessionId: null,
+                browserTabId: null,
               }
             : entry
         )
@@ -280,73 +477,124 @@ export function LiveEditorPane() {
     }
 
     try {
-      const response = await fetch(`${HTTP_BACKEND_URL}/config/app-proxy`, {
+      const desktopPreview = desktopPreviewRef.current
+      if (desktopPreview) {
+        const data = await desktopPreview.load({
+          tabId: resolvedTabId,
+          url: urlToLoad,
+        })
+        const resolvedTargetUrl = data.target_url
+
+        setAuthIssue(null)
+        setTargetUrl(resolvedTargetUrl)
+        setPreviewTabs((currentTabs) =>
+          currentTabs.map((entry, index) =>
+            entry.id === resolvedTabId
+              ? {
+                  ...entry,
+                  mode: 'browser',
+                  url: resolvedTargetUrl,
+                  title: getPreviewTabTitle(resolvedTargetUrl, data.title, index + 1),
+                  proxySessionId: null,
+                  browserTabId: data.browser_tab_id,
+                  frameSrc: 'about:blank',
+                  snapshotDataUrl: null,
+                }
+              : entry
+          )
+        )
+
+        if (options?.persist !== false) {
+          await syncStorePreviewUrl(resolvedTargetUrl)
+        }
+
+        window.setTimeout(() => {
+          void updateEmbeddedPreviewBounds()
+          void syncTabSelections(resolvedTabId)
+          void syncAllPreviewSelectionModes()
+        }, 150)
+
+        if (options?.announceSuccess !== false) {
+          toast.success('Loaded in embedded Chromium')
+        }
+        return
+      }
+
+      const data = await requestPreviewJson<PreviewLoadResponse>('/api/live-preview/load', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_url: urlToLoad,
-          session_id: tab?.proxySessionId || undefined,
+          proxy_session_id: tab?.proxySessionId || undefined,
+          browser_tab_id: tab?.browserTabId || undefined,
+          preferred_mode: 'auto',
         }),
       })
-      if (!response.ok) {
-        let detail = `HTTP ${response.status}`
-        try {
-          const errorData = await response.json()
-          detail = errorData.detail || detail
-        } catch {
-          const errorText = await response.text()
-          detail = errorText || detail
-        }
-        throw new Error(detail)
-      }
 
-      const data = await response.json()
-      const resolvedTargetUrl =
-        typeof data?.target_url === 'string' ? data.target_url : urlToLoad
-      const proxySessionId =
-        typeof data?.proxy_session_id === 'string'
-          ? data.proxy_session_id
-          : tab?.proxySessionId || null
-
-      if (!proxySessionId) {
-        throw new Error('Proxy session was not created')
-      }
+      const resolvedTargetUrl = data.target_url
 
       setAuthIssue(null)
       setTargetUrl(resolvedTargetUrl)
       setPreviewTabs((currentTabs) =>
-        currentTabs.map((entry, index) =>
-          entry.id === resolvedTabId
-            ? {
-                ...entry,
-                url: resolvedTargetUrl,
-                proxySessionId,
-                frameSrc: buildProxyFrameUrl(proxySessionId),
-                title: getPreviewTabTitle(
-                  resolvedTargetUrl,
-                  null,
-                  index + 1
-                ),
-              }
-            : entry
-        )
+        currentTabs.map((entry, index) => {
+          if (entry.id !== resolvedTabId) {
+            return entry
+          }
+
+          if (data.mode === 'proxy') {
+            return {
+              ...entry,
+              mode: 'proxy',
+              url: resolvedTargetUrl,
+              title: getPreviewTabTitle(resolvedTargetUrl, null, index + 1),
+              proxySessionId: data.proxy_session_id,
+              browserTabId: null,
+              frameSrc: resolveFrameSrc(data.frame_src),
+              snapshotDataUrl: null,
+            }
+          }
+
+          return {
+            ...entry,
+            mode: 'browser',
+            url: resolvedTargetUrl,
+            title: getPreviewTabTitle(resolvedTargetUrl, data.title, index + 1),
+            proxySessionId: null,
+            browserTabId: data.browser_tab_id,
+            frameSrc: 'about:blank',
+            snapshotDataUrl: data.snapshot_data_url,
+          }
+        })
       )
 
       if (options?.persist !== false) {
         await syncStorePreviewUrl(resolvedTargetUrl)
       }
 
+      if (data.mode === 'browser' && data.browser_tab_id) {
+        await sendBrowserCommand(data.browser_tab_id, 'focus')
+      }
+
+      window.setTimeout(() => {
+        void syncTabSelections(resolvedTabId)
+        void syncAllPreviewSelectionModes()
+      }, 150)
+
       if (options?.announceSuccess !== false) {
-        toast.success('App loaded')
+        toast.success(
+          data.mode === 'browser'
+            ? hasEmbeddedBrowserPreview
+              ? 'Loaded in embedded Chromium'
+              : 'Loaded in managed browser'
+            : 'App loaded'
+        )
       }
     } catch (error) {
-      console.error('Failed to configure app proxy:', error)
+      console.error('[live-editor] Failed to load preview target:', error)
       toast.error(
         error instanceof Error ? `Failed to load app: ${error.message}` : 'Failed to load app'
       )
     }
-  }, [syncStorePreviewUrl])
+  }, [hasEmbeddedBrowserPreview, sendBrowserCommand, syncAllPreviewSelectionModes, syncStorePreviewUrl, syncTabSelections, updateEmbeddedPreviewBounds])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -356,9 +604,20 @@ export function LiveEditorPane() {
     setTargetUrl(tab.url)
     setAuthIssue(null)
     setShowUrlHistory(false)
-
     await syncStorePreviewUrl(tab.url || null)
-  }, [syncStorePreviewUrl])
+
+    if (tab.mode === 'browser' && tab.browserTabId) {
+      const desktopPreview = desktopPreviewRef.current
+      if (desktopPreview) {
+        await desktopPreview.activate(tab.browserTabId)
+        window.setTimeout(() => {
+          void updateEmbeddedPreviewBounds()
+        }, 60)
+      } else {
+        await sendBrowserCommand(tab.browserTabId, 'focus')
+      }
+    }
+  }, [sendBrowserCommand, syncStorePreviewUrl, updateEmbeddedPreviewBounds])
 
   const addPreviewTab = useCallback(() => {
     const nextTab = createPreviewTab('', null, previewTabsRef.current.length + 1)
@@ -375,7 +634,7 @@ export function LiveEditorPane() {
     if (closingIndex < 0) return
 
     const closingTab = previewTabsRef.current[closingIndex]
-    if (closingTab.proxySessionId) {
+    if (closingTab.mode === 'proxy' && closingTab.proxySessionId) {
       try {
         await fetch(
           `${HTTP_BACKEND_URL}/config/app-proxy?session_id=${encodeURIComponent(closingTab.proxySessionId)}`,
@@ -386,6 +645,26 @@ export function LiveEditorPane() {
         )
       } catch (error) {
         console.error('[live-editor] Failed to clear closed proxy tab session:', error)
+      }
+    }
+
+    if (closingTab.mode === 'browser' && closingTab.browserTabId) {
+      const desktopPreview = desktopPreviewRef.current
+      if (desktopPreview) {
+        try {
+          await desktopPreview.close(closingTab.browserTabId)
+        } catch (error) {
+          console.error('[live-editor] Failed to close embedded preview tab:', error)
+        }
+      } else {
+        try {
+          await fetch(`${HTTP_BACKEND_URL}/api/live-preview/browser/${encodeURIComponent(closingTab.browserTabId)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+        } catch (error) {
+          console.error('[live-editor] Failed to close managed browser tab:', error)
+        }
       }
     }
 
@@ -418,11 +697,34 @@ export function LiveEditorPane() {
     setAuthIssue(null)
     setShowUrlHistory(false)
     await syncStorePreviewUrl(nextTab.url || null)
-  }, [syncStorePreviewUrl])
 
-  const refreshApp = useCallback(() => {
+    if (nextTab.mode === 'browser' && nextTab.browserTabId) {
+      const desktopPreview = desktopPreviewRef.current
+      if (desktopPreview) {
+        await desktopPreview.activate(nextTab.browserTabId)
+        window.setTimeout(() => {
+          void updateEmbeddedPreviewBounds()
+        }, 60)
+      } else {
+        await sendBrowserCommand(nextTab.browserTabId, 'focus')
+      }
+    }
+  }, [sendBrowserCommand, syncStorePreviewUrl, updateEmbeddedPreviewBounds])
+
+  const refreshApp = useCallback(async () => {
     const activePreviewTab = getActivePreviewTab()
     if (!activePreviewTab) {
+      return
+    }
+
+    if (activePreviewTab.mode === 'browser' && activePreviewTab.browserTabId) {
+      await sendBrowserCommand(activePreviewTab.browserTabId, 'refresh')
+      if (desktopPreviewRef.current) {
+        window.setTimeout(() => {
+          void updateEmbeddedPreviewBounds()
+        }, 120)
+      }
+      toast.success(hasEmbeddedBrowserPreview ? 'Preview refreshed' : 'Browser refreshed', { duration: 1000 })
       return
     }
 
@@ -447,7 +749,7 @@ export function LiveEditorPane() {
     } catch (error) {
       console.error('[live-editor] Failed to refresh active preview tab:', error)
     }
-  }, [getActivePreviewTab])
+  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, sendBrowserCommand, updateEmbeddedPreviewBounds])
 
   useEffect(() => {
     if (lastProjectPathRef.current === projectPath) {
@@ -496,7 +798,11 @@ export function LiveEditorPane() {
                   ...entry,
                   url: '',
                   title: getPreviewTabTitle('', null, index + 1),
+                  mode: null,
                   frameSrc: 'about:blank',
+                  snapshotDataUrl: null,
+                  proxySessionId: null,
+                  browserTabId: null,
                 }
               : entry
           )
@@ -521,24 +827,75 @@ export function LiveEditorPane() {
   }, [previewUrl, getActivePreviewTab, loadApp])
 
   useEffect(() => {
-    syncAllFrameSelectionModes()
-  }, [activePreviewTabId, previewTabs, selectMode, syncAllFrameSelectionModes])
+    const desktopPreview = desktopPreviewRef.current
+    if (!desktopPreview) {
+      return
+    }
+
+    let frameId: number | null = null
+    const syncBounds = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      frameId = window.requestAnimationFrame(() => {
+        void updateEmbeddedPreviewBounds()
+      })
+    }
+
+    syncBounds()
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncBounds()
+    })
+
+    if (previewHostRef.current) {
+      resizeObserver.observe(previewHostRef.current)
+    }
+
+    window.addEventListener('resize', syncBounds)
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', syncBounds)
+      void desktopPreview.hide()
+    }
+  }, [activePreviewTabId, previewTabs, updateEmbeddedPreviewBounds])
+
+  useEffect(() => {
+    void syncAllPreviewSelectionModes()
+  }, [activePreviewTabId, selectMode, syncAllPreviewSelectionModes])
 
   const toggleSelectMode = useCallback(() => {
     const newMode = !selectMode
     setSelectMode(newMode)
 
     if (newMode) {
-      toast.success('Select mode ON - click elements to select', {
-        duration: 2000,
-      })
+      const activePreviewTab = getActivePreviewTab()
+      if (activePreviewTab?.mode === 'browser') {
+        toast.success(
+          hasEmbeddedBrowserPreview
+            ? 'Select mode ON - click elements in the embedded browser'
+            : 'Select mode ON - use the managed browser window to click elements',
+          {
+          duration: 2500,
+          }
+        )
+      } else {
+        toast.success('Select mode ON - click elements to select', {
+          duration: 2000,
+        })
+      }
     }
-  }, [selectMode])
+  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, selectMode])
 
   const handleIframeLoad = useCallback((tabId: string) => {
     setTimeout(() => {
+      const tab = getPreviewTabById(tabId)
       const iframe = iframeRefs.current[tabId]
-      if (!iframe?.contentWindow) {
+      if (!tab || tab.mode !== 'proxy' || !iframe?.contentWindow) {
         return
       }
 
@@ -549,12 +906,12 @@ export function LiveEditorPane() {
         },
         '*'
       )
-      syncTabSelections(tabId)
+      void syncTabSelections(tabId)
     }, 120)
-  }, [selectMode, syncTabSelections])
+  }, [getPreviewTabById, selectMode, syncTabSelections])
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const handleProxyMessage = (event: MessageEvent) => {
       const sourceTab = getTabForMessageSource(event.source)
       const activePreviewTab = getActivePreviewTab()
 
@@ -592,7 +949,7 @@ export function LiveEditorPane() {
           typeof event.data.data?.pageUrl === 'string'
             ? event.data.data.pageUrl
             : sourceTab.url
-        const element = selectedElements.find(
+        const element = selectedElementsRef.current.find(
           (entry) =>
             entry.xpath === event.data.data.xpath
             && entry.sourceTabId === sourceTab.id
@@ -650,19 +1007,187 @@ export function LiveEditorPane() {
       }
     }
 
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, selectedElements, syncStorePreviewUrl])
+    window.addEventListener('message', handleProxyMessage)
+    return () => window.removeEventListener('message', handleProxyMessage)
+  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, syncStorePreviewUrl])
+
+  const handleBrowserPreviewEvent = useCallback((payload: BrowserPreviewEvent) => {
+    const sourceTab = getPreviewTabByBrowserId(payload.browser_tab_id)
+    const activePreviewTab = getActivePreviewTab()
+
+    if (!sourceTab) {
+      return
+    }
+
+    if (payload.type === 'browser-location-changed') {
+      const nextUrl = typeof payload.url === 'string' ? payload.url : sourceTab.url
+      const nextTitle = typeof payload.title === 'string' ? payload.title : sourceTab.title
+
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry, index) =>
+          entry.id === sourceTab.id
+            ? {
+                ...entry,
+                url: nextUrl,
+                title: getPreviewTabTitle(nextUrl, nextTitle, index + 1),
+              }
+            : entry
+        )
+      )
+
+      if (sourceTab.id === activePreviewTab?.id) {
+        setTargetUrl(nextUrl)
+        void syncStorePreviewUrl(nextUrl)
+      }
+
+      window.setTimeout(() => {
+        void syncTabSelections(sourceTab.id)
+      }, 250)
+      return
+    }
+
+    if (payload.type === 'browser-tab-snapshot') {
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry) =>
+          entry.id === sourceTab.id
+            ? {
+                ...entry,
+                snapshotDataUrl: payload.snapshot_data_url || null,
+              }
+            : entry
+        )
+      )
+      return
+    }
+
+    if (payload.type === 'browser-element-selected') {
+      const data = payload.data || {}
+      const sourceUrl =
+        typeof data.pageUrl === 'string'
+          ? data.pageUrl
+          : sourceTab.url
+
+      addElement({
+        tagName: typeof data.tagName === 'string' ? data.tagName : 'div',
+        elementId:
+          typeof data.elementId === 'string'
+            ? data.elementId
+            : null,
+        classList: Array.isArray(data.classList)
+          ? data.classList.filter((entry): entry is string => typeof entry === 'string')
+          : [],
+        textContent: typeof data.textContent === 'string' ? data.textContent : '',
+        xpath: typeof data.xpath === 'string' ? data.xpath : '',
+        outerHTML: typeof data.outerHTML === 'string' ? data.outerHTML : '',
+        sourceTabId: sourceTab.id,
+        sourceTabLabel: sourceTab.title || 'Browser',
+        sourceUrl,
+        pageTitle:
+          typeof data.pageTitle === 'string'
+            ? data.pageTitle
+            : sourceTab.title || null,
+      })
+      return
+    }
+
+    if (payload.type === 'browser-element-deselected') {
+      const data = payload.data || {}
+      const sourceUrl =
+        typeof data.pageUrl === 'string'
+          ? data.pageUrl
+          : sourceTab.url
+      const element = selectedElementsRef.current.find(
+        (entry) =>
+          entry.xpath === data.xpath
+          && entry.sourceTabId === sourceTab.id
+          && entry.sourceUrl === sourceUrl
+      )
+      if (element) {
+        removeElement(element.id)
+      }
+      return
+    }
+
+    if (payload.type === 'browser-select-cancelled') {
+      setSelectMode(false)
+      return
+    }
+
+    if (payload.type === 'browser-load-failed') {
+      const status = Number(payload.data?.errorCode || 0)
+      const failingUrl =
+        typeof payload.data?.url === 'string'
+          ? payload.data.url
+          : sourceTab.url
+      if (sourceTab.id === activePreviewTab?.id) {
+        setAuthIssue({ status, url: failingUrl })
+      }
+      toast.error(`Preview load failed: ${payload.data?.errorDescription || 'Unknown error'}`)
+      return
+    }
+
+    if (payload.type === 'browser-tab-closed') {
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry) =>
+          entry.id === sourceTab.id
+            ? {
+                ...entry,
+                browserTabId: null,
+                snapshotDataUrl: null,
+                mode: null,
+              }
+            : entry
+        )
+      )
+      toast.error(
+        hasEmbeddedBrowserPreview
+          ? 'Embedded preview tab was closed. Reload the URL to reopen it.'
+          : 'Managed browser tab was closed. Reload the URL to reopen it.'
+      )
+    }
+  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, removeElement, syncStorePreviewUrl, syncTabSelections])
+
+  useEffect(() => {
+    if (desktopPreviewRef.current) {
+      const handleNativePreviewEvent = (event: Event) => {
+        const payload = (event as CustomEvent<BrowserPreviewEvent>).detail
+        handleBrowserPreviewEvent(payload)
+      }
+
+      window.addEventListener('pixel-forge-preview', handleNativePreviewEvent as EventListener)
+      return () => {
+        window.removeEventListener('pixel-forge-preview', handleNativePreviewEvent as EventListener)
+      }
+    }
+
+    const wsUrl = `ws://${window.location.hostname}:7001/ws/live-preview`
+    const ws = new WebSocket(wsUrl)
+
+    ws.onmessage = (event) => {
+      const payload = JSON.parse(event.data) as BrowserPreviewEvent
+      handleBrowserPreviewEvent(payload)
+    }
+
+    return () => ws.close()
+  }, [handleBrowserPreviewEvent])
 
   const handleClearElements = useCallback(() => {
     clearElements()
-    for (const iframe of Object.values(iframeRefs.current)) {
-      iframe?.contentWindow?.postMessage(
-        { type: 'pixel-forge-clear-selections' },
-        '*'
-      )
+
+    for (const tab of previewTabsRef.current) {
+      if (tab.mode === 'proxy') {
+        iframeRefs.current[tab.id]?.contentWindow?.postMessage(
+          { type: 'pixel-forge-clear-selections' },
+          '*'
+        )
+        continue
+      }
+
+      if (tab.mode === 'browser' && tab.browserTabId) {
+        void sendBrowserCommand(tab.browserTabId, 'clear')
+      }
     }
-  }, [clearElements])
+  }, [clearElements, sendBrowserCommand])
 
   const handleRemoveElement = useCallback((
     id: string,
@@ -672,11 +1197,31 @@ export function LiveEditorPane() {
   ) => {
     removeElement(id)
 
-    iframeRefs.current[sourceTabId]?.contentWindow?.postMessage(
-      { type: 'pixel-forge-deselect', xpath },
-      '*'
-    )
-  }, [removeElement])
+    const sourceTab = getPreviewTabById(sourceTabId)
+    if (!sourceTab) {
+      return
+    }
+
+    if (sourceTab.mode === 'proxy') {
+      iframeRefs.current[sourceTabId]?.contentWindow?.postMessage(
+        { type: 'pixel-forge-deselect', xpath },
+        '*'
+      )
+      return
+    }
+
+    if (sourceTab.mode === 'browser' && sourceTab.browserTabId) {
+      void sendBrowserCommand(sourceTab.browserTabId, 'deselect', { xpath })
+    }
+  }, [getPreviewTabById, removeElement, sendBrowserCommand])
+
+  const focusManagedBrowser = useCallback(async () => {
+    const activePreviewTab = getActivePreviewTab()
+    if (!activePreviewTab?.browserTabId) {
+      return
+    }
+    await sendBrowserCommand(activePreviewTab.browserTabId, 'focus')
+  }, [getActivePreviewTab, sendBrowserCommand])
 
   const viewportShellStyle =
     viewportMode === 'phone'
@@ -716,6 +1261,8 @@ export function LiveEditorPane() {
     },
   ]
 
+  const activePreviewTab = getActivePreviewTab()
+
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -744,6 +1291,15 @@ export function LiveEditorPane() {
                     <div className="truncate text-[11px] opacity-80">
                       {tab.url || 'Blank tab'}
                     </div>
+                    {tab.mode && (
+                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] opacity-70">
+                        {tab.mode === 'browser'
+                          ? hasEmbeddedBrowserPreview
+                            ? 'Chromium'
+                            : 'Chrome'
+                          : 'Proxy'}
+                      </div>
+                    )}
                   </div>
                 </button>
                 <button
@@ -829,12 +1385,24 @@ export function LiveEditorPane() {
             <Button
               variant="outline"
               size="sm"
-              onClick={refreshApp}
+              onClick={() => void refreshApp()}
               title="Refresh preview"
               className="h-7 w-7 border-border/60 p-0"
             >
               <RefreshCw className="h-3 w-3" />
             </Button>
+            {activePreviewTab?.mode === 'browser' && activePreviewTab.browserTabId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void focusManagedBrowser()}
+                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
+                title={hasEmbeddedBrowserPreview ? 'Focus the embedded preview' : 'Focus the managed browser window'}
+              >
+                <Globe2 className="h-3 w-3" />
+                {hasEmbeddedBrowserPreview ? 'Focus Preview' : 'Focus Browser'}
+              </Button>
+            )}
             <Button
               variant={selectMode ? 'default' : 'outline'}
               size="sm"
@@ -850,6 +1418,15 @@ export function LiveEditorPane() {
             </Button>
 
             <div className="ml-auto flex items-center gap-1.5">
+              {activePreviewTab?.mode && (
+                <div className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                  {activePreviewTab.mode === 'browser'
+                    ? hasEmbeddedBrowserPreview
+                      ? 'Embedded Chromium'
+                      : 'Managed Chrome'
+                    : 'Proxy'}
+                </div>
+              )}
               <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
                 {viewportModes.map(({ mode, label, title, icon: Icon }) => (
                   <Button
@@ -903,29 +1480,98 @@ export function LiveEditorPane() {
               </Button>
             </div>
           )}
+
           <div
             className="mx-auto h-full min-h-[28rem] transition-[width,max-width] duration-200 ease-out"
             style={viewportShellStyle}
           >
             <div className={`${viewportFrameClassName} relative`}>
-              {previewTabs.map((tab) => (
-                <iframe
-                  key={tab.id}
-                  ref={(iframe) => setIframeRef(tab.id, iframe)}
-                  src={tab.frameSrc}
-                  className={`absolute inset-0 h-full w-full border-0 bg-white ${
-                    tab.id === activePreviewTabId ? 'block' : 'hidden'
-                  }`}
-                  onLoad={() => handleIframeLoad(tab.id)}
-                />
-              ))}
+              {previewTabs.some((tab) => tab.mode === 'proxy') && (
+                <>
+                  {previewTabs.map((tab) => (
+                    <iframe
+                      key={tab.id}
+                      ref={(iframe) => setIframeRef(tab.id, iframe)}
+                      src={tab.mode === 'proxy' ? tab.frameSrc : 'about:blank'}
+                      className={`absolute inset-0 h-full w-full border-0 bg-white ${
+                        tab.id === activePreviewTabId && tab.mode === 'proxy' ? 'block' : 'hidden'
+                      }`}
+                      onLoad={() => handleIframeLoad(tab.id)}
+                    />
+                  ))}
+                </>
+              )}
+
+              {activePreviewTab?.mode !== 'proxy' && (
+                hasEmbeddedBrowserPreview ? (
+                  <div
+                    ref={previewHostRef}
+                    className="absolute inset-0 bg-white"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col overflow-hidden bg-background">
+                    <div className="flex items-center justify-between border-b border-border/60 bg-card/70 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">
+                          Managed browser preview
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {activePreviewTab?.url || 'Load a remote URL to open a real Chrome tab'}
+                        </div>
+                      </div>
+                      {activePreviewTab?.browserTabId && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void focusManagedBrowser()}
+                          className="h-8 border-border/60 text-xs"
+                        >
+                          Focus Browser
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="relative flex-1 bg-[#060709]">
+                      {activePreviewTab?.snapshotDataUrl ? (
+                        <img
+                          src={activePreviewTab.snapshotDataUrl}
+                          alt={activePreviewTab.title || 'Managed browser snapshot'}
+                          className="h-full w-full object-contain"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center p-6">
+                          <div className="max-w-md rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
+                            <div className="text-sm font-medium text-foreground">
+                              This tab is running in managed Chrome
+                            </div>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              Interact with the real browser window for login flows and complex apps.
+                              Pixel Forge will still capture selections into this project chat.
+                            </p>
+                            {activePreviewTab?.browserTabId && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void focusManagedBrowser()}
+                                className="mt-4 border-border/60 text-xs"
+                              >
+                                Bring browser to front
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className="flex w-[clamp(320px,26vw,420px)] min-w-[300px] max-w-[42vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-card/50">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col overflow-hidden">
           <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
             <TabsTrigger value="chat" className="gap-1.5 text-xs">
               <MessageSquare className="h-3.5 w-3.5" />
@@ -947,7 +1593,7 @@ export function LiveEditorPane() {
               value="chat"
               className="m-0 h-full min-w-0 overflow-hidden"
             >
-              <ChatMessages onRefreshPreview={refreshApp} />
+              <ChatMessages onRefreshPreview={() => void refreshApp()} />
             </TabsContent>
 
             <TabsContent

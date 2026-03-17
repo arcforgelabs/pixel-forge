@@ -1,3 +1,4 @@
+import { describe, expect, test } from "vitest";
 import { extractHistory, renderHistory } from "./utils";
 import { Commit, CommitHash } from "../commits/types";
 

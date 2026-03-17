@@ -1,6 +1,6 @@
 import { useProjectStore } from "../../store/project-store";
 import Spinner from "../core/Spinner";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 
 function Variants() {
   const { inputMode, head, commits, updateSelectedVariantIndex } =
@@ -11,13 +11,13 @@ function Variants() {
   const variants = commit?.variants || [];
   const selectedVariantIndex = commit?.selectedVariantIndex || 0;
 
-  const handleVariantClick = (index: number) => {
+  const handleVariantClick = useCallback((index: number) => {
     // Don't do anything if this is already the selected variant or no head
     if (index === selectedVariantIndex || !head) return;
 
     // First update the UI to show we're switching variants
     updateSelectedVariantIndex(head, index);
-  };
+  }, [head, selectedVariantIndex, updateSelectedVariantIndex]);
 
   // Add keyboard shortcuts for variant switching - MUST be before any early returns
   useEffect(() => {
@@ -45,7 +45,7 @@ function Variants() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [variants.length, commit?.isCommitted, selectedVariantIndex, head]);
+  }, [commit, handleVariantClick, variants.length]);
 
   // Early returns after all hooks
   // If there is no head, don't show the variants

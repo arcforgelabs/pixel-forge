@@ -18,6 +18,7 @@ API_URL="http://127.0.0.1:7001"
 WEB_URL="http://pixel-forge.localhost:5173"
 WEB_HEALTH_URL="http://127.0.0.1:5173"
 OPEN_BROWSER_SCRIPT="$SCRIPT_DIR/tools/open_visible_browser.sh"
+DESKTOP_DIR="$SCRIPT_DIR/apps/desktop"
 
 mkdir -p "$LOG_DIR"
 
@@ -63,8 +64,10 @@ cd "$API_DIR"
 if [ ! -d ".venv" ]; then
     echo "Creating Python venv..."
     python3 -m venv .venv
-    .venv/bin/pip install -q fastapi uvicorn httpx pillow moviepy pydantic websockets
 fi
+
+echo "Syncing API Python dependencies..."
+.venv/bin/pip install -q --upgrade -r "$API_DIR/requirements.txt"
 
 echo -e "${YELLOW}Starting API (auto-reload)...${NC}"
 .venv/bin/uvicorn main:app --host 0.0.0.0 --port 7001 --reload \
@@ -111,9 +114,17 @@ if ! curl -s "$WEB_HEALTH_URL/" > /dev/null 2>&1; then
 fi
 echo -e "${GREEN}✓ Frontend on ${WEB_URL} (HMR)${NC}"
 
-# --- Open browser ---
-if [ "${PIXEL_FORGE_NO_BROWSER:-0}" != "1" ] && [ -x "$OPEN_BROWSER_SCRIPT" ]; then
-    "$OPEN_BROWSER_SCRIPT" "$WEB_URL" >/dev/null 2>&1 &
+# --- Open browser or desktop shell ---
+if [ "${PIXEL_FORGE_NO_BROWSER:-0}" != "1" ]; then
+    if [ "${PIXEL_FORGE_USE_DESKTOP_SHELL:-0}" = "1" ]; then
+        if [ ! -d "$DESKTOP_DIR/node_modules" ]; then
+            echo "Installing desktop shell dependencies..."
+            pnpm --dir "$DESKTOP_DIR" install
+        fi
+        PIXEL_FORGE_SHELL_URL="$WEB_URL" pnpm --dir "$DESKTOP_DIR" start >/dev/null 2>&1 &
+    elif [ -x "$OPEN_BROWSER_SCRIPT" ]; then
+        "$OPEN_BROWSER_SCRIPT" "$WEB_URL" >/dev/null 2>&1 &
+    fi
 fi
 
 echo ""

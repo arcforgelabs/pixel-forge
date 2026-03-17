@@ -171,7 +171,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           }))
           break
 
-        case 'tool_use':
+        case 'tool_use': {
           // Tool execution started
           const toolActivity: ToolActivity = {
             id: generateId(),
@@ -193,8 +193,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             ],
           }))
           break
+        }
 
-        case 'tool_result':
+        case 'tool_result': {
           // Tool execution completed
           const { currentTool, messages } = get()
           if (currentTool) {
@@ -214,8 +215,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             set({ messages: updatedMessages, currentTool: null })
           }
           break
+        }
 
-        case 'complete':
+        case 'complete': {
           // Response complete
           const { currentStreamContent, messages: msgs } = get()
           const isRemoteTarget = !!data.is_remote_target
@@ -263,8 +265,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             console.log('[live-editor] Session synced to session-store:', data.session_id)
           }
           break
+        }
 
-        case 'session':
+        case 'session': {
           if (data.session_id) {
             useSessionStore.getState().setLiveEditorSession({
               threadId: data.session_id,
@@ -275,6 +278,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             })
           }
           break
+        }
 
         case 'error':
           set({

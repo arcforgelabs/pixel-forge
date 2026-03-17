@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$HOME/.local/lib/pixel-forge"
 BIN_DIR="$HOME/.local/bin"
 WEB_DIR="$SCRIPT_DIR/apps/web"
+DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
 
 # Ensure pnpm/node are in PATH
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
@@ -46,6 +47,22 @@ if [ -f "$WEB_DIR/dist/index.html" ]; then
     cp -r "$WEB_DIR/dist" "$INSTALL_DIR/frontend"
 fi
 
+# --- Desktop shell ---
+if [ -f "$DESKTOP_SOURCE_DIR/package.json" ]; then
+    echo "Installing desktop shell..."
+    rm -rf "$INSTALL_DIR/desktop"
+    cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
+    if command -v npm &>/dev/null; then
+        DESKTOP_ELECTRON_SPEC="$(node -p "require('$DESKTOP_SOURCE_DIR/package.json').dependencies.electron")"
+        (
+            cd "$INSTALL_DIR"
+            npm install "electron@${DESKTOP_ELECTRON_SPEC#^}" --no-fund --no-audit
+        )
+    else
+        echo "Warning: npm not found — desktop shell dependencies were not installed."
+    fi
+fi
+
 # --- Python venv ---
 if [ ! -d "$INSTALL_DIR/.venv" ]; then
     echo "Creating virtual environment..."
@@ -54,7 +71,7 @@ fi
 
 echo "Installing Python dependencies..."
 "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
+"$INSTALL_DIR/.venv/bin/pip" install -q --upgrade -r "$INSTALL_DIR/requirements.txt"
 
 # --- Launcher script ---
 cat > "$BIN_DIR/pixel-forge" << 'LAUNCHER'
@@ -132,6 +149,34 @@ LAUNCHER
 
 chmod +x "$BIN_DIR/pixel-forge"
 
+cat > "$BIN_DIR/pixel-forge-shell" << 'SHELL'
+#!/bin/bash
+
+INSTALL_DIR="$HOME/.local/lib/pixel-forge"
+PORT="${PIXEL_FORGE_PORT:-7001}"
+URL="http://pixel-forge.localhost:$PORT"
+ELECTRON_BIN="$INSTALL_DIR/node_modules/electron/dist/electron"
+
+pixel-forge start >/dev/null 2>&1 || true
+
+for _ in $(seq 1 30); do
+    if curl -fsS "$URL" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+if [ ! -x "$ELECTRON_BIN" ]; then
+    echo "Pixel Forge desktop shell is not installed. Re-run ./install.sh"
+    exit 1
+fi
+
+export PIXEL_FORGE_SHELL_URL="$URL"
+exec "$ELECTRON_BIN" --no-sandbox "$INSTALL_DIR/desktop"
+SHELL
+
+chmod +x "$BIN_DIR/pixel-forge-shell"
+
 # --- Systemd user service ---
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_DIR"
@@ -170,7 +215,7 @@ cat > "$DESKTOP_DIR/pixel-forge.desktop" << 'DESKTOP'
 [Desktop Entry]
 Name=Pixel Forge
 Comment=Visual app editor — screenshot bootstrap and live editing
-Exec=bash -c 'pixel-forge start; sleep 2; xdg-open http://pixel-forge.localhost:7001'
+Exec=bash -lc 'exec pixel-forge-shell'
 Icon=pixel-forge
 Terminal=false
 Type=Application
@@ -188,6 +233,7 @@ echo "Usage:"
 echo "  pixel-forge start    # Start the service"
 echo "  pixel-forge stop     # Stop it"
 echo "  pixel-forge open     # Open in browser"
+echo "  pixel-forge-shell    # Open the desktop shell"
 echo "  pixel-forge logs     # Tail logs"
 echo "  pixel-forge status   # Check status"
 echo ""

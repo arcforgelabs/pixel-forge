@@ -1,81 +1,99 @@
 # Architecture
 
-## Runtime
+## Intent
+
+Pixel Forge must be the control surface for visually editing a real running app. That means one project-level chat, one shared selected-element context, and a browser surface that is real enough for localhost dev apps and hostile third-party sites alike.
+
+## Current Reality
 
 ```text
-Browser
-  -> apps/web
-       -> ws://pixel-forge.localhost:7001/generate-code
-       -> ws://pixel-forge.localhost:7001/ws/live-editor
-       -> http://pixel-forge.localhost:7001/config/app-proxy (credentialed)
-       -> http://pixel-forge.localhost:7001/save-code
+FastAPI service
+  -> serves the built React frontend
+  -> brokers Live Editor requests into Agent Deck
+  -> persists projects/sessions in SQLite
+  -> writes request packs into the target workspace
 
-apps/api
-  -> screenshot bootstrap prompt pipeline
-  -> app proxy with injected selection script
-  -> browser-scoped proxy session cookie
-  -> per-session upstream cookie jar + target URL
-  -> live-editor thread store
-  -> request-pack writer (.pixel-forge/requests/<request-id>)
-  -> Agent Deck session bridge for live-edit requests
-  -> real file writes into the target project
+React frontend (apps/web)
+  -> owns project selection, chat, selected elements, preview tab strip
+  -> still has a browser-only fallback path:
+       localhost/private URLs -> proxy iframe
+       remote URLs -> backend-managed Chrome session or native shell when present
 
 Agent Deck
-  -> persistent Claude session per live-editor thread
-  -> visible/attachable session in Agent Deck
+  -> persistent agent runtime per Live Editor thread
 ```
 
-## Selection Context Path
+Truth:
+- The existing browser-only app can keep working for localhost and simple flows.
+- A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites.
+- Proxying or iframe tricks are not a durable answer for auth-heavy sites like Claude or Google.
+
+## Transition Architecture
 
 ```text
-Target app in /app/ proxy
-  -> injected selection script captures tag, id, classes, text, xpath, outerHTML
-  -> proxied browser session carries a local proxy cookie
-  -> apps/api replays upstream auth cookies from the per-session jar
-  -> apps/web stores selected element state
-  -> apps/web serializes <selected-element> context
-  -> apps/api writes request pack on disk
-  -> apps/api sends a short dispatch prompt into Agent Deck
-  -> Claude reads the request pack and edits the real project
+Pixel Forge Desktop Shell (apps/desktop)
+  -> BrowserWindow loads the existing Pixel Forge UI
+  -> WebContentsView surfaces map 1:1 to Pixel Forge preview tabs
+  -> preload script injects selection overlays into the real page
+  -> preview events flow back into the React app
+
+Pixel Forge UI (apps/web)
+  -> remains the product chrome: tab strip, toolbar, chat, Elements pane
+  -> measures the preview pane bounds
+  -> tells the shell which preview tab is active and where the native browser surface should mount
+
+FastAPI backend (apps/api)
+  -> remains the broker/state plane
+  -> persists projects/sessions/request packs
+  -> keeps web fallback preview support for non-shell usage
 ```
 
-## State Boundary
+This is the current build direction.
+
+## Ideal Target
 
 ```text
-Target project
-  -> .pixel-forge/requests/<request-id>/*
-     request.md
-     selected-elements.xml
-     attachments/*
+Native Pixel Forge shell
+  -> embedded Chromium is the default preview runtime for all URLs
+  -> localhost and remote sites share one browser model
+  -> one project chat can compare multiple live tabs without opening external browser windows
 
-Pixel Forge local state
-  -> live-editor thread metadata
-     thread_id -> agent_deck_session_id -> claude_session_id
-  -> proxy session metadata
-     browser session cookie -> target_url -> upstream cookie jar
+FastAPI backend
+  -> agent orchestration
+  -> durable state
+  -> request-pack generation
+  -> file writes and repo operations
+
+Agent Deck
+  -> persistent coding session
 ```
 
-## Repo Boundary
+In the ideal shape, the proxy path becomes a compatibility fallback, not the core preview architecture.
 
-```text
-apps/api
-  Canonical backend
+## Layer Ownership
 
-apps/web
-  Canonical frontend
+### Product Chrome
+- Project/session state
+- Preview tab strip
+- Shared selection list
+- Chat UI
+- Request dispatch controls
 
-packages/*
-  Optional CLI/SDK adapters, not the product runtime
+### Native Browser Layer
+- Real page loading
+- Cookies/storage/service workers
+- Login/auth flows
+- Tab-local DOM state and history
+- Selection overlay injection into the live page
 
-archive/*
-  Archived integrations that are not part of the default product surface
-
-tools/*
-  Offline automation and evaluation helpers
-```
+### Backend Broker Layer
+- Project/session persistence
+- Request packs
+- Live Editor dispatch into Agent Deck
+- Generated file writes
 
 ## Non-Goals
 
-- No nested frontend/backend product inside the repo
-- No second web app pretending to be the primary runtime
-- No duplicate backend path for the same live-edit workflow
+- Pretending the browser-only web app can become a full embedded Chromium host
+- Treating the proxy path as the long-term answer for third-party authenticated sites
+- Rebuilding Agent Deck inside Pixel Forge

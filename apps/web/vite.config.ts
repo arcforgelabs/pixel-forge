@@ -22,4 +22,9 @@ export default defineConfig({
     port: 4173,
     strictPort: true,
   },
+  test: {
+    environment: "node",
+    setupFiles: ["./src/setupTests.ts"],
+    testTimeout: 30000,
+  },
 });

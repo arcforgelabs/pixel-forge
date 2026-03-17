@@ -44,6 +44,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-P-002:` Direct code edits still require a writable workspace even when the preview target is a remote or third-party website.
 - `REQ-P-003:` Authenticated staging and production targets must keep login state inside Pixel Forge by binding each browser session to its own proxy target and upstream cookie jar.
 - `REQ-P-004:` Proxy setup from the web app must use credentialed backend calls so the browser-scoped proxy session cookie is actually established before the iframe loads.
+- `REQ-P-005:` Pixel Forge must grow a native shell path that can host a real Chromium surface inside the app chrome; the browser-only web build is a fallback, not the final answer for third-party authenticated sites.
 
 ### Multi-Tab Preview Context
 - `REQ-M-001:` The Live Editor preview layer must support multiple browser-style preview tabs inside one project/chat instance. Adding a tab must not start a new chat thread.
@@ -52,6 +53,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-M-004:` The element context builder must group selections by preview tab/source, including tab and URL metadata, while still sending one unified prompt to the agent.
 - `REQ-M-005:` Switching preview tabs must not clear the unified selected-element list. The active iframe only renders overlays for selections that belong to the active tab.
 - `REQ-M-006:` Pixel Forge must not enforce a small fixed preview-tab cap. Practical limits are driven by runtime/browser resources, not a hardcoded product limit.
+- `REQ-M-007:` In the native shell path, preview tabs must render inside Pixel Forge itself rather than bouncing the user out to separate external browser windows.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -61,10 +63,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` Cross-tab selection context is not yet proven end-to-end in one dispatched Live Editor request pack.
-- Why it is the limiter: The browser layer now supports multi-tab comparison, but Pixel Forge’s differentiator only holds if the agent actually receives those grouped cross-tab sources clearly in one prompt.
-- Smallest complete unit to attack it: Select elements from two preview tabs, send one Live Editor request, and inspect the request pack plus agent-facing context for both source groups.
-- Immediate proof target: Open two preview tabs, select at least one element from each, send one request, and confirm the request pack/context builder clearly identifies both sources in one unified dispatch.
+- `[active]` The desktop shell path still needs hardening and default-toolchain cleanup for daily use.
+- Why it is the limiter: Embedded Chromium inside Pixel Forge is now proven, so the product shape is no longer the blocker. Stability now depends on removing stale build-tooling drift and tightening the native-shell runtime path.
+- Smallest complete unit to attack it: Move the frontend off deprecated lint/tooling paths, keep Electron on the current surface API, and make install/build behavior explicit instead of warning-heavy.
+- Immediate proof target: Run clean install/build checks after the tooling upgrade and confirm the native shell still loads a real page and feeds selections into the shared Elements context.
 
 # Current Proof Status
 
@@ -77,6 +79,7 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` Pixel Forge now maintains browser-scoped proxy sessions with upstream cookie jars for authenticated targets. Basis: `/config/app-proxy` issues a local proxy-session cookie and the app proxy reuses per-session upstream clients instead of one global stateless target.
 - `[validated]` Pixel Forge now maintains multiple mounted preview tabs inside one Live Editor thread, with each tab bound to its own proxy session and active URL state. Basis: browser smoke loaded `https://field.arcforge.au/` and `https://claude.ai/new` in separate tabs and kept the active URL bar on the real target URL rather than the internal proxy URL.
 - `[validated]` Cross-tab element selection now survives tab switches and stays unified in one project-level context list. Basis: browser smoke selected one element from the Claude tab and one from the Field tab, then the Elements pane showed both selections together with their source URLs.
+- `[validated]` Pixel Forge now has a native desktop-shell path (`apps/desktop`) that embeds real Chromium-backed preview tabs inside the app chrome. Basis: Electron shell proof loaded a live remote page into the preview pane, switched it to `https://example.com/`, enabled selecting, and the shared Elements context incremented inside the Pixel Forge UI.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.

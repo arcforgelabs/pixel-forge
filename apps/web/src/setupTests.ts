@@ -1,3 +1,3 @@
-// So jest test runner can read env vars from .env file
+// Load env vars for the test runner.
 import { config } from "dotenv";
 config({ path: ".env.jest" });

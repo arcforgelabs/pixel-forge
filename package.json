@@ -4,15 +4,26 @@
   "version": "1.0.0",
   "description": "Visual app editor with screenshot bootstrap and live editing for real running apps.",
   "type": "module",
+  "packageManager": "pnpm@10.25.0",
   "scripts": {
     "dev": "./start-dev.sh",
     "dev:api": "cd apps/api && python3 main.py",
     "dev:web": "pnpm --dir apps/web dev",
+    "dev:shell": "pnpm --dir apps/desktop dev",
     "open:browser": "./tools/open_visible_browser.sh http://pixel-forge.localhost:5173",
+    "open:shell": "PIXEL_FORGE_SHELL_URL=http://pixel-forge.localhost:5173 pnpm --dir apps/desktop start",
     "build:web": "pnpm --dir apps/web build",
-    "check:api": "python3 -m py_compile apps/api/main.py apps/api/app_proxy.py apps/api/session_manager.py",
+    "check:api": "python3 -m py_compile $(rg --files apps/api -g '*.py' -g '!apps/api/.venv/**')",
+    "check:desktop": "node --check apps/desktop/main.mjs && node --check apps/desktop/shell-preload.mjs && node --check apps/desktop/preview-preload.mjs",
     "check:web": "pnpm --dir apps/web build",
     "lint:web": "pnpm --dir apps/web lint",
     "test:web": "pnpm --dir apps/web test"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "puppeteer"
+    ]
   }
 }
