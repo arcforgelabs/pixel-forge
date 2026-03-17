@@ -65,9 +65,35 @@ export interface PixelForgeDesktopBootstrapState {
   activeMode: 'screenshot' | 'live-editor' | null
 }
 
+export interface PixelForgeDesktopPendingControllerUpdate {
+  id: string
+  projectPath: string
+  snapshotPath: string | null
+  previewUrl: string | null
+  activeMode: 'screenshot' | 'live-editor' | null
+  summary: string
+  source: string
+  requestId: string | null
+  commitHash: string | null
+  createdAt: string
+  canRollback: boolean
+}
+
 export interface PixelForgeDesktopAppAPI {
   applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
+  applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
+  getPendingControllerUpdate(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
+  stageControllerUpdate(payload: {
+    projectPath: string
+    previewUrl?: string | null
+    activeMode?: 'screenshot' | 'live-editor' | null
+    summary?: string | null
+    source?: string | null
+    requestId?: string | null
+    commitHash?: string | null
+  }): Promise<PixelForgeDesktopPendingControllerUpdate>
+  dismissPendingControllerUpdate(): Promise<{ ok: true }>
 }
 
 declare global {

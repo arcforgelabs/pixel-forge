@@ -1,5 +1,6 @@
 import { HTTP_BACKEND_URL } from "@/config";
 import { create } from "zustand";
+import type { PixelForgeDesktopPendingControllerUpdate } from "@/types/pixel-forge-desktop";
 
 export type ActiveMode = "screenshot" | "live-editor";
 export type OutputMode = "scratch" | "custom";
@@ -56,6 +57,7 @@ interface SessionStore {
   outputMode: OutputMode;
   customOutputPath: string | null;
   lastSavedFile: LastSavedFile | null;
+  pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
 
   // Actions
   hydrateProjects: () => Promise<void>;
@@ -92,6 +94,9 @@ interface SessionStore {
 
   // Helpers
   getCurrentProjectUrls: () => string[];
+  setPendingControllerUpdate: (
+    update: PixelForgeDesktopPendingControllerUpdate | null
+  ) => void;
 }
 
 interface ApiProjectUrl {
@@ -280,6 +285,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   outputMode: "scratch",
   customOutputPath: null,
   lastSavedFile: null,
+  pendingControllerUpdate: null,
 
   // Agent selection
   agentType: "claude",
@@ -475,6 +481,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         timestamp: new Date().toISOString(),
       },
     });
+  },
+
+  setPendingControllerUpdate: (update) => {
+    set({ pendingControllerUpdate: update });
   },
 
   getCurrentProjectUrls: () => {

@@ -1,11 +1,19 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
+import { promises as fsPromises, watchFile, unwatchFile } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SHELL_URL = process.env.PIXEL_FORGE_SHELL_URL || 'http://pixel-forge.localhost:7001'
 const PREVIEW_PARTITION = 'persist:pixel-forge-preview'
+const APP_STATE_DIR = path.resolve(
+  process.env.PIXEL_FORGE_STATE_DIR || path.join(os.homedir(), '.pixel-forge'),
+)
+const CONTROLLER_UPDATE_SNAPSHOTS_DIR = path.join(APP_STATE_DIR, 'controller-updates')
+const PENDING_CONTROLLER_UPDATE_PATH = path.join(APP_STATE_DIR, 'pending-controller-update.json')
+const BOOTSTRAP_STATE_PATH = path.join(APP_STATE_DIR, 'controller-bootstrap-state.json')
 
 app.setName('Pixel Forge')
 
@@ -17,7 +25,7 @@ let attachedPreviewView = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
-let pendingBootstrapState = null
+let pendingUpdateSnapshot = null
 
 const previewViews = new Map()
 const webContentsTabIds = new Map()
@@ -29,11 +37,195 @@ function currentView() {
   return previewViews.get(activePreviewTabId) ?? null
 }
 
+function normalizeText(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
 function broadcastPreviewEvent(event) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return
   }
   mainWindow.webContents.send('pixel-forge-preview:event', event)
+}
+
+function broadcastAppEvent(event) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+  mainWindow.webContents.send('pixel-forge-app:event', event)
+}
+
+async function ensureAppStateDir() {
+  await fsPromises.mkdir(APP_STATE_DIR, { recursive: true })
+}
+
+function shouldCopySnapshotPath(projectPath, sourcePath) {
+  const relativePath = path.relative(projectPath, sourcePath)
+  if (!relativePath) {
+    return true
+  }
+
+  const segments = relativePath.split(path.sep).filter(Boolean)
+  if (segments.length === 0) {
+    return true
+  }
+
+  if (segments.includes('.git') || segments.includes('.venv') || segments.includes('node_modules')) {
+    return false
+  }
+
+  if (segments[0] === '.pixel-forge' && (segments[1] === 'instances' || segments[1] === 'requests')) {
+    return false
+  }
+
+  return true
+}
+
+async function createControllerUpdateSnapshot(projectPath, updateId) {
+  const sourcePath = path.resolve(projectPath)
+  const snapshotPath = path.join(CONTROLLER_UPDATE_SNAPSHOTS_DIR, updateId)
+  await fsPromises.mkdir(CONTROLLER_UPDATE_SNAPSHOTS_DIR, { recursive: true })
+  await fsPromises.rm(snapshotPath, { recursive: true, force: true })
+  await fsPromises.cp(sourcePath, snapshotPath, {
+    recursive: true,
+    filter: (source) => shouldCopySnapshotPath(sourcePath, path.resolve(source)),
+  })
+  return snapshotPath
+}
+
+async function deleteControllerUpdateSnapshot(snapshotPath) {
+  if (!snapshotPath) {
+    return
+  }
+  await fsPromises.rm(snapshotPath, { recursive: true, force: true })
+}
+
+async function readJsonFile(filePath) {
+  try {
+    const raw = await fsPromises.readFile(filePath, 'utf-8')
+    return JSON.parse(raw)
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') {
+      return null
+    }
+    console.warn(`[pixel-forge] Failed to read ${filePath}:`, error)
+    return null
+  }
+}
+
+async function writeJsonFile(filePath, payload) {
+  await ensureAppStateDir()
+  await fsPromises.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+}
+
+async function deleteFileIfPresent(filePath) {
+  try {
+    await fsPromises.unlink(filePath)
+  } catch (error) {
+    if (!error || typeof error !== 'object' || error.code !== 'ENOENT') {
+      throw error
+    }
+  }
+}
+
+function sanitizePendingControllerUpdate(payload) {
+  const projectPath = normalizeText(payload?.projectPath)
+  if (!projectPath) {
+    throw new Error('projectPath is required')
+  }
+
+  const activeMode =
+    payload?.activeMode === 'live-editor' || payload?.activeMode === 'screenshot'
+      ? payload.activeMode
+      : null
+
+  return {
+    id: normalizeText(payload?.id) || Math.random().toString(36).slice(2, 14),
+    projectPath,
+    snapshotPath: normalizeText(payload?.snapshotPath),
+    previewUrl: normalizeText(payload?.previewUrl),
+    activeMode,
+    summary: normalizeText(payload?.summary) || 'Update ready to load.',
+    source: normalizeText(payload?.source) || 'manual',
+    requestId: normalizeText(payload?.requestId),
+    commitHash: normalizeText(payload?.commitHash),
+    createdAt: normalizeText(payload?.createdAt) || new Date().toISOString(),
+    canRollback: payload?.canRollback !== false,
+  }
+}
+
+async function readPendingControllerUpdate() {
+  const payload = await readJsonFile(PENDING_CONTROLLER_UPDATE_PATH)
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  try {
+    return sanitizePendingControllerUpdate(payload)
+  } catch {
+    return null
+  }
+}
+
+async function syncPendingControllerUpdate() {
+  const update = await readPendingControllerUpdate()
+  const serialized = JSON.stringify(update)
+  if (serialized === pendingUpdateSnapshot) {
+    return update
+  }
+  pendingUpdateSnapshot = serialized
+  broadcastAppEvent({
+    type: 'pending-controller-update-changed',
+    update,
+  })
+  return update
+}
+
+async function stagePendingControllerUpdate(payload) {
+  const normalized = sanitizePendingControllerUpdate(payload)
+  normalized.snapshotPath = await createControllerUpdateSnapshot(
+    normalized.projectPath,
+    normalized.id,
+  )
+  await writeJsonFile(PENDING_CONTROLLER_UPDATE_PATH, normalized)
+  pendingUpdateSnapshot = null
+  await syncPendingControllerUpdate()
+  return normalized
+}
+
+async function clearPendingControllerUpdate() {
+  const existing = await readPendingControllerUpdate()
+  await deleteFileIfPresent(PENDING_CONTROLLER_UPDATE_PATH)
+  await deleteControllerUpdateSnapshot(existing?.snapshotPath)
+  pendingUpdateSnapshot = null
+  await syncPendingControllerUpdate()
+}
+
+async function writeBootstrapState(payload) {
+  await writeJsonFile(BOOTSTRAP_STATE_PATH, sanitizeBootstrapState(payload))
+}
+
+async function consumeBootstrapStateFile() {
+  const payload = await readJsonFile(BOOTSTRAP_STATE_PATH)
+  await deleteFileIfPresent(BOOTSTRAP_STATE_PATH)
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+  return sanitizeBootstrapState(payload)
+}
+
+function scheduleShellRelaunch() {
+  setTimeout(() => {
+    app.relaunch({
+      execPath: process.execPath,
+      args: process.argv.slice(1),
+    })
+    app.exit(0)
+  }, 150)
 }
 
 function sanitizeBounds(bounds) {
@@ -219,19 +411,20 @@ async function waitForShellReady(timeoutMs = 90000) {
 }
 
 async function applyControllerUpdate(projectPath, bootstrapState) {
+  const installProjectPath = normalizeText(projectPath)
   const sanitizedState = sanitizeBootstrapState(bootstrapState)
+  if (!installProjectPath) {
+    throw new Error('install projectPath is required')
+  }
   if (!sanitizedState.projectPath) {
-    throw new Error('projectPath is required')
+    throw new Error('bootstrap projectPath is required')
   }
 
-  pendingBootstrapState = sanitizedState
-  await runShellCommand('./install.sh && pixel-forge restart', sanitizedState.projectPath)
+  await writeBootstrapState(sanitizedState)
+  await runShellCommand('./install.sh && pixel-forge restart', installProjectPath)
   await waitForShellReady()
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    await mainWindow.webContents.loadURL(SHELL_URL)
-  }
-
+  await clearPendingControllerUpdate()
+  scheduleShellRelaunch()
   return { ok: true }
 }
 
@@ -463,6 +656,10 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  void ensureAppStateDir().then(() => syncPendingControllerUpdate())
+  watchFile(PENDING_CONTROLLER_UPDATE_PATH, { interval: 1000 }, () => {
+    void syncPendingControllerUpdate()
+  })
   createMainWindow()
 
   ipcMain.handle('pixel-forge-preview:load', async (_event, payload) => {
@@ -598,10 +795,44 @@ app.whenReady().then(() => {
     )
   })
 
+  ipcMain.handle('pixel-forge-app:apply-pending-controller-update', async (_event, payload) => {
+    const pendingUpdate = await readPendingControllerUpdate()
+    if (!pendingUpdate) {
+      throw new Error('No staged Pixel Forge update is ready to load.')
+    }
+
+    return applyControllerUpdate(pendingUpdate.snapshotPath || pendingUpdate.projectPath, {
+      ...payload,
+      projectPath:
+        typeof payload?.projectPath === 'string' && payload.projectPath.trim()
+          ? payload.projectPath
+          : pendingUpdate.projectPath,
+      previewUrl:
+        typeof payload?.previewUrl === 'string' && payload.previewUrl.trim()
+          ? payload.previewUrl
+          : pendingUpdate.previewUrl,
+      activeMode:
+        payload?.activeMode === 'live-editor' || payload?.activeMode === 'screenshot'
+          ? payload.activeMode
+          : pendingUpdate.activeMode,
+    })
+  })
+
   ipcMain.handle('pixel-forge-app:consume-bootstrap-state', async () => {
-    const state = pendingBootstrapState
-    pendingBootstrapState = null
-    return state
+    return consumeBootstrapStateFile()
+  })
+
+  ipcMain.handle('pixel-forge-app:get-pending-controller-update', async () => {
+    return readPendingControllerUpdate()
+  })
+
+  ipcMain.handle('pixel-forge-app:stage-controller-update', async (_event, payload) => {
+    return stagePendingControllerUpdate(payload)
+  })
+
+  ipcMain.handle('pixel-forge-app:dismiss-controller-update', async () => {
+    await clearPendingControllerUpdate()
+    return { ok: true }
   })
 
   ipcMain.on('pixel-forge-overlay:list-selected', (_event, value) => {
@@ -632,4 +863,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   app.quit()
+})
+
+app.on('before-quit', () => {
+  unwatchFile(PENDING_CONTROLLER_UPDATE_PATH)
 })

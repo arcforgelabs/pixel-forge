@@ -162,6 +162,36 @@ function pushUndoSnapshot(
   return nextHistory.slice(-MAX_SELECTION_HISTORY)
 }
 
+async function stageControllerUpdateNotice(options: {
+  projectPath: string
+  previewUrl: string | null
+  activeMode: 'live-editor' | 'screenshot'
+  requestId: string | null
+}) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  const desktopApp = window.pixelForgeDesktop?.app
+  if (!desktopApp) {
+    return
+  }
+
+  const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
+  const summary = `Controller update from ${requestLabel} is ready to load.`
+
+  const update = await desktopApp.stageControllerUpdate({
+    projectPath: options.projectPath,
+    previewUrl: options.previewUrl,
+    activeMode: options.activeMode,
+    summary,
+    source: 'live-editor',
+    requestId: options.requestId,
+    commitHash: null,
+  })
+
+  useSessionStore.getState().setPendingControllerUpdate(update)
+}
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -341,6 +371,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               requestId: data.request_id ?? null,
             })
             console.log('[live-editor] Session synced to session-store:', data.session_id)
+          }
+          if (isSelfEditSafeMode) {
+            const sessionState = useSessionStore.getState()
+            if (sessionState.projectPath) {
+              void stageControllerUpdateNotice({
+                projectPath: sessionState.projectPath,
+                previewUrl: sessionState.previewUrl,
+                activeMode: sessionState.activeMode,
+                requestId,
+              }).catch((error) => {
+                console.error('[live-editor] Failed to stage controller update notice:', error)
+              })
+            }
           }
           break
         }

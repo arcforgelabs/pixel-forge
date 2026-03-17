@@ -22,9 +22,13 @@ import { createCommit } from "./components/commits/utils";
 // GenerateFromText removed — screenshot workflow sidebar no longer rendered
 import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
+import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { IS_TARGET_MODE, TARGET_PROJECT_PATH } from "./config";
-import type { PixelForgeDesktopBootstrapState } from "./types/pixel-forge-desktop";
+import type {
+  PixelForgeDesktopBootstrapState,
+  PixelForgeDesktopPendingControllerUpdate,
+} from "./types/pixel-forge-desktop";
 
 function App() {
   const {
@@ -70,6 +74,7 @@ function App() {
     projectsLoaded,
     hydrateProjects,
     setProject,
+    setPendingControllerUpdate,
     setSessionId,
     switchMode,
   } = useSessionStore();
@@ -98,6 +103,42 @@ function App() {
         setDesktopBootstrapLoaded(true);
       });
   }, []);
+
+  useEffect(() => {
+    if (!window.pixelForgeDesktop?.app) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void window.pixelForgeDesktop.app
+      .getPendingControllerUpdate()
+      .then((update) => {
+        if (!cancelled) {
+          setPendingControllerUpdate(update);
+        }
+      })
+      .catch((error) => {
+        console.error("[app] Failed to load pending controller update:", error);
+      });
+
+    const handleAppEvent = (rawEvent: Event) => {
+      const event = rawEvent as CustomEvent<{
+        type?: string;
+        update?: PixelForgeDesktopPendingControllerUpdate | null;
+      }>;
+      if (event.detail?.type !== "pending-controller-update-changed") {
+        return;
+      }
+      setPendingControllerUpdate(event.detail.update ?? null);
+    };
+
+    window.addEventListener("pixel-forge-app", handleAppEvent as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);
+    };
+  }, [setPendingControllerUpdate]);
 
   useEffect(() => {
     void hydrateProjects().catch((error) => {
@@ -473,9 +514,10 @@ function App() {
       />
 
       {/* Main content */}
-      <main className="flex flex-col flex-1 min-w-0 h-screen overflow-hidden">
+      <main className="relative flex flex-col flex-1 min-w-0 h-screen overflow-hidden">
         {/* Mode Tab Bar */}
         <ModeTabBar />
+        <ControllerUpdateNotice />
 
         {/* Both panes rendered, visibility toggled to preserve state */}
         <div className={`flex-1 min-h-0 overflow-auto ${activeMode === "screenshot" ? "" : "hidden"}`}>

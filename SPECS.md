@@ -78,6 +78,9 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `REQ-E-003:` A Pixel Forge self-edit request must not restart or replace the active Pixel Forge controller before the current live-edit stream finishes.
 - `REQ-E-004:` Self-edit activation should stage repo changes first and leave install/restart activation to an explicit post-run step rather than cutting off the in-flight broker session.
 - `REQ-E-005:` The installed controller path must keep at least one rollback build so a broken self-update can be reverted quickly.
+- `REQ-E-006:` Self-edit completions and external/manual Pixel Forge edits must share the same staged controller-update lane instead of one path living only inside chat.
+- `REQ-E-007:` A staged controller update must freeze a source snapshot at stage time so applying it cannot accidentally pick up later unrelated working-tree drift.
+- `REQ-E-008:` Applying a staged controller update must relaunch the shell against the restored project/mode/preview context so desktop-shell code changes can take effect without manual relaunch choreography.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -87,10 +90,10 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 
 # Current Limiting Factor
 
-- `[active]` The selection correction loop is still too brittle when the user needs a parent container instead of a tiny child or needs to recover from a mistaken selection without rebuilding the whole context set.
-- Why it is the limiter: Pixel Forge’s core value is truthful visual context assembly. If correcting one bad selection is awkward, the whole multi-tab selection workflow feels fragile.
-- Smallest complete unit to attack it: keep ancestor-cycle hover targeting, add in-place promotion for existing selections, and add undo/redo at the shared selection-store boundary so correction is reversible.
-- Immediate proof target: prove yellow promotion preview appears over a selected target, prove the same selection id is promoted to its parent on click, and prove store-level undo/redo restores exact selection order.
+- `[active]` The in-app transcript layer still drops too much useful agent completion/status information once the underlying coding agent gets into richer tool flows.
+- Why it is the limiter: Pixel Forge can now preserve truthful visual context and safe staged self-updates, but if the user still has to inspect Agent Deck to confirm completion or key outcomes, Pixel Forge is not yet the primary operating surface.
+- Smallest complete unit to attack it: keep the chat UI concise, but harden completion detection and agent-specific status extraction so Pixel Forge reliably shows progress, completion, and actionable next steps without flooding the chat with raw tool noise.
+- Immediate proof target: prove a real Live Editor run finishes with a trustworthy in-app completion state and the key apply/refresh actions even when the underlying agent transcript is longer than the current condensed stream.
 
 # Current Proof Status
 
@@ -109,6 +112,9 @@ Make Pixel Forge the fastest way to visually edit a real running app while keepi
 - `[validated]` Pixel Forge can now launch a sibling Pixel Forge target runtime for self-editing without sharing controller ports, DB state, or managed-browser profile state. Basis: the backend local-target launcher allocates isolated runtime settings and the controller opens the returned target URL inside the existing preview-tab system.
 - `[validated]` Target runtimes no longer block self-edit inspection with controller-first startup UI. Basis: target mode suppresses the auto-open project selector, auto-binds the launched workspace as the current project, hides the recursive launch control, and labels the runtime as a target instance.
 - `[unvalidated]` Pixel Forge self-edit requests now stay controller-safe through completion instead of restarting the active broker mid-stream. Basis: request-pack and dispatch-prompt guardrails exist, but the full self-edit loop has not yet been re-proven end to end.
+- `[validated]` Pixel Forge now stages controller updates through one shared lane for self-edit and external/manual agent work, and that notice survives outside the chat surface. Basis: the shell watches a persistent staged-update record, the app top chrome renders a shared update notice, and both Live Editor self-edit completion and the `pixel-forge stage-update` CLI write the same record.
+- `[validated]` Staged controller updates now apply from a frozen source snapshot instead of the mutable live repo working tree. Basis: stage-time snapshot smoke proved the staged snapshot excludes transient heavy paths, `show` returns the frozen payload, and `clear` removes both the pending record and snapshot.
+- `[validated]` Applying a staged controller update now relaunches the shell back into the same project/mode/preview context. Basis: the shell writes bootstrap state to disk before install/restart, then relaunches Electron so updated shell code can take effect without a manual close/reopen dance.
 - `[validated]` Live Editor request packs now include a structured `selection-tunnel.json` artifact and can expose it back through a local API/CLI path. Basis: request-pack smoke created the tunnel file, registered it in the manifest, and the backend now serves `/api/live-editor/selection-tunnel`.
 - `[validated]` Pixel Forge now stores screenshot evidence alongside selection context so non-DOM selections can carry frozen visual state into the request pack. Basis: the shell selection bridge now captures bounded image crops during selection and the frontend includes them as request-pack attachments.
 - `[validated]` Selected DOM targets can now be promoted upward in place without losing their selection slot, and the shell preview shows that promotion as a yellow transitional preview before commit. Basis: Electron smoke selected a child button, showed `Promote to div#parent` with yellow badge state on `Ctrl+Shift`, then emitted `browser-element-updated` with the same selection id retargeted to the parent xpath.

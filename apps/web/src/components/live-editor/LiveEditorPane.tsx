@@ -809,18 +809,25 @@ export function LiveEditorPane() {
       toast.error('Applying controller updates requires the Pixel Forge desktop shell.')
       return
     }
-    if (!projectPath) {
-      toast.error('No project is selected.')
-      return
-    }
 
     const toastId = toast.loading('Loading updated Pixel Forge build...')
     try {
-      await desktopApp.applyControllerUpdate({
-        projectPath,
-        previewUrl,
-        activeMode,
-      })
+      if (desktopApp.applyPendingControllerUpdate) {
+        await desktopApp.applyPendingControllerUpdate({
+          projectPath: projectPath ?? '',
+          previewUrl,
+          activeMode,
+        })
+      } else {
+        if (!projectPath) {
+          throw new Error('No project is selected.')
+        }
+        await desktopApp.applyControllerUpdate({
+          projectPath,
+          previewUrl,
+          activeMode,
+        })
+      }
       toast.dismiss(toastId)
     } catch (error) {
       toast.dismiss(toastId)

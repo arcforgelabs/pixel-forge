@@ -166,8 +166,20 @@ case "${1:-start}" in
         shift
         exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/selection_tunnel_cli.py" "$@"
         ;;
+    stage-update)
+        shift
+        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" stage "$@"
+        ;;
+    show-update)
+        shift
+        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" show "$@"
+        ;;
+    clear-update)
+        shift
+        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" clear "$@"
+        ;;
     --help|-h)
-        echo "Usage: pixel-forge [start|stop|restart|rollback|status|logs|open|open-web|tunnel]"
+        echo "Usage: pixel-forge [start|stop|restart|rollback|status|logs|open|open-web|tunnel|stage-update|show-update|clear-update]"
         echo ""
         echo "Commands:"
         echo "  start     Start the service (default)"
@@ -179,6 +191,9 @@ case "${1:-start}" in
         echo "  open      Open the desktop shell"
         echo "  open-web  Open the raw web UI in a browser"
         echo "  tunnel    Read a request pack's selection tunnel JSON"
+        echo "  stage-update  Stage a controller update for in-app apply"
+        echo "  show-update   Show the staged controller update payload"
+        echo "  clear-update  Clear the staged controller update payload"
         echo ""
         echo "Environment:"
         echo "  PIXEL_FORGE_PORT  Port (default: 7001)"
@@ -282,6 +297,7 @@ echo "  pixel-forge open     # Open the desktop shell"
 echo "  pixel-forge open-web # Open the raw web UI"
 echo "  pixel-forge rollback # Restore the previous installed build"
 echo "  pixel-forge tunnel --project <path> --request <id>"
+echo "  pixel-forge stage-update --project \$PWD --summary 'Update ready to load'"
 echo "  pixel-forge-shell    # Open the desktop shell"
 echo "  pixel-forge logs     # Tail logs"
 echo "  pixel-forge status   # Check status"
