@@ -202,6 +202,10 @@ def start_pixel_forge_target(project_path: str) -> LocalTargetRecord:
             "PIXEL_FORGE_MANAGED_BROWSER_DIR": str(managed_browser_dir),
             "PIXEL_FORGE_LOG_DIR": str(log_dir),
             "PIXEL_FORGE_TARGET_PROJECT_PATH": normalized_project_path,
+            "PIXEL_FORGE_FORCE_POLLING": "1",
+            "CHOKIDAR_USEPOLLING": "1",
+            "CHOKIDAR_INTERVAL": "250",
+            "WATCHFILES_FORCE_POLLING": "1",
             "VITE_PIXEL_FORGE_TARGET_MODE": "1",
             "VITE_PIXEL_FORGE_TARGET_PROJECT_PATH": normalized_project_path,
         }

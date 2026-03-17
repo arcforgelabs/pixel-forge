@@ -49,10 +49,21 @@ export interface PixelForgeDesktopPreviewAPI {
   hide(): Promise<{ ok: true }>
 }
 
+export interface PixelForgeDesktopOverlayAPI {
+  pickList(payload: {
+    anchorRect: { x: number; y: number; width: number; height: number }
+    items: Array<{ value: string; label: string }>
+    selectedValue?: string | null
+    width?: number
+    maxHeight?: number
+  }): Promise<string | null>
+}
+
 declare global {
   interface Window {
     pixelForgeDesktop?: {
       preview: PixelForgeDesktopPreviewAPI
+      overlay: PixelForgeDesktopOverlayAPI
     }
   }
 }

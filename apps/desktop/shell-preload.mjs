@@ -22,4 +22,7 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
     setBounds: (bounds) => ipcRenderer.invoke('pixel-forge-preview:set-bounds', bounds),
     hide: () => ipcRenderer.invoke('pixel-forge-preview:hide'),
   },
+  overlay: {
+    pickList: (payload) => ipcRenderer.invoke('pixel-forge-overlay:pick-list', payload),
+  },
 })

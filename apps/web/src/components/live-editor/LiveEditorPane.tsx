@@ -329,7 +329,9 @@ export function LiveEditorPane() {
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
   const previewHostRef = useRef<HTMLDivElement | null>(null)
+  const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
+  const desktopOverlayRef = useRef(window.pixelForgeDesktop?.overlay ?? null)
 
   const [selectMode, setSelectMode] = useState(false)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
@@ -717,6 +719,40 @@ export function LiveEditorPane() {
       }
     }
   }, [sendBrowserCommand, syncAllPreviewSelectionModes, syncStorePreviewUrl, syncTabSelections, updateEmbeddedPreviewBounds])
+
+  const openUrlHistory = useCallback(async () => {
+    if (currentProjectUrls.length === 0) {
+      return
+    }
+
+    const desktopOverlay = desktopOverlayRef.current
+    const anchor = urlHistoryAnchorRef.current
+    if (desktopOverlay && anchor) {
+      const rect = anchor.getBoundingClientRect()
+      const selectedUrl = await desktopOverlay.pickList({
+        anchorRect: {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        },
+        items: currentProjectUrls.map((url) => ({
+          value: url,
+          label: url,
+        })),
+        selectedValue: targetUrl,
+        width: Math.max(Math.round(rect.width), 420),
+        maxHeight: 280,
+      })
+      if (selectedUrl) {
+        setTargetUrl(selectedUrl)
+        await loadApp(selectedUrl)
+      }
+      return
+    }
+
+    setShowUrlHistory((current) => !current)
+  }, [currentProjectUrls, loadApp, targetUrl])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -1515,7 +1551,7 @@ export function LiveEditorPane() {
           </div>
 
           <div className="flex flex-wrap items-start gap-1.5 border-t border-border/50 px-3 py-1.5">
-            <div className="min-w-[16rem] flex-1">
+            <div ref={urlHistoryAnchorRef} className="min-w-[16rem] flex-1">
               <div className="flex gap-0">
                 <Input
                   value={targetUrl}
@@ -1532,7 +1568,7 @@ export function LiveEditorPane() {
                   variant="outline"
                   size="sm"
                   className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
-                  onClick={() => setShowUrlHistory(!showUrlHistory)}
+                  onClick={() => void openUrlHistory()}
                   disabled={currentProjectUrls.length === 0}
                   title="Recent preview URLs"
                 >

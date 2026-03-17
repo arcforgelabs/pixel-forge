@@ -13,6 +13,8 @@ let activePreviewTabId = null
 let previewVisible = false
 let previewBounds = { x: 0, y: 0, width: 0, height: 0 }
 let attachedPreviewView = null
+let pickerOverlayWindow = null
+let pickerOverlayResolver = null
 
 const previewViews = new Map()
 const webContentsTabIds = new Map()
@@ -38,6 +40,20 @@ function sanitizeBounds(bounds) {
     width: Math.max(0, Math.round(Number(bounds?.width) || 0)),
     height: Math.max(0, Math.round(Number(bounds?.height) || 0)),
   }
+}
+
+function closePickerOverlay(result = null) {
+  if (pickerOverlayResolver) {
+    pickerOverlayResolver(result)
+    pickerOverlayResolver = null
+  }
+  if (pickerOverlayWindow && !pickerOverlayWindow.isDestroyed()) {
+    const closingWindow = pickerOverlayWindow
+    pickerOverlayWindow = null
+    closingWindow.destroy()
+    return
+  }
+  pickerOverlayWindow = null
 }
 
 function applyPreviewView() {
@@ -68,6 +84,8 @@ function applyPreviewView() {
 }
 
 function registerViewEvents(tabId, view) {
+  const webContentsId = view.webContents.id
+
   view.webContents.setWindowOpenHandler(({ url }) => {
     void loadPreviewUrl(tabId, url)
     return { action: 'deny' }
@@ -93,7 +111,7 @@ function registerViewEvents(tabId, view) {
 
   view.webContents.on('destroyed', () => {
     previewViews.delete(tabId)
-    webContentsTabIds.delete(view.webContents.id)
+    webContentsTabIds.delete(webContentsId)
     if (attachedPreviewView === view) {
       attachedPreviewView = null
     }
@@ -124,6 +142,31 @@ function registerViewEvents(tabId, view) {
   })
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function settleAbortedNavigation(view, fallbackUrl) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (view.webContents.isDestroyed()) {
+      break
+    }
+    if (!view.webContents.isLoadingMainFrame()) {
+      break
+    }
+    await sleep(100)
+  }
+
+  const currentUrl = view.webContents.isDestroyed()
+    ? ''
+    : (view.webContents.getURL() || '')
+  if (!currentUrl || currentUrl === 'about:blank') {
+    throw new Error(`ERR_ABORTED (-3) loading '${fallbackUrl}'`)
+  }
+}
+
 function getOrCreatePreviewView(tabId) {
   const existing = previewViews.get(tabId)
   if (existing) {
@@ -150,7 +193,15 @@ async function loadPreviewUrl(tabId, url) {
   activePreviewTabId = tabId
   previewVisible = true
   applyPreviewView()
-  await view.webContents.loadURL(url)
+  try {
+    await view.webContents.loadURL(url)
+  } catch (error) {
+    const message = String(error?.message || error || '')
+    if (!message.includes('ERR_ABORTED (-3)')) {
+      throw error
+    }
+    await settleAbortedNavigation(view, url)
+  }
   view.webContents.focus()
   return {
     mode: 'browser',
@@ -201,6 +252,91 @@ async function capturePreviewRegion(tabId, rect) {
 
   const jpeg = output.toJPEG(80)
   return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+}
+
+async function showPickListOverlay(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('Main window is not available')
+  }
+
+  const items = Array.isArray(payload?.items)
+    ? payload.items
+        .filter((entry) => entry && typeof entry.value === 'string' && typeof entry.label === 'string')
+        .map((entry) => ({ value: entry.value, label: entry.label }))
+    : []
+  if (items.length === 0) {
+    return null
+  }
+
+  closePickerOverlay(null)
+
+  const anchorRect = sanitizeBounds(payload?.anchorRect || {})
+  const contentBounds = mainWindow.getContentBounds()
+  const width = Math.max(
+    280,
+    Math.round(Number(payload?.width) || anchorRect.width || 420)
+  )
+  const maxHeight = Math.max(160, Math.round(Number(payload?.maxHeight) || 260))
+  const listHeight = Math.min(maxHeight, 12 + items.length * 38)
+
+  const minX = contentBounds.x + 8
+  const maxX = contentBounds.x + Math.max(8, contentBounds.width - width - 8)
+  const minY = contentBounds.y + 8
+  const maxY = contentBounds.y + Math.max(8, contentBounds.height - listHeight - 8)
+
+  const x = Math.min(Math.max(contentBounds.x + anchorRect.x, minX), maxX)
+  const y = Math.min(
+    Math.max(contentBounds.y + anchorRect.y + anchorRect.height + 6, minY),
+    maxY
+  )
+
+  pickerOverlayWindow = new BrowserWindow({
+    parent: mainWindow,
+    x,
+    y,
+    width,
+    height: listHeight,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
+    show: false,
+    hasShadow: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'picker-overlay-preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+
+  pickerOverlayWindow.on('blur', () => {
+    closePickerOverlay(null)
+  })
+  pickerOverlayWindow.on('closed', () => {
+    pickerOverlayWindow = null
+    if (pickerOverlayResolver) {
+      pickerOverlayResolver(null)
+      pickerOverlayResolver = null
+    }
+  })
+
+  await pickerOverlayWindow.loadFile(path.join(__dirname, 'picker-overlay.html'))
+  pickerOverlayWindow.webContents.send('pixel-forge-overlay:list-init', {
+    items,
+    selectedValue: typeof payload?.selectedValue === 'string' ? payload.selectedValue : null,
+  })
+  pickerOverlayWindow.show()
+  pickerOverlayWindow.focus()
+
+  return await new Promise((resolve) => {
+    pickerOverlayResolver = resolve
+  })
 }
 
 function createMainWindow() {
@@ -358,6 +494,18 @@ app.whenReady().then(() => {
       throw new Error('Unknown preview sender')
     }
     return capturePreviewRegion(tabId, rect)
+  })
+
+  ipcMain.handle('pixel-forge-overlay:pick-list', async (_event, payload) => {
+    return showPickListOverlay(payload)
+  })
+
+  ipcMain.on('pixel-forge-overlay:list-selected', (_event, value) => {
+    closePickerOverlay(typeof value === 'string' ? value : null)
+  })
+
+  ipcMain.on('pixel-forge-overlay:list-cancel', () => {
+    closePickerOverlay(null)
   })
 
   ipcMain.on('pixel-forge-preview:event', (event, payload) => {

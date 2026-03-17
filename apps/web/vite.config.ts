@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const webPort = Number.parseInt(env.PIXEL_FORGE_WEB_PORT || "5173", 10);
   const previewPort = Number.parseInt(env.PIXEL_FORGE_WEB_PREVIEW_PORT || "4173", 10);
   const apiTarget = `http://127.0.0.1:${apiPort}`;
+  const forcePolling =
+    (env.PIXEL_FORGE_FORCE_POLLING || process.env.PIXEL_FORGE_FORCE_POLLING || "0") === "1";
 
   return {
     base: "",
@@ -24,6 +26,12 @@ export default defineConfig(({ mode }) => {
       allowedHosts: true,
       port: webPort,
       strictPort: true,
+      watch: forcePolling
+        ? {
+            usePolling: true,
+            interval: 250,
+          }
+        : undefined,
       proxy: {
         "/api": { target: apiTarget, changeOrigin: true, ws: true },
         "/app": { target: apiTarget, changeOrigin: true, ws: true },
