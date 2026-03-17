@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { generateCode } from "./generateCode";
 import SettingsSidebar from "./components/settings/SettingsSidebar";
+import { Button } from "./components/ui/button";
 import { AppState, CodeGenerationParams, EditorTheme, Settings } from "./types";
 import { usePersistedState } from "./hooks/usePersistedState";
 // USER_CLOSE_WEB_SOCKET_CODE removed — cancelCodeGeneration no longer used
@@ -25,6 +26,7 @@ import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { IS_TARGET_MODE, TARGET_PROJECT_PATH } from "./config";
+import { FolderOpen } from "lucide-react";
 import type {
   PixelForgeDesktopBootstrapState,
   PixelForgeDesktopPendingControllerUpdate,
@@ -494,12 +496,8 @@ function App() {
     <div className="dark:bg-background dark:text-foreground flex flex-row h-screen overflow-hidden">
       {/* Project Selector Modal */}
       <ProjectSelector
-        open={!IS_TARGET_MODE && showProjectSelector}
-        onOpenChange={(nextOpen) => {
-          if (!IS_TARGET_MODE) {
-            setShowProjectSelector(nextOpen);
-          }
-        }}
+        open={showProjectSelector}
+        onOpenChange={setShowProjectSelector}
       />
 
       {/* Settings drawer - pushes main content */}
@@ -518,6 +516,20 @@ function App() {
         {/* Mode Tab Bar */}
         <ModeTabBar />
         <ControllerUpdateNotice />
+        {IS_TARGET_MODE && (
+          <div className="shrink-0 border-b border-border/40 bg-card/20 px-3 py-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setShowProjectSelector(true)}
+            >
+              <FolderOpen className="h-4 w-4" />
+              Open Workspace Dialog
+            </Button>
+          </div>
+        )}
 
         {/* Both panes rendered, visibility toggled to preserve state */}
         <div className={`flex-1 min-h-0 overflow-auto ${activeMode === "screenshot" ? "" : "hidden"}`}>
