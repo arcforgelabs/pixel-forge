@@ -14,6 +14,9 @@ const TARGET_MODE_VALUES = new Set(["1", "true", "yes", "on"]);
 export const IS_TARGET_MODE = TARGET_MODE_VALUES.has(
   String(import.meta.env.VITE_PIXEL_FORGE_TARGET_MODE || "").toLowerCase()
 );
+export const TARGET_PROJECT_PATH = String(
+  import.meta.env.VITE_PIXEL_FORGE_TARGET_PROJECT_PATH || ""
+).trim() || null;
 
 export const WS_BACKEND_URL =
   import.meta.env.VITE_WS_BACKEND_URL || `${DEFAULT_WS_PROTOCOL}://${DEFAULT_BACKEND_HOST}`;

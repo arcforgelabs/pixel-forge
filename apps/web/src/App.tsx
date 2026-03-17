@@ -23,7 +23,7 @@ import { createCommit } from "./components/commits/utils";
 import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
-import { IS_TARGET_MODE } from "./config";
+import { IS_TARGET_MODE, TARGET_PROJECT_PATH } from "./config";
 
 function App() {
   const {
@@ -68,6 +68,7 @@ function App() {
     activeMode,
     projectsLoaded,
     hydrateProjects,
+    setProject,
     setSessionId,
     switchMode,
   } = useSessionStore();
@@ -80,6 +81,16 @@ function App() {
       console.error("[app] Failed to hydrate projects:", error);
     });
   }, [hydrateProjects]);
+
+  useEffect(() => {
+    if (!IS_TARGET_MODE || !TARGET_PROJECT_PATH || !projectsLoaded || projectPath) {
+      return;
+    }
+
+    void setProject({ path: TARGET_PROJECT_PATH }).catch((error) => {
+      console.error("[app] Failed to auto-bind target project:", error);
+    });
+  }, [projectPath, projectsLoaded, setProject]);
 
   // Show project selector on first render if no project is configured
   useEffect(() => {
