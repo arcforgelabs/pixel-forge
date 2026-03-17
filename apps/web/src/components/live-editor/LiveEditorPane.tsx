@@ -1379,52 +1379,51 @@ export function LiveEditorPane() {
             </Button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 px-3 py-1.5">
-            <div className="relative z-20 flex min-w-[16rem] flex-1 gap-0">
-              <Input
-                value={targetUrl}
-                onChange={(event) => setTargetUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    void loadApp()
-                  }
-                }}
-                placeholder="Enter preview URL..."
-                className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
-                onClick={() => setShowUrlHistory(!showUrlHistory)}
-                disabled={currentProjectUrls.length === 0}
-                title="Recent preview URLs"
-              >
-                <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
-              </Button>
+          <div className="flex flex-wrap items-start gap-1.5 border-t border-border/50 px-3 py-1.5">
+            <div className="min-w-[16rem] flex-1">
+              <div className="flex gap-0">
+                <Input
+                  value={targetUrl}
+                  onChange={(event) => setTargetUrl(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void loadApp()
+                    }
+                  }}
+                  placeholder="Enter preview URL..."
+                  className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
+                  onClick={() => setShowUrlHistory(!showUrlHistory)}
+                  disabled={currentProjectUrls.length === 0}
+                  title="Recent preview URLs"
+                >
+                  <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+                </Button>
+              </div>
               {showUrlHistory && currentProjectUrls.length > 0 && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowUrlHistory(false)} />
-                  <div className="absolute bottom-full left-0 z-20 mb-1 w-full rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
-                    <div className="max-h-48 overflow-y-auto py-1">
-                      {currentProjectUrls.map((url) => (
-                        <button
-                          key={url}
-                          onClick={() => {
-                            setTargetUrl(url)
-                            setShowUrlHistory(false)
-                            void loadApp(url)
-                          }}
-                          className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
-                            url === targetUrl ? 'bg-primary/5 text-primary' : ''
-                          }`}
-                        >
-                          <span className="truncate">{url}</span>
-                        </button>
-                      ))}
-                    </div>
+                <div className="mt-1 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
+                  <div className="max-h-48 overflow-y-auto py-1">
+                    {currentProjectUrls.map((url) => (
+                      <button
+                        key={url}
+                        onClick={() => {
+                          setTargetUrl(url)
+                          setShowUrlHistory(false)
+                          void loadApp(url)
+                        }}
+                        className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
+                          url === targetUrl ? 'bg-primary/5 text-primary' : ''
+                        }`}
+                      >
+                        <span className="truncate">{url}</span>
+                      </button>
+                    ))}
                   </div>
-                </>
+                </div>
               )}
             </div>
             <Button
