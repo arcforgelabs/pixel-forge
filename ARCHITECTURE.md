@@ -11,7 +11,7 @@ Pixel Forge must be able to point back at isolated sibling instances of Pixel Fo
 If the self-target differs materially from the controller UI, the architecture has failed. The user is then fixing a surrogate, not Pixel Forge.
 
 Safety must live below the UI:
-- isolated ports, DB roots, and browser profiles
+- isolated ports, runtime sandboxes, and browser profiles
 - staged apply instead of mid-stream self-restart
 - frozen update snapshots plus rollback
 - backend/runtime policy interception for dangerous actions
@@ -41,6 +41,7 @@ Truth:
 - The desktop shell is the product path.
 - A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites or faithful localhost self-edit targets.
 - Proxying or iframe tricks are not a durable answer for auth-heavy sites, HMR-heavy localhost apps, or sibling-instance self-edit flows.
+- The shared product model cannot live inside per-runtime DB copies. Projects, resumable sessions, and staged updates are control-plane state and must stay visible across controller and mirror runtimes.
 - The current architectural bug is no longer the default launch path. It is the remaining gap between a faithful mirror runtime and a fully shell-capable recursive mirror runtime inside that preview surface.
 
 ## Transition Architecture
@@ -91,8 +92,8 @@ Sibling target runtime
   -> when a staged self-edit snapshot exists, loading the latest mirror should prefer that snapshot as the next candidate build
   -> old mirror candidates stay interactive in their own tabs; newer mirror candidates open as new tabs rather than overwriting the old one
   -> older mirror candidates can be reopened explicitly from a build picker
-  -> target state must remain isolated from the controller
-  -> target state should be seeded from the current runtime snapshot so the UI reproduces the controller before divergence is introduced
+  -> target runtime sandboxes must stay isolated from the controller for browser state, logs, and build artifacts
+  -> shared control-plane metadata must stay common across controller and mirrors so project/session/update truth does not drift
   -> target UI should converge toward a full mirror, not a target-flavored variant
   -> nested mirror runtimes still need shell-grade preview ownership/context routing to recurse indefinitely
 
@@ -152,7 +153,7 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 
 ### Runtime Isolation Layer
 - Separate API/web ports
-- Separate DB and browser-profile state
+- Separate runtime sandboxes and browser-profile state
 - Mirror-target lifecycle
 - Versioned mirror build artifacts stored under Pixel Forge state outside the repo
 - Frozen staged-update snapshots
@@ -160,7 +161,7 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 - Policy interception for dangerous self-edit actions
 
 ### Backend Broker Layer
-- Project/session persistence
+- Shared control-plane persistence for projects, resumable sessions, and staged updates
 - Request packs
 - Selection tunnel API/CLI surface
 - Live Editor dispatch into Agent Deck

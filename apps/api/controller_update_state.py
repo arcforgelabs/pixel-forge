@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from runtime_config import state_dir
+from runtime_config import shared_state_dir
 
 
 PENDING_CONTROLLER_UPDATE_FILE = "pending-controller-update.json"
@@ -16,13 +16,13 @@ CONTROLLER_UPDATE_SNAPSHOTS_DIR = "controller-updates"
 
 
 def pending_controller_update_path() -> Path:
-    path = state_dir() / PENDING_CONTROLLER_UPDATE_FILE
+    path = shared_state_dir() / PENDING_CONTROLLER_UPDATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def controller_update_snapshots_dir() -> Path:
-    path = state_dir() / CONTROLLER_UPDATE_SNAPSHOTS_DIR
+    path = shared_state_dir() / CONTROLLER_UPDATE_SNAPSHOTS_DIR
     path.mkdir(parents=True, exist_ok=True)
     return path
 

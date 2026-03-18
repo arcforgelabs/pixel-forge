@@ -37,6 +37,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-S-002:` Pixel Forge broker metadata belongs in a small persistent store; bulky artifacts belong on disk outside that metadata path.
 - `REQ-S-003:` Workspace binding, preview target selection, and generated-output destination must stay separate in the product model. Do not collapse them into one misleading "project" field.
 - `REQ-S-004:` Workspace/project metadata and resumable Live Editor session linkage must persist in the Pixel Forge backend store instead of browser localStorage.
+- `REQ-S-005:` Project/workspace metadata, Live Editor thread/session linkage, and staged update records must live in a shared Pixel Forge control-plane store visible to the controller and mirror runtimes. Runtime sandboxes may isolate browser state, logs, and build artifacts, but they must not silently fork this shared product metadata.
 
 ### Git Hygiene
 - `REQ-G-001:` Request packs created inside a target repo must not pollute the user’s normal git status.
@@ -84,7 +85,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute.
 
 ### Self-Edit Runtime
-- `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, state DB path, and managed-browser profile path.
+- `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, runtime sandbox paths, and managed-browser profile paths.
 - `REQ-E-002:` The default self-edit target must be a faithful mirror of Pixel Forge's real controller UI and startup flows, including the workspace selector and deeper self-target launch paths. Safety belongs to isolated runtime/state boundaries and backend/runtime policy interception, not to front-end neutering of the target surface.
 - `REQ-E-002A:` Self-edit must be preview-first. A completed Pixel Forge self-edit request should be loadable into a new mirror preview build/tab before the user decides to promote that same build into the controller.
 - `REQ-E-003:` A Pixel Forge self-edit request must not restart or replace the active Pixel Forge controller before the current live-edit stream finishes.
@@ -119,6 +120,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[validated]` Pixel Forge surfaces Agent Deck session identity in the Live Editor UI. Basis: the frontend persists and displays Agent Deck session metadata.
 - `[validated]` Pixel Forge now separates workspace selection, preview URL, and generated output policy in the selector flow. Basis: the selector now binds a workspace, accepts any preview URL, and defaults scratch output to `.pixel-forge/generated/`.
 - `[validated]` Project/workspace metadata and resumable Live Editor session linkage now persist server-side in SQLite under `~/.pixel-forge/pixel-forge.db`. Basis: recent projects, preview URL history, and Live Editor session metadata now load from backend APIs instead of browser localStorage.
+- `[validated]` Shared Pixel Forge metadata now lives in a control-plane store that is visible to controller and mirror runtimes instead of being snapshotted into isolated mirror DB copies. Basis: the shared SQLite DB and staged controller-update state now resolve through the shared control-plane root while mirrors keep isolated runtime sandboxes for browser/build state.
 - `[validated]` Pixel Forge now maintains browser-scoped proxy sessions with upstream cookie jars for authenticated targets. Basis: `/config/app-proxy` issues a local proxy-session cookie and the app proxy reuses per-session upstream clients instead of one global stateless target.
 - `[validated]` Pixel Forge now maintains multiple mounted preview tabs inside one Live Editor thread, with each tab bound to its own proxy session and active URL state. Basis: browser smoke loaded `https://field.arcforge.au/` and `https://claude.ai/new` in separate tabs and kept the active URL bar on the real target URL rather than the internal proxy URL.
 - `[validated]` Cross-tab element selection now survives tab switches and stays unified in one project-level context list. Basis: browser smoke selected one element from the Claude tab and one from the Field tab, then the Elements pane showed both selections together with their source URLs.

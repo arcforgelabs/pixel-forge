@@ -8,6 +8,7 @@ from pathlib import Path
 
 from state_db import connect as connect_state_db
 from state_db import db_path as state_db_path
+from state_db import legacy_instance_db_paths
 from state_db import legacy_live_editor_db_path
 
 
@@ -93,6 +94,70 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
+    for legacy_path in legacy_instance_db_paths():
+        if legacy_path == _db_path() or not legacy_path.is_file():
+            continue
+
+        with sqlite3.connect(legacy_path) as legacy_conn:
+            legacy_conn.row_factory = sqlite3.Row
+            tables = legacy_conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table' AND name = 'live_editor_threads'
+                """
+            ).fetchone()
+            if tables is None:
+                continue
+
+            rows = legacy_conn.execute(
+                """
+                SELECT thread_id, project_path, backend, agent_deck_session_id,
+                       agent_deck_session_title, claude_session_id, last_request_id,
+                       created_at, updated_at
+                FROM live_editor_threads
+                """
+            ).fetchall()
+
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO live_editor_threads (
+                    thread_id,
+                    project_path,
+                    backend,
+                    agent_deck_session_id,
+                    agent_deck_session_title,
+                    claude_session_id,
+                    last_request_id,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(thread_id) DO UPDATE SET
+                    project_path = excluded.project_path,
+                    backend = excluded.backend,
+                    agent_deck_session_id = excluded.agent_deck_session_id,
+                    agent_deck_session_title = excluded.agent_deck_session_title,
+                    claude_session_id = excluded.claude_session_id,
+                    last_request_id = excluded.last_request_id,
+                    created_at = MIN(live_editor_threads.created_at, excluded.created_at),
+                    updated_at = MAX(live_editor_threads.updated_at, excluded.updated_at)
+                """,
+                (
+                    row["thread_id"],
+                    str(Path(row["project_path"]).resolve()),
+                    row["backend"],
+                    row["agent_deck_session_id"],
+                    row["agent_deck_session_title"],
+                    row["claude_session_id"],
+                    row["last_request_id"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     global _DB_INITIALIZED
     if _DB_INITIALIZED:
@@ -118,6 +183,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """
         )
         _migrate_legacy_rows(conn)
+        _migrate_legacy_instance_rows(conn)
         conn.commit()
         _DB_INITIALIZED = True
 

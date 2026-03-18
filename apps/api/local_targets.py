@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import signal
 import socket
 import subprocess
@@ -17,8 +16,8 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 from runtime_config import (
+    shared_state_dir as runtime_shared_state_dir,
     source_root as runtime_source_root,
-    state_dir as runtime_state_dir,
 )
 
 
@@ -78,7 +77,7 @@ def _slug_for_project(
 
 
 def _target_state_dir(instance_slug: str) -> Path:
-    path = runtime_state_dir() / "instances" / instance_slug
+    path = runtime_shared_state_dir() / "instances" / instance_slug
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -299,19 +298,6 @@ def _resolve_mirror_launch_source(source_root: str) -> MirrorLaunchSource:
         )
 
     raise ValueError(f"Unsupported Pixel Forge mirror source root: {root}")
-
-
-def _copy_file_if_present(source: Path, destination: Path) -> None:
-    if source.is_file():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-    elif destination.exists():
-        destination.unlink()
-
-
-def _seed_mirror_state_from_runtime(state_dir: Path) -> None:
-    current_state_dir = runtime_state_dir()
-    _copy_file_if_present(current_state_dir / "pixel-forge.db", state_dir / "pixel-forge.db")
 
 
 def _run_logged_shell(
@@ -569,7 +555,6 @@ def start_pixel_forge_target(
 
     try:
         if normalized_runtime_kind == "mirror":
-            _seed_mirror_state_from_runtime(state_dir)
             command, env, api_url, web_url, launch_cwd = _ensure_mirror_runtime(
                 source_root=normalized_source_root,
                 state_dir=state_dir,
@@ -660,7 +645,7 @@ def list_pixel_forge_targets(
 ) -> list[LocalTargetRecord]:
     normalized_project_path = _normalize_project_path(project_path)
     records: list[LocalTargetRecord] = []
-    instances_root = runtime_state_dir() / "instances"
+    instances_root = runtime_shared_state_dir() / "instances"
     if not instances_root.exists():
         return records
 

@@ -6,6 +6,7 @@ import threading
 from dataclasses import dataclass
 
 from state_db import connect as connect_state_db
+from state_db import legacy_instance_db_paths
 from state_db import legacy_live_editor_db_path
 
 
@@ -136,6 +137,132 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
+    for legacy_path in legacy_instance_db_paths():
+        with sqlite3.connect(legacy_path) as legacy_conn:
+            legacy_conn.row_factory = sqlite3.Row
+
+            tables = {
+                str(row["name"])
+                for row in legacy_conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name IN ('projects', 'project_urls', 'sessions')
+                    """
+                ).fetchall()
+            }
+
+            if "projects" in tables:
+                rows = legacy_conn.execute(
+                    """
+                    SELECT path, name, output_mode, custom_output_path, created_at, last_opened
+                    FROM projects
+                    ORDER BY last_opened DESC
+                    """
+                ).fetchall()
+                for row in rows:
+                    normalized_path = normalize_project_path(row["path"])
+                    conn.execute(
+                        """
+                        INSERT INTO projects (
+                            path,
+                            name,
+                            output_mode,
+                            custom_output_path,
+                            created_at,
+                            last_opened
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(path) DO UPDATE SET
+                            name = excluded.name,
+                            output_mode = excluded.output_mode,
+                            custom_output_path = excluded.custom_output_path,
+                            created_at = MIN(projects.created_at, excluded.created_at),
+                            last_opened = MAX(projects.last_opened, excluded.last_opened)
+                        """,
+                        (
+                            normalized_path,
+                            row["name"] or project_name_for_path(normalized_path),
+                            row["output_mode"] or "scratch",
+                            row["custom_output_path"],
+                            row["created_at"],
+                            row["last_opened"],
+                        ),
+                    )
+
+            if "project_urls" in tables:
+                rows = legacy_conn.execute(
+                    """
+                    SELECT project_path, url, last_used, use_count
+                    FROM project_urls
+                    ORDER BY last_used DESC
+                    """
+                ).fetchall()
+                for row in rows:
+                    normalized_path = normalize_project_path(row["project_path"])
+                    conn.execute(
+                        """
+                        INSERT INTO project_urls (
+                            project_path,
+                            url,
+                            last_used,
+                            use_count
+                        ) VALUES (?, ?, ?, ?)
+                        ON CONFLICT(project_path, url) DO UPDATE SET
+                            last_used = MAX(project_urls.last_used, excluded.last_used),
+                            use_count = MAX(project_urls.use_count, excluded.use_count)
+                        """,
+                        (
+                            normalized_path,
+                            row["url"],
+                            row["last_used"],
+                            int(row["use_count"] or 1),
+                        ),
+                    )
+
+            if "sessions" in tables:
+                rows = legacy_conn.execute(
+                    """
+                    SELECT project_path, thread_id, backend, agent_deck_session_id,
+                           agent_deck_session_title, created_at, last_active
+                    FROM sessions
+                    ORDER BY last_active DESC
+                    """
+                ).fetchall()
+                for row in rows:
+                    normalized_path = normalize_project_path(row["project_path"])
+                    conn.execute(
+                        """
+                        INSERT INTO sessions (
+                            project_path,
+                            thread_id,
+                            backend,
+                            agent_deck_session_id,
+                            agent_deck_session_title,
+                            created_at,
+                            last_active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(thread_id) DO UPDATE SET
+                            project_path = excluded.project_path,
+                            backend = excluded.backend,
+                            agent_deck_session_id = excluded.agent_deck_session_id,
+                            agent_deck_session_title = excluded.agent_deck_session_title,
+                            created_at = MIN(sessions.created_at, excluded.created_at),
+                            last_active = MAX(sessions.last_active, excluded.last_active)
+                        """,
+                        (
+                            normalized_path,
+                            row["thread_id"],
+                            row["backend"],
+                            row["agent_deck_session_id"],
+                            row["agent_deck_session_title"],
+                            row["created_at"],
+                            row["last_active"],
+                        ),
+                    )
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     global _DB_INITIALIZED
     if _DB_INITIALIZED:
@@ -186,6 +313,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """
         )
         _migrate_legacy_live_editor_state(conn)
+        _migrate_legacy_instance_state(conn)
         conn.commit()
         _DB_INITIALIZED = True
 

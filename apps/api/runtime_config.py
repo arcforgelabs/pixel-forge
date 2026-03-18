@@ -39,18 +39,29 @@ def web_host() -> str:
     return os.environ.get("PIXEL_FORGE_WEB_HOST") or f"{instance_slug()}.localhost"
 
 
-def state_dir() -> Path:
-    override = os.environ.get("PIXEL_FORGE_STATE_DIR")
+def shared_state_dir() -> Path:
+    override = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
     base_dir = Path(override).expanduser() if override else Path.home() / ".pixel-forge"
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
 
-def db_path() -> Path:
+def state_dir() -> Path:
+    override = os.environ.get("PIXEL_FORGE_STATE_DIR")
+    base_dir = Path(override).expanduser() if override else shared_state_dir()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
+
+
+def shared_db_path() -> Path:
     override = os.environ.get("PIXEL_FORGE_DB_PATH")
-    path = Path(override).expanduser() if override else state_dir() / "pixel-forge.db"
+    path = Path(override).expanduser() if override else shared_state_dir() / "pixel-forge.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def db_path() -> Path:
+    return shared_db_path()
 
 
 def managed_browser_dir() -> Path:
