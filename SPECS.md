@@ -84,6 +84,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-U-001:` Each Live Editor request pack must include a structured frozen selection tunnel artifact in addition to human-readable selected-elements markup.
 - `REQ-U-002:` Pixel Forge must expose agent-facing inspection paths for selected live surfaces. The minimum path is the frozen local selection tunnel; the target path is live attach into the already-running preview session without replaying login, navigation, or view reconstruction.
 - `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute, and dispatch instructions must require the agent to state any remaining inspection limitation explicitly instead of guessing.
+- `REQ-U-004:` Agent-facing Pixel Forge operations must converge on the existing `pixel-forge` CLI plus a dedicated `using-pixel-forge` skill. Do not fork agent behavior across a second parallel CLI surface unless the canonical CLI proves insufficient.
 
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, runtime sandbox paths, and managed-browser profile paths.
@@ -99,6 +100,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-E-010:` Mirror preview builds must be versioned local artifacts keyed by their frozen source snapshot/runtime root so multiple mirror candidates can stay open in separate tabs without overwriting each other.
 - `REQ-E-011:` `Run Pixel Forge` must default to the latest available mirror candidate for the workspace, while still allowing explicit selection of older mirror builds.
 - `REQ-E-012:` Mirror build artifacts belong in Pixel Forge state outside the repo so they do not pollute git status or require git-ignore churn in the workspace.
+- `REQ-E-013:` Applying a staged controller update must hand off to a detached update runner and close the active controller shell before install/restart begins. The update progress surface may be a separate dedicated updater window, but the controller being replaced must not remain responsible for its own update lifecycle.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -150,6 +152,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[unvalidated]` Automatic selector routing is good enough across real hybrid DOM/canvas/WebGL apps, not just synthetic cases. Basis: implemented in the shell selection engine, but not yet hammered against a wider hostile sample.
 - `[validated]` Ancestor-cycle hover selection now moves upward through visible DOM ancestors while the pointer stays still and resets back to the direct hovered target on movement. Basis: shell smoke on nested markup showed child `1/3`, parent `2/3`, then reset to the child after mouse movement.
 - `[validated]` Dispatch/request-pack guidance now explicitly tells agents to treat Pixel Forge-forged artifacts as authoritative evidence, apply changes to the active preview target when the workspace controls it, and state remaining inspection limits instead of guessing. Basis: backend dispatch prompt and request-pack working rules now encode that behavior.
+- `[validated]` Pixel Forge now provides a dedicated `using-pixel-forge` skill and points Live Editor implementers at it instead of expecting them to infer the CLI/tunnel workflow. Basis: the skill is installed locally and the Live Editor dispatch prompt explicitly tells agents to use it when available.
 - `[unvalidated]` The selection tunnel gives working agents enough frozen context to avoid replaying third-party auth or deep navigation in practice. Basis: file/API/CLI path now exists, but it has not yet been exercised by a real agent workflow end to end.
 - `[unvalidated]` Pixel Forge has a true live attach path that lets a working agent inspect the already-running preview session/tab in place instead of relying on frozen artifacts only. Basis: this is the desired architecture, but no such attach lane is proven yet.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.

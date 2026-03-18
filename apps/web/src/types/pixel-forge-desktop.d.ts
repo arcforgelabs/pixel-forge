@@ -80,7 +80,7 @@ export interface PixelForgeDesktopPendingControllerUpdate {
 }
 
 export interface PixelForgeDesktopControllerUpdateApplyState {
-  status: 'idle' | 'running' | 'error'
+  status: 'idle' | 'running' | 'done' | 'error'
   updateId: string | null
   phase:
     | 'idle'
@@ -88,7 +88,9 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
     | 'installing'
     | 'restarting'
     | 'waiting'
+    | 'finalizing'
     | 'relaunching'
+    | 'done'
     | 'error'
   progress: number
   message: string

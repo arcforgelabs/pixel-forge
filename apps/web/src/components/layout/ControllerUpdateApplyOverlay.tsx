@@ -11,8 +11,12 @@ function phaseLabel(phase: string): string {
       return "Restarting";
     case "waiting":
       return "Waiting";
+    case "finalizing":
+      return "Finalizing";
     case "relaunching":
       return "Relaunching";
+    case "done":
+      return "Done";
     default:
       return "Applying";
   }

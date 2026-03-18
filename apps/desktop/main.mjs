@@ -13,11 +13,17 @@ const APP_STATE_DIR = path.resolve(
 )
 const CONTROLLER_UPDATE_SNAPSHOTS_DIR = path.join(APP_STATE_DIR, 'controller-updates')
 const PENDING_CONTROLLER_UPDATE_PATH = path.join(APP_STATE_DIR, 'pending-controller-update.json')
+const CONTROLLER_UPDATE_APPLY_STATE_PATH = path.join(
+  APP_STATE_DIR,
+  'controller-update-apply-state.json',
+)
 const BOOTSTRAP_STATE_PATH = path.join(APP_STATE_DIR, 'controller-bootstrap-state.json')
+const IS_UPDATER_UI_MODE = process.argv.includes('--pixel-forge-updater-ui')
 
 app.setName('Pixel Forge')
 
 let mainWindow = null
+let updaterWindow = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
@@ -29,6 +35,7 @@ let controllerUpdateApplyState = {
   progress: 0,
   message: '',
   error: null,
+  updatedAt: null,
 }
 
 const previewViews = new Map()
@@ -131,12 +138,24 @@ function sanitizeControllerUpdateApplyState(payload) {
     'installing',
     'restarting',
     'waiting',
+    'finalizing',
     'relaunching',
+    'done',
     'error',
   ])
-  const status = payload?.status === 'running' || payload?.status === 'error' ? payload.status : 'idle'
-  const phase = allowedPhases.has(payload?.phase) ? payload.phase : status === 'error' ? 'error' : 'idle'
+  const status =
+    payload?.status === 'running' || payload?.status === 'error' || payload?.status === 'done'
+      ? payload.status
+      : 'idle'
+  const phase = allowedPhases.has(payload?.phase)
+    ? payload.phase
+    : status === 'error'
+      ? 'error'
+      : status === 'done'
+        ? 'done'
+        : 'idle'
   const progress = Math.max(0, Math.min(100, Math.round(Number(payload?.progress) || 0)))
+  const updatedAt = normalizeText(payload?.updatedAt) || new Date().toISOString()
   return {
     status,
     updateId: normalizeText(payload?.updateId),
@@ -144,11 +163,13 @@ function sanitizeControllerUpdateApplyState(payload) {
     progress,
     message: normalizeText(payload?.message) || '',
     error: normalizeText(payload?.error),
+    updatedAt,
   }
 }
 
 function setControllerUpdateApplyState(payload) {
   controllerUpdateApplyState = sanitizeControllerUpdateApplyState(payload)
+  void persistControllerUpdateApplyState(controllerUpdateApplyState)
   broadcastAppEvent({
     type: 'controller-update-apply-state-changed',
     state: controllerUpdateApplyState,
@@ -338,6 +359,35 @@ async function deleteFileIfPresent(filePath) {
   }
 }
 
+async function readControllerUpdateApplyState() {
+  const payload = await readJsonFile(CONTROLLER_UPDATE_APPLY_STATE_PATH)
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+  return sanitizeControllerUpdateApplyState(payload)
+}
+
+async function persistControllerUpdateApplyState(state) {
+  const normalized = sanitizeControllerUpdateApplyState(state)
+  if (normalized.status === 'idle') {
+    await deleteFileIfPresent(CONTROLLER_UPDATE_APPLY_STATE_PATH)
+    return
+  }
+  await writeJsonFile(CONTROLLER_UPDATE_APPLY_STATE_PATH, normalized)
+}
+
+async function syncControllerUpdateApplyStateFromDisk() {
+  const persisted = await readControllerUpdateApplyState()
+  controllerUpdateApplyState = persisted ?? sanitizeControllerUpdateApplyState({
+    status: 'idle',
+    phase: 'idle',
+    progress: 0,
+    message: '',
+    error: null,
+  })
+  return controllerUpdateApplyState
+}
+
 function sanitizePendingControllerUpdate(payload) {
   const projectPath = normalizeText(payload?.projectPath)
   if (!projectPath) {
@@ -439,6 +489,105 @@ async function clearPendingControllerUpdate() {
   await deleteFileIfPresent(PENDING_CONTROLLER_UPDATE_PATH)
   pendingUpdateSnapshot = null
   await syncPendingControllerUpdate()
+}
+
+async function recoverControllerUpdateApplyState() {
+  await syncControllerUpdateApplyStateFromDisk()
+  if (controllerUpdateApplyState.status !== 'running') {
+    return controllerUpdateApplyState
+  }
+
+  const pendingUpdate = await readPendingControllerUpdate()
+  const ageMs = Math.max(
+    0,
+    Date.now() - Date.parse(controllerUpdateApplyState.updatedAt || new Date().toISOString()),
+  )
+  const shellReady = await isShellReady(2500)
+
+  if (
+    pendingUpdate
+    && shellReady
+    && (controllerUpdateApplyState.phase === 'waiting'
+      || controllerUpdateApplyState.phase === 'finalizing'
+      || controllerUpdateApplyState.phase === 'relaunching')
+  ) {
+    try {
+      await clearPendingControllerUpdate()
+    } catch (error) {
+      console.warn('[pixel-forge] Failed to clear recovered pending controller update:', error)
+    }
+    controllerUpdateApplyState = sanitizeControllerUpdateApplyState({
+      status: 'idle',
+      phase: 'idle',
+      progress: 0,
+      message: '',
+      error: null,
+    })
+    await persistControllerUpdateApplyState(controllerUpdateApplyState)
+    return controllerUpdateApplyState
+  }
+
+  if (ageMs > 180000) {
+    controllerUpdateApplyState = sanitizeControllerUpdateApplyState({
+      status: 'error',
+      updateId: controllerUpdateApplyState.updateId,
+      phase: 'error',
+      progress: 100,
+      message: 'The previous Pixel Forge update got stuck and needs recovery.',
+      error: shellReady
+        ? 'The app came back online but the shell never finished the update flow.'
+        : 'Pixel Forge did not come back online after the previous update.',
+    })
+    await persistControllerUpdateApplyState(controllerUpdateApplyState)
+  }
+
+  return controllerUpdateApplyState
+}
+
+function launchDetachedControllerUpdateUi() {
+  const relaunchArgs = process.argv
+    .slice(1)
+    .filter((arg) => arg !== '--pixel-forge-updater-ui')
+  const proc = spawn(process.execPath, [...relaunchArgs, '--pixel-forge-updater-ui'], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  })
+  proc.unref()
+}
+
+function launchDetachedControllerUpdateRunner(installProjectPath, updateId) {
+  const relaunchArgs = process.argv
+    .slice(1)
+    .filter((arg) => arg !== '--pixel-forge-updater-ui')
+  const relaunchArgsB64 = Buffer.from(JSON.stringify(relaunchArgs), 'utf-8').toString('base64')
+  const proc = spawn(
+    process.execPath,
+    [
+      path.join(__dirname, 'controller-update-runner.mjs'),
+      '--state-dir',
+      APP_STATE_DIR,
+      '--install-root',
+      installProjectPath,
+      '--update-id',
+      updateId || '',
+      '--shell-url',
+      SHELL_URL,
+      '--app-exec',
+      process.execPath,
+      '--relaunch-args-b64',
+      relaunchArgsB64,
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      },
+    },
+  )
+  proc.unref()
 }
 
 async function writeBootstrapState(payload) {
@@ -690,17 +839,33 @@ function runShellCommand(command, cwd) {
   })
 }
 
+async function isShellReady(timeoutMs = 0) {
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+
+  do {
+    try {
+      const response = await fetch(SHELL_URL, { cache: 'no-store' })
+      if (response.ok) {
+        return true
+      }
+    } catch {
+      // Retry until the service is ready again.
+    }
+    if (timeoutMs <= 0 || Date.now() >= deadline) {
+      break
+    }
+    await sleep(1000)
+  } while (Date.now() < deadline)
+
+  return false
+}
+
 async function waitForShellReady(timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
-    try {
-      const response = await fetch(SHELL_URL, { cache: 'no-store' })
-      if (response.ok) {
-        return
-      }
-    } catch {
-      // Retry until the service is ready again.
+    if (await isShellReady()) {
+      return
     }
     await sleep(1000)
   }
@@ -733,48 +898,19 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
     })
 
     await writeBootstrapState(sanitizedState)
-
     setControllerUpdateApplyState({
       status: 'running',
       updateId,
       phase: 'installing',
-      progress: 40,
-      message: 'Installing updated Pixel Forge build…',
+      progress: 18,
+      message: 'Closing Pixel Forge and starting the external update runner…',
       error: null,
     })
-    await runShellCommand('./install.sh', installProjectPath)
-
-    setControllerUpdateApplyState({
-      status: 'running',
-      updateId,
-      phase: 'restarting',
-      progress: 68,
-      message: 'Restarting Pixel Forge service…',
-      error: null,
-    })
-    await runShellCommand('pixel-forge restart', installProjectPath)
-
-    setControllerUpdateApplyState({
-      status: 'running',
-      updateId,
-      phase: 'waiting',
-      progress: 84,
-      message: 'Waiting for the updated app to come back online…',
-      error: null,
-    })
-    await waitForShellReady()
-
-    await clearPendingControllerUpdate()
-
-    setControllerUpdateApplyState({
-      status: 'running',
-      updateId,
-      phase: 'relaunching',
-      progress: 100,
-      message: 'Reloading Pixel Forge with the updated build…',
-      error: null,
-    })
-    scheduleShellRelaunch()
+    launchDetachedControllerUpdateUi()
+    launchDetachedControllerUpdateRunner(installProjectPath, updateId)
+    setTimeout(() => {
+      app.exit(0)
+    }, 180)
     return { ok: true }
   } catch (error) {
     setControllerUpdateApplyState({
@@ -787,6 +923,32 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
     })
     throw error
   }
+}
+
+function createUpdaterWindow() {
+  updaterWindow = new BrowserWindow({
+    width: 520,
+    height: 220,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b0d10',
+    alwaysOnTop: true,
+    center: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'updater-preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+
+  updaterWindow.loadFile(path.join(__dirname, 'updater.html'))
+  updaterWindow.on('closed', () => {
+    updaterWindow = null
+  })
 }
 
 async function settleAbortedNavigation(view, fallbackUrl) {
@@ -1041,7 +1203,25 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
-  void ensureAppStateDir().then(() => syncPendingControllerUpdate())
+  if (IS_UPDATER_UI_MODE) {
+    ipcMain.handle('pixel-forge-updater:get-state', async () => {
+      return (await readControllerUpdateApplyState())
+        ?? sanitizeControllerUpdateApplyState({
+          status: 'idle',
+          phase: 'idle',
+          progress: 0,
+          message: '',
+          error: null,
+        })
+    })
+    createUpdaterWindow()
+    return
+  }
+
+  void ensureAppStateDir().then(async () => {
+    await syncPendingControllerUpdate()
+    await recoverControllerUpdateApplyState()
+  })
   watchFile(PENDING_CONTROLLER_UPDATE_PATH, { interval: 1000 }, () => {
     void syncPendingControllerUpdate()
   })
@@ -1221,6 +1401,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pixel-forge-app:get-controller-update-apply-state', async () => {
+    await syncControllerUpdateApplyStateFromDisk()
     return controllerUpdateApplyState
   })
 
@@ -1254,7 +1435,7 @@ app.whenReady().then(() => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!IS_UPDATER_UI_MODE && BrowserWindow.getAllWindows().length === 0) {
       createMainWindow()
     }
   })

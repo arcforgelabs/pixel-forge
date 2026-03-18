@@ -15,6 +15,7 @@ Safety must live below the UI:
 - staged apply instead of mid-stream self-restart
 - frozen update snapshots plus rollback
 - backend/runtime policy interception for dangerous actions
+- detached updater orchestration when the controller itself is being replaced
 
 Safety must not depend on front-end neutering of the very UI Pixel Forge is supposed to inspect and fix.
 
@@ -104,6 +105,11 @@ FastAPI backend (apps/api)
   -> records and lists local mirror build instances
   -> persists projects/sessions/request packs
   -> may keep compatibility preview code internally, but the product surface routes preview through the shell
+
+Canonical agent tooling
+  -> one `pixel-forge` CLI surface
+  -> one `using-pixel-forge` skill that teaches agents how to use the CLI, request pack, and tunnel truthfully
+  -> no second parallel Pixel Forge CLI unless the canonical surface proves insufficient
 ```
 
 This is the current build direction. The unresolved transition work is no longer "make mirror the default"; it is "make mirror runtimes fully shell-capable when Pixel Forge is running inside Pixel Forge."
@@ -173,6 +179,7 @@ Target shape:
 - Mirror-target lifecycle
 - Versioned mirror build artifacts stored under Pixel Forge state outside the repo
 - Frozen staged-update snapshots
+- Detached controller-update runner plus dedicated updater UI when the controller itself is being replaced
 - Rollback lane
 - Policy interception for dangerous self-edit actions
 
