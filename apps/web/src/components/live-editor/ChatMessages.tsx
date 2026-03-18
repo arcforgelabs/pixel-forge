@@ -9,7 +9,6 @@
 
 import { useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
 import { ToolCard } from './ToolCard'
@@ -32,16 +31,30 @@ export function ChatMessages({
     currentStreamContent,
     currentStatusMessage,
   } = useLiveEditorStore()
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = scrollContainerRef.current
+    if (!container) {
+      return
+    }
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: 'smooth',
+    })
   }, [messages, currentStreamContent])
 
   return (
-    <ScrollArea className="min-h-0 min-w-0 flex-1 [&>div]:!overflow-x-hidden [&>div>div]:!block [&>div>div]:!min-w-0">
-      <div className="min-w-0 w-full space-y-4 overflow-hidden p-4">
+    <div
+      ref={scrollContainerRef}
+      className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
+      onWheelCapture={(event) => {
+        event.stopPropagation()
+      }}
+    >
+      <div className="min-w-0 w-full space-y-4 p-4">
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -218,6 +231,6 @@ export function ChatMessages({
         {/* Scroll anchor */}
         <div ref={messagesEndRef} />
       </div>
-    </ScrollArea>
+    </div>
   )
 }
