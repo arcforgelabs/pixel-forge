@@ -1,6 +1,6 @@
 import { app, BrowserWindow, WebContentsView, ipcMain, shell, webContents as electronWebContents } from 'electron'
 import { spawn } from 'node:child_process'
-import { promises as fsPromises, watchFile, unwatchFile } from 'node:fs'
+import { existsSync, promises as fsPromises, watchFile, unwatchFile } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -120,6 +120,73 @@ async function ensureAppStateDir() {
   await fsPromises.mkdir(APP_STATE_DIR, { recursive: true })
 }
 
+function shouldIgnoreSnapshotEntry(relativePath) {
+  const normalized = relativePath.split(path.sep).filter(Boolean)
+  if (normalized.length === 0) {
+    return false
+  }
+
+  if (normalized.includes('.git') || normalized.includes('.venv') || normalized.includes('node_modules')) {
+    return true
+  }
+
+  return (
+    normalized[0] === '.pixel-forge'
+    && (normalized[1] === 'instances' || normalized[1] === 'requests')
+  )
+}
+
+async function copyControllerSnapshotTree(sourceRoot, destinationRoot, relativePath = '') {
+  const sourcePath = relativePath ? path.join(sourceRoot, relativePath) : sourceRoot
+  const destinationPath = relativePath ? path.join(destinationRoot, relativePath) : destinationRoot
+  const stat = await fsPromises.lstat(sourcePath)
+
+  if (stat.isSymbolicLink()) {
+    const linkTarget = await fsPromises.readlink(sourcePath)
+    await fsPromises.symlink(linkTarget, destinationPath)
+    return
+  }
+
+  if (stat.isDirectory()) {
+    await fsPromises.mkdir(destinationPath, { recursive: true })
+    await fsPromises.chmod(destinationPath, stat.mode)
+    const entries = await fsPromises.readdir(sourcePath, { withFileTypes: true })
+    for (const entry of entries) {
+      const entryRelativePath = relativePath
+        ? path.join(relativePath, entry.name)
+        : entry.name
+      if (shouldIgnoreSnapshotEntry(entryRelativePath)) {
+        continue
+      }
+      await copyControllerSnapshotTree(sourceRoot, destinationRoot, entryRelativePath)
+    }
+    return
+  }
+
+  await fsPromises.copyFile(sourcePath, destinationPath)
+  await fsPromises.chmod(destinationPath, stat.mode)
+}
+
+function isInstallableProjectRoot(candidatePath) {
+  if (!candidatePath) {
+    return false
+  }
+
+  const resolvedPath = path.resolve(candidatePath)
+  return (
+    path.basename(resolvedPath) !== 'node_modules'
+    && requireInstallLayout(resolvedPath)
+  )
+}
+
+function requireInstallLayout(candidatePath) {
+  return (
+    path.isAbsolute(candidatePath)
+    && existsSync(path.join(candidatePath, 'install.sh'))
+    && existsSync(path.join(candidatePath, 'apps', 'api', 'main.py'))
+  )
+}
+
 function getOwnerBaseBounds(ownerContextId) {
   const mainContextId = getMainPreviewContextId()
   if (mainContextId === null) {
@@ -152,37 +219,18 @@ function getOwnerBaseBounds(ownerContextId) {
   }
 }
 
-function shouldCopySnapshotPath(projectPath, sourcePath) {
-  const relativePath = path.relative(projectPath, sourcePath)
-  if (!relativePath) {
-    return true
-  }
-
-  const segments = relativePath.split(path.sep).filter(Boolean)
-  if (segments.length === 0) {
-    return true
-  }
-
-  if (segments.includes('.git') || segments.includes('.venv') || segments.includes('node_modules')) {
-    return false
-  }
-
-  if (segments[0] === '.pixel-forge' && (segments[1] === 'instances' || segments[1] === 'requests')) {
-    return false
-  }
-
-  return true
-}
-
 async function createControllerUpdateSnapshot(projectPath, updateId) {
   const sourcePath = path.resolve(projectPath)
+  if (!isInstallableProjectRoot(sourcePath)) {
+    throw new Error(`Cannot stage controller update from non-installable root: ${sourcePath}`)
+  }
   const snapshotPath = path.join(CONTROLLER_UPDATE_SNAPSHOTS_DIR, updateId)
   await fsPromises.mkdir(CONTROLLER_UPDATE_SNAPSHOTS_DIR, { recursive: true })
   await fsPromises.rm(snapshotPath, { recursive: true, force: true })
-  await fsPromises.cp(sourcePath, snapshotPath, {
-    recursive: true,
-    filter: (source) => shouldCopySnapshotPath(sourcePath, path.resolve(source)),
-  })
+  await copyControllerSnapshotTree(sourcePath, snapshotPath)
+  if (!isInstallableProjectRoot(snapshotPath)) {
+    throw new Error(`Staged controller update snapshot is incomplete: ${snapshotPath}`)
+  }
   return snapshotPath
 }
 
@@ -313,6 +361,36 @@ async function stagePendingControllerUpdate(payload) {
   pendingUpdateSnapshot = null
   await syncPendingControllerUpdate()
   return normalized
+}
+
+async function rewritePendingControllerUpdate(update) {
+  const normalized = sanitizePendingControllerUpdate(update)
+  await writeJsonFile(PENDING_CONTROLLER_UPDATE_PATH, normalized)
+  pendingUpdateSnapshot = null
+  await syncPendingControllerUpdate()
+  return normalized
+}
+
+async function ensurePendingControllerUpdateSnapshot(pendingUpdate) {
+  if (!pendingUpdate) {
+    throw new Error('No staged Pixel Forge update is ready to load.')
+  }
+
+  const snapshotPath = normalizeText(pendingUpdate.snapshotPath)
+  if (snapshotPath && isInstallableProjectRoot(snapshotPath)) {
+    return pendingUpdate
+  }
+
+  const projectPath = normalizeText(pendingUpdate.projectPath)
+  if (!projectPath || !isInstallableProjectRoot(projectPath)) {
+    throw new Error('Staged Pixel Forge update has no installable source root.')
+  }
+
+  const repairedSnapshotPath = await createControllerUpdateSnapshot(projectPath, pendingUpdate.id)
+  return rewritePendingControllerUpdate({
+    ...pendingUpdate,
+    snapshotPath: repairedSnapshotPath,
+  })
 }
 
 async function clearPendingControllerUpdate() {
@@ -595,6 +673,9 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
   const sanitizedState = sanitizeBootstrapState(bootstrapState)
   if (!installProjectPath) {
     throw new Error('install projectPath is required')
+  }
+  if (!isInstallableProjectRoot(installProjectPath)) {
+    throw new Error(`Installable Pixel Forge root not found: ${installProjectPath}`)
   }
   if (!sanitizedState.projectPath) {
     throw new Error('bootstrap projectPath is required')
@@ -1006,7 +1087,9 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pixel-forge-app:apply-pending-controller-update', async (_event, payload) => {
-    const pendingUpdate = await readPendingControllerUpdate()
+    const pendingUpdate = await ensurePendingControllerUpdateSnapshot(
+      await readPendingControllerUpdate(),
+    )
     if (!pendingUpdate) {
       throw new Error('No staged Pixel Forge update is ready to load.')
     }
