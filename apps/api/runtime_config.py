@@ -60,6 +60,27 @@ def managed_browser_dir() -> Path:
     return path
 
 
+def source_root() -> Path:
+    override = os.environ.get("PIXEL_FORGE_RUNTIME_SOURCE_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    here = Path(__file__).resolve()
+    installed_root = here.parent
+    if (
+        (installed_root / "main.py").is_file()
+        and (installed_root / "requirements.txt").is_file()
+        and (installed_root / "frontend" / "index.html").is_file()
+    ):
+        return installed_root
+
+    repo_root = here.parents[2]
+    if (repo_root / "apps" / "api" / "main.py").is_file():
+        return repo_root
+
+    return installed_root
+
+
 def runtime_kind() -> str:
     raw_kind = (os.environ.get("PIXEL_FORGE_RUNTIME_KIND") or "").strip().lower()
     if raw_kind in {"controller", "mirror", "dev"}:

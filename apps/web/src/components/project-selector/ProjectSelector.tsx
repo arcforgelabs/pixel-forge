@@ -173,7 +173,7 @@ export function ProjectSelector({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[min(85vh,44rem)] overflow-hidden p-0">
+      <DialogContent className="w-[min(92vw,32rem)] max-h-[min(85vh,44rem)] overflow-hidden p-0 sm:max-w-none">
         <div className="flex max-h-[min(85vh,44rem)] flex-col">
           <DialogHeader className="shrink-0 px-6 pb-0 pt-6 pr-12">
             <DialogTitle className="text-xl">Open Workspace</DialogTitle>
@@ -182,7 +182,7 @@ export function ProjectSelector({
             </p>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-4">
             {/* Recent Projects */}
             {recentProjects.length > 0 && (
               <div className="space-y-2">
@@ -193,43 +193,41 @@ export function ProjectSelector({
                       key={project.path}
                       className="overflow-hidden rounded-md border border-border"
                     >
-                      {/* Project row */}
-                      <button
-                        onClick={() => {
-                          // Open with most recent URL
-                          void handleSelectProject(
-                            project.path,
-                            project.previewUrls[0],
-                            project.outputMode || "scratch",
-                            project.customOutputPath || null
-                          ).catch((error) => {
-                            toast.error(
-                              error instanceof Error
-                                ? error.message
-                                : "Failed to open workspace"
-                            );
-                          });
-                        }}
-                        className="w-full flex items-center justify-between p-3 text-left transition-colors hover:bg-muted/50"
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-3">
-                          <FaFolder className="flex-shrink-0 text-blue-500" />
+                      <div className="group flex min-w-0 items-start gap-3 p-3 transition-colors hover:bg-muted/50">
+                        <button
+                          onClick={() => {
+                            void handleSelectProject(
+                              project.path,
+                              project.previewUrls[0],
+                              project.outputMode || "scratch",
+                              project.customOutputPath || null
+                            ).catch((error) => {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Failed to open workspace"
+                              );
+                            });
+                          }}
+                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                        >
+                          <FaFolder className="mt-0.5 shrink-0 text-blue-500" />
                           <div className="min-w-0 flex-1">
                             <div className="truncate font-medium">{project.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">
+                            <div className="mt-0.5 truncate text-xs text-muted-foreground">
                               {project.path}
                             </div>
                           </div>
-                        </div>
-                        <div className="ml-2 flex flex-shrink-0 items-center gap-2">
+                        </button>
+                        <div className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground">
                           {project.previewUrls.length > 0 && (
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              type="button"
+                              onClick={() =>
                                 setExpandedProject(
                                   expandedProject === project.path ? null : project.path
-                                );
-                              }}
+                                )
+                              }
                               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted"
                               title="Show preview URLs"
                             >
@@ -242,7 +240,7 @@ export function ProjectSelector({
                             {formatDate(project.lastOpened)}
                           </span>
                         </div>
-                      </button>
+                      </div>
 
                       {/* Expanded URL list */}
                       {expandedProject === project.path && project.previewUrls.length > 0 && (

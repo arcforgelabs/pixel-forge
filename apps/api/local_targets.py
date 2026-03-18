@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -15,7 +16,10 @@ from typing import Any, Literal
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from runtime_config import state_dir as runtime_state_dir
+from runtime_config import (
+    source_root as runtime_source_root,
+    state_dir as runtime_state_dir,
+)
 
 
 PIXEL_FORGE_TARGET_KIND = "pixel-forge"
@@ -30,6 +34,7 @@ class LocalTargetRecord:
     kind: str
     runtime_kind: Literal["mirror", "dev"]
     project_path: str
+    source_root: str
     instance_slug: str
     api_port: int
     web_port: int
@@ -69,6 +74,17 @@ def _target_state_dir(instance_slug: str) -> Path:
     path = runtime_state_dir() / "instances" / instance_slug
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+@dataclass(slots=True)
+class MirrorLaunchSource:
+    layout: Literal["installed", "workspace"]
+    root: Path
+    api_dir: Path
+    requirements_path: Path
+    frontend_dist: Path | None
+    web_dir: Path | None
+    venv_python: Path | None
 
 
 def _build_base_env() -> dict[str, str]:
@@ -186,6 +202,7 @@ def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) ->
         kind=PIXEL_FORGE_TARGET_KIND,
         runtime_kind=runtime_kind,
         project_path=str(metadata["project_path"]),
+        source_root=str(metadata["source_root"]),
         instance_slug=str(metadata["instance_slug"]),
         api_port=int(metadata["api_port"]),
         web_port=int(metadata["web_port"]),
@@ -236,6 +253,48 @@ def _append_log_line(log_file: Path, line: str) -> None:
         handle.write(f"{line}\n".encode("utf-8", errors="replace"))
 
 
+def _resolve_mirror_launch_source(source_root: str) -> MirrorLaunchSource:
+    root = Path(source_root).expanduser().resolve()
+
+    if (root / "main.py").is_file() and (root / "requirements.txt").is_file():
+        frontend_dist = root / "frontend"
+        return MirrorLaunchSource(
+            layout="installed",
+            root=root,
+            api_dir=root,
+            requirements_path=root / "requirements.txt",
+            frontend_dist=frontend_dist if (frontend_dist / "index.html").is_file() else None,
+            web_dir=None,
+            venv_python=root / ".venv" / "bin" / "python",
+        )
+
+    if (root / "apps" / "api" / "main.py").is_file() and (root / "apps" / "api" / "requirements.txt").is_file():
+        return MirrorLaunchSource(
+            layout="workspace",
+            root=root,
+            api_dir=root / "apps" / "api",
+            requirements_path=root / "apps" / "api" / "requirements.txt",
+            frontend_dist=None,
+            web_dir=root / "apps" / "web",
+            venv_python=None,
+        )
+
+    raise ValueError(f"Unsupported Pixel Forge mirror source root: {root}")
+
+
+def _copy_file_if_present(source: Path, destination: Path) -> None:
+    if source.is_file():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    elif destination.exists():
+        destination.unlink()
+
+
+def _seed_mirror_state_from_runtime(state_dir: Path) -> None:
+    current_state_dir = runtime_state_dir()
+    _copy_file_if_present(current_state_dir / "pixel-forge.db", state_dir / "pixel-forge.db")
+
+
 def _run_logged_shell(
     command: str,
     *,
@@ -257,74 +316,93 @@ def _run_logged_shell(
 
 def _ensure_mirror_runtime(
     *,
-    project_path: str,
+    source_root: str,
     state_dir: Path,
     instance_slug: str,
     api_port: int,
     web_host: str,
     log_file: Path,
-) -> tuple[list[str], dict[str, str], str, str]:
-    venv_dir = state_dir / "venv"
-    venv_python = venv_dir / "bin" / "python"
-    requirements_path = Path(project_path) / "apps" / "api" / "requirements.txt"
-    web_dir = Path(project_path) / "apps" / "web"
-    frontend_dist = state_dir / "frontend-dist"
+) -> tuple[list[str], dict[str, str], str, str, str]:
+    launch_source = _resolve_mirror_launch_source(source_root)
     log_dir = state_dir / "logs"
     managed_browser_dir = state_dir / "managed-browser"
-    frontend_dist.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
     managed_browser_dir.mkdir(parents=True, exist_ok=True)
 
-    build_env = _build_base_env()
-    build_env.update(
-        {
-            "PIXEL_FORGE_INSTANCE_SLUG": instance_slug,
-            "PIXEL_FORGE_RUNTIME_KIND": "mirror",
-            "VITE_PIXEL_FORGE_RUNTIME_KIND": "mirror",
-        }
-    )
+    if launch_source.layout == "installed":
+        if not launch_source.frontend_dist:
+            raise RuntimeError(
+                f"Installed Pixel Forge source has no bundled frontend: {launch_source.root}"
+            )
+        if not launch_source.venv_python or not launch_source.venv_python.is_file():
+            raise RuntimeError(
+                f"Installed Pixel Forge source has no Python runtime: {launch_source.root}"
+            )
+        frontend_dist = launch_source.frontend_dist
+        venv_python = launch_source.venv_python
+    else:
+        venv_dir = state_dir / "venv"
+        venv_python = venv_dir / "bin" / "python"
+        frontend_dist = state_dir / "frontend-dist"
+        frontend_dist.mkdir(parents=True, exist_ok=True)
 
-    if not venv_python.is_file():
+        build_env = _build_base_env()
+        build_env.update(
+            {
+                "PIXEL_FORGE_INSTANCE_SLUG": instance_slug,
+                "PIXEL_FORGE_RUNTIME_KIND": "mirror",
+                "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": str(launch_source.root),
+                "VITE_PIXEL_FORGE_RUNTIME_KIND": "mirror",
+            }
+        )
+
+        if not venv_python.is_file():
+            _run_logged_shell(
+                f"python3 -m venv {shlex.quote(str(venv_dir))}",
+                cwd=str(launch_source.root),
+                env=build_env,
+                log_file=log_file,
+            )
+
         _run_logged_shell(
-            f"python3 -m venv {shlex.quote(str(venv_dir))}",
-            cwd=project_path,
+            f"{shlex.quote(str(venv_python))} -m pip install -q --upgrade pip",
+            cwd=str(launch_source.root),
+            env=build_env,
+            log_file=log_file,
+        )
+        _run_logged_shell(
+            f"{shlex.quote(str(venv_python))} -m pip install -q -r {shlex.quote(str(launch_source.requirements_path))}",
+            cwd=str(launch_source.root),
             env=build_env,
             log_file=log_file,
         )
 
-    _run_logged_shell(
-        f"{shlex.quote(str(venv_python))} -m pip install -q --upgrade pip",
-        cwd=project_path,
-        env=build_env,
-        log_file=log_file,
-    )
-    _run_logged_shell(
-        f"{shlex.quote(str(venv_python))} -m pip install -q -r {shlex.quote(str(requirements_path))}",
-        cwd=project_path,
-        env=build_env,
-        log_file=log_file,
-    )
+        web_dir = launch_source.web_dir
+        if not web_dir:
+            raise RuntimeError(
+                f"Workspace Pixel Forge source has no web app: {launch_source.root}"
+            )
 
-    if not (web_dir / "node_modules").exists():
+        if not (web_dir / "node_modules").exists():
+            _run_logged_shell(
+                "pnpm install --frozen-lockfile",
+                cwd=str(web_dir),
+                env=build_env,
+                log_file=log_file,
+            )
+
         _run_logged_shell(
-            "pnpm install --frozen-lockfile",
+            "pnpm exec tsc --pretty false",
             cwd=str(web_dir),
             env=build_env,
             log_file=log_file,
         )
-
-    _run_logged_shell(
-        "pnpm exec tsc --pretty false",
-        cwd=str(web_dir),
-        env=build_env,
-        log_file=log_file,
-    )
-    _run_logged_shell(
-        f"pnpm exec vite build --emptyOutDir --outDir {shlex.quote(str(frontend_dist))}",
-        cwd=str(web_dir),
-        env=build_env,
-        log_file=log_file,
-    )
+        _run_logged_shell(
+            f"pnpm exec vite build --emptyOutDir --outDir {shlex.quote(str(frontend_dist))}",
+            cwd=str(web_dir),
+            env=build_env,
+            log_file=log_file,
+        )
 
     api_env = _build_base_env()
     api_env.update(
@@ -332,6 +410,7 @@ def _ensure_mirror_runtime(
             "PIXEL_FORGE_INSTANCE_SLUG": instance_slug,
             "PIXEL_FORGE_RUNTIME_ROLE": "target",
             "PIXEL_FORGE_RUNTIME_KIND": "mirror",
+            "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": str(launch_source.root),
             "PIXEL_FORGE_API_PORT": str(api_port),
             "PIXEL_FORGE_WEB_PORT": str(api_port),
             "PIXEL_FORGE_WEB_HOST": web_host,
@@ -354,7 +433,7 @@ def _ensure_mirror_runtime(
     ]
     api_url = f"http://127.0.0.1:{api_port}"
     web_url = f"http://{web_host}:{api_port}"
-    return command, api_env, api_url, web_url
+    return command, api_env, api_url, web_url, str(launch_source.api_dir)
 
 
 def _ensure_dev_runtime(
@@ -378,6 +457,7 @@ def _ensure_dev_runtime(
             "PIXEL_FORGE_INSTANCE_SLUG": instance_slug,
             "PIXEL_FORGE_RUNTIME_ROLE": "target",
             "PIXEL_FORGE_RUNTIME_KIND": "dev",
+            "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": project_path,
             "PIXEL_FORGE_TARGET_MODE": "1",
             "PIXEL_FORGE_NO_BROWSER": "1",
             "PIXEL_FORGE_KILL_STALE": "0",
@@ -411,6 +491,7 @@ def start_pixel_forge_target(
 ) -> LocalTargetRecord:
     normalized_project_path = _normalize_project_path(project_path)
     normalized_runtime_kind = _normalize_runtime_kind(runtime_kind)
+    normalized_source_root = _normalize_project_path(str(runtime_source_root()))
     _validate_pixel_forge_project(normalized_project_path)
 
     instance_slug = _slug_for_project(normalized_project_path, normalized_runtime_kind)
@@ -421,6 +502,7 @@ def start_pixel_forge_target(
         metadata
         and metadata.get("web_url")
         and metadata.get("runtime_kind") == normalized_runtime_kind
+        and metadata.get("source_root") == normalized_source_root
         and _is_http_ready(str(metadata["web_url"]))
         and not force_restart
     ):
@@ -458,8 +540,9 @@ def start_pixel_forge_target(
 
     try:
         if normalized_runtime_kind == "mirror":
-            command, env, api_url, web_url = _ensure_mirror_runtime(
-                project_path=normalized_project_path,
+            _seed_mirror_state_from_runtime(state_dir)
+            command, env, api_url, web_url, launch_cwd = _ensure_mirror_runtime(
+                source_root=normalized_source_root,
                 state_dir=state_dir,
                 instance_slug=instance_slug,
                 api_port=api_port,
@@ -476,6 +559,7 @@ def start_pixel_forge_target(
                 web_host=web_host,
                 log_file=log_file,
             )
+            launch_cwd = normalized_project_path
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             "Pixel Forge target build failed before launch.\n"
@@ -487,9 +571,7 @@ def start_pixel_forge_target(
     with log_file.open("ab") as log_handle:
         proc = subprocess.Popen(
             command,
-            cwd=normalized_project_path
-            if normalized_runtime_kind == "dev"
-            else str(Path(normalized_project_path) / "apps" / "api"),
+            cwd=launch_cwd,
             env=env,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
@@ -505,6 +587,7 @@ def start_pixel_forge_target(
                 "kind": PIXEL_FORGE_TARGET_KIND,
                 "runtime_kind": normalized_runtime_kind,
                 "project_path": normalized_project_path,
+                "source_root": normalized_source_root,
                 "instance_slug": instance_slug,
                 "api_port": api_port,
                 "web_port": web_port,

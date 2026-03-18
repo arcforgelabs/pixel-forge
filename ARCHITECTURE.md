@@ -26,8 +26,9 @@ Installed controller runtime
   -> the real product path the user is operating
 
 Current sibling target runtime
-  -> default path is now an isolated mirror runtime built from the workspace source
-  -> serves a built frontend from an isolated dist path and runs on its own ports/state/profile
+  -> default path is now an isolated mirror runtime launched from the current runtime artifact/source root
+  -> seeds isolated target state from the current runtime state snapshot so startup flows and recent-project data stay faithful
+  -> may build an isolated frontend only when the chosen mirror source is a repo/snapshot rather than an installed build
   -> keeps the dev/HMR lane available only as an explicit lower-fidelity path
   -> is closer to the controller, but nested shell capabilities inside mirror runtimes are still incomplete
 
@@ -60,6 +61,8 @@ Pixel Forge UI (apps/web)
 Mirror target runtime (required default self-edit path)
   -> isolated sibling Pixel Forge instance
   -> must preserve the same startup flows and UI semantics as the controller
+  -> must be sourced from an immutable runtime artifact or frozen snapshot, not a mutable working tree by default
+  -> must inherit a controller-state snapshot strongly enough to reproduce controller startup/layout issues
   -> must allow recursive self-targeting when needed
   -> should differ from the controller only in runtime isolation and staged-update policy
 
@@ -81,7 +84,9 @@ Selection tunnel
 
 Sibling target runtime
   -> today: default launch uses the mirror lane, not the dev/HMR lane
+  -> mirror launch should inherit the current runtime source root by default, not the mutable project workspace
   -> target state must remain isolated from the controller
+  -> target state should be seeded from the current runtime snapshot so the UI reproduces the controller before divergence is introduced
   -> target UI should converge toward a full mirror, not a target-flavored variant
   -> nested mirror runtimes still need shell-grade preview ownership/context routing to recurse indefinitely
 
