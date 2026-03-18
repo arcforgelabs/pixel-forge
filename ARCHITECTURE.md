@@ -85,6 +85,7 @@ Selection tunnel
   -> freezes selected state into request-pack artifacts on disk
   -> exposes that frozen state through a local API/CLI for the working agent
   -> lets the agent inspect Pixel Forge-forged selection context without replaying auth or navigation
+  -> current gap: this is still mostly a frozen evidence lane, not a live attach lane into the already-running preview tab/session
 
 Sibling target runtime
   -> today: default launch uses the mirror lane, not the dev/HMR lane
@@ -133,6 +134,21 @@ Agent Deck
 ```
 
 In the ideal shape, the proxy path disappears from the user-facing preview workflow entirely, and self-development uses a faithful mirror target by default rather than a special target-mode UI.
+
+## Live Agent Inspect Gap
+
+Today Pixel Forge mainly hands working agents a frozen request pack plus selection tunnel. That is materially better than asking the agent to recreate the browser path from scratch, but it is not yet the same thing as attaching the agent to the already-running preview session the user prepared.
+
+Current practical consequence:
+- agents can still fall back to repo-code inference when frozen artifacts are not enough
+- agents may ignore the live selected surface and invent behavior
+- deploy/apply steps can be missed even when Pixel Forge knows the active preview target
+
+Target shape:
+- Pixel Forge keeps the frozen request-pack/tunnel path as the minimum truthful handoff
+- Pixel Forge also exposes a live attach lane into the existing preview tab/session when deeper inspection is needed
+- agents attach to the session the user already navigated instead of recreating auth, pathing, or state
+- if live attach is unavailable, the handoff contract must force the agent to say so explicitly rather than hallucinating
 
 ## Layer Ownership
 

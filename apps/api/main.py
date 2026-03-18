@@ -1124,6 +1124,9 @@ Make the smallest correct change, avoid AskUserQuestion for this request, and fi
         base += f"""
 
 If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
+        base += """
+
+Treat the request pack, selected-elements artifact, and selection tunnel as authoritative evidence for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge already captured the relevant state. If the frozen tunnel is still insufficient to verify a claim, say that explicitly instead of guessing."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if len(selection_sources) > 1:

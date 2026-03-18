@@ -11,6 +11,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 5. Pixel Forge can launch a faithful sibling Pixel Forge mirror runtime for self-edit loops without colliding with the controller instance or diverging from the UI being fixed.
 6. Selected-element context must stay truthful across DOM and canvas-like preview surfaces, and the working agent must be able to inspect the frozen selected state without replaying the browser path manually.
 7. Pixel Forge preview interaction must grow as a real tool system, with selection as the first tool rather than a permanent special case, so future capabilities can ship without sprawling across Live Editor state and shell glue.
+8. Working agents must use Pixel Forge-forged preview evidence truthfully instead of inferring or inventing live behavior from repo code when the user already navigated and selected the real target surface.
 
 # Requirements
 
@@ -81,8 +82,8 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 ### Agent Selection Tunnel
 - `REQ-U-001:` Each Live Editor request pack must include a structured frozen selection tunnel artifact in addition to human-readable selected-elements markup.
-- `REQ-U-002:` Pixel Forge must expose a local selection-tunnel inspection path that an agent can use without replaying login, navigation, or view reconstruction.
-- `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute.
+- `REQ-U-002:` Pixel Forge must expose agent-facing inspection paths for selected live surfaces. The minimum path is the frozen local selection tunnel; the target path is live attach into the already-running preview session without replaying login, navigation, or view reconstruction.
+- `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute, and dispatch instructions must require the agent to state any remaining inspection limitation explicitly instead of guessing.
 
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, runtime sandbox paths, and managed-browser profile paths.
@@ -110,10 +111,10 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 # Current Limiting Factor
 
-- `[active]` Preview tooling behavior is still spread across Live Editor UI state, shell glue, and the selection engine instead of a first-class tool system.
-- Why it is the limiter: every new capability like ancestor cycling, promotion, behind-the-pixel probing, measurement, compare, or annotate risks becoming another special-case branch instead of a composable tool. That makes focus bugs, input routing, overlay behavior, and agent-context serialization harder to reason about every time the tool surface grows.
-- Smallest complete unit to attack it: define and implement a shared tool controller boundary with the current selection tool moved behind that contract before adding the next materially different preview tool.
-- Immediate proof target: document the current selection-as-tool reality and the target tool-controller architecture clearly enough that the next implementation step is extraction, not more behavior accretion inside `LiveEditorPane` and `selection-engine`.
+- `[active]` Agent handoff fidelity is still weaker than the preview/session fidelity Pixel Forge already captures.
+- Why it is the limiter: Pixel Forge can capture the real selected surface, but working agents still fall back to repo-code inference too easily because the handoff is mostly a frozen request pack with no proven live attach path into the already-running preview session. That creates hallucinated behavior and missed deploy/apply steps even when the user already navigated to the truth.
+- Smallest complete unit to attack it: strengthen the handoff contract so agents must treat Pixel Forge-forged artifacts as authoritative evidence, then add a live attach path from the agent runtime into the existing preview session instead of forcing replay or guesswork.
+- Immediate proof target: prove one real agent workflow that reads the request pack, uses the selection tunnel instead of recreating navigation, applies the change to the active preview target, and states any remaining live-inspection limitation honestly.
 
 # Current Proof Status
 
@@ -148,7 +149,9 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[validated]` Selection add/remove/clear/promote mutations now support undo and redo in the controller state. Basis: store regression tests prove replace/remove/clear restore the exact selection order and ids through undo/redo.
 - `[unvalidated]` Automatic selector routing is good enough across real hybrid DOM/canvas/WebGL apps, not just synthetic cases. Basis: implemented in the shell selection engine, but not yet hammered against a wider hostile sample.
 - `[validated]` Ancestor-cycle hover selection now moves upward through visible DOM ancestors while the pointer stays still and resets back to the direct hovered target on movement. Basis: shell smoke on nested markup showed child `1/3`, parent `2/3`, then reset to the child after mouse movement.
+- `[validated]` Dispatch/request-pack guidance now explicitly tells agents to treat Pixel Forge-forged artifacts as authoritative evidence, apply changes to the active preview target when the workspace controls it, and state remaining inspection limits instead of guessing. Basis: backend dispatch prompt and request-pack working rules now encode that behavior.
 - `[unvalidated]` The selection tunnel gives working agents enough frozen context to avoid replaying third-party auth or deep navigation in practice. Basis: file/API/CLI path now exists, but it has not yet been exercised by a real agent workflow end to end.
+- `[unvalidated]` Pixel Forge has a true live attach path that lets a working agent inspect the already-running preview session/tab in place instead of relying on frozen artifacts only. Basis: this is the desired architecture, but no such attach lane is proven yet.
 - `[unvalidated]` JSONL-tail streaming parity is good enough for all real Claude tool flows, not just common edit flows. Basis: implemented from observed Claude JSONL structure but not yet proven across wider cases.
 - `[unvalidated]` Request-pack retention limits are the right balance between debuggability and disk usage. Basis: chosen pragmatically for the first working cut.
 - `[unvalidated]` Deploy-aware feedback loop: remote target detection, deploy instruction in dispatch prompt, and Refresh Preview button in chat and toolbar. Basis: implemented in backend and frontend but not yet proven against a real staging target.
@@ -163,6 +166,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[question]` Should the second source panel support its own independent deploy-aware refresh, or is one shared refresh sufficient?
 - `[question]` When we add behind-the-pixel probing later, should it stay on a separate modifier chord from ancestor cycling or become an explicit advanced selection sub-mode?
 - `[question]` Should the eventual tool palette be global to the whole preview workspace, or should some tools only appear when the active substrate/runtime can actually support them?
+- `[question]` Should the eventual live attach lane be implemented through Pixel Forge's own browser-session API, a browser-native attach protocol, or both?
 
 # Out of Scope
 

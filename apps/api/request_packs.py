@@ -204,6 +204,8 @@ def create_request_pack(
     working_rules = [
         "- Read this request pack before changing code.",
         "- Make the smallest correct change.",
+        "- Treat the request-pack artifacts as the source of truth for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge has already captured evidence.",
+        "- If the captured selection tunnel or attachments are still insufficient to verify a live behavior claim, say that explicitly instead of guessing.",
         "- Do not use AskUserQuestion for this request. Make the smallest reasonable assumption and state it in the final confirmation if needed.",
         "- Briefly confirm what you changed when you are done.",
     ]
@@ -253,7 +255,7 @@ def create_request_pack(
                 "## Selection Tunnel",
                 "",
                 f"- Read `{relative_selection_tunnel_path}` for the structured frozen selection state Pixel Forge captured.",
-                "- Use it when you need the exact selected target context without replaying the browser path manually.",
+                "- Use it as authoritative evidence for the selected target context instead of replaying login, navigation, or view reconstruction unless the request explicitly requires that.",
             ]
         )
     if relative_attachment_paths:
