@@ -22,18 +22,31 @@ const stateDir = path.resolve(argValue('--state-dir') || '')
 const installRoot = path.resolve(argValue('--install-root') || '')
 const updateId = normalizeText(argValue('--update-id'))
 const shellUrl = normalizeText(argValue('--shell-url')) || 'http://pixel-forge.localhost:7001'
-const appExec = normalizeText(argValue('--app-exec')) || process.execPath
-const relaunchArgsB64 = normalizeText(argValue('--relaunch-args-b64')) || ''
-const relaunchArgs = (() => {
-  try {
-    return JSON.parse(Buffer.from(relaunchArgsB64, 'base64').toString('utf-8'))
-  } catch {
-    return []
-  }
-})()
 
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')
+const runnerLogPath = path.join(stateDir, 'controller-update-runner.log')
+
+async function appendLog(message) {
+  if (!stateDir) {
+    return
+  }
+  await fs.mkdir(path.dirname(runnerLogPath), { recursive: true })
+  await fs.appendFile(
+    runnerLogPath,
+    `[${new Date().toISOString()}] ${message}\n`,
+    'utf-8',
+  )
+}
+
+async function logInfo(message) {
+  await appendLog(message)
+}
+
+async function logError(message, error = null) {
+  const detail = error instanceof Error ? error.stack || error.message : String(error ?? '')
+  await appendLog(detail ? `${message}\n${detail}` : message)
+}
 
 function requireInstallLayout(candidatePath) {
   return (
@@ -77,7 +90,7 @@ async function deleteDirectoryIfPresent(dirPath) {
   try {
     await fs.rm(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
   } catch (error) {
-    console.warn('[pixel-forge runner] Failed to delete directory:', dirPath, error)
+    await logError(`[pixel-forge runner] Failed to delete directory: ${dirPath}`, error)
   }
 }
 
@@ -158,6 +171,98 @@ async function waitForShellReady(timeoutMs = 90000) {
   throw new Error('Pixel Forge did not come back after update.')
 }
 
+function shouldIgnoreSnapshotEntry(relativePath) {
+  const normalized = relativePath.split(path.sep).filter(Boolean)
+  if (normalized.length === 0) {
+    return false
+  }
+
+  if (normalized.includes('.git') || normalized.includes('.venv') || normalized.includes('node_modules')) {
+    return true
+  }
+
+  return (
+    normalized[0] === '.pixel-forge'
+    && (normalized[1] === 'instances' || normalized[1] === 'requests')
+  )
+}
+
+async function copyControllerSnapshotTree(sourceRoot, destinationRoot, relativePath = '') {
+  const sourcePath = relativePath ? path.join(sourceRoot, relativePath) : sourceRoot
+  const destinationPath = relativePath ? path.join(destinationRoot, relativePath) : destinationRoot
+  const stat = await fs.lstat(sourcePath)
+
+  if (stat.isSymbolicLink()) {
+    const linkTarget = await fs.readlink(sourcePath)
+    await fs.symlink(linkTarget, destinationPath)
+    return
+  }
+
+  if (stat.isDirectory()) {
+    await fs.mkdir(destinationPath, { recursive: true })
+    await fs.chmod(destinationPath, stat.mode)
+    const entries = await fs.readdir(sourcePath, { withFileTypes: true })
+    for (const entry of entries) {
+      const entryRelativePath = relativePath
+        ? path.join(relativePath, entry.name)
+        : entry.name
+      if (shouldIgnoreSnapshotEntry(entryRelativePath)) {
+        continue
+      }
+      await copyControllerSnapshotTree(sourceRoot, destinationRoot, entryRelativePath)
+    }
+    return
+  }
+
+  await fs.copyFile(sourcePath, destinationPath)
+  await fs.chmod(destinationPath, stat.mode)
+}
+
+async function createControllerUpdateSnapshot(projectPath, requestedUpdateId) {
+  const sourcePath = path.resolve(projectPath)
+  if (!requireInstallLayout(sourcePath)) {
+    throw new Error(`Cannot create controller update snapshot from non-installable root: ${sourcePath}`)
+  }
+
+  const updateRoot = path.join(stateDir, 'controller-updates')
+  const normalizedUpdateId = requestedUpdateId || Math.random().toString(36).slice(2, 14)
+  let snapshotPath = path.join(updateRoot, normalizedUpdateId)
+  await fs.mkdir(updateRoot, { recursive: true })
+  await deleteDirectoryIfPresent(snapshotPath)
+
+  if (existsSync(snapshotPath)) {
+    snapshotPath = path.join(updateRoot, `${normalizedUpdateId}-${Date.now().toString(36)}`)
+    await deleteDirectoryIfPresent(snapshotPath)
+  }
+
+  await copyControllerSnapshotTree(sourcePath, snapshotPath)
+  if (!requireInstallLayout(snapshotPath)) {
+    throw new Error(`Rebuilt controller update snapshot is incomplete: ${snapshotPath}`)
+  }
+  return snapshotPath
+}
+
+async function readPendingControllerUpdate() {
+  const payload = await readJsonFile(pendingUpdatePath)
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+  const pendingProjectPath = normalizeText(payload.projectPath)
+  if (!pendingProjectPath) {
+    return null
+  }
+  return {
+    ...payload,
+    id: normalizeText(payload.id),
+    projectPath: pendingProjectPath,
+    snapshotPath: normalizeText(payload.snapshotPath),
+  }
+}
+
+async function writePendingControllerUpdate(payload) {
+  await writeJsonFile(pendingUpdatePath, payload)
+}
+
 async function clearPendingControllerUpdate() {
   const pending = await readJsonFile(pendingUpdatePath)
   if (pending?.snapshotPath) {
@@ -166,10 +271,43 @@ async function clearPendingControllerUpdate() {
   await deleteFileIfPresent(pendingUpdatePath)
 }
 
+async function ensureInstallRoot(candidatePath) {
+  if (requireInstallLayout(candidatePath)) {
+    return candidatePath
+  }
+
+  const pendingUpdate = await readPendingControllerUpdate()
+  if (!pendingUpdate) {
+    throw new Error('No staged Pixel Forge update is ready to install.')
+  }
+  if (updateId && pendingUpdate.id && pendingUpdate.id !== updateId) {
+    throw new Error(
+      `Staged controller update mismatch. Expected ${updateId}, found ${pendingUpdate.id}.`,
+    )
+  }
+  if (requireInstallLayout(pendingUpdate.snapshotPath || '')) {
+    return path.resolve(pendingUpdate.snapshotPath)
+  }
+  if (!requireInstallLayout(pendingUpdate.projectPath)) {
+    throw new Error(`Staged Pixel Forge update has no installable source root: ${pendingUpdate.projectPath}`)
+  }
+
+  await logInfo(`Repairing staged controller update snapshot from ${pendingUpdate.projectPath}`)
+  const rebuiltSnapshotPath = await createControllerUpdateSnapshot(
+    pendingUpdate.projectPath,
+    pendingUpdate.id || updateId,
+  )
+  await writePendingControllerUpdate({
+    ...pendingUpdate,
+    snapshotPath: rebuiltSnapshotPath,
+  })
+  return rebuiltSnapshotPath
+}
+
 function relaunchPixelForge() {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const proc = spawn(appExec, relaunchArgs, {
+  const proc = spawn('bash', ['-lc', 'pixel-forge-shell'], {
     detached: true,
     stdio: 'ignore',
     env,
@@ -181,9 +319,8 @@ async function main() {
   if (!stateDir) {
     throw new Error('Missing --state-dir')
   }
-  if (!requireInstallLayout(installRoot)) {
-    throw new Error(`Installable Pixel Forge root not found: ${installRoot}`)
-  }
+  const resolvedInstallRoot = await ensureInstallRoot(installRoot)
+  await logInfo(`Starting controller update runner for ${resolvedInstallRoot}`)
 
   await setState({
     phase: 'installing',
@@ -191,7 +328,8 @@ async function main() {
     message: 'Installing updated Pixel Forge build…',
     error: null,
   })
-  await runShellCommand('./install.sh', installRoot)
+  await runShellCommand('./install.sh', resolvedInstallRoot)
+  await logInfo('Finished install.sh')
 
   await setState({
     phase: 'restarting',
@@ -199,7 +337,8 @@ async function main() {
     message: 'Restarting Pixel Forge service…',
     error: null,
   })
-  await runShellCommand('pixel-forge restart', installRoot)
+  await runShellCommand('pixel-forge restart', resolvedInstallRoot)
+  await logInfo('Finished pixel-forge restart')
 
   await setState({
     phase: 'waiting',
@@ -218,7 +357,7 @@ async function main() {
   try {
     await clearPendingControllerUpdate()
   } catch (error) {
-    console.warn('[pixel-forge runner] Failed to clear pending controller update:', error)
+    await logError('[pixel-forge runner] Failed to clear pending controller update', error)
   }
 
   await setState({
@@ -228,6 +367,7 @@ async function main() {
     error: null,
   })
   relaunchPixelForge()
+  await logInfo('Relaunched Pixel Forge shell')
 
   await setState({
     status: 'done',
@@ -241,6 +381,7 @@ async function main() {
 }
 
 main().catch(async (error) => {
+  await logError('Controller update runner failed', error)
   await setError(error)
   process.exitCode = 1
 })

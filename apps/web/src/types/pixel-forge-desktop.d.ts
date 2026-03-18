@@ -100,8 +100,12 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
 export interface PixelForgeDesktopAppAPI {
   applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
+  startControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void
+  startPendingControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void
   consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
   getPendingControllerUpdate(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
+  getDismissedControllerUpdateId(): Promise<string | null>
+  setDismissedControllerUpdateId(updateId: string | null): Promise<string | null>
   getControllerUpdateApplyState(): Promise<PixelForgeDesktopControllerUpdateApplyState>
   stageControllerUpdate(payload: {
     projectPath: string

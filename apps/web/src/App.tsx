@@ -77,6 +77,7 @@ function App() {
     activeMode,
     projectsLoaded,
     hydrateProjects,
+    setDismissedControllerUpdateId,
     setProject,
     setControllerUpdateApplyState,
     setPendingControllerUpdate,
@@ -157,6 +158,17 @@ function App() {
       });
 
     void window.pixelForgeDesktop.app
+      .getDismissedControllerUpdateId()
+      .then((updateId) => {
+        if (!cancelled) {
+          setDismissedControllerUpdateId(updateId);
+        }
+      })
+      .catch((error) => {
+        console.error("[app] Failed to load dismissed controller update:", error);
+      });
+
+    void window.pixelForgeDesktop.app
       .getControllerUpdateApplyState()
       .then((state) => {
         if (!cancelled) {
@@ -196,7 +208,11 @@ function App() {
       cancelled = true;
       window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);
     };
-  }, [setControllerUpdateApplyState, setPendingControllerUpdate]);
+  }, [
+    setControllerUpdateApplyState,
+    setDismissedControllerUpdateId,
+    setPendingControllerUpdate,
+  ]);
 
   useEffect(() => {
     void hydrateProjects().catch((error) => {

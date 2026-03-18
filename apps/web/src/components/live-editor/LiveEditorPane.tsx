@@ -926,7 +926,13 @@ export function LiveEditorPane() {
 
     const toastId = toast.loading('Loading updated Pixel Forge build...')
     try {
-      if (desktopApp.applyPendingControllerUpdate) {
+      if (desktopApp.startPendingControllerUpdate) {
+        desktopApp.startPendingControllerUpdate({
+          projectPath: projectPath ?? '',
+          previewUrl,
+          activeMode,
+        })
+      } else if (desktopApp.applyPendingControllerUpdate) {
         await desktopApp.applyPendingControllerUpdate({
           projectPath: projectPath ?? '',
           previewUrl,

@@ -86,6 +86,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
     try {
       setIsApplyingControllerUpdate(true);
+      if (desktopApp.startPendingControllerUpdate) {
+        desktopApp.startPendingControllerUpdate({
+          projectPath: projectPath ?? pendingControllerUpdate.projectPath,
+          previewUrl: previewUrl ?? pendingControllerUpdate.previewUrl,
+          activeMode:
+            activeMode ?? pendingControllerUpdate.activeMode ?? "live-editor",
+        });
+        return;
+      }
       await desktopApp.applyPendingControllerUpdate({
         projectPath: projectPath ?? pendingControllerUpdate.projectPath,
         previewUrl: previewUrl ?? pendingControllerUpdate.previewUrl,
@@ -309,7 +318,16 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setDismissedControllerUpdateId(null)}
+                        onClick={() => {
+                          void (async () => {
+                            if (window.pixelForgeDesktop?.app?.setDismissedControllerUpdateId) {
+                              await window.pixelForgeDesktop.app.setDismissedControllerUpdateId(
+                                null
+                              );
+                            }
+                            setDismissedControllerUpdateId(null);
+                          })();
+                        }}
                         className="text-muted-foreground hover:text-foreground"
                       >
                         Show Header Notice Again

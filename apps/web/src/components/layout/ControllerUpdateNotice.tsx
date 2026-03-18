@@ -42,6 +42,15 @@ export function ControllerUpdateNotice() {
   const onApply = async () => {
     try {
       setIsApplying(true);
+      if (desktopApp.startPendingControllerUpdate) {
+        desktopApp.startPendingControllerUpdate({
+          projectPath: projectPath ?? pendingControllerUpdate.projectPath,
+          previewUrl: previewUrl ?? pendingControllerUpdate.previewUrl,
+          activeMode:
+            activeMode ?? pendingControllerUpdate.activeMode ?? "live-editor",
+        });
+        return;
+      }
       await desktopApp.applyPendingControllerUpdate({
         projectPath: projectPath ?? pendingControllerUpdate.projectPath,
         previewUrl: previewUrl ?? pendingControllerUpdate.previewUrl,
@@ -58,9 +67,15 @@ export function ControllerUpdateNotice() {
   };
 
   const onDismiss = async () => {
-    setIsDismissing(true);
-    setDismissedControllerUpdateId(pendingControllerUpdate.id);
-    setIsDismissing(false);
+    try {
+      setIsDismissing(true);
+      if (desktopApp.setDismissedControllerUpdateId) {
+        await desktopApp.setDismissedControllerUpdateId(pendingControllerUpdate.id);
+      }
+      setDismissedControllerUpdateId(pendingControllerUpdate.id);
+    } finally {
+      setIsDismissing(false);
+    }
   };
 
   return (
