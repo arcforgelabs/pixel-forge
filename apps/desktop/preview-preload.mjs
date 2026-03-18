@@ -5,6 +5,10 @@ function emit(type, data = {}) {
   ipcRenderer.send('pixel-forge-preview:event', { type, data })
 }
 
+ipcRenderer.on('pixel-forge-preview:event', (_event, payload) => {
+  window.dispatchEvent(new CustomEvent('pixel-forge-preview', { detail: payload }))
+})
+
 async function captureRegion(rect) {
   return ipcRenderer.invoke('pixel-forge-preview:capture-region', rect)
 }
