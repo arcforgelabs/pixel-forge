@@ -172,11 +172,17 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 from pathlib import Path
 
+_FRONTEND_DIST_OVERRIDE = os.environ.get("PIXEL_FORGE_FRONTEND_DIST")
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 _INSTALLED_DIST = Path(__file__).resolve().parent / "frontend"
 _SERVING_FRONTEND = False
+_FRONTEND_DIST_CANDIDATES: list[Path] = []
 
-for _dist_candidate in (_INSTALLED_DIST, _FRONTEND_DIST):
+if _FRONTEND_DIST_OVERRIDE:
+    _FRONTEND_DIST_CANDIDATES.append(Path(_FRONTEND_DIST_OVERRIDE).expanduser().resolve())
+_FRONTEND_DIST_CANDIDATES.extend((_INSTALLED_DIST, _FRONTEND_DIST))
+
+for _dist_candidate in _FRONTEND_DIST_CANDIDATES:
     if (_dist_candidate / "index.html").is_file():
         # Serve sub-asset directories explicitly so they take priority over
         # the catch-all proxy router, which would otherwise eat these paths.
@@ -300,6 +306,8 @@ class BrowserPreviewCommandRequest(BaseModel):
 
 class LocalTargetStartRequest(BaseModel):
     project_path: str
+    runtime_kind: Literal["mirror", "dev"] = "mirror"
+    force_restart: bool = True
 
 
 # Stack to file extension mapping
@@ -422,7 +430,12 @@ async def get_project_sessions(project_path: str):
 @app.post("/api/local-targets/pixel-forge/start")
 async def start_local_pixel_forge_target(payload: LocalTargetStartRequest):
     try:
-        record = await asyncio.to_thread(start_pixel_forge_target, payload.project_path)
+        record = await asyncio.to_thread(
+            start_pixel_forge_target,
+            payload.project_path,
+            payload.runtime_kind,
+            payload.force_restart,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

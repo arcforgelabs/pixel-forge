@@ -61,6 +61,7 @@ interface BrowserPreviewLoadResponse {
 
 interface LocalPixelForgeTargetResponse {
   kind: 'pixel-forge'
+  runtime_kind: 'mirror' | 'dev'
   project_path: string
   instance_slug: string
   api_port: number
@@ -941,19 +942,23 @@ export function LiveEditorPane() {
         '/api/local-targets/pixel-forge/start',
         {
           method: 'POST',
-          body: JSON.stringify({ project_path: projectPath }),
+          body: JSON.stringify({
+            project_path: projectPath,
+            runtime_kind: 'mirror',
+            force_restart: true,
+          }),
         }
       )
 
       await openUrlInPreviewTab(record.web_url, {
-        title: 'Pixel Forge Target',
+        title: record.runtime_kind === 'mirror' ? 'Pixel Forge Mirror' : 'Pixel Forge Target',
         announceSuccess: false,
       })
 
       toast.success(
         record.already_running
-          ? 'Pixel Forge target reconnected'
-          : 'Pixel Forge target launched'
+          ? 'Pixel Forge mirror reconnected'
+          : 'Pixel Forge mirror launched'
       )
     } catch (error) {
       console.error('[live-editor] Failed to launch Pixel Forge target:', error)
@@ -1725,7 +1730,7 @@ export function LiveEditorPane() {
                 onClick={() => void launchPixelForgeTarget()}
                 disabled={!hasEmbeddedBrowserPreview || isLaunchingPixelForgeTarget}
                 className="h-7 gap-1 border-border/60 px-2.5 text-xs"
-                title="Launch this workspace as a sibling Pixel Forge target for self-editing"
+                title="Launch this workspace as an isolated Pixel Forge mirror for self-editing"
               >
                 <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
                 {isLaunchingPixelForgeTarget ? 'Launching...' : 'Run Pixel Forge'}

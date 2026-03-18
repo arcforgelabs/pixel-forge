@@ -8,6 +8,7 @@ from pathlib import Path
 DEFAULT_INSTANCE_SLUG = "pixel-forge"
 DEFAULT_API_PORT = 7001
 DEFAULT_WEB_PORT = 5173
+DEFAULT_RUNTIME_KIND = "controller"
 
 
 def _sanitize_slug(raw_value: str) -> str:
@@ -59,9 +60,20 @@ def managed_browser_dir() -> Path:
     return path
 
 
+def runtime_kind() -> str:
+    raw_kind = (os.environ.get("PIXEL_FORGE_RUNTIME_KIND") or "").strip().lower()
+    if raw_kind in {"controller", "mirror", "dev"}:
+        return raw_kind
+    if _truthy(os.environ.get("PIXEL_FORGE_TARGET_MODE")):
+        return "dev"
+    return DEFAULT_RUNTIME_KIND
+
+
 def target_mode() -> bool:
-    return _truthy(os.environ.get("PIXEL_FORGE_TARGET_MODE"))
+    return runtime_kind() == "dev"
 
 
 def runtime_role() -> str:
-    return os.environ.get("PIXEL_FORGE_RUNTIME_ROLE") or ("target" if target_mode() else "controller")
+    return os.environ.get("PIXEL_FORGE_RUNTIME_ROLE") or (
+        "target" if runtime_kind() in {"mirror", "dev"} else "controller"
+    )

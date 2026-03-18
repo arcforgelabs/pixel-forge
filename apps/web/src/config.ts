@@ -10,10 +10,19 @@ const DEFAULT_HTTP_PROTOCOL =
     : "http";
 const DEFAULT_WS_PROTOCOL = DEFAULT_HTTP_PROTOCOL === "https" ? "wss" : "ws";
 const TARGET_MODE_VALUES = new Set(["1", "true", "yes", "on"]);
+const RUNTIME_KIND_VALUES = new Set(["controller", "mirror", "dev"]);
 
-export const IS_TARGET_MODE = TARGET_MODE_VALUES.has(
-  String(import.meta.env.VITE_PIXEL_FORGE_TARGET_MODE || "").toLowerCase()
-);
+const RAW_RUNTIME_KIND = String(
+  import.meta.env.VITE_PIXEL_FORGE_RUNTIME_KIND || ""
+).toLowerCase();
+
+export const RUNTIME_KIND = RUNTIME_KIND_VALUES.has(RAW_RUNTIME_KIND)
+  ? (RAW_RUNTIME_KIND as "controller" | "mirror" | "dev")
+  : TARGET_MODE_VALUES.has(String(import.meta.env.VITE_PIXEL_FORGE_TARGET_MODE || "").toLowerCase())
+    ? "dev"
+    : "controller";
+
+export const IS_TARGET_MODE = RUNTIME_KIND === "dev";
 export const TARGET_PROJECT_PATH = String(
   import.meta.env.VITE_PIXEL_FORGE_TARGET_PROJECT_PATH || ""
 ).trim() || null;

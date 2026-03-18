@@ -25,7 +25,7 @@ import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
-import { IS_TARGET_MODE, TARGET_PROJECT_PATH } from "./config";
+import { RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { FolderOpen } from "lucide-react";
 import type {
   PixelForgeDesktopBootstrapState,
@@ -83,7 +83,6 @@ function App() {
 
   // Project selector state - show on first load if no project is set
   const [showProjectSelector, setShowProjectSelector] = useState(false);
-  const [targetStartupDialogShown, setTargetStartupDialogShown] = useState(false);
   const [desktopBootstrapState, setDesktopBootstrapState] =
     useState<PixelForgeDesktopBootstrapState | null>(null);
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
@@ -189,7 +188,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!IS_TARGET_MODE || !TARGET_PROJECT_PATH || !projectsLoaded || projectPath) {
+    if (RUNTIME_KIND !== "dev" || !TARGET_PROJECT_PATH || !projectsLoaded || projectPath) {
       return;
     }
 
@@ -200,19 +199,10 @@ function App() {
 
   // Show project selector on first render if no project is configured
   useEffect(() => {
-    if (!IS_TARGET_MODE && projectsLoaded && appState === AppState.INITIAL && !projectPath) {
+    if (projectsLoaded && appState === AppState.INITIAL && !projectPath) {
       setShowProjectSelector(true);
     }
   }, [appState, projectPath, projectsLoaded]);
-
-  useEffect(() => {
-    if (!IS_TARGET_MODE || !projectsLoaded || appState !== AppState.INITIAL || targetStartupDialogShown) {
-      return;
-    }
-
-    setShowProjectSelector(true);
-    setTargetStartupDialogShown(true);
-  }, [appState, projectsLoaded, targetStartupDialogShown]);
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(
@@ -508,7 +498,7 @@ function App() {
       <ProjectSelector
         open={showProjectSelector}
         onOpenChange={setShowProjectSelector}
-        mirrorStartupState={IS_TARGET_MODE}
+        mirrorStartupState={RUNTIME_KIND === "dev"}
       />
 
       {/* Settings drawer - pushes main content */}
@@ -525,7 +515,7 @@ function App() {
         {/* Mode Tab Bar */}
         <ModeTabBar />
         <ControllerUpdateNotice />
-        {IS_TARGET_MODE && (
+        {RUNTIME_KIND === "dev" && (
           <div className="shrink-0 border-b border-border/40 bg-card/20 px-3 py-2">
             <Button
               type="button"

@@ -26,10 +26,10 @@ Installed controller runtime
   -> the real product path the user is operating
 
 Current sibling target runtime
-  -> isolated ports/state/profile
-  -> repo-launched FastAPI + Vite dev/HMR stack
-  -> still influenced by target-mode UI branching
-  -> useful for some inspection, but not yet a faithful mirror of the controller
+  -> default path is now an isolated mirror runtime built from the workspace source
+  -> serves a built frontend from an isolated dist path and runs on its own ports/state/profile
+  -> keeps the dev/HMR lane available only as an explicit lower-fidelity path
+  -> is closer to the controller, but nested shell capabilities inside mirror runtimes are still incomplete
 
 Agent Deck
   -> persistent agent runtime per Live Editor thread
@@ -39,7 +39,7 @@ Truth:
 - The desktop shell is the product path.
 - A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites or faithful localhost self-edit targets.
 - Proxying or iframe tricks are not a durable answer for auth-heavy sites, HMR-heavy localhost apps, or sibling-instance self-edit flows.
-- The current architectural bug is not lack of isolation. It is that the mirror target and the dev target are still partially conflated, so the sibling target can diverge from the controller surface being fixed.
+- The current architectural bug is no longer the default launch path. It is the remaining gap between a faithful mirror runtime and a fully shell-capable recursive mirror runtime inside that preview surface.
 
 ## Transition Architecture
 
@@ -80,9 +80,10 @@ Selection tunnel
   -> lets the agent inspect Pixel Forge-forged selection context without replaying auth or navigation
 
 Sibling target runtime
-  -> today: still partially implemented through a dev/HMR lane
+  -> today: default launch uses the mirror lane, not the dev/HMR lane
   -> target state must remain isolated from the controller
   -> target UI should converge toward a full mirror, not a target-flavored variant
+  -> nested mirror runtimes still need shell-grade preview ownership/context routing to recurse indefinitely
 
 FastAPI backend (apps/api)
   -> remains the broker/state plane
@@ -91,7 +92,7 @@ FastAPI backend (apps/api)
   -> may keep compatibility preview code internally, but the product surface routes preview through the shell
 ```
 
-This is the current build direction. The unresolved transition work is to separate the faithful mirror target from the lower-fidelity dev target and make the mirror target the default self-edit path.
+This is the current build direction. The unresolved transition work is no longer "make mirror the default"; it is "make mirror runtimes fully shell-capable when Pixel Forge is running inside Pixel Forge."
 
 ## Ideal Target
 
