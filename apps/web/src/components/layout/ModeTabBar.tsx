@@ -1,11 +1,23 @@
 import { useSessionStore } from "@/store/session-store";
 import { IS_TARGET_MODE } from "@/config";
+import { PanelLeft } from "lucide-react";
 
 export function ModeTabBar() {
-  const { activeMode, projectName } = useSessionStore();
+  const { activeMode, projectName, settingsSidebarOpen, toggleSettingsSidebar } = useSessionStore();
 
   return (
-    <div className="flex items-center justify-between border-b border-border/50 bg-card/40 backdrop-blur-sm px-4 py-1.5">
+    <div className="flex items-center border-b border-border/50 bg-card/40 backdrop-blur-sm px-2 py-1.5">
+      {/* Sidebar toggle — always visible, like Claude's top-left toggle */}
+      {!settingsSidebarOpen && (
+        <button
+          onClick={toggleSettingsSidebar}
+          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-300 text-muted-foreground hover:text-foreground active:scale-95 mr-1"
+          aria-label="Open sidebar"
+          title="Open sidebar"
+        >
+          <PanelLeft className="h-5 w-5" />
+        </button>
+      )}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground capitalize">{activeMode === "live-editor" ? "Live Editor" : "Screenshot"}</span>
         {projectName && (
