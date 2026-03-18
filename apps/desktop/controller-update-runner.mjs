@@ -26,6 +26,7 @@ const shellUrl = normalizeText(argValue('--shell-url')) || 'http://pixel-forge.l
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')
 const runnerLogPath = path.join(stateDir, 'controller-update-runner.log')
+const cleanupQueuePath = path.join(stateDir, 'controller-update-cleanup-queue.json')
 
 async function appendLog(message) {
   if (!stateDir) {
@@ -92,6 +93,76 @@ async function deleteDirectoryIfPresent(dirPath) {
   } catch (error) {
     await logError(`[pixel-forge runner] Failed to delete directory: ${dirPath}`, error)
   }
+}
+
+async function enqueueSnapshotCleanup(snapshotPath) {
+  if (!snapshotPath) {
+    return
+  }
+  const resolvedPath = path.resolve(snapshotPath)
+  let entries = []
+  const current = await readJsonFile(cleanupQueuePath)
+  if (Array.isArray(current)) {
+    entries = current.filter((value) => typeof value === 'string' && value.trim())
+  }
+  if (!entries.includes(resolvedPath)) {
+    entries.push(resolvedPath)
+  }
+  await writeJsonFile(cleanupQueuePath, entries)
+}
+
+function launchDetachedSnapshotCleanup(stateDirPath) {
+  const script = `
+set -eu
+sleep 8
+python3 - <<'PY'
+import json
+import pathlib
+import shutil
+import time
+
+state_dir = pathlib.Path(${JSON.stringify(stateDirPath)})
+queue_path = state_dir / 'controller-update-cleanup-queue.json'
+if not queue_path.exists():
+    raise SystemExit(0)
+
+try:
+    payload = json.loads(queue_path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(0)
+
+paths = [pathlib.Path(p).expanduser() for p in payload if isinstance(p, str) and p.strip()]
+remaining = []
+for target in paths:
+    deleted = False
+    for attempt in range(6):
+        try:
+            shutil.rmtree(target)
+            deleted = True
+            break
+        except FileNotFoundError:
+            deleted = True
+            break
+        except OSError:
+            time.sleep(1.0 + attempt)
+    if not deleted:
+        remaining.append(str(target))
+
+if remaining:
+    queue_path.write_text(json.dumps(remaining, indent=2), encoding='utf-8')
+else:
+    try:
+        queue_path.unlink()
+    except FileNotFoundError:
+        pass
+PY
+`
+  const proc = spawn('bash', ['-lc', script], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  })
+  proc.unref()
 }
 
 async function setState(payload) {
@@ -266,7 +337,7 @@ async function writePendingControllerUpdate(payload) {
 async function clearPendingControllerUpdate() {
   const pending = await readJsonFile(pendingUpdatePath)
   if (pending?.snapshotPath) {
-    await deleteDirectoryIfPresent(path.resolve(pending.snapshotPath))
+    await enqueueSnapshotCleanup(pending.snapshotPath)
   }
   await deleteFileIfPresent(pendingUpdatePath)
 }
@@ -367,6 +438,7 @@ async function main() {
     error: null,
   })
   relaunchPixelForge()
+  launchDetachedSnapshotCleanup(stateDir)
   await logInfo('Relaunched Pixel Forge shell')
 
   await setState({
