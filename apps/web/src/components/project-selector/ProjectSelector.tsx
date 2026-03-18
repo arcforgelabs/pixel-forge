@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +52,7 @@ export function ProjectSelector({
   );
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
+  const projectPathInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -173,7 +174,13 @@ export function ProjectSelector({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(92vw,32rem)] max-h-[min(85vh,44rem)] overflow-hidden p-0 sm:max-w-none">
+      <DialogContent
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          projectPathInputRef.current?.focus();
+        }}
+        className="w-[min(92vw,32rem)] max-h-[min(85vh,44rem)] overflow-hidden p-0 sm:max-w-none"
+      >
         <div className="flex max-h-[min(85vh,44rem)] flex-col">
           <DialogHeader className="shrink-0 px-6 pb-0 pt-6 pr-12">
             <DialogTitle className="text-xl">Open Workspace</DialogTitle>
@@ -195,6 +202,7 @@ export function ProjectSelector({
                     >
                       <div className="group flex min-w-0 items-start gap-3 p-3 transition-colors hover:bg-muted/50">
                         <button
+                          type="button"
                           onClick={() => {
                             void handleSelectProject(
                               project.path,
@@ -209,7 +217,7 @@ export function ProjectSelector({
                               );
                             });
                           }}
-                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                          className="flex min-w-0 flex-1 items-start gap-3 rounded-md px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         >
                           <FaFolder className="mt-0.5 shrink-0 text-blue-500" />
                           <div className="min-w-0 flex-1">
@@ -286,6 +294,7 @@ export function ProjectSelector({
                 <div className="flex gap-2">
                   <Input
                     id="project-path"
+                    ref={projectPathInputRef}
                     placeholder="/path/to/your/project"
                     value={projectPath}
                     onChange={(e) => setProjectPath(e.target.value)}
