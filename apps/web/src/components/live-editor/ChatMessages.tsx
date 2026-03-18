@@ -18,11 +18,13 @@ import { AlertTriangle, CheckCircle2, FileText, RefreshCw } from 'lucide-react'
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
   onApplyControllerUpdate?: () => void
+  onLoadPreviewUpdate?: () => void
 }
 
 export function ChatMessages({
   onRefreshPreview,
   onApplyControllerUpdate,
+  onLoadPreviewUpdate,
 }: ChatMessagesProps) {
   const {
     messages,
@@ -91,6 +93,16 @@ export function ChatMessages({
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
                       Refresh Preview
+                    </Button>
+                  )}
+                  {msg.canLoadPreviewUpdate && onLoadPreviewUpdate && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                      onClick={onLoadPreviewUpdate}
+                    >
+                      Load Updated Preview
                     </Button>
                   )}
                   {msg.canApplyControllerUpdate && onApplyControllerUpdate && (

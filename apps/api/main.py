@@ -48,7 +48,16 @@ from PIL import Image
 from moviepy import VideoFileClip
 from request_packs import create_request_pack
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
-from local_targets import serialize_local_target, start_pixel_forge_target
+from controller_update_state import (
+    clear_pending_controller_update,
+    read_pending_controller_update,
+    write_pending_controller_update,
+)
+from local_targets import (
+    list_pixel_forge_targets,
+    serialize_local_target,
+    start_pixel_forge_target,
+)
 from runtime_config import api_port as runtime_api_port
 
 from session_manager import (
@@ -308,6 +317,17 @@ class LocalTargetStartRequest(BaseModel):
     project_path: str
     runtime_kind: Literal["mirror", "dev"] = "mirror"
     force_restart: bool = True
+    source_root: str | None = None
+
+
+class PendingControllerUpdateRequest(BaseModel):
+    project_path: str
+    preview_url: str | None = None
+    active_mode: Literal["live-editor", "screenshot"] | None = None
+    summary: str | None = None
+    source: str | None = None
+    request_id: str | None = None
+    commit_hash: str | None = None
 
 
 # Stack to file extension mapping
@@ -435,12 +455,61 @@ async def start_local_pixel_forge_target(payload: LocalTargetStartRequest):
             payload.project_path,
             payload.runtime_kind,
             payload.force_restart,
+            payload.source_root,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return serialize_local_target(record)
+
+
+@app.get("/api/local-targets/pixel-forge")
+async def list_local_pixel_forge_targets(
+    project_path: str,
+    runtime_kind: Literal["mirror", "dev"] = "mirror",
+):
+    try:
+        records = await asyncio.to_thread(
+            list_pixel_forge_targets,
+            project_path,
+            runtime_kind,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"targets": [serialize_local_target(record) for record in records]}
+
+
+@app.get("/api/controller-update")
+async def get_pending_controller_update():
+    update = await asyncio.to_thread(read_pending_controller_update)
+    return {"update": update}
+
+
+@app.post("/api/controller-update")
+async def stage_pending_controller_update(payload: PendingControllerUpdateRequest):
+    try:
+        update = await asyncio.to_thread(
+            write_pending_controller_update,
+            {
+                "projectPath": payload.project_path,
+                "previewUrl": payload.preview_url,
+                "activeMode": payload.active_mode,
+                "summary": payload.summary,
+                "source": payload.source,
+                "requestId": payload.request_id,
+                "commitHash": payload.commit_hash,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"update": update}
+
+
+@app.delete("/api/controller-update")
+async def delete_pending_controller_update():
+    cleared = await asyncio.to_thread(clear_pending_controller_update)
+    return {"ok": cleared}
 
 
 @app.post("/browse/directory")

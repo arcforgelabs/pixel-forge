@@ -35,6 +35,7 @@ class LocalTargetRecord:
     runtime_kind: Literal["mirror", "dev"]
     project_path: str
     source_root: str
+    build_label: str
     instance_slug: str
     api_port: int
     web_port: int
@@ -46,6 +47,7 @@ class LocalTargetRecord:
     pid: int | None
     target_mode: bool
     already_running: bool
+    created_at: str | None
 
 
 def _normalize_project_path(project_path: str) -> str:
@@ -62,11 +64,16 @@ def _normalize_runtime_kind(
 
 
 def _slug_for_project(
-    project_path: str, runtime_kind: Literal["mirror", "dev"]
+    project_path: str,
+    runtime_kind: Literal["mirror", "dev"],
+    source_root: str | None = None,
 ) -> str:
     normalized_path = _normalize_project_path(project_path)
     basename = re.sub(r"[^a-z0-9-]+", "-", Path(normalized_path).name.lower()).strip("-")
-    digest = hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:8]
+    digest_source = normalized_path
+    if runtime_kind == "mirror" and source_root:
+        digest_source = f"{normalized_path}::{_normalize_project_path(source_root)}"
+    digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:8]
     return f"{basename or 'project'}-{runtime_kind}-target-{digest}"
 
 
@@ -127,6 +134,16 @@ def _write_metadata(instance_slug: str, payload: dict[str, Any]) -> None:
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+
+
+def _label_for_source_root(source_root: str) -> str:
+    normalized = Path(source_root).expanduser().resolve()
+    runtime_root = Path(runtime_source_root()).expanduser().resolve()
+    if normalized == runtime_root:
+        return "Live Runtime"
+    if "controller-updates" in normalized.parts:
+        return f"Staged {normalized.name}"
+    return normalized.name or str(normalized)
 
 
 def _is_port_free(port: int) -> bool:
@@ -203,6 +220,7 @@ def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) ->
         runtime_kind=runtime_kind,
         project_path=str(metadata["project_path"]),
         source_root=str(metadata["source_root"]),
+        build_label=str(metadata.get("build_label") or _label_for_source_root(str(metadata["source_root"]))),
         instance_slug=str(metadata["instance_slug"]),
         api_port=int(metadata["api_port"]),
         web_port=int(metadata["web_port"]),
@@ -214,6 +232,7 @@ def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) ->
         pid=int(metadata["pid"]) if metadata.get("pid") else None,
         target_mode=runtime_kind == "dev",
         already_running=already_running,
+        created_at=str(metadata["created_at"]) if metadata.get("created_at") else None,
     )
 
 
@@ -488,13 +507,23 @@ def start_pixel_forge_target(
     project_path: str,
     runtime_kind: str = DEFAULT_RUNTIME_KIND,
     force_restart: bool = False,
+    source_root: str | None = None,
 ) -> LocalTargetRecord:
     normalized_project_path = _normalize_project_path(project_path)
     normalized_runtime_kind = _normalize_runtime_kind(runtime_kind)
-    normalized_source_root = _normalize_project_path(str(runtime_source_root()))
+    if normalized_runtime_kind == "mirror":
+        normalized_source_root = _normalize_project_path(
+            source_root or str(runtime_source_root())
+        )
+    else:
+        normalized_source_root = _normalize_project_path(normalized_project_path)
     _validate_pixel_forge_project(normalized_project_path)
 
-    instance_slug = _slug_for_project(normalized_project_path, normalized_runtime_kind)
+    instance_slug = _slug_for_project(
+        normalized_project_path,
+        normalized_runtime_kind,
+        normalized_source_root,
+    )
     state_dir = _target_state_dir(instance_slug)
     metadata = _load_metadata(instance_slug)
 
@@ -588,6 +617,7 @@ def start_pixel_forge_target(
                 "runtime_kind": normalized_runtime_kind,
                 "project_path": normalized_project_path,
                 "source_root": normalized_source_root,
+                "build_label": _label_for_source_root(normalized_source_root),
                 "instance_slug": instance_slug,
                 "api_port": api_port,
                 "web_port": web_port,
@@ -597,6 +627,7 @@ def start_pixel_forge_target(
                 "state_dir": str(state_dir),
                 "log_file": str(log_file),
                 "pid": proc.pid,
+                "created_at": metadata.get("created_at") if metadata else time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             }
             _write_metadata(instance_slug, payload)
             return _record_from_metadata(payload, already_running=False)
@@ -621,3 +652,42 @@ def start_pixel_forge_target(
 
 def serialize_local_target(record: LocalTargetRecord) -> dict[str, Any]:
     return asdict(record)
+
+
+def list_pixel_forge_targets(
+    project_path: str,
+    runtime_kind: Literal["mirror", "dev"] | None = "mirror",
+) -> list[LocalTargetRecord]:
+    normalized_project_path = _normalize_project_path(project_path)
+    records: list[LocalTargetRecord] = []
+    instances_root = runtime_state_dir() / "instances"
+    if not instances_root.exists():
+        return records
+
+    for metadata_path in instances_root.glob("*/runtime.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if _normalize_project_path(str(metadata.get("project_path") or "")) != normalized_project_path:
+            continue
+        if runtime_kind and str(metadata.get("runtime_kind") or "") != runtime_kind:
+            continue
+
+        pid = int(metadata["pid"]) if metadata.get("pid") else None
+        running = _is_http_ready(str(metadata.get("web_url") or "")) and _process_alive(pid)
+        try:
+            records.append(_record_from_metadata(metadata, already_running=running))
+        except Exception:
+            continue
+
+    records.sort(
+        key=lambda record: (
+            record.created_at or "",
+            record.instance_slug,
+        ),
+        reverse=True,
+    )
+    return records

@@ -25,7 +25,7 @@ import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
-import { RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
+import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { FolderOpen } from "lucide-react";
 import type {
   PixelForgeDesktopBootstrapState,
@@ -107,11 +107,32 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!window.pixelForgeDesktop?.app) {
-      return;
-    }
-
     let cancelled = false;
+
+    if (!window.pixelForgeDesktop?.app) {
+      void fetch(`${HTTP_BACKEND_URL}/api/controller-update`, {
+        credentials: "include",
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          return response.json() as Promise<{
+            update: PixelForgeDesktopPendingControllerUpdate | null;
+          }>;
+        })
+        .then((payload) => {
+          if (!cancelled) {
+            setPendingControllerUpdate(payload.update);
+          }
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load pending controller update:", error);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void window.pixelForgeDesktop.app
       .getPendingControllerUpdate()

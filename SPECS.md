@@ -10,6 +10,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 4. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
 5. Pixel Forge can launch a faithful sibling Pixel Forge mirror runtime for self-edit loops without colliding with the controller instance or diverging from the UI being fixed.
 6. Selected-element context must stay truthful across DOM and canvas-like preview surfaces, and the working agent must be able to inspect the frozen selected state without replaying the browser path manually.
+7. Pixel Forge preview interaction must grow as a real tool system, with selection as the first tool rather than a permanent special case, so future capabilities can ship without sprawling across Live Editor state and shell glue.
 
 # Requirements
 
@@ -67,6 +68,16 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-X-006:` While select mode is active on an already selected DOM-like target, holding `Ctrl+Shift` over that selection must preview promotion to the next ancestor container in a distinct transitional state, and clicking must replace that saved selection in place instead of removing and re-adding it.
 - `REQ-X-007:` Pixel Forge must support undo and redo for selection-engine mutations so selection add/remove/clear/promote mistakes can be reversed without rebuilding the whole prompt manually.
 
+### Tool System
+- `REQ-L-001:` Pixel Forge preview interaction must be modeled as named tools with a shared controller/registry, not as one-off booleans and ad hoc event handling embedded directly in Live Editor UI code.
+- `REQ-L-002:` The current selection tool must live inside that tool system as tool `v1`, not as a permanent special case that future tools have to work around.
+- `REQ-L-003:` Each tool must own its input handling, transient hover/proposal state, committed artifact state, overlay rendering, and request-pack/tunnel serialization contract.
+- `REQ-L-004:` Tool state must distinguish transient proposed targets from committed artifacts so hover previews, promotion, undo/redo, and future tool composition stay predictable.
+- `REQ-L-005:` Tool shortcuts, modifier chords, and focus handoff must be routed through a central tool input layer instead of being solved separately inside each tool implementation.
+- `REQ-L-006:` Default tool behavior should stay automatic when the substrate makes the right choice obvious, but advanced sub-modes and alternate probing strategies may exist behind explicit chords or advanced controls.
+- `REQ-L-007:` Pixel Forge must record which tool and sub-mode produced each committed artifact so the working agent can interpret the selection tunnel truthfully.
+- `REQ-L-008:` The user-facing tool surface should converge toward a compact persistent tool palette/rail, not a scattering of special-case buttons across individual panes.
+
 ### Agent Selection Tunnel
 - `REQ-U-001:` Each Live Editor request pack must include a structured frozen selection tunnel artifact in addition to human-readable selected-elements markup.
 - `REQ-U-002:` Pixel Forge must expose a local selection-tunnel inspection path that an agent can use without replaying login, navigation, or view reconstruction.
@@ -75,6 +86,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, state DB path, and managed-browser profile path.
 - `REQ-E-002:` The default self-edit target must be a faithful mirror of Pixel Forge's real controller UI and startup flows, including the workspace selector and deeper self-target launch paths. Safety belongs to isolated runtime/state boundaries and backend/runtime policy interception, not to front-end neutering of the target surface.
+- `REQ-E-002A:` Self-edit must be preview-first. A completed Pixel Forge self-edit request should be loadable into a new mirror preview build/tab before the user decides to promote that same build into the controller.
 - `REQ-E-003:` A Pixel Forge self-edit request must not restart or replace the active Pixel Forge controller before the current live-edit stream finishes.
 - `REQ-E-004:` Self-edit activation should stage repo changes first and leave install/restart activation to an explicit post-run step rather than cutting off the in-flight broker session.
 - `REQ-E-005:` The installed controller path must keep at least one rollback build so a broken self-update can be reverted quickly.
@@ -82,6 +94,9 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-E-007:` A staged controller update must freeze a source snapshot at stage time so applying it cannot accidentally pick up later unrelated working-tree drift.
 - `REQ-E-008:` Applying a staged controller update must relaunch the shell against the restored project/mode/preview context so desktop-shell code changes can take effect without manual relaunch choreography.
 - `REQ-E-009:` If Pixel Forge keeps a lower-fidelity dev-target path for rapid iteration, that path must be explicit and must not replace the faithful mirror target as the default self-edit surface.
+- `REQ-E-010:` Mirror preview builds must be versioned local artifacts keyed by their frozen source snapshot/runtime root so multiple mirror candidates can stay open in separate tabs without overwriting each other.
+- `REQ-E-011:` `Run Pixel Forge` must default to the latest available mirror candidate for the workspace, while still allowing explicit selection of older mirror builds.
+- `REQ-E-012:` Mirror build artifacts belong in Pixel Forge state outside the repo so they do not pollute git status or require git-ignore churn in the workspace.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -91,10 +106,10 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 # Current Limiting Factor
 
-- `[active]` Mirror-target fidelity still drifts when the sibling runtime does not inherit the same controller artifact and controller state snapshot that the live app is actually using.
-- Why it is the limiter: if the mirror is sourced from a different build or starts from different state, startup/layout bugs cannot be reproduced faithfully and self-edit fixes target a surrogate instead of the product.
-- Smallest complete unit to attack it: launch mirror targets from the current runtime source root, seed them from the current runtime state snapshot, and only use workspace/dev lanes explicitly for lower-fidelity debugging.
-- Immediate proof target: from the controller, launch a mirror target and confirm the workspace-selector dialog renders with the same recent-project payload and the same layout behavior as the controller before any staged update is applied.
+- `[active]` Preview tooling behavior is still spread across Live Editor UI state, shell glue, and the selection engine instead of a first-class tool system.
+- Why it is the limiter: every new capability like ancestor cycling, promotion, behind-the-pixel probing, measurement, compare, or annotate risks becoming another special-case branch instead of a composable tool. That makes focus bugs, input routing, overlay behavior, and agent-context serialization harder to reason about every time the tool surface grows.
+- Smallest complete unit to attack it: define and implement a shared tool controller boundary with the current selection tool moved behind that contract before adding the next materially different preview tool.
+- Immediate proof target: document the current selection-as-tool reality and the target tool-controller architecture clearly enough that the next implementation step is extraction, not more behavior accretion inside `LiveEditorPane` and `selection-engine`.
 
 # Current Proof Status
 
@@ -119,6 +134,9 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[validated]` Sibling target runtimes can now surface the shared workspace-selector affordance and recursive self-launch controls inside the isolated target runtime. Basis: target mode now exposes a selector opener in-app and no longer suppresses `Run Pixel Forge` inside the target runtime.
 - `[unvalidated]` Mirror-target fidelity is high enough that fixing the target UI fixes the controller UI. Basis: the mirror launcher now targets the current runtime artifact and seeds isolated state from the current runtime, but end-to-end UI proof against the startup dialog mismatch has not yet been re-run after that change.
 - `[unvalidated]` Mirror runtimes are fully shell-capable when Pixel Forge runs inside Pixel Forge, including nested preview ownership and update affordances. Basis: the default self-edit target is now a faithful mirror build, but recursive shell capability inside that mirror runtime has not yet been completed.
+- `[validated]` Self-edit now separates preview loading from controller promotion in the product model. Basis: chat completion can load a staged update into a mirror preview tab, while the controller header notice remains the promotion path for the installed app.
+- `[validated]` Mirror candidates are now versioned local runtime artifacts rather than one mutable mirror instance. Basis: mirror instances are keyed by source snapshot/runtime root, can coexist in separate tabs, and can be listed/selectively reopened.
+- `[planned]` Pixel Forge preview interaction will be restructured as a first-class tool system with selection as the first tool rather than a permanent special case. Basis: the architectural intent is now explicit, but the controller/registry extraction has not started yet.
 - `[validated]` Live Editor request packs now include a structured `selection-tunnel.json` artifact and can expose it back through a local API/CLI path. Basis: request-pack smoke created the tunnel file, registered it in the manifest, and the backend now serves `/api/live-editor/selection-tunnel`.
 - `[validated]` Pixel Forge now stores screenshot evidence alongside selection context so non-DOM selections can carry frozen visual state into the request pack. Basis: the shell selection bridge now captures bounded image crops during selection and the frontend includes them as request-pack attachments.
 - `[validated]` Selected DOM targets can now be promoted upward in place without losing their selection slot, and the shell preview shows that promotion as a yellow transitional preview before commit. Basis: Electron smoke selected a child button, showed `Promote to div#parent` with yellow badge state on `Ctrl+Shift`, then emitted `browser-element-updated` with the same selection id retargeted to the parent xpath.
@@ -139,6 +157,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[question]` Should request-pack retention become content-addressed and deduplicated, or is bounded per-request storage sufficient in practice?
 - `[question]` Should the second source panel support its own independent deploy-aware refresh, or is one shared refresh sufficient?
 - `[question]` When we add behind-the-pixel probing later, should it stay on a separate modifier chord from ancestor cycling or become an explicit advanced selection sub-mode?
+- `[question]` Should the eventual tool palette be global to the whole preview workspace, or should some tools only appear when the active substrate/runtime can actually support them?
 
 # Out of Scope
 

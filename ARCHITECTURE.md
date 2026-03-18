@@ -29,6 +29,7 @@ Current sibling target runtime
   -> default path is now an isolated mirror runtime launched from the current runtime artifact/source root
   -> seeds isolated target state from the current runtime state snapshot so startup flows and recent-project data stay faithful
   -> may build an isolated frontend only when the chosen mirror source is a repo/snapshot rather than an installed build
+  -> mirror instances are versioned by their source snapshot/runtime root so multiple candidates can stay open side by side
   -> keeps the dev/HMR lane available only as an explicit lower-fidelity path
   -> is closer to the controller, but nested shell capabilities inside mirror runtimes are still incomplete
 
@@ -63,6 +64,8 @@ Mirror target runtime (required default self-edit path)
   -> must preserve the same startup flows and UI semantics as the controller
   -> must be sourced from an immutable runtime artifact or frozen snapshot, not a mutable working tree by default
   -> must inherit a controller-state snapshot strongly enough to reproduce controller startup/layout issues
+  -> must support preview-first iteration: load into the mirror first, inspect it, then optionally promote that same build into the controller
+  -> must support multiple concurrent mirror candidates as separate tabs/builds rather than mutating one mirror instance in place
   -> must allow recursive self-targeting when needed
   -> should differ from the controller only in runtime isolation and staged-update policy
 
@@ -85,6 +88,9 @@ Selection tunnel
 Sibling target runtime
   -> today: default launch uses the mirror lane, not the dev/HMR lane
   -> mirror launch should inherit the current runtime source root by default, not the mutable project workspace
+  -> when a staged self-edit snapshot exists, loading the latest mirror should prefer that snapshot as the next candidate build
+  -> old mirror candidates stay interactive in their own tabs; newer mirror candidates open as new tabs rather than overwriting the old one
+  -> older mirror candidates can be reopened explicitly from a build picker
   -> target state must remain isolated from the controller
   -> target state should be seeded from the current runtime snapshot so the UI reproduces the controller before divergence is introduced
   -> target UI should converge toward a full mirror, not a target-flavored variant
@@ -93,6 +99,7 @@ Sibling target runtime
 FastAPI backend (apps/api)
   -> remains the broker/state plane
   -> launches sibling Pixel Forge targets on demand
+  -> records and lists local mirror build instances
   -> persists projects/sessions/request packs
   -> may keep compatibility preview code internally, but the product surface routes preview through the shell
 ```
@@ -147,6 +154,7 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 - Separate API/web ports
 - Separate DB and browser-profile state
 - Mirror-target lifecycle
+- Versioned mirror build artifacts stored under Pixel Forge state outside the repo
 - Frozen staged-update snapshots
 - Rollback lane
 - Policy interception for dangerous self-edit actions

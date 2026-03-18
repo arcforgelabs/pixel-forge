@@ -11,7 +11,8 @@
  */
 
 import { create } from 'zustand'
-import { WS_BACKEND_URL } from '@/config'
+import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
+import type { PixelForgeDesktopPendingControllerUpdate } from '@/types/pixel-forge-desktop'
 import { useSessionStore } from '../../../store/session-store'
 import {
   buildSelectionArtifacts,
@@ -54,6 +55,7 @@ export interface ChatMessage {
   isRemoteComplete?: boolean
   systemTone?: 'info' | 'success' | 'error'
   canApplyControllerUpdate?: boolean
+  canLoadPreviewUpdate?: boolean
 }
 
 export interface SelectedElement extends SelectionRecord {
@@ -171,23 +173,60 @@ async function stageControllerUpdateNotice(options: {
   if (typeof window === 'undefined') {
     return
   }
-  const desktopApp = window.pixelForgeDesktop?.app
-  if (!desktopApp) {
-    return
-  }
-
   const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
-  const summary = `Controller update from ${requestLabel} is ready to load.`
+  const summary = `Pixel Forge update from ${requestLabel} is ready to load.`
+  const desktopApp = window.pixelForgeDesktop?.app
+  let update: PixelForgeDesktopPendingControllerUpdate
 
-  const update = await desktopApp.stageControllerUpdate({
-    projectPath: options.projectPath,
-    previewUrl: options.previewUrl,
-    activeMode: options.activeMode,
-    summary,
-    source: 'live-editor',
-    requestId: options.requestId,
-    commitHash: null,
-  })
+  if (desktopApp) {
+    update = await desktopApp.stageControllerUpdate({
+      projectPath: options.projectPath,
+      previewUrl: options.previewUrl,
+      activeMode: options.activeMode,
+      summary,
+      source: 'live-editor',
+      requestId: options.requestId,
+      commitHash: null,
+    })
+  } else {
+    const response = await fetch(`${HTTP_BACKEND_URL}/api/controller-update`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_path: options.projectPath,
+        preview_url: options.previewUrl,
+        active_mode: options.activeMode,
+        summary,
+        source: 'live-editor',
+        request_id: options.requestId,
+        commit_hash: null,
+      }),
+    })
+
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      try {
+        const payload = await response.json() as { detail?: string }
+        if (typeof payload.detail === 'string' && payload.detail) {
+          message = payload.detail
+        }
+      } catch {
+        const text = await response.text()
+        if (text) {
+          message = text
+        }
+      }
+      throw new Error(message)
+    }
+
+    const payload = await response.json() as {
+      update: PixelForgeDesktopPendingControllerUpdate
+    }
+    update = payload.update
+  }
 
   useSessionStore.getState().setPendingControllerUpdate(update)
 }
@@ -309,6 +348,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           const { currentStreamContent, messages: msgs } = get()
           const isRemoteTarget = !!data.is_remote_target
           const isSelfEditSafeMode = !!data.self_edit_safe_mode
+          const canStageControllerUpdate = isSelfEditSafeMode && !!window.pixelForgeDesktop?.app
           const requestId =
             typeof data.request_id === 'string' && data.request_id
               ? data.request_id
@@ -324,12 +364,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               requestId,
               selectionCount,
               selfEditSafeMode: isSelfEditSafeMode,
+              controllerUpdateStaged: canStageControllerUpdate,
               isRemoteTarget,
             }),
             timestamp: new Date(),
             isRemoteComplete: isRemoteTarget || undefined,
             systemTone: 'success',
-            canApplyControllerUpdate: isSelfEditSafeMode || undefined,
+            canLoadPreviewUpdate: isSelfEditSafeMode || undefined,
           }
 
           if (currentStreamContent) {

@@ -91,7 +91,7 @@ export function ControllerUpdateNotice() {
             disabled={isApplying || isDismissing}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isApplying ? "animate-spin" : ""}`} />
-            Load Update
+            Load Controller Update
           </Button>
           <Button
             size="sm"

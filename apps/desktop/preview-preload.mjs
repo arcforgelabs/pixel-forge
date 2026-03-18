@@ -45,20 +45,6 @@ if (shouldExposeDesktopBridge()) {
     overlay: {
       pickList: (payload) => ipcRenderer.invoke('pixel-forge-overlay:pick-list', payload),
     },
-    app: {
-      applyControllerUpdate: (payload) =>
-        ipcRenderer.invoke('pixel-forge-app:apply-controller-update', payload),
-      applyPendingControllerUpdate: (payload) =>
-        ipcRenderer.invoke('pixel-forge-app:apply-pending-controller-update', payload),
-      consumeBootstrapState: () =>
-        ipcRenderer.invoke('pixel-forge-app:consume-bootstrap-state'),
-      getPendingControllerUpdate: () =>
-        ipcRenderer.invoke('pixel-forge-app:get-pending-controller-update'),
-      stageControllerUpdate: (payload) =>
-        ipcRenderer.invoke('pixel-forge-app:stage-controller-update', payload),
-      dismissPendingControllerUpdate: () =>
-        ipcRenderer.invoke('pixel-forge-app:dismiss-controller-update'),
-    },
   })
 }
 

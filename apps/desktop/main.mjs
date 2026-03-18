@@ -427,6 +427,9 @@ function applyAllPreviewViews() {
 }
 
 function removePreviewRecord(previewRecord) {
+  if (!previewRecord) {
+    return
+  }
   const context = previewContexts.get(previewRecord.ownerContextId)
   if (context?.attachedView === previewRecord.view) {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -438,7 +441,9 @@ function removePreviewRecord(previewRecord) {
     context.activeTabId = null
     context.visible = false
   }
-  previewKeyByWebContentsId.delete(previewRecord.view.webContents.id)
+  if (typeof previewRecord.webContentsId === 'number') {
+    previewKeyByWebContentsId.delete(previewRecord.webContentsId)
+  }
   previewViews.delete(previewRecord.key)
 }
 
@@ -447,9 +452,11 @@ function destroyOwnedPreviewContexts(ownerContextId) {
     (record) => record.ownerContextId === ownerContextId,
   )
   for (const childRecord of childRecords) {
-    destroyOwnedPreviewContexts(childRecord.view.webContents.id)
+    if (typeof childRecord.webContentsId === 'number') {
+      destroyOwnedPreviewContexts(childRecord.webContentsId)
+    }
     removePreviewRecord(childRecord)
-    if (!childRecord.view.webContents.isDestroyed()) {
+    if (childRecord.view && !childRecord.view.webContents.isDestroyed()) {
       childRecord.view.webContents.destroy()
     }
   }
@@ -641,6 +648,7 @@ function getOrCreatePreviewView(ownerContextId, tabId) {
     ownerContextId,
     tabId,
     view,
+    webContentsId: view.webContents.id,
   })
   previewKeyByWebContentsId.set(view.webContents.id, previewKey)
   registerViewEvents(ownerContextId, tabId, view)
@@ -942,7 +950,7 @@ app.whenReady().then(() => {
     if (!previewRecord) {
       return { ok: true }
     }
-    destroyOwnedPreviewContexts(previewRecord.view.webContents.id)
+    destroyOwnedPreviewContexts(previewRecord.webContentsId)
     removePreviewRecord(previewRecord)
     if (!previewRecord.view.webContents.isDestroyed()) {
       previewRecord.view.webContents.destroy()

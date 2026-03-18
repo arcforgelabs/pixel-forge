@@ -3,6 +3,7 @@ export interface CompletionSummaryInput {
   selectionCount?: number | null
   isRemoteTarget?: boolean
   selfEditSafeMode?: boolean
+  controllerUpdateStaged?: boolean
 }
 
 function pluralize(count: number, noun: string): string {
@@ -68,6 +69,7 @@ export function buildCompletionSummary({
   selectionCount,
   isRemoteTarget,
   selfEditSafeMode,
+  controllerUpdateStaged,
 }: CompletionSummaryInput): string {
   const parts = ['Complete']
 
@@ -80,6 +82,10 @@ export function buildCompletionSummary({
   }
 
   if (selfEditSafeMode) {
+    parts.push('preview update ready')
+  }
+
+  if (controllerUpdateStaged) {
     parts.push('controller update staged')
   }
 
