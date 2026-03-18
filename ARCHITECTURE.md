@@ -2,22 +2,34 @@
 
 ## Intent
 
-Pixel Forge must be the control surface for visually editing a real running app. That means one project-level chat, one shared selected-element context, and a browser surface that is real enough for localhost dev apps and hostile third-party sites alike.
+Pixel Forge must be the control surface for visually editing a real running app, including Pixel Forge itself. That means one project-level chat, one shared selected-element context, and a browser surface that is real enough for localhost dev apps, hostile third-party sites, and recursive self-development.
+
+## Core Tenet: Self-Development
+
+Pixel Forge must be able to point back at isolated sibling instances of Pixel Forge and improve the real product by selecting and editing the real surface.
+
+If the self-target differs materially from the controller UI, the architecture has failed. The user is then fixing a surrogate, not Pixel Forge.
+
+Safety must live below the UI:
+- isolated ports, DB roots, and browser profiles
+- staged apply instead of mid-stream self-restart
+- frozen update snapshots plus rollback
+- backend/runtime policy interception for dangerous actions
+
+Safety must not depend on front-end neutering of the very UI Pixel Forge is supposed to inspect and fix.
 
 ## Current Reality
 
 ```text
-FastAPI service
-  -> serves the built React frontend
-  -> brokers Live Editor requests into Agent Deck
-  -> persists projects/sessions in SQLite
-  -> writes request packs into the target workspace
+Installed controller runtime
+  -> desktop shell + installed backend + built frontend
+  -> the real product path the user is operating
 
-React frontend (apps/web)
-  -> owns project selection, chat, selected elements, preview tab strip
-  -> can launch a sibling Pixel Forge target runtime for self-editing
-  -> treats the native shell as the only supported Live Editor preview runtime
-  -> exposes a browser-only fallback only as a debug/service surface, not as product-equivalent preview
+Current sibling target runtime
+  -> isolated ports/state/profile
+  -> repo-launched FastAPI + Vite dev/HMR stack
+  -> still influenced by target-mode UI branching
+  -> useful for some inspection, but not yet a faithful mirror of the controller
 
 Agent Deck
   -> persistent agent runtime per Live Editor thread
@@ -27,6 +39,7 @@ Truth:
 - The desktop shell is the product path.
 - A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites or faithful localhost self-edit targets.
 - Proxying or iframe tricks are not a durable answer for auth-heavy sites, HMR-heavy localhost apps, or sibling-instance self-edit flows.
+- The current architectural bug is not lack of isolation. It is that the mirror target and the dev target are still partially conflated, so the sibling target can diverge from the controller surface being fixed.
 
 ## Transition Architecture
 
@@ -39,10 +52,21 @@ Pixel Forge Desktop Shell (apps/desktop)
 
 Pixel Forge UI (apps/web)
   -> remains the product chrome: tab strip, toolbar, chat, Elements pane
-  -> can spawn a sibling Pixel Forge target runtime from the bound workspace
+  -> can spawn isolated sibling Pixel Forge runtimes from the bound workspace
   -> owns the shared selection list and request-pack tunnel metadata
   -> measures the preview pane bounds
   -> tells the shell which preview tab is active and where the native browser surface should mount
+
+Mirror target runtime (required default self-edit path)
+  -> isolated sibling Pixel Forge instance
+  -> must preserve the same startup flows and UI semantics as the controller
+  -> must allow recursive self-targeting when needed
+  -> should differ from the controller only in runtime isolation and staged-update policy
+
+Dev target runtime (optional advanced path)
+  -> lower-fidelity HMR/dev-server lane for rapid iteration
+  -> may be useful for debugging
+  -> must not replace the mirror target as the default self-edit surface
 
 Selection engine
   -> auto-detects DOM vs region selection based on the live preview substrate
@@ -56,10 +80,9 @@ Selection tunnel
   -> lets the agent inspect Pixel Forge-forged selection context without replaying auth or navigation
 
 Sibling target runtime
-  -> runs its own FastAPI + Vite stack on isolated localhost ports
-  -> gets its own SQLite state root and managed-browser profile path
-  -> renders inside the controller preview like any other localhost app
-  -> stays visually faithful, but suppresses controller-first startup blocking
+  -> today: still partially implemented through a dev/HMR lane
+  -> target state must remain isolated from the controller
+  -> target UI should converge toward a full mirror, not a target-flavored variant
 
 FastAPI backend (apps/api)
   -> remains the broker/state plane
@@ -68,7 +91,7 @@ FastAPI backend (apps/api)
   -> may keep compatibility preview code internally, but the product surface routes preview through the shell
 ```
 
-This is the current build direction.
+This is the current build direction. The unresolved transition work is to separate the faithful mirror target from the lower-fidelity dev target and make the mirror target the default self-edit path.
 
 ## Ideal Target
 
@@ -77,7 +100,7 @@ Native Pixel Forge shell
   -> embedded Chromium is the default preview runtime for all URLs
   -> localhost and remote sites share one browser model
   -> one project chat can compare multiple live tabs without opening external browser windows
-  -> one controller instance can launch and inspect sibling target instances for self-editing
+  -> one controller instance can launch and inspect sibling mirror-target instances for self-editing
 
 FastAPI backend
   -> agent orchestration
@@ -85,11 +108,17 @@ FastAPI backend
   -> request-pack generation
   -> file writes and repo operations
 
+Mirror target runtime
+  -> isolated sibling Pixel Forge instance
+  -> same user-facing startup flows, layout, and controls as the controller
+  -> safe because isolation, staging, and rollback live underneath the UI
+  -> can recurse into deeper self-targets when the user needs to inspect Pixel Forge inspecting Pixel Forge
+
 Agent Deck
   -> persistent coding session
 ```
 
-In the ideal shape, the proxy path disappears from the user-facing preview workflow entirely.
+In the ideal shape, the proxy path disappears from the user-facing preview workflow entirely, and self-development uses a faithful mirror target by default rather than a special target-mode UI.
 
 ## Layer Ownership
 
@@ -108,11 +137,13 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 - Tab-local DOM state and history
 - Automatic DOM-vs-region selection overlay injection into the live page
 
-### Sibling Target Layer
-- Isolated localhost target runtime for self-editing
+### Runtime Isolation Layer
 - Separate API/web ports
 - Separate DB and browser-profile state
-- Target-mode UI guardrails
+- Mirror-target lifecycle
+- Frozen staged-update snapshots
+- Rollback lane
+- Policy interception for dangerous self-edit actions
 
 ### Backend Broker Layer
 - Project/session persistence
@@ -125,4 +156,5 @@ In the ideal shape, the proxy path disappears from the user-facing preview workf
 
 - Pretending the browser-only web app can become a full embedded Chromium host
 - Treating the proxy path as a product-equivalent answer for localhost or third-party preview
+- Treating a front-end-neutered target mode as a sufficient self-edit architecture
 - Rebuilding Agent Deck inside Pixel Forge
