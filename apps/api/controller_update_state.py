@@ -115,6 +115,18 @@ def create_controller_update_snapshot(project_path: str, update_id: str) -> str:
     return str(destination)
 
 
+def controller_update_snapshot_has_runtime_layout(snapshot_path: str | None) -> bool:
+    if not snapshot_path:
+        return False
+    root = Path(snapshot_path).expanduser().resolve()
+    return (
+        (root / "install.sh").is_file()
+        and (root / "apps" / "api" / "main.py").is_file()
+        and (root / "apps" / "api" / "requirements.txt").is_file()
+        and (root / "apps" / "web" / "package.json").is_file()
+    )
+
+
 def read_pending_controller_update() -> dict[str, Any] | None:
     path = pending_controller_update_path()
     if not path.exists():
@@ -136,6 +148,24 @@ def read_pending_controller_update() -> dict[str, Any] | None:
 
 def write_pending_controller_update(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_pending_controller_update(payload)
+    normalized["snapshotPath"] = create_controller_update_snapshot(
+        normalized["projectPath"], normalized["id"]
+    )
+    path = pending_controller_update_path()
+    path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
+    return normalized
+
+
+def repair_pending_controller_update_snapshot(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+
+    normalized = normalize_pending_controller_update(payload)
+    if controller_update_snapshot_has_runtime_layout(normalized["snapshotPath"]):
+        return normalized
+
     normalized["snapshotPath"] = create_controller_update_snapshot(
         normalized["projectPath"], normalized["id"]
     )

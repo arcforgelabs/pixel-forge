@@ -19,6 +19,10 @@ from runtime_config import (
     shared_state_dir as runtime_shared_state_dir,
     source_root as runtime_source_root,
 )
+from controller_update_state import (
+    read_pending_controller_update,
+    repair_pending_controller_update_snapshot,
+)
 
 
 PIXEL_FORGE_TARGET_KIND = "pixel-forge"
@@ -300,6 +304,33 @@ def _resolve_mirror_launch_source(source_root: str) -> MirrorLaunchSource:
     raise ValueError(f"Unsupported Pixel Forge mirror source root: {root}")
 
 
+def _resolve_repaired_mirror_source_root(
+    project_path: str,
+    source_root: str,
+) -> str:
+    try:
+        _resolve_mirror_launch_source(source_root)
+        return source_root
+    except ValueError as source_error:
+        pending_update = repair_pending_controller_update_snapshot(
+            read_pending_controller_update()
+        )
+        if (
+            pending_update
+            and pending_update.get("projectPath")
+            and _normalize_project_path(str(pending_update["projectPath"])) == project_path
+            and pending_update.get("snapshotPath")
+            and str(Path(str(pending_update["snapshotPath"])).expanduser().resolve())
+            == str(Path(source_root).expanduser().resolve())
+        ):
+            repaired_source_root = str(
+                Path(str(pending_update["snapshotPath"])).expanduser().resolve()
+            )
+            _resolve_mirror_launch_source(repaired_source_root)
+            return repaired_source_root
+        raise source_error
+
+
 def _run_logged_shell(
     command: str,
     *,
@@ -500,6 +531,10 @@ def start_pixel_forge_target(
     if normalized_runtime_kind == "mirror":
         normalized_source_root = _normalize_project_path(
             source_root or str(runtime_source_root())
+        )
+        normalized_source_root = _resolve_repaired_mirror_source_root(
+            normalized_project_path,
+            normalized_source_root,
         )
     else:
         normalized_source_root = _normalize_project_path(normalized_project_path)
