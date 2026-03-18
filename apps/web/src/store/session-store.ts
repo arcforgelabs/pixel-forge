@@ -60,6 +60,7 @@ interface SessionStore {
   outputMode: OutputMode;
   customOutputPath: string | null;
   lastSavedFile: LastSavedFile | null;
+  controllerVersion: string | null;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   dismissedControllerUpdateId: string | null;
   controllerUpdateApplyState: PixelForgeDesktopControllerUpdateApplyState;
@@ -99,6 +100,7 @@ interface SessionStore {
 
   // Helpers
   getCurrentProjectUrls: () => string[];
+  setControllerVersion: (version: string | null) => void;
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
   ) => void;
@@ -294,6 +296,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   outputMode: "scratch",
   customOutputPath: null,
   lastSavedFile: null,
+  controllerVersion: null,
   pendingControllerUpdate: null,
   dismissedControllerUpdateId: null,
   controllerUpdateApplyState: {
@@ -499,6 +502,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         timestamp: new Date().toISOString(),
       },
     });
+  },
+
+  setControllerVersion: (controllerVersion) => {
+    set({ controllerVersion });
   },
 
   setPendingControllerUpdate: (update) => {

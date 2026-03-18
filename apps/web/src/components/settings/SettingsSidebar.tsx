@@ -5,8 +5,10 @@ import { Settings } from "@/types";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { capitalize } from "@/lib/utils";
+import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
 import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
@@ -32,6 +34,13 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
+function formatSource(source: string | null | undefined): string {
+  if (!source || !source.trim()) {
+    return "update";
+  }
+  return source.replace(/[-_]+/g, " ");
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -54,6 +63,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     agentType,
     setAgentType,
     previewUrl,
+    controllerVersion,
     recentProjects,
     setProject,
     pendingControllerUpdate,
@@ -70,6 +80,47 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const shouldDisableStackUpdates =
     appState === AppState.CODING || appState === AppState.CODE_READY;
   const hasActiveSession = !!sessionId || !!liveEditorSession;
+  const stagedVersion = pendingControllerUpdate?.version ?? null;
+  const versionComparison = compareSemver(stagedVersion, controllerVersion);
+  const runningVersionLabel = formatVersionLabel(controllerVersion);
+  const stagedVersionLabel = formatVersionLabel(stagedVersion);
+  const updateStatus = !pendingControllerUpdate
+    ? {
+        label: "Up to date",
+        className: "border-transparent bg-muted text-foreground",
+        detail: `Running ${runningVersionLabel}. No staged controller update is available.`,
+        buttonLabel: "Load Controller Update",
+      }
+    : versionComparison === null
+      ? {
+          label: "Staged build",
+          className:
+            "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+          detail: `${stagedVersionLabel} is staged for this controller and can be loaded from Settings.`,
+          buttonLabel: "Load Controller Update",
+        }
+      : versionComparison > 0
+        ? {
+            label: "Update available",
+            className:
+              "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+            detail: `${stagedVersionLabel} is staged and ready to apply over ${runningVersionLabel}.`,
+            buttonLabel: `Update to ${stagedVersionLabel}`,
+          }
+        : versionComparison === 0
+          ? {
+              label: "Reload ready",
+              className: "border-transparent bg-muted text-foreground",
+              detail: `${stagedVersionLabel} is already staged for this running controller version.`,
+              buttonLabel: `Reload ${stagedVersionLabel}`,
+            }
+          : {
+              label: "Older staged build",
+              className:
+                "border-amber-500/30 bg-amber-500/10 text-amber-100",
+              detail: `${stagedVersionLabel} is staged, but it is older than the running ${runningVersionLabel}.`,
+              buttonLabel: `Load ${stagedVersionLabel}`,
+            };
 
   function setStack(stack: Stack) {
     setSettings((prev: Settings) => ({
@@ -287,56 +338,96 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           </DialogHeader>
 
           <div className="space-y-6 py-2">
-            {pendingControllerUpdate && (
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Controller Update
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Application
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Controller Version</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {updateStatus.detail}
+                    </p>
+                  </div>
+                  <Badge variant="outline" className={updateStatus.className}>
+                    {updateStatus.label}
+                  </Badge>
                 </div>
 
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-                  <p className="text-sm text-foreground">
-                    {pendingControllerUpdate.summary?.trim() || "Update ready to load."}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Source: {pendingControllerUpdate.source || "update"}
-                    {pendingControllerUpdate.commitHash && ` · ${pendingControllerUpdate.commitHash.slice(0, 7)}`}
-                    {pendingControllerUpdate.canRollback && " · rollback available"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleLoadControllerUpdate()}
-                      disabled={!window.pixelForgeDesktop?.app || isApplyingControllerUpdate}
-                      className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isApplyingControllerUpdate ? "animate-spin" : ""}`} />
-                      Load Controller Update
-                    </Button>
-                    {dismissedControllerUpdateId === pendingControllerUpdate.id && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          void (async () => {
-                            if (window.pixelForgeDesktop?.app?.setDismissedControllerUpdateId) {
-                              await window.pixelForgeDesktop.app.setDismissedControllerUpdateId(
-                                null
-                              );
-                            }
-                            setDismissedControllerUpdateId(null);
-                          })();
-                        }}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        Show Header Notice Again
-                      </Button>
-                    )}
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Running</span>
+                    <span className="font-mono text-xs text-foreground">
+                      {runningVersionLabel}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Staged</span>
+                    <span className="font-mono text-xs text-foreground">
+                      {pendingControllerUpdate ? stagedVersionLabel : "none"}
+                    </span>
                   </div>
                 </div>
-              </section>
-            )}
+
+                {pendingControllerUpdate ? (
+                  <>
+                    <div className="rounded-lg border border-emerald-500/20 bg-card/70 p-3">
+                      <p className="text-sm text-foreground">
+                        {pendingControllerUpdate.summary?.trim() || "Update ready to load."}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Source: {formatSource(pendingControllerUpdate.source)}
+                        {pendingControllerUpdate.commitHash && ` · ${pendingControllerUpdate.commitHash.slice(0, 7)}`}
+                        {pendingControllerUpdate.canRollback && " · rollback available"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Staged {new Date(pendingControllerUpdate.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleLoadControllerUpdate()}
+                        disabled={!window.pixelForgeDesktop?.app || isApplyingControllerUpdate}
+                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${isApplyingControllerUpdate ? "animate-spin" : ""}`} />
+                        {updateStatus.buttonLabel}
+                      </Button>
+                      {dismissedControllerUpdateId === pendingControllerUpdate.id && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            void (async () => {
+                              if (window.pixelForgeDesktop?.app?.setDismissedControllerUpdateId) {
+                                await window.pixelForgeDesktop.app.setDismissedControllerUpdateId(
+                                  null
+                                );
+                              }
+                              setDismissedControllerUpdateId(null);
+                            })();
+                          }}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          Show Header Notice Again
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Settings is the durable update control surface. If you ignore the header notice
+                    later, the staged controller build will still be available here.
+                  </p>
+                )}
+              </div>
+            </section>
 
             {/* Screenshot settings */}
             {activeMode === "screenshot" && (

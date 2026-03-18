@@ -59,6 +59,9 @@ echo "Copying API to $INSTALL_DIR..."
 # Clean old files but preserve .venv
 find "$INSTALL_DIR" -maxdepth 1 -not -name '.venv' -not -name "$(basename "$INSTALL_DIR")" -exec rm -rf {} + 2>/dev/null || true
 cp -r "$SCRIPT_DIR/apps/api/"* "$INSTALL_DIR/"
+if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/VERSION"
+fi
 
 # --- Bundle built frontend ---
 if [ -f "$WEB_DIR/dist/index.html" ]; then

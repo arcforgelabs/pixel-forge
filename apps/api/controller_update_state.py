@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from runtime_config import shared_state_dir
+from runtime_version import read_version_for_project
 
 
 PENDING_CONTROLLER_UPDATE_FILE = "pending-controller-update.json"
@@ -54,6 +55,7 @@ def normalize_pending_controller_update(payload: dict[str, Any]) -> dict[str, An
         "id": _normalize_text(payload.get("id")) or uuid4().hex[:12],
         "projectPath": project_path,
         "snapshotPath": _normalize_text(payload.get("snapshotPath") or payload.get("snapshot_path")),
+        "version": _normalize_text(payload.get("version")) or read_version_for_project(project_path),
         "previewUrl": preview_url,
         "activeMode": active_mode,
         "summary": summary,

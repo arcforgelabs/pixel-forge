@@ -53,6 +53,7 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
+from runtime_version import read_runtime_version
 from local_targets import (
     list_pixel_forge_targets,
     serialize_local_target,
@@ -206,10 +207,12 @@ for _dist_candidate in _FRONTEND_DIST_CANDIDATES:
 
         @app.get("/")
         async def serve_frontend_index():
-            return FileResponse(
+            response = FileResponse(
                 str(_dist_candidate / "index.html"),
                 media_type="text/html",
             )
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
         _SERVING_FRONTEND = True
         print(f"[pixel-forge] Serving built frontend from {_dist_candidate}")
@@ -484,6 +487,12 @@ async def list_local_pixel_forge_targets(
 async def get_pending_controller_update():
     update = await asyncio.to_thread(read_pending_controller_update)
     return {"update": update}
+
+
+@app.get("/api/runtime-info")
+async def get_runtime_info():
+    controller_version = await asyncio.to_thread(read_runtime_version)
+    return {"controllerVersion": controller_version}
 
 
 @app.post("/api/controller-update")

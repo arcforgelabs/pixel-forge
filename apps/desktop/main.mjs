@@ -4,6 +4,7 @@ import { existsSync, promises as fsPromises, watchFile, unwatchFile } from 'node
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readControllerVersion, readProjectVersion } from './version.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SHELL_URL = process.env.PIXEL_FORGE_SHELL_URL || 'http://pixel-forge.localhost:7001'
@@ -442,6 +443,7 @@ function sanitizePendingControllerUpdate(payload) {
     id: normalizeText(payload?.id) || Math.random().toString(36).slice(2, 14),
     projectPath,
     snapshotPath: normalizeText(payload?.snapshotPath),
+    version: normalizeText(payload?.version),
     previewUrl: normalizeText(payload?.previewUrl),
     activeMode,
     summary: normalizeText(payload?.summary) || 'Update ready to load.',
@@ -453,6 +455,22 @@ function sanitizePendingControllerUpdate(payload) {
   }
 }
 
+async function withPendingControllerUpdateVersion(update) {
+  if (!update || update.version) {
+    return update
+  }
+
+  const resolvedVersion = await readProjectVersion(update.snapshotPath || update.projectPath)
+  if (!resolvedVersion) {
+    return update
+  }
+
+  return {
+    ...update,
+    version: resolvedVersion,
+  }
+}
+
 async function readPendingControllerUpdate() {
   const payload = await readJsonFile(PENDING_CONTROLLER_UPDATE_PATH)
   if (!payload || typeof payload !== 'object') {
@@ -460,7 +478,7 @@ async function readPendingControllerUpdate() {
   }
 
   try {
-    return sanitizePendingControllerUpdate(payload)
+    return withPendingControllerUpdateVersion(sanitizePendingControllerUpdate(payload))
   } catch {
     return null
   }
@@ -486,6 +504,7 @@ async function syncPendingControllerUpdate() {
 
 async function stagePendingControllerUpdate(payload) {
   const normalized = sanitizePendingControllerUpdate(payload)
+  normalized.version = await readProjectVersion(normalized.projectPath)
   normalized.snapshotPath = await createControllerUpdateSnapshot(
     normalized.projectPath,
     normalized.id,
@@ -499,10 +518,21 @@ async function stagePendingControllerUpdate(payload) {
 
 async function rewritePendingControllerUpdate(update) {
   const normalized = sanitizePendingControllerUpdate(update)
+  if (!normalized.version) {
+    normalized.version = await readProjectVersion(
+      normalized.snapshotPath || normalized.projectPath,
+    )
+  }
   await writeJsonFile(PENDING_CONTROLLER_UPDATE_PATH, normalized)
   pendingUpdateSnapshot = null
   await syncPendingControllerUpdate()
   return normalized
+}
+
+async function readRuntimeInfo() {
+  return {
+    controllerVersion: await readControllerVersion(),
+  }
 }
 
 async function ensurePendingControllerUpdateSnapshot(pendingUpdate) {
@@ -984,10 +1014,11 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
 }
 
 async function startPendingControllerUpdate(payload) {
-  const pendingUpdate = await readPendingControllerUpdate()
-  if (!pendingUpdate) {
+  const existingPendingUpdate = await readPendingControllerUpdate()
+  if (!existingPendingUpdate) {
     throw new Error('No staged Pixel Forge update is ready to load.')
   }
+  const pendingUpdate = await ensurePendingControllerUpdateSnapshot(existingPendingUpdate)
 
   return applyControllerUpdate(pendingUpdate.snapshotPath || pendingUpdate.projectPath, {
     ...payload,
@@ -1258,7 +1289,7 @@ async function showPickListOverlay(ownerContextId, payload) {
   })
 }
 
-function createMainWindow() {
+async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1680,
     height: 1100,
@@ -1275,6 +1306,7 @@ function createMainWindow() {
   })
 
   mainWindow.maximize()
+  await mainWindow.webContents.session.clearCache()
   mainWindow.loadURL(SHELL_URL)
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1299,7 +1331,7 @@ function createMainWindow() {
 app.whenReady().then(() => {
   if (IS_UPDATER_UI_MODE) {
     ipcMain.handle('pixel-forge-updater:get-state', async () => {
-      return (await readControllerUpdateApplyState())
+      return (await recoverControllerUpdateApplyState())
         ?? sanitizeControllerUpdateApplyState({
           status: 'idle',
           phase: 'idle',
@@ -1319,7 +1351,7 @@ app.whenReady().then(() => {
   watchFile(PENDING_CONTROLLER_UPDATE_PATH, { interval: 1000 }, () => {
     void syncPendingControllerUpdate()
   })
-  createMainWindow()
+  void createMainWindow()
 
   ipcMain.handle('pixel-forge-preview:load', async (event, payload) => {
     const ownerContextId = event.sender.id
@@ -1491,6 +1523,10 @@ app.whenReady().then(() => {
     return readDismissedControllerUpdateId()
   })
 
+  ipcMain.handle('pixel-forge-app:get-runtime-info', async () => {
+    return readRuntimeInfo()
+  })
+
   ipcMain.handle('pixel-forge-app:set-dismissed-controller-update-id', async (_event, payload) => {
     return writeDismissedControllerUpdateId(payload?.updateId)
   })
@@ -1529,9 +1565,9 @@ app.whenReady().then(() => {
     })
   })
 
-  app.on('activate', () => {
+app.on('activate', () => {
     if (!IS_UPDATER_UI_MODE && BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow()
+      void createMainWindow()
     }
   })
 })

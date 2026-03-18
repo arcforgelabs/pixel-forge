@@ -69,6 +69,7 @@ export interface PixelForgeDesktopPendingControllerUpdate {
   id: string
   projectPath: string
   snapshotPath: string | null
+  version: string | null
   previewUrl: string | null
   activeMode: 'screenshot' | 'live-editor' | null
   summary: string
@@ -97,6 +98,10 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
   error: string | null
 }
 
+export interface PixelForgeDesktopRuntimeInfo {
+  controllerVersion: string
+}
+
 export interface PixelForgeDesktopAppAPI {
   applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
@@ -104,6 +109,7 @@ export interface PixelForgeDesktopAppAPI {
   startPendingControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void
   consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
   getPendingControllerUpdate(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
+  getRuntimeInfo(): Promise<PixelForgeDesktopRuntimeInfo>
   getDismissedControllerUpdateId(): Promise<string | null>
   setDismissedControllerUpdateId(updateId: string | null): Promise<string | null>
   getControllerUpdateApplyState(): Promise<PixelForgeDesktopControllerUpdateApplyState>

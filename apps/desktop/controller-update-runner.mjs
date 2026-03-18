@@ -368,6 +368,7 @@ async function ensureInstallRoot(candidatePath) {
     pendingUpdate.projectPath,
     pendingUpdate.id || updateId,
   )
+  await logInfo(`Rebuilt staged controller update snapshot at ${rebuiltSnapshotPath}`)
   await writePendingControllerUpdate({
     ...pendingUpdate,
     snapshotPath: rebuiltSnapshotPath,
@@ -390,6 +391,13 @@ async function main() {
   if (!stateDir) {
     throw new Error('Missing --state-dir')
   }
+
+  await setState({
+    phase: 'preparing',
+    progress: 24,
+    message: 'Verifying the staged Pixel Forge update snapshot…',
+    error: null,
+  })
   const resolvedInstallRoot = await ensureInstallRoot(installRoot)
   await logInfo(`Starting controller update runner for ${resolvedInstallRoot}`)
 

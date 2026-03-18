@@ -77,6 +77,7 @@ function App() {
     activeMode,
     projectsLoaded,
     hydrateProjects,
+    setControllerVersion,
     setDismissedControllerUpdateId,
     setProject,
     setControllerUpdateApplyState,
@@ -114,6 +115,24 @@ function App() {
     let cancelled = false;
 
     if (!window.pixelForgeDesktop?.app) {
+      void fetch(`${HTTP_BACKEND_URL}/api/runtime-info`, {
+        credentials: "include",
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          return response.json() as Promise<{ controllerVersion?: string | null }>;
+        })
+        .then((payload) => {
+          if (!cancelled) {
+            setControllerVersion(payload.controllerVersion?.trim() || null);
+          }
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load runtime info:", error);
+        });
+
       setControllerUpdateApplyState({
         status: "idle",
         updateId: null,
@@ -145,6 +164,17 @@ function App() {
         cancelled = true;
       };
     }
+
+    void window.pixelForgeDesktop.app
+      .getRuntimeInfo()
+      .then((runtimeInfo) => {
+        if (!cancelled) {
+          setControllerVersion(runtimeInfo.controllerVersion?.trim() || null);
+        }
+      })
+      .catch((error) => {
+        console.error("[app] Failed to load runtime info:", error);
+      });
 
     void window.pixelForgeDesktop.app
       .getPendingControllerUpdate()
@@ -209,6 +239,7 @@ function App() {
       window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);
     };
   }, [
+    setControllerVersion,
     setControllerUpdateApplyState,
     setDismissedControllerUpdateId,
     setPendingControllerUpdate,

@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
       ipcRenderer.invoke('pixel-forge-app:consume-bootstrap-state'),
     getPendingControllerUpdate: () =>
       ipcRenderer.invoke('pixel-forge-app:get-pending-controller-update'),
+    getRuntimeInfo: () =>
+      ipcRenderer.invoke('pixel-forge-app:get-runtime-info'),
     getDismissedControllerUpdateId: () =>
       ipcRenderer.invoke('pixel-forge-app:get-dismissed-controller-update-id'),
     setDismissedControllerUpdateId: (updateId) =>
