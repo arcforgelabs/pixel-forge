@@ -190,7 +190,36 @@ async function deleteControllerUpdateSnapshot(snapshotPath) {
   if (!snapshotPath) {
     return
   }
-  await fsPromises.rm(snapshotPath, { recursive: true, force: true })
+  const resolvedPath = path.resolve(snapshotPath)
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await fsPromises.rm(resolvedPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 150,
+      })
+      return
+    } catch (error) {
+      const code = typeof error === 'object' && error ? error.code : ''
+      if (attempt === 3) {
+        console.warn(
+          `[pixel-forge] Failed to delete controller update snapshot ${resolvedPath}:`,
+          error,
+        )
+        return
+      }
+      if (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'EPERM') {
+        console.warn(
+          `[pixel-forge] Unexpected snapshot cleanup error for ${resolvedPath}:`,
+          error,
+        )
+        return
+      }
+      await sleep(250 * (attempt + 1))
+    }
+  }
 }
 
 async function readJsonFile(filePath) {
@@ -288,8 +317,8 @@ async function stagePendingControllerUpdate(payload) {
 
 async function clearPendingControllerUpdate() {
   const existing = await readPendingControllerUpdate()
-  await deleteFileIfPresent(PENDING_CONTROLLER_UPDATE_PATH)
   await deleteControllerUpdateSnapshot(existing?.snapshotPath)
+  await deleteFileIfPresent(PENDING_CONTROLLER_UPDATE_PATH)
   pendingUpdateSnapshot = null
   await syncPendingControllerUpdate()
 }

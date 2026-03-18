@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,8 +85,21 @@ def _delete_snapshot(snapshot_path: str | None) -> None:
     if not snapshot_path:
         return
     path = Path(snapshot_path).expanduser()
-    if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+    if not path.exists():
+        return
+    for attempt in range(4):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            if attempt == 3 or error.errno not in {39, 16, 1}:
+                print(
+                    f"[pixel-forge] Warning: failed to delete controller update snapshot {path}: {error}"
+                )
+                return
+            time.sleep(0.25 * (attempt + 1))
 
 
 def create_controller_update_snapshot(project_path: str, update_id: str) -> str:
@@ -135,6 +149,6 @@ def clear_pending_controller_update() -> bool:
     existing = read_pending_controller_update()
     if not path.exists():
         return False
-    path.unlink()
     _delete_snapshot(existing["snapshotPath"] if existing else None)
+    path.unlink()
     return True
