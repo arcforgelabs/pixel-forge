@@ -1142,17 +1142,26 @@ Selections span multiple preview sources. Use the grouped sources in the request
 This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
 Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
 
-    should_emit_remote_deploy_note = False
-    if _is_remote_preview(preview_url):
-        if not selection_sources:
-            should_emit_remote_deploy_note = True
-        elif len(selection_sources) == 1:
-            should_emit_remote_deploy_note = selection_sources[0][1] == preview_url
-
-    if should_emit_remote_deploy_note:
+    if preview_url:
         base += f"""
 
-The preview target is a remote deployment at {preview_url}. After completing the code edit, deploy these changes using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar. If no deployment process is found, state that and skip deployment."""
+The active preview target for this request is {preview_url}. If this workspace controls that target, do not stop at code changes: apply the update to that preview target and verify this exact URL/path reflects the change before you finish."""
+        if self_edit_safe_mode:
+            base += """
+
+For Pixel Forge self-edit requests, do not replace the active controller mid-stream. Use the staged preview/controller update flow instead, and finish by stating whether the updated preview/controller build is ready to load."""
+        elif _is_remote_preview(preview_url):
+            base += """
+
+For repo-controlled remote previews, deploy using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar."""
+        else:
+            base += """
+
+For local/dev previews, rebuild, restart, or reload the service serving this URL so the preview updates in place."""
+
+        base += """
+
+If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload."""
 
     return base
 
@@ -1897,6 +1906,7 @@ async def live_editor_chat(websocket: WebSocket):
                     element_context,
                     attachments,
                     agent_deck_session_id=session_info.agent_deck_session_id,
+                    preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     extra_working_rules=[
                         "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",

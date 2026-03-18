@@ -431,6 +431,16 @@ export function installSelectionBridge({ emit, captureRegion }) {
       if (!selection.rootXPath || !selection.region) {
         return null
       }
+      const hintedRootElement =
+        selection.__pixelForgeResolvedElement instanceof Element
+          ? selection.__pixelForgeResolvedElement
+          : null
+      if (matchesRegionFingerprint(hintedRootElement, selection)) {
+        const rect = computeRegionRect(hintedRootElement.getBoundingClientRect(), selection.region)
+        if (rect.width > 0 && rect.height > 0) {
+          return { element: hintedRootElement, rect }
+        }
+      }
       const rootElement = findElementByXPath(selection.rootXPath)
       if (!matchesRegionFingerprint(rootElement, selection)) {
         return null
@@ -440,6 +450,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
         return null
       }
       return { element: rootElement, rect }
+    }
+
+    const hintedElement =
+      selection.__pixelForgeResolvedElement instanceof Element
+        ? selection.__pixelForgeResolvedElement
+        : null
+    if (matchesDomFingerprint(hintedElement, selection)) {
+      return { element: hintedElement, rect: hintedElement.getBoundingClientRect() }
     }
 
     const element = findElementByXPath(selection.xpath)
@@ -830,6 +848,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       pageUrl: window.location.href,
       pageTitle: document.title || null,
       selectionId,
+      __pixelForgeResolvedElement: element,
     }
   }
 
@@ -893,6 +912,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       pageUrl: window.location.href,
       pageTitle: document.title || null,
       selectionId,
+      __pixelForgeResolvedElement: surfaceElement,
     }
   }
 

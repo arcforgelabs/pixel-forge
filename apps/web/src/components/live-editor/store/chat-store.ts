@@ -45,6 +45,10 @@ export interface ChatAttachment {
   kind: 'image' | 'file'
 }
 
+interface PendingOutboundMessage {
+  payload: Record<string, unknown>
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
@@ -77,6 +81,7 @@ interface LiveEditorChatStore {
   // Connection state
   ws: WebSocket | null
   connected: boolean
+  queuedMessages: PendingOutboundMessage[]
 
   // Selection state (task_2_3)
   selectedElements: SelectedElement[]
@@ -246,6 +251,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   currentRequestId: null,
   ws: null,
   connected: false,
+  queuedMessages: [],
   selectedElements: [],
   selectionUndoStack: [],
   selectionRedoStack: [],
@@ -260,7 +266,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
   connect: (endpoint = '/ws/live-editor') => {
     const { ws } = get()
-    if (ws && ws.readyState === WebSocket.OPEN) return
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
     const wsUrl = endpoint.startsWith('ws://') || endpoint.startsWith('wss://')
       ? endpoint
@@ -270,6 +276,16 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     newWs.onopen = () => {
       set({ connected: true })
       console.log('[live-editor] WebSocket connected')
+
+      const { queuedMessages, ws: activeWs } = get()
+      if (!activeWs || activeWs.readyState !== WebSocket.OPEN || queuedMessages.length === 0) {
+        return
+      }
+
+      for (const queuedMessage of queuedMessages) {
+        activeWs.send(JSON.stringify(queuedMessage.payload))
+      }
+      set({ queuedMessages: [] })
     }
 
     newWs.onmessage = (event) => {
@@ -552,12 +568,6 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     const sessionId = getSessionId()
     const projectPath = getProjectPath()
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      get().connect()
-      setTimeout(() => get().sendMessage(content), 500)
-      return
-    }
-
     if (!trimmedContent && !hasAttachments) {
       return
     }
@@ -635,6 +645,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
     if (sessionId) {
       payload.thread_id = sessionId
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      set((state) => ({
+        queuedMessages: [...state.queuedMessages, { payload }],
+        currentStatusMessage: 'Reconnecting Live Editor… request queued.',
+      }))
+      get().connect()
+      return
     }
 
     ws.send(JSON.stringify(payload))

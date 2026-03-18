@@ -49,7 +49,7 @@ export function ChatMessages({
   return (
     <div
       ref={scrollContainerRef}
-      className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
+      className="h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain"
       onWheelCapture={(event) => {
         event.stopPropagation()
       }}

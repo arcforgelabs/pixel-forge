@@ -124,6 +124,17 @@ def _write_attachment(
     return destination, effective_mime
 
 
+def _is_remote_preview(url: str | None) -> bool:
+    if not url:
+        return False
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
+
+
 def create_request_pack(
     project_path: str,
     thread_id: str,
@@ -132,6 +143,7 @@ def create_request_pack(
     attachments: list[dict[str, str]],
     *,
     agent_deck_session_id: str | None = None,
+    preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     extra_working_rules: list[str] | None = None,
 ) -> RequestPack:
@@ -209,6 +221,22 @@ def create_request_pack(
             *working_rules,
         ]
     )
+    if preview_url:
+        request_sections.extend(
+            [
+                "",
+                "## Active Preview Target",
+                "",
+                f"- Active preview target when this request was sent: `{preview_url}`.",
+                "- If this workspace controls that target, do not stop at code changes. Apply the update to that preview target and verify that this exact location reflects the change before you finish.",
+                (
+                    "- For local/dev previews, rebuild, restart, or reload the local service serving this URL."
+                    if not _is_remote_preview(preview_url)
+                    else "- For repo-controlled remote previews, deploy using the workspace's deployment process."
+                ),
+                "- If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload.",
+            ]
+        )
     if relative_selected_path:
         request_sections.extend(
             [
@@ -247,6 +275,7 @@ def create_request_pack(
                 "request_id": request_id,
                 "thread_id": thread_id,
                 "agent_deck_session_id": agent_deck_session_id,
+                "preview_url": preview_url,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
                 "selection_tunnel_file": relative_selection_tunnel_path,

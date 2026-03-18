@@ -2240,7 +2240,7 @@ export function LiveEditorPane() {
           <div className="mt-2 flex-1 min-h-0 overflow-hidden">
             <TabsContent
               value="chat"
-              className="m-0 h-full min-w-0 overflow-hidden"
+              className="m-0 flex h-full min-w-0 flex-col overflow-hidden"
             >
               <ChatMessages
                 onRefreshPreview={() => void refreshApp()}

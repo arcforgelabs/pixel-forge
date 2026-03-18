@@ -101,9 +101,12 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
-- `REQ-D-002:` When the agent completes a code edit against a remote preview target, the dispatch prompt must instruct the agent to deploy the changes using whatever deployment process the workspace provides. No standardized deploy convention — the agent infers the deploy method from the workspace.
-- `REQ-D-003:` After agent completion on a remote target, the chat UI must show a "Refresh Preview" action that cache-busts and reloads the iframe to the current path without destroying the proxy session or auth state.
-- `REQ-D-004:` A manual "Refresh Preview" button must always be available in the toolbar as a universal fallback regardless of target type.
+- `REQ-D-002:` When the agent completes a code edit against the active preview target and that target is controlled by the workspace, the request pack and dispatch prompt must instruct the agent to apply the update to that preview target before treating the task as done.
+- `REQ-D-003:` For local/dev preview targets, the agent must rebuild, restart, or reload the service serving that exact preview URL/path using the repo's normal workflow instead of stopping at file edits.
+- `REQ-D-004:` For repo-controlled remote preview targets, the agent must deploy using whatever deployment process the workspace provides. No standardized deploy convention — the agent infers the deploy method from the workspace.
+- `REQ-D-005:` If the active preview target is external or not controlled by the workspace, the agent must say that explicitly and skip deployment or reload instead of silently doing nothing.
+- `REQ-D-006:` After agent completion on a remote target, the chat UI must show a "Refresh Preview" action that cache-busts and reloads the iframe to the current path without destroying the proxy session or auth state.
+- `REQ-D-007:` A manual "Refresh Preview" button must always be available in the toolbar as a universal fallback regardless of target type.
 
 # Current Limiting Factor
 
