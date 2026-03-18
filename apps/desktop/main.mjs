@@ -649,6 +649,9 @@ function sendPreviewCommand(ownerContextId, tabId, command) {
     throw new Error(`Unknown preview tab: ${tabId}`)
   }
   const view = previewRecord.view
+  if (command?.type === 'set-select-mode' && command.enabled) {
+    view.webContents.focus()
+  }
   view.webContents.send('pixel-forge-preview:command', command)
   return {
     mode: 'browser',
