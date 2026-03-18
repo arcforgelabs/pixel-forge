@@ -1,6 +1,9 @@
 import { HTTP_BACKEND_URL } from "@/config";
 import { create } from "zustand";
-import type { PixelForgeDesktopPendingControllerUpdate } from "@/types/pixel-forge-desktop";
+import type {
+  PixelForgeDesktopControllerUpdateApplyState,
+  PixelForgeDesktopPendingControllerUpdate,
+} from "@/types/pixel-forge-desktop";
 
 export type ActiveMode = "screenshot" | "live-editor";
 export type OutputMode = "scratch" | "custom";
@@ -58,6 +61,8 @@ interface SessionStore {
   customOutputPath: string | null;
   lastSavedFile: LastSavedFile | null;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
+  dismissedControllerUpdateId: string | null;
+  controllerUpdateApplyState: PixelForgeDesktopControllerUpdateApplyState;
 
   // Actions
   hydrateProjects: () => Promise<void>;
@@ -96,6 +101,10 @@ interface SessionStore {
   getCurrentProjectUrls: () => string[];
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
+  ) => void;
+  setDismissedControllerUpdateId: (updateId: string | null) => void;
+  setControllerUpdateApplyState: (
+    state: PixelForgeDesktopControllerUpdateApplyState
   ) => void;
 }
 
@@ -286,6 +295,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   customOutputPath: null,
   lastSavedFile: null,
   pendingControllerUpdate: null,
+  dismissedControllerUpdateId: null,
+  controllerUpdateApplyState: {
+    status: "idle",
+    updateId: null,
+    phase: "idle",
+    progress: 0,
+    message: "",
+    error: null,
+  },
 
   // Agent selection
   agentType: "claude",
@@ -484,7 +502,21 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   setPendingControllerUpdate: (update) => {
-    set({ pendingControllerUpdate: update });
+    set((state) => ({
+      pendingControllerUpdate: update,
+      dismissedControllerUpdateId:
+        !update || state.dismissedControllerUpdateId !== update.id
+          ? null
+          : state.dismissedControllerUpdateId,
+    }));
+  },
+
+  setDismissedControllerUpdateId: (updateId) => {
+    set({ dismissedControllerUpdateId: updateId });
+  },
+
+  setControllerUpdateApplyState: (controllerUpdateApplyState) => {
+    set({ controllerUpdateApplyState });
   },
 
   getCurrentProjectUrls: () => {

@@ -22,6 +22,14 @@ let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
 let pendingUpdateSnapshot = null
+let controllerUpdateApplyState = {
+  status: 'idle',
+  updateId: null,
+  phase: 'idle',
+  progress: 0,
+  message: '',
+  error: null,
+}
 
 const previewViews = new Map()
 const previewContexts = new Map()
@@ -114,6 +122,38 @@ function broadcastAppEvent(event) {
     return
   }
   mainWindow.webContents.send('pixel-forge-app:event', event)
+}
+
+function sanitizeControllerUpdateApplyState(payload) {
+  const allowedPhases = new Set([
+    'idle',
+    'preparing',
+    'installing',
+    'restarting',
+    'waiting',
+    'relaunching',
+    'error',
+  ])
+  const status = payload?.status === 'running' || payload?.status === 'error' ? payload.status : 'idle'
+  const phase = allowedPhases.has(payload?.phase) ? payload.phase : status === 'error' ? 'error' : 'idle'
+  const progress = Math.max(0, Math.min(100, Math.round(Number(payload?.progress) || 0)))
+  return {
+    status,
+    updateId: normalizeText(payload?.updateId),
+    phase,
+    progress,
+    message: normalizeText(payload?.message) || '',
+    error: normalizeText(payload?.error),
+  }
+}
+
+function setControllerUpdateApplyState(payload) {
+  controllerUpdateApplyState = sanitizeControllerUpdateApplyState(payload)
+  broadcastAppEvent({
+    type: 'controller-update-apply-state-changed',
+    state: controllerUpdateApplyState,
+  })
+  return controllerUpdateApplyState
 }
 
 async function ensureAppStateDir() {
@@ -671,6 +711,7 @@ async function waitForShellReady(timeoutMs = 90000) {
 async function applyControllerUpdate(projectPath, bootstrapState) {
   const installProjectPath = normalizeText(projectPath)
   const sanitizedState = sanitizeBootstrapState(bootstrapState)
+  const updateId = normalizeText(bootstrapState?.updateId)
   if (!installProjectPath) {
     throw new Error('install projectPath is required')
   }
@@ -681,12 +722,71 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
     throw new Error('bootstrap projectPath is required')
   }
 
-  await writeBootstrapState(sanitizedState)
-  await runShellCommand('./install.sh && pixel-forge restart', installProjectPath)
-  await waitForShellReady()
-  await clearPendingControllerUpdate()
-  scheduleShellRelaunch()
-  return { ok: true }
+  try {
+    setControllerUpdateApplyState({
+      status: 'running',
+      updateId,
+      phase: 'preparing',
+      progress: 10,
+      message: 'Preparing staged Pixel Forge update…',
+      error: null,
+    })
+
+    await writeBootstrapState(sanitizedState)
+
+    setControllerUpdateApplyState({
+      status: 'running',
+      updateId,
+      phase: 'installing',
+      progress: 40,
+      message: 'Installing updated Pixel Forge build…',
+      error: null,
+    })
+    await runShellCommand('./install.sh', installProjectPath)
+
+    setControllerUpdateApplyState({
+      status: 'running',
+      updateId,
+      phase: 'restarting',
+      progress: 68,
+      message: 'Restarting Pixel Forge service…',
+      error: null,
+    })
+    await runShellCommand('pixel-forge restart', installProjectPath)
+
+    setControllerUpdateApplyState({
+      status: 'running',
+      updateId,
+      phase: 'waiting',
+      progress: 84,
+      message: 'Waiting for the updated app to come back online…',
+      error: null,
+    })
+    await waitForShellReady()
+
+    await clearPendingControllerUpdate()
+
+    setControllerUpdateApplyState({
+      status: 'running',
+      updateId,
+      phase: 'relaunching',
+      progress: 100,
+      message: 'Reloading Pixel Forge with the updated build…',
+      error: null,
+    })
+    scheduleShellRelaunch()
+    return { ok: true }
+  } catch (error) {
+    setControllerUpdateApplyState({
+      status: 'error',
+      updateId,
+      phase: 'error',
+      progress: 100,
+      message: 'Failed to apply the staged Pixel Forge update.',
+      error: error instanceof Error ? error.message : String(error || 'Unknown error'),
+    })
+    throw error
+  }
 }
 
 async function settleAbortedNavigation(view, fallbackUrl) {
@@ -1096,6 +1196,7 @@ app.whenReady().then(() => {
 
     return applyControllerUpdate(pendingUpdate.snapshotPath || pendingUpdate.projectPath, {
       ...payload,
+      updateId: pendingUpdate.id,
       projectPath:
         typeof payload?.projectPath === 'string' && payload.projectPath.trim()
           ? payload.projectPath
@@ -1117,6 +1218,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('pixel-forge-app:get-pending-controller-update', async () => {
     return readPendingControllerUpdate()
+  })
+
+  ipcMain.handle('pixel-forge-app:get-controller-update-apply-state', async () => {
+    return controllerUpdateApplyState
   })
 
   ipcMain.handle('pixel-forge-app:stage-controller-update', async (_event, payload) => {

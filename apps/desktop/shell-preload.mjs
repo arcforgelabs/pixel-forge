@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
       ipcRenderer.invoke('pixel-forge-app:consume-bootstrap-state'),
     getPendingControllerUpdate: () =>
       ipcRenderer.invoke('pixel-forge-app:get-pending-controller-update'),
+    getControllerUpdateApplyState: () =>
+      ipcRenderer.invoke('pixel-forge-app:get-controller-update-apply-state'),
     stageControllerUpdate: (payload) =>
       ipcRenderer.invoke('pixel-forge-app:stage-controller-update', payload),
     dismissPendingControllerUpdate: () =>

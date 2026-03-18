@@ -79,11 +79,28 @@ export interface PixelForgeDesktopPendingControllerUpdate {
   canRollback: boolean
 }
 
+export interface PixelForgeDesktopControllerUpdateApplyState {
+  status: 'idle' | 'running' | 'error'
+  updateId: string | null
+  phase:
+    | 'idle'
+    | 'preparing'
+    | 'installing'
+    | 'restarting'
+    | 'waiting'
+    | 'relaunching'
+    | 'error'
+  progress: number
+  message: string
+  error: string | null
+}
+
 export interface PixelForgeDesktopAppAPI {
   applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
   getPendingControllerUpdate(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
+  getControllerUpdateApplyState(): Promise<PixelForgeDesktopControllerUpdateApplyState>
   stageControllerUpdate(payload: {
     projectPath: string
     previewUrl?: string | null

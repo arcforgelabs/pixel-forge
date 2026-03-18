@@ -117,21 +117,23 @@ export function ToolCard({ activity }: ToolCardProps) {
             : 'bg-accent/30 ring-1 ring-border/25'
         }`}
       >
-        <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/40">
-          {isRunning ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          ) : isComplete ? (
-            <CheckCircle2
-              className={`h-3.5 w-3.5 ${activity.isError ? 'text-destructive' : 'text-primary'}`}
-            />
-          ) : (
-            getToolIcon(activity.tool)
-          )}
-          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-muted-foreground">
+        <CollapsibleTrigger className="flex w-full min-w-0 max-w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/40 overflow-hidden">
+          <span className="flex-shrink-0">
+            {isRunning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            ) : isComplete ? (
+              <CheckCircle2
+                className={`h-3.5 w-3.5 ${activity.isError ? 'text-destructive' : 'text-primary'}`}
+              />
+            ) : (
+              getToolIcon(activity.tool)
+            )}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
             {getToolDescription(activity.tool, activity.input, isComplete)}
           </span>
           <ChevronDown
-            className={`h-3 w-3 text-muted-foreground/50 transition-transform ${
+            className={`h-3 w-3 flex-shrink-0 text-muted-foreground/50 transition-transform ${
               open ? 'rotate-180' : ''
             }`}
           />

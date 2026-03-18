@@ -14,10 +14,11 @@ function formatSource(source: string): string {
 export function ControllerUpdateNotice() {
   const {
     activeMode,
+    dismissedControllerUpdateId,
     pendingControllerUpdate,
     previewUrl,
     projectPath,
-    setPendingControllerUpdate,
+    setDismissedControllerUpdateId,
   } = useSessionStore();
   const [isApplying, setIsApplying] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
@@ -31,6 +32,10 @@ export function ControllerUpdateNotice() {
   }, [pendingControllerUpdate]);
 
   if (!pendingControllerUpdate || !desktopApp) {
+    return null;
+  }
+
+  if (dismissedControllerUpdateId === pendingControllerUpdate.id) {
     return null;
   }
 
@@ -53,17 +58,9 @@ export function ControllerUpdateNotice() {
   };
 
   const onDismiss = async () => {
-    try {
-      setIsDismissing(true);
-      await desktopApp.dismissPendingControllerUpdate();
-      setPendingControllerUpdate(null);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to dismiss staged Pixel Forge update";
-      toast.error(message);
-    } finally {
-      setIsDismissing(false);
-    }
+    setIsDismissing(true);
+    setDismissedControllerUpdateId(pendingControllerUpdate.id);
+    setIsDismissing(false);
   };
 
   return (

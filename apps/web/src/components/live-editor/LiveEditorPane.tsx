@@ -1657,6 +1657,7 @@ export function LiveEditorPane() {
 
       if (sourceTab.id === activePreviewTab?.id) {
         setTargetUrl(nextUrl)
+        pushUrlHistory(nextUrl)
         void syncStorePreviewUrl(nextUrl)
       }
 
@@ -1760,7 +1761,7 @@ export function LiveEditorPane() {
           : 'Managed browser tab was closed. Reload the URL to reopen it.'
       )
     }
-  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, removeElement, removeElements, replaceElement, syncStorePreviewUrl, syncTabSelections])
+  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, pushUrlHistory, removeElement, removeElements, replaceElement, syncStorePreviewUrl, syncTabSelections])
 
   useEffect(() => {
     if (desktopPreviewRef.current) {

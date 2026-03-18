@@ -24,10 +24,12 @@ import { createCommit } from "./components/commits/utils";
 import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
+import ControllerUpdateApplyOverlay from "./components/layout/ControllerUpdateApplyOverlay";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { FolderOpen } from "lucide-react";
 import type {
+  PixelForgeDesktopControllerUpdateApplyState,
   PixelForgeDesktopBootstrapState,
   PixelForgeDesktopPendingControllerUpdate,
 } from "./types/pixel-forge-desktop";
@@ -76,6 +78,7 @@ function App() {
     projectsLoaded,
     hydrateProjects,
     setProject,
+    setControllerUpdateApplyState,
     setPendingControllerUpdate,
     setSessionId,
     switchMode,
@@ -110,6 +113,14 @@ function App() {
     let cancelled = false;
 
     if (!window.pixelForgeDesktop?.app) {
+      setControllerUpdateApplyState({
+        status: "idle",
+        updateId: null,
+        phase: "idle",
+        progress: 0,
+        message: "",
+        error: null,
+      });
       void fetch(`${HTTP_BACKEND_URL}/api/controller-update`, {
         credentials: "include",
       })
@@ -145,15 +156,39 @@ function App() {
         console.error("[app] Failed to load pending controller update:", error);
       });
 
+    void window.pixelForgeDesktop.app
+      .getControllerUpdateApplyState()
+      .then((state) => {
+        if (!cancelled) {
+          setControllerUpdateApplyState(state);
+        }
+      })
+      .catch((error) => {
+        console.error("[app] Failed to load controller update apply state:", error);
+      });
+
     const handleAppEvent = (rawEvent: Event) => {
       const event = rawEvent as CustomEvent<{
         type?: string;
         update?: PixelForgeDesktopPendingControllerUpdate | null;
+        state?: PixelForgeDesktopControllerUpdateApplyState;
       }>;
-      if (event.detail?.type !== "pending-controller-update-changed") {
+      if (event.detail?.type === "pending-controller-update-changed") {
+        setPendingControllerUpdate(event.detail.update ?? null);
         return;
       }
-      setPendingControllerUpdate(event.detail.update ?? null);
+      if (event.detail?.type === "controller-update-apply-state-changed") {
+        setControllerUpdateApplyState(
+          event.detail.state ?? {
+            status: "idle",
+            updateId: null,
+            phase: "idle",
+            progress: 0,
+            message: "",
+            error: null,
+          }
+        );
+      }
     };
 
     window.addEventListener("pixel-forge-app", handleAppEvent as EventListener);
@@ -161,7 +196,7 @@ function App() {
       cancelled = true;
       window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);
     };
-  }, [setPendingControllerUpdate]);
+  }, [setControllerUpdateApplyState, setPendingControllerUpdate]);
 
   useEffect(() => {
     void hydrateProjects().catch((error) => {
@@ -536,6 +571,7 @@ function App() {
         {/* Mode Tab Bar */}
         <ModeTabBar />
         <ControllerUpdateNotice />
+        <ControllerUpdateApplyOverlay />
         {RUNTIME_KIND === "dev" && (
           <div className="shrink-0 border-b border-border/40 bg-card/20 px-3 py-2">
             <Button

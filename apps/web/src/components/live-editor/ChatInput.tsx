@@ -8,9 +8,10 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Paperclip, Send, X } from 'lucide-react'
+import { ChevronUp, FileText, Paperclip, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
+import { useSessionStore } from '@/store/session-store'
 import toast from 'react-hot-toast'
 
 function fileToDataURL(file: File): Promise<string> {
@@ -28,7 +29,10 @@ export function ChatInput() {
   const [isDragActive, setIsDragActive] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [showAgentPicker, setShowAgentPicker] = useState(false)
+  const agentPickerRef = useRef<HTMLDivElement>(null)
   const { sendMessage, isStreaming, selectedElements } = useLiveEditorStore()
+  const { agentType, setAgentType } = useSessionStore()
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
   ).size
@@ -59,6 +63,18 @@ export function ChatInput() {
       textarea.style.overflowY = textarea.scrollHeight > 384 ? 'auto' : 'hidden'
     }
   }, [input])
+
+  // Close agent picker on outside click
+  useEffect(() => {
+    if (!showAgentPicker) return
+    const handler = (e: MouseEvent) => {
+      if (agentPickerRef.current && !agentPickerRef.current.contains(e.target as Node)) {
+        setShowAgentPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showAgentPicker])
 
   // Focus textarea on mount with delay to handle iframe focus conflicts
   useEffect(() => {
@@ -273,14 +289,54 @@ export function ChatInput() {
               )}
             </Button>
           </div>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={!canSubmit}
-            className="h-7 w-7 rounded-lg p-0 transition-all disabled:opacity-30"
-          >
-            <Send className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!canSubmit}
+              className="h-7 w-7 rounded-lg rounded-r-none p-0 transition-all disabled:opacity-30"
+            >
+              <Send className="h-3.5 w-3.5" />
+            </Button>
+            {/* Agent selector */}
+            <div className="relative" ref={agentPickerRef}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowAgentPicker((v) => !v)}
+                className="h-7 px-1 rounded-lg rounded-l-none border-l border-border/20"
+                title={`Agent: ${agentType === 'claude' ? 'Claude Code' : 'Codex'}`}
+              >
+                <ChevronUp className={`h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
+              </Button>
+              {showAgentPicker && (
+                <div className="absolute bottom-full right-0 mb-1 w-40 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                  {[
+                    { value: 'claude', label: 'Claude Code' },
+                    { value: 'codex', label: 'Codex' },
+                  ].map((agent) => (
+                    <button
+                      key={agent.value}
+                      type="button"
+                      onClick={() => {
+                        setAgentType(agent.value)
+                        setShowAgentPicker(false)
+                      }}
+                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        agentType === agent.value ? 'text-primary font-medium' : 'text-foreground'
+                      }`}
+                    >
+                      {agent.label}
+                      {agentType === agent.value && (
+                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </form>
