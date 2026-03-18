@@ -83,6 +83,7 @@ function App() {
 
   // Project selector state - show on first load if no project is set
   const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [targetStartupDialogShown, setTargetStartupDialogShown] = useState(false);
   const [desktopBootstrapState, setDesktopBootstrapState] =
     useState<PixelForgeDesktopBootstrapState | null>(null);
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
@@ -203,6 +204,15 @@ function App() {
       setShowProjectSelector(true);
     }
   }, [appState, projectPath, projectsLoaded]);
+
+  useEffect(() => {
+    if (!IS_TARGET_MODE || !projectsLoaded || appState !== AppState.INITIAL || targetStartupDialogShown) {
+      return;
+    }
+
+    setShowProjectSelector(true);
+    setTargetStartupDialogShown(true);
+  }, [appState, projectsLoaded, targetStartupDialogShown]);
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(
@@ -498,6 +508,7 @@ function App() {
       <ProjectSelector
         open={showProjectSelector}
         onOpenChange={setShowProjectSelector}
+        mirrorStartupState={IS_TARGET_MODE}
       />
 
       {/* Settings drawer - pushes main content */}
@@ -505,9 +516,7 @@ function App() {
         settings={settings}
         setSettings={setSettings}
         onOpenProjectSelector={() => {
-          if (!IS_TARGET_MODE) {
-            setShowProjectSelector(true);
-          }
+          setShowProjectSelector(true);
         }}
       />
 

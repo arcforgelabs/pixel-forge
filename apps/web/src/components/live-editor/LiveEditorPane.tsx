@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionStore } from '@/store/session-store'
-import { HTTP_BACKEND_URL, IS_TARGET_MODE, WS_BACKEND_URL } from '@/config'
+import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -1718,7 +1718,7 @@ export function LiveEditorPane() {
               <Play className="h-3 w-3" />
               Load
             </Button>
-            {projectPath && !IS_TARGET_MODE && (
+            {projectPath && (
               <Button
                 variant="outline"
                 size="sm"

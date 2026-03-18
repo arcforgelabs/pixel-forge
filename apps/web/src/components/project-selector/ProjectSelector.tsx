@@ -25,9 +25,14 @@ interface BrowseDirectoryResponse {
 interface ProjectSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mirrorStartupState?: boolean;
 }
 
-export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
+export function ProjectSelector({
+  open,
+  onOpenChange,
+  mirrorStartupState = false,
+}: ProjectSelectorProps) {
   const {
     recentProjects,
     setProject,
@@ -50,13 +55,21 @@ export function ProjectSelector({ open, onOpenChange }: ProjectSelectorProps) {
 
   useEffect(() => {
     if (open) {
-      setProjectPath(storedProjectPath || "");
-      setPreviewUrl(storedPreviewUrl || "");
-      setOutputMode(storedOutputMode || "scratch");
-      setCustomOutputPath(storedCustomOutputPath || "");
+      if (mirrorStartupState) {
+        setProjectPath("");
+        setPreviewUrl("");
+        setOutputMode("scratch");
+        setCustomOutputPath("");
+      } else {
+        setProjectPath(storedProjectPath || "");
+        setPreviewUrl(storedPreviewUrl || "");
+        setOutputMode(storedOutputMode || "scratch");
+        setCustomOutputPath(storedCustomOutputPath || "");
+      }
       setExpandedProject(null);
     }
   }, [
+    mirrorStartupState,
     open,
     storedProjectPath,
     storedPreviewUrl,
