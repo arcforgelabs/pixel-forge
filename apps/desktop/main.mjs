@@ -285,9 +285,20 @@ async function createControllerUpdateSnapshot(projectPath, updateId) {
   if (!isInstallableProjectRoot(sourcePath)) {
     throw new Error(`Cannot stage controller update from non-installable root: ${sourcePath}`)
   }
-  const snapshotPath = path.join(CONTROLLER_UPDATE_SNAPSHOTS_DIR, updateId)
+
+  const normalizedUpdateId = normalizeText(updateId) || Math.random().toString(36).slice(2, 14)
+  let snapshotPath = path.join(CONTROLLER_UPDATE_SNAPSHOTS_DIR, normalizedUpdateId)
   await fsPromises.mkdir(CONTROLLER_UPDATE_SNAPSHOTS_DIR, { recursive: true })
-  await fsPromises.rm(snapshotPath, { recursive: true, force: true })
+  await deleteControllerUpdateSnapshot(snapshotPath)
+
+  if (existsSync(snapshotPath)) {
+    snapshotPath = path.join(
+      CONTROLLER_UPDATE_SNAPSHOTS_DIR,
+      `${normalizedUpdateId}-${Date.now().toString(36)}`,
+    )
+    await deleteControllerUpdateSnapshot(snapshotPath)
+  }
+
   await copyControllerSnapshotTree(sourcePath, snapshotPath)
   if (!isInstallableProjectRoot(snapshotPath)) {
     throw new Error(`Staged controller update snapshot is incomplete: ${snapshotPath}`)
@@ -297,7 +308,7 @@ async function createControllerUpdateSnapshot(projectPath, updateId) {
 
 async function deleteControllerUpdateSnapshot(snapshotPath) {
   if (!snapshotPath) {
-    return
+    return true
   }
   const resolvedPath = path.resolve(snapshotPath)
 
@@ -309,7 +320,7 @@ async function deleteControllerUpdateSnapshot(snapshotPath) {
         maxRetries: 3,
         retryDelay: 150,
       })
-      return
+      return true
     } catch (error) {
       const code = typeof error === 'object' && error ? error.code : ''
       if (attempt === 3) {
@@ -317,18 +328,20 @@ async function deleteControllerUpdateSnapshot(snapshotPath) {
           `[pixel-forge] Failed to delete controller update snapshot ${resolvedPath}:`,
           error,
         )
-        return
+        return false
       }
       if (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'EPERM') {
         console.warn(
           `[pixel-forge] Unexpected snapshot cleanup error for ${resolvedPath}:`,
           error,
         )
-        return
+        return false
       }
       await sleep(250 * (attempt + 1))
     }
   }
+
+  return !existsSync(resolvedPath)
 }
 
 async function readJsonFile(filePath) {
