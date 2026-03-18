@@ -1119,6 +1119,9 @@ def build_live_editor_dispatch_prompt(
 
 Start by reading the request file itself, then read every referenced context file before changing code.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+    base += """
+
+If the `using-pixel-forge` skill is available, use it for this request."""
 
     if selection_tunnel_url:
         base += f"""
