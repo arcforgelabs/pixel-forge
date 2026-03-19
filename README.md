@@ -31,7 +31,31 @@ That starts:
 - `apps/api` on `http://pixel-forge.localhost:7001`
 - `apps/web` on `http://pixel-forge.localhost:5173`
 
-Open `http://pixel-forge.localhost:5173`.
+When a GUI display is available, it also auto-opens the Pixel Forge desktop shell. The raw web UI remains available at `http://pixel-forge.localhost:5173`.
+
+## Install the Local App
+
+```bash
+./install.sh
+pixel-forge open
+```
+
+Use `pixel-forge rollback` to restore the previous installed build if a local install goes bad.
+
+## Verify
+
+```bash
+pnpm verify
+```
+
+This is the canonical repo proof lane for version sync, shell syntax, API/desktop/web checks, isolated install smoke, and staged controller-update apply/rollback smoke.
+
+## Controller Updates
+
+- Stage a controller update with `pixel-forge stage-update --project /abs/path --summary "Update ready to load"`.
+- Inspect it with `pixel-forge show-update`.
+- Clear it with `pixel-forge clear-update`.
+- If the install/update lane changed since the snapshot was staged, clear and restage it from the current repo instead of applying the stale snapshot.
 
 ## Live Editor Flow
 

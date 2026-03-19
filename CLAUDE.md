@@ -6,22 +6,42 @@ Pixel Forge is a visual app editor. Screenshot bootstrap and Live Editor are two
 
 ## Starting the Full UI
 
-**Required**: Two processes must be running.
+Preferred dev path:
 
 ```bash
-# Terminal 1: Backend (Claude CLI proxy)
-pixel-forge                     # Runs on port 7001
-
-# Terminal 2: Web app
-cd apps/web
-pnpm dev                        # Runs on port 5173
+./start-dev.sh
 ```
 
-**Open**: http://pixel-forge.localhost:5173
+That starts the API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available.
 
-If `pixel-forge` command not found, run `./install.sh` first.
+Manual fallback:
 
-Visible browser verification must use a maximized browser window sized to the current display. `./start-dev.sh` now auto-opens one when a GUI display is available. Set `PIXEL_FORGE_NO_BROWSER=1` if you only want the services.
+```bash
+# Terminal 1
+cd apps/api
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python main.py
+
+# Terminal 2
+cd apps/web
+pnpm install
+pnpm dev
+```
+
+If `pixel-forge` command is not installed yet, run `./install.sh` first.
+
+Visible browser verification must use a maximized browser window sized to the current display. `./start-dev.sh` auto-opens the desktop shell when it can. Set `PIXEL_FORGE_USE_DESKTOP_SHELL=0` to force the raw browser path for debugging, or `PIXEL_FORGE_NO_BROWSER=1` if you only want the services.
+
+## Verification
+
+Run this after changes to the install/update lane, staged controller updates, or launcher behavior:
+
+```bash
+pnpm verify
+```
+
+That is the canonical proof lane for version sync, shell syntax, API/desktop/web checks, isolated install smoke, and staged controller-update apply/rollback smoke.
 
 `SPECS.md` is the repo constitution. Live Editor now runs through Agent Deck-backed persistent sessions. Each request is written to `.pixel-forge/requests/<request-id>/...` inside the target project before Pixel Forge dispatches a short prompt into the corresponding Agent Deck session.
 
@@ -70,3 +90,5 @@ apps/web                        # React frontend
 **Element selection not working**: Make sure Select mode is ON (green) in the toolbar.
 
 **No response from Claude**: Check that `pixel-forge` backend is running on port 7001.
+
+**Stale controller update won't apply**: If the install/update lane changed since the snapshot was staged, clear the pending update and stage a fresh one from the current repo instead of applying the stale snapshot.

@@ -6,7 +6,24 @@
 ./start-dev.sh
 ```
 
-Open `http://pixel-forge.localhost:5173`.
+When a GUI display is available, that also auto-opens the Pixel Forge desktop shell. The raw web UI remains at `http://pixel-forge.localhost:5173`.
+
+## Verify Changes
+
+```bash
+pnpm verify
+```
+
+Use this after touching the install/update lane, the launcher, or staged controller-update flow.
+
+## Install the Local App
+
+```bash
+./install.sh
+pixel-forge open
+```
+
+If a pending controller update was staged before an updater/install change, clear it and restage from the current repo instead of loading the stale snapshot.
 
 ## Manual Start
 
