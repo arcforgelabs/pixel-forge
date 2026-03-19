@@ -53,7 +53,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     toggleSettingsSidebar,
     activeMode,
     switchMode,
-    projectName,
     projectPath,
     liveEditorSession,
     clearLiveEditorSession,
@@ -256,7 +255,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                 >
                   <FolderOpen className="h-4 w-4" />
                   <span className="flex-1 text-left truncate">
-                    {projectName || "Projects"}
+                    Projects
                   </span>
                   <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-150 ${projectsExpanded ? "rotate-180" : ""}`} />
                 </button>

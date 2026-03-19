@@ -331,6 +331,50 @@ def _resolve_repaired_mirror_source_root(
         raise source_error
 
 
+def _normalize_listed_target_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    runtime_kind = _normalize_runtime_kind(str(metadata.get("runtime_kind") or DEFAULT_RUNTIME_KIND))
+    if runtime_kind != "mirror":
+        return metadata
+
+    project_path = str(metadata.get("project_path") or "").strip()
+    source_root = str(metadata.get("source_root") or "").strip()
+    if not project_path or not source_root:
+        return None
+
+    try:
+        repaired_source_root = _resolve_repaired_mirror_source_root(
+            _normalize_project_path(project_path),
+            _normalize_project_path(source_root),
+        )
+    except ValueError:
+        return None
+
+    normalized_source_root = _normalize_project_path(source_root)
+    updated = False
+    if repaired_source_root != normalized_source_root:
+        metadata = {
+            **metadata,
+            "source_root": repaired_source_root,
+        }
+        updated = True
+
+    expected_build_label = _label_for_source_root(repaired_source_root)
+    if metadata.get("build_label") != expected_build_label:
+        metadata = {
+            **metadata,
+            "build_label": expected_build_label,
+        }
+        updated = True
+
+    if updated and metadata.get("instance_slug"):
+        try:
+            _write_metadata(str(metadata["instance_slug"]), metadata)
+        except OSError:
+            pass
+
+    return metadata
+
+
 def _run_logged_shell(
     command: str,
     *,
@@ -690,6 +734,9 @@ def list_pixel_forge_targets(
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(metadata, dict):
+            continue
+        metadata = _normalize_listed_target_metadata(metadata)
+        if not metadata:
             continue
         if _normalize_project_path(str(metadata.get("project_path") or "")) != normalized_project_path:
             continue

@@ -13,11 +13,16 @@
     "open:browser": "./tools/open_visible_browser.sh http://pixel-forge.localhost:5173",
     "open:shell": "PIXEL_FORGE_SHELL_URL=http://pixel-forge.localhost:5173 pnpm --dir apps/desktop start",
     "build:web": "pnpm --dir apps/web build",
+    "check:version": "node scripts/check-version-sync.mjs",
+    "check:shell": "bash -n install.sh start-dev.sh",
     "check:api": "python3 -m py_compile $(rg --files apps/api -g '*.py' -g '!apps/api/.venv/**')",
-    "check:desktop": "node --check apps/desktop/main.mjs && node --check apps/desktop/shell-preload.mjs && node --check apps/desktop/preview-preload.mjs",
+    "check:desktop": "node --check apps/desktop/main.mjs && node --check apps/desktop/shell-preload.mjs && node --check apps/desktop/preview-preload.mjs && node --check apps/desktop/picker-overlay-preload.mjs && node --check apps/desktop/selection-engine.mjs && node --check apps/desktop/updater-preload.mjs && node --check apps/desktop/version.mjs && node --check apps/desktop/controller-update-runner.mjs",
     "check:web": "pnpm --dir apps/web build",
     "lint:web": "pnpm --dir apps/web lint",
-    "test:web": "pnpm --dir apps/web test"
+    "test:web": "pnpm --dir apps/web test",
+    "smoke:install": "node scripts/smoke-install.mjs",
+    "smoke:update": "node scripts/smoke-controller-update.mjs",
+    "verify": "pnpm check:version && pnpm check:shell && pnpm check:api && pnpm check:desktop && pnpm lint:web && pnpm test:web && pnpm check:web && pnpm smoke:install && pnpm smoke:update"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

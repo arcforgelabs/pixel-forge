@@ -18,10 +18,16 @@ function normalizeText(value) {
   return trimmed || null
 }
 
+function isTruthy(value) {
+  return typeof value === 'string'
+    && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
 const stateDir = path.resolve(argValue('--state-dir') || '')
 const installRoot = path.resolve(argValue('--install-root') || '')
 const updateId = normalizeText(argValue('--update-id'))
 const shellUrl = normalizeText(argValue('--shell-url')) || 'http://pixel-forge.localhost:7001'
+const pixelForgeBinDir = normalizeText(process.env.PIXEL_FORGE_BIN_DIR)
 
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')
@@ -47,6 +53,13 @@ async function logInfo(message) {
 async function logError(message, error = null) {
   const detail = error instanceof Error ? error.stack || error.message : String(error ?? '')
   await appendLog(detail ? `${message}\n${detail}` : message)
+}
+
+function pixelForgeCommand(binaryName) {
+  if (pixelForgeBinDir) {
+    return path.join(path.resolve(pixelForgeBinDir), binaryName)
+  }
+  return binaryName
 }
 
 function requireInstallLayout(candidatePath) {
@@ -224,19 +237,58 @@ async function sleep(ms) {
   })
 }
 
-async function waitForShellReady(timeoutMs = 90000) {
+async function readExpectedControllerVersion(rootPath) {
+  for (const relativePath of ['VERSION', 'package.json']) {
+    try {
+      const raw = await fs.readFile(path.join(rootPath, relativePath), 'utf-8')
+      if (relativePath === 'VERSION') {
+        const value = raw.trim()
+        if (value) {
+          return value
+        }
+        continue
+      }
+
+      const payload = JSON.parse(raw)
+      if (typeof payload?.version === 'string' && payload.version.trim()) {
+        return payload.version.trim()
+      }
+    } catch {
+      // Keep looking for a readable version surface.
+    }
+  }
+
+  return null
+}
+
+async function waitForShellReady(expectedVersion = null, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs
+  const runtimeInfoUrl = new URL('/api/runtime-info', shellUrl).toString()
 
   while (Date.now() < deadline) {
     try {
       const response = await fetch(shellUrl, { cache: 'no-store' })
       if (response.ok) {
-        return
+        if (!expectedVersion) {
+          return
+        }
+
+        const runtimeInfoResponse = await fetch(runtimeInfoUrl, { cache: 'no-store' })
+        if (runtimeInfoResponse.ok) {
+          const payload = await runtimeInfoResponse.json()
+          if (payload?.controllerVersion === expectedVersion) {
+            return
+          }
+        }
       }
     } catch {
       // Retry until ready.
     }
     await sleep(1000)
+  }
+
+  if (expectedVersion) {
+    throw new Error(`Pixel Forge did not come back with controller version ${expectedVersion}.`)
   }
 
   throw new Error('Pixel Forge did not come back after update.')
@@ -377,9 +429,12 @@ async function ensureInstallRoot(candidatePath) {
 }
 
 function relaunchPixelForge() {
+  if (isTruthy(process.env.PIXEL_FORGE_SKIP_SHELL_RELAUNCH)) {
+    return
+  }
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const proc = spawn('bash', ['-lc', 'pixel-forge-shell'], {
+  const proc = spawn('bash', ['-lc', JSON.stringify(pixelForgeCommand('pixel-forge-shell'))], {
     detached: true,
     stdio: 'ignore',
     env,
@@ -399,6 +454,7 @@ async function main() {
     error: null,
   })
   const resolvedInstallRoot = await ensureInstallRoot(installRoot)
+  const expectedVersion = await readExpectedControllerVersion(resolvedInstallRoot)
   await logInfo(`Starting controller update runner for ${resolvedInstallRoot}`)
 
   await setState({
@@ -407,7 +463,7 @@ async function main() {
     message: 'Installing updated Pixel Forge build…',
     error: null,
   })
-  await runShellCommand('./install.sh', resolvedInstallRoot)
+  await runShellCommand('bash ./install.sh', resolvedInstallRoot)
   await logInfo('Finished install.sh')
 
   await setState({
@@ -416,7 +472,7 @@ async function main() {
     message: 'Restarting Pixel Forge service…',
     error: null,
   })
-  await runShellCommand('pixel-forge restart', resolvedInstallRoot)
+  await runShellCommand(`${JSON.stringify(pixelForgeCommand('pixel-forge'))} restart`, resolvedInstallRoot)
   await logInfo('Finished pixel-forge restart')
 
   await setState({
@@ -425,7 +481,7 @@ async function main() {
     message: 'Waiting for the updated app to come back online…',
     error: null,
   })
-  await waitForShellReady()
+  await waitForShellReady(expectedVersion)
 
   await setState({
     phase: 'finalizing',

@@ -3,7 +3,7 @@
 # Starts all required services for the Live Editor
 # Both backend and frontend auto-reload on code changes.
 
-set -e
+set -euo pipefail
 
 # Ensure common tool paths are available (desktop launchers may not source profile)
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
@@ -23,8 +23,9 @@ WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 WEB_HEALTH_URL="http://127.0.0.1:${WEB_PORT}"
 OPEN_BROWSER_SCRIPT="$SCRIPT_DIR/tools/open_visible_browser.sh"
 DESKTOP_DIR="$SCRIPT_DIR/apps/desktop"
-KILL_STALE="${PIXEL_FORGE_KILL_STALE:-1}"
+KILL_STALE="${PIXEL_FORGE_KILL_STALE:-0}"
 USE_DESKTOP_SHELL="${PIXEL_FORGE_USE_DESKTOP_SHELL:-1}"
+REQUIREMENTS_HASH_FILE="${PIXEL_FORGE_REQUIREMENTS_HASH_FILE:-$SCRIPT_DIR/.pixel-forge/api-requirements.sha256}"
 
 mkdir -p "$LOG_DIR"
 
@@ -41,17 +42,89 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-if [ "$KILL_STALE" = "1" ]; then
-    # Kill stale Pixel Forge processes on our configured ports before starting
-    for port in "$API_PORT" "$WEB_PORT"; do
-        stale_pid=$(ss -tlnp "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
-        if [ -n "$stale_pid" ]; then
-            echo -e "${YELLOW}Killing stale process on port $port (PID: $stale_pid)${NC}"
-            kill "$stale_pid" 2>/dev/null || true
-            sleep 1
-        fi
-    done
-fi
+require_command() {
+    local command_name="$1"
+    local install_hint="$2"
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo -e "${RED}Error: missing required command '$command_name'. ${install_hint}${NC}"
+        exit 1
+    fi
+}
+
+find_listening_pids() {
+    local port="$1"
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u
+        return 0
+    fi
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -H -tlnp "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u
+    fi
+}
+
+ensure_port_available() {
+    local port="$1"
+    local label="$2"
+    local pids
+
+    pids="$(find_listening_pids "$port" || true)"
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+
+    if [ "$KILL_STALE" != "1" ]; then
+        echo -e "${RED}Error: ${label} port ${port} is already in use by PID(s): $(echo "$pids" | tr '\n' ' ' | xargs).${NC}"
+        echo -e "${YELLOW}Set PIXEL_FORGE_KILL_STALE=1 to terminate those processes explicitly, or pick different ports.${NC}"
+        exit 1
+    fi
+
+    while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        echo -e "${YELLOW}Killing stale process on port $port (PID: $pid)${NC}"
+        kill "$pid" 2>/dev/null || true
+    done <<< "$pids"
+
+    sleep 1
+}
+
+hash_file() {
+    local file_path="$1"
+    python3 - "$file_path" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+print(hashlib.sha256(path.read_bytes()).hexdigest())
+PY
+}
+
+sync_api_dependencies() {
+    local requirements_hash=""
+    local previous_hash=""
+
+    requirements_hash="$(hash_file "$API_DIR/requirements.txt")"
+    previous_hash="$(cat "$REQUIREMENTS_HASH_FILE" 2>/dev/null || true)"
+
+    if [ ! -d ".venv" ]; then
+        echo "Creating Python venv..."
+        python3 -m venv .venv
+    fi
+
+    if [ ! -x ".venv/bin/uvicorn" ] || [ "$requirements_hash" != "$previous_hash" ]; then
+        echo "Syncing API Python dependencies..."
+        .venv/bin/pip install -q --upgrade -r "$API_DIR/requirements.txt"
+        mkdir -p "$(dirname "$REQUIREMENTS_HASH_FILE")"
+        printf '%s\n' "$requirements_hash" > "$REQUIREMENTS_HASH_FILE"
+        return
+    fi
+
+    echo "API Python dependencies unchanged."
+}
 
 # PIDs for cleanup
 API_PID=""
@@ -68,6 +141,9 @@ cleanup() {
 trap cleanup SIGINT SIGTERM EXIT
 
 # Check dependencies
+require_command "python3" "Install Python 3 and re-run ./start-dev.sh."
+require_command "pnpm" "Install pnpm and re-run ./start-dev.sh."
+require_command "curl" "Install curl and re-run ./start-dev.sh."
 if ! command -v claude &> /dev/null; then
     if [ "${PIXEL_FORGE_TARGET_MODE:-0}" = "1" ]; then
         echo -e "${YELLOW}Warning: claude CLI not found. Target runtime will boot, but agent-backed flows will not work inside it.${NC}"
@@ -77,16 +153,13 @@ if ! command -v claude &> /dev/null; then
     fi
 fi
 
+ensure_port_available "$API_PORT" "API"
+ensure_port_available "$WEB_PORT" "Frontend"
+
 # --- API Backend with auto-reload ---
 cd "$API_DIR"
 
-if [ ! -d ".venv" ]; then
-    echo "Creating Python venv..."
-    python3 -m venv .venv
-fi
-
-echo "Syncing API Python dependencies..."
-.venv/bin/pip install -q --upgrade -r "$API_DIR/requirements.txt"
+sync_api_dependencies
 
 echo -e "${YELLOW}Starting API (auto-reload)...${NC}"
 .venv/bin/uvicorn main:app --host 0.0.0.0 --port "$API_PORT" --reload \

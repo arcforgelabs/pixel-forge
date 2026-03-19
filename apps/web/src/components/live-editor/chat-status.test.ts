@@ -30,7 +30,7 @@ describe('chat-status helpers', () => {
     expect(summarizeToolStatus('Write', {}, 'error')).toBe('Write failed')
   })
 
-  it('builds completion summaries from real request metadata', () => {
+  it('builds self-edit preview summaries from real request metadata', () => {
     expect(
       buildCompletionSummary({
         requestId: 'abcd-1234',
@@ -39,7 +39,18 @@ describe('chat-status helpers', () => {
         isRemoteTarget: true,
       })
     ).toBe(
-      'Complete · 3 selections · request abcd-1234 · controller update staged · refresh preview if needed'
+      'Complete · 3 selections · request abcd-1234 · preview update ready · refresh preview if needed'
+    )
+  })
+
+  it('surfaces staged controller updates explicitly', () => {
+    expect(
+      buildCompletionSummary({
+        requestId: 'abcd-1234',
+        controllerUpdateStaged: true,
+      })
+    ).toBe(
+      'Complete · request abcd-1234 · controller update staged'
     )
   })
 })
