@@ -1,198 +1,167 @@
 # Architecture
 
-## Intent
+This is the only active repo-level architecture and operating doc.
 
-Pixel Forge must be the control surface for visually editing a real running app, including Pixel Forge itself. That means one project-level chat, one shared selected-element context, and a browser surface that is real enough for localhost dev apps, hostile third-party sites, and recursive self-development.
+- `SPECS.md` owns intent, goals, requirements, limiting factor, and proof status.
+- `ARCHITECTURE.md` owns current system shape, next target release shape, final ideal shape, and the operating lanes that still deserve to exist.
+- `AGENTS.md` and `CLAUDE.md` should only contain non-inferable agent guardrails.
+- Historical and displaced root docs live under `docs/archives/root-docs/`.
 
-## Core Tenet: Self-Development
+## Operating Lanes
 
-Pixel Forge must be able to point back at isolated sibling instances of Pixel Forge and improve the real product by selecting and editing the real surface.
+### Development
 
-If the self-target differs materially from the controller UI, the architecture has failed. The user is then fixing a surrogate, not Pixel Forge.
+Preferred path:
 
-Safety must live below the UI:
-- isolated ports, runtime sandboxes, and browser profiles
-- staged apply instead of mid-stream self-restart
-- frozen update snapshots plus rollback
-- backend/runtime policy interception for dangerous actions
-- detached updater orchestration when the controller itself is being replaced
-
-Safety must not depend on front-end neutering of the very UI Pixel Forge is supposed to inspect and fix.
-
-## Current Reality
-
-```text
-Installed controller runtime
-  -> desktop shell + installed backend + built frontend
-  -> the real product path the user is operating
-
-Current sibling target runtime
-  -> default path is now an isolated mirror runtime launched from the current runtime artifact/source root
-  -> seeds isolated target state from the current runtime state snapshot so startup flows and recent-project data stay faithful
-  -> may build an isolated frontend only when the chosen mirror source is a repo/snapshot rather than an installed build
-  -> mirror instances are versioned by their source snapshot/runtime root so multiple candidates can stay open side by side
-  -> keeps the dev/HMR lane available only as an explicit lower-fidelity path
-  -> is closer to the controller, but nested shell capabilities inside mirror runtimes are still incomplete
-
-Agent Deck
-  -> persistent agent runtime per Live Editor thread
+```bash
+./start-dev.sh
 ```
 
-Truth:
-- The desktop shell is the product path.
-- A plain web app cannot embed a real Chromium tab surface for arbitrary third-party sites or faithful localhost self-edit targets.
-- Proxying or iframe tricks are not a durable answer for auth-heavy sites, HMR-heavy localhost apps, or sibling-instance self-edit flows.
-- The shared product model cannot live inside per-runtime DB copies. Projects, resumable sessions, and staged updates are control-plane state and must stay visible across controller and mirror runtimes.
-- The current architectural bug is no longer the default launch path. It is the remaining gap between a faithful mirror runtime and a fully shell-capable recursive mirror runtime inside that preview surface.
+That starts the API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available.
 
-## Transition Architecture
+Manual fallback:
 
-```text
-Pixel Forge Desktop Shell (apps/desktop)
-  -> BrowserWindow loads the existing Pixel Forge UI
-  -> WebContentsView surfaces map 1:1 to Pixel Forge preview tabs
-  -> preload script injects selection overlays into the real page
-  -> preview events flow back into the React app
+```bash
+cd apps/api
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python main.py
 
-Pixel Forge UI (apps/web)
-  -> remains the product chrome: tab strip, toolbar, chat, Elements pane
-  -> can spawn isolated sibling Pixel Forge runtimes from the bound workspace
-  -> owns the shared selection list and request-pack tunnel metadata
-  -> measures the preview pane bounds
-  -> tells the shell which preview tab is active and where the native browser surface should mount
-
-Mirror target runtime (required default self-edit path)
-  -> isolated sibling Pixel Forge instance
-  -> must preserve the same startup flows and UI semantics as the controller
-  -> must be sourced from an immutable runtime artifact or frozen snapshot, not a mutable working tree by default
-  -> must inherit a controller-state snapshot strongly enough to reproduce controller startup/layout issues
-  -> must support preview-first iteration: load into the mirror first, inspect it, then optionally promote that same build into the controller
-  -> must support multiple concurrent mirror candidates as separate tabs/builds rather than mutating one mirror instance in place
-  -> must allow recursive self-targeting when needed
-  -> should differ from the controller only in runtime isolation and staged-update policy
-
-Dev target runtime (optional advanced path)
-  -> lower-fidelity HMR/dev-server lane for rapid iteration
-  -> may be useful for debugging
-  -> must not replace the mirror target as the default self-edit surface
-
-Selection engine
-  -> auto-detects DOM vs region selection based on the live preview substrate
-  -> keeps durable selection ids and page/view identity
-  -> reconciles overlays back onto the live DOM or surface when that view returns
-  -> captures bounded visual evidence for spatial selections
-
-Selection tunnel
-  -> freezes selected state into request-pack artifacts on disk
-  -> exposes that frozen state through a local API/CLI for the working agent
-  -> lets the agent inspect Pixel Forge-forged selection context without replaying auth or navigation
-  -> current gap: this is still mostly a frozen evidence lane, not a live attach lane into the already-running preview tab/session
-
-Sibling target runtime
-  -> today: default launch uses the mirror lane, not the dev/HMR lane
-  -> mirror launch should inherit the current runtime source root by default, not the mutable project workspace
-  -> when a staged self-edit snapshot exists, loading the latest mirror should prefer that snapshot as the next candidate build
-  -> old mirror candidates stay interactive in their own tabs; newer mirror candidates open as new tabs rather than overwriting the old one
-  -> older mirror candidates can be reopened explicitly from a build picker
-  -> target runtime sandboxes must stay isolated from the controller for browser state, logs, and build artifacts
-  -> shared control-plane metadata must stay common across controller and mirrors so project/session/update truth does not drift
-  -> target UI should converge toward a full mirror, not a target-flavored variant
-  -> nested mirror runtimes still need shell-grade preview ownership/context routing to recurse indefinitely
-
-FastAPI backend (apps/api)
-  -> remains the broker/state plane
-  -> launches sibling Pixel Forge targets on demand
-  -> records and lists local mirror build instances
-  -> persists projects/sessions/request packs
-  -> may keep compatibility preview code internally, but the product surface routes preview through the shell
-
-Canonical agent tooling
-  -> one `pixel-forge` CLI surface
-  -> one `using-pixel-forge` skill that teaches agents how to use the CLI, request pack, and tunnel truthfully
-  -> no second parallel Pixel Forge CLI unless the canonical surface proves insufficient
+cd apps/web
+pnpm install
+pnpm dev
 ```
 
-This is the current build direction. The unresolved transition work is no longer "make mirror the default"; it is "make mirror runtimes fully shell-capable when Pixel Forge is running inside Pixel Forge."
+### Installed Controller App
 
-## Ideal Target
-
-```text
-Native Pixel Forge shell
-  -> embedded Chromium is the default preview runtime for all URLs
-  -> localhost and remote sites share one browser model
-  -> one project chat can compare multiple live tabs without opening external browser windows
-  -> one controller instance can launch and inspect sibling mirror-target instances for self-editing
-
-FastAPI backend
-  -> agent orchestration
-  -> durable state
-  -> request-pack generation
-  -> file writes and repo operations
-
-Mirror target runtime
-  -> isolated sibling Pixel Forge instance
-  -> same user-facing startup flows, layout, and controls as the controller
-  -> safe because isolation, staging, and rollback live underneath the UI
-  -> can recurse into deeper self-targets when the user needs to inspect Pixel Forge inspecting Pixel Forge
-
-Agent Deck
-  -> persistent coding session
+```bash
+./install.sh
+pixel-forge open
 ```
 
-In the ideal shape, the proxy path disappears from the user-facing preview workflow entirely, and self-development uses a faithful mirror target by default rather than a special target-mode UI.
+### Verification
 
-## Live Agent Inspect Gap
+```bash
+pnpm verify
+```
 
-Today Pixel Forge mainly hands working agents a frozen request pack plus selection tunnel. That is materially better than asking the agent to recreate the browser path from scratch, but it is not yet the same thing as attaching the agent to the already-running preview session the user prepared.
+This is the canonical proof lane for version sync, shell syntax, API/desktop/web health, isolated install smoke, and staged controller-update apply/rollback smoke.
 
-Current practical consequence:
-- agents can still fall back to repo-code inference when frozen artifacts are not enough
-- agents may ignore the live selected surface and invent behavior
-- deploy/apply steps can be missed even when Pixel Forge knows the active preview target
+### Controller Update Management
 
-Target shape:
-- Pixel Forge keeps the frozen request-pack/tunnel path as the minimum truthful handoff
-- Pixel Forge also exposes a live attach lane into the existing preview tab/session when deeper inspection is needed
-- agents attach to the session the user already navigated instead of recreating auth, pathing, or state
-- if live attach is unavailable, the handoff contract must force the agent to say so explicitly rather than hallucinating
+```bash
+pixel-forge stage-update --project /abs/path --summary "Update ready to load"
+pixel-forge show-update
+pixel-forge clear-update
+```
 
-## Layer Ownership
+If the install/update lane changed after a controller update was staged, clear and restage it from current repo truth instead of applying the stale snapshot.
 
-### Product Chrome
-- Project/session state
-- Preview tab strip
-- Shared selection list
-- Chat UI
-- Request dispatch controls
-- Selection tunnel assembly
+## Current State
 
-### Native Browser Layer
-- Real page loading
-- Cookies/storage/service workers
-- Login/auth flows
-- Tab-local DOM state and history
-- Automatic DOM-vs-region selection overlay injection into the live page
+Current architectural facts:
 
-### Runtime Isolation Layer
-- Separate API/web ports
-- Separate runtime sandboxes and browser-profile state
-- Mirror-target lifecycle
-- Versioned mirror build artifacts stored under Pixel Forge state outside the repo
-- Frozen staged-update snapshots
-- Detached controller-update runner plus dedicated updater UI when the controller itself is being replaced
-- Rollback lane
-- Policy interception for dangerous self-edit actions
+- The product path is the desktop shell over the installed FastAPI backend and built frontend.
+- The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
+- Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, and mirror instance metadata.
+- Live Editor writes request packs into the target workspace and dispatches a short prompt into a persistent Agent Deck session.
+- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` defaults to the latest available mirror candidate for the workspace, with staged snapshots preferred when one exists.
+- Controller updates stage a frozen snapshot, hand off to a detached updater, reinstall from that frozen source, restart through the installed launcher, wait for the expected controller version, relaunch the shell, and keep a rollback build.
 
-### Backend Broker Layer
-- Shared control-plane persistence for projects, resumable sessions, and staged updates
-- Request packs
-- Selection tunnel API/CLI surface
-- Live Editor dispatch into Agent Deck
-- Generated file writes
+### Current System Diagram
 
-## Non-Goals
+```mermaid
+flowchart LR
+  User[User] --> Shell[Pixel Forge Desktop Shell<br/>apps/desktop]
+  Shell --> UI[React Product UI<br/>apps/web]
+  Shell --> Preview[Embedded Chromium Preview Tabs]
+  UI --> API[FastAPI Control Plane<br/>apps/api]
+  API --> State[(Shared State<br/>~/.pixel-forge)]
+  API --> Packs[Request Packs + Selection Tunnel<br/>&lt;workspace&gt;/.pixel-forge/requests]
+  API --> AgentDeck[Persistent Agent Deck Session]
+  API --> Mirrors[Mirror / Dev Runtimes]
+  API --> Staged[Staged Controller Update Record]
+  Staged --> Runner[Detached Update Runner]
+  Runner --> Installed[Installed Controller Runtime<br/>~/.local/lib/pixel-forge]
+```
 
-- Pretending the browser-only web app can become a full embedded Chromium host
-- Treating the proxy path as a product-equivalent answer for localhost or third-party preview
-- Treating a front-end-neutered target mode as a sufficient self-edit architecture
-- Rebuilding Agent Deck inside Pixel Forge
+### Current Controller Update Flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant C as Controller Shell
+  participant R as Detached Update Runner
+  participant S as Frozen Snapshot
+  participant I as Installed Runtime
+
+  U->>C: Load Controller Update
+  C->>R: Spawn updater with staged snapshot
+  C-->>U: Close controller shell
+  R->>S: bash ./install.sh
+  R->>I: pixel-forge restart
+  R->>I: Wait for expected /api/runtime-info version
+  R->>I: Clear staged update + keep rollback
+  R->>C: Relaunch shell
+```
+
+## Next Target Release
+
+The next target release should attack the current limiting factor from `SPECS.md`: agent handoff fidelity is still weaker than the preview/session fidelity Pixel Forge already captures.
+
+The smallest complete unit that matters now:
+
+- keep the frozen request-pack and selection-tunnel lane as the minimum truthful handoff
+- add a live attach lane into the already-running preview tab or browser session when deeper inspection is needed
+- make deploy/apply expectations follow the active preview target truth instead of repo-only inference
+- keep the staged update and mirror architecture intact while strengthening the agent-side connection to the live surface
+
+### Next Target Release Diagram
+
+```mermaid
+flowchart LR
+  User[User-prepared preview state] --> Preview[Running Preview Tab / Session]
+  Preview --> Tunnel[Frozen Selection Tunnel]
+  Preview --> Attach[Live Attach Bridge]
+  Tunnel --> Agent[Persistent Agent Runtime]
+  Attach --> Agent
+  Agent --> Workspace[Workspace Changes]
+  Agent --> Apply[Apply / Deploy / Refresh Preview]
+```
+
+## Final Ideal State
+
+The final ideal state is a boring, recursive, truthful loop:
+
+- one embedded browser model for localhost, remote sites, and Pixel Forge itself
+- one shared control plane for controller and mirror runtimes
+- one agent runtime that can use both frozen evidence and live attach into the prepared preview session
+- one promotion path from mirror preview candidate to installed controller, with rollback if needed
+- recursion stays faithful because mirrors are real Pixel Forge runtimes, not special target-only surrogates
+
+### Final Ideal State Diagram
+
+```mermaid
+flowchart TD
+  Controller[Controller Runtime] --> Browser[Unified Embedded Browser Model]
+  Controller --> Mirrors[Versioned Mirror Candidates]
+  Mirrors --> Mirrors
+  Controller <--> State[(Shared Control Plane)]
+  Mirrors <--> State
+  Browser <--> Agent[Persistent Agent Runtime]
+  Agent --> RequestPacks[Request Packs + Selection Tunnel]
+  Agent --> LiveAttach[Live Preview Attach]
+  Agent --> Workspace[Target Workspaces]
+  Workspace --> Promote[Preview First, Promote Second]
+  Promote --> Controller
+  Promote --> Rollback[Rollback Build]
+```
+
+## What No Longer Earns Active Space
+
+- separate quick-start and setup docs
+- progress or vision docs that duplicate `SPECS.md` or this file
+- test-run narratives that are just historical execution logs
+- root-level summaries or findings docs that are no longer operational truth
+
+Those belong in `docs/archives/root-docs/`, not in the active root doc surface.
