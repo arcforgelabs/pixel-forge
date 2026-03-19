@@ -6,7 +6,13 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { capitalize } from "@/lib/utils";
 import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
@@ -41,6 +47,37 @@ function formatSource(source: string | null | undefined): string {
   return source.replace(/[-_]+/g, " ");
 }
 
+function formatRuntimeLayout(layout: string | null | undefined): string {
+  if (layout === "installed") {
+    return "Installed runtime";
+  }
+  if (layout === "workspace") {
+    return "Workspace checkout";
+  }
+  return "Unknown runtime";
+}
+
+function formatAgentDeckTool(tool: string | null | undefined): string {
+  if (!tool || !tool.trim()) {
+    return "Agent";
+  }
+
+  return tool === "claude"
+    ? "Claude Code"
+    : tool === "codex"
+      ? "Codex"
+      : capitalize(tool);
+}
+
+function formatAgentDeckTargetLabel(target: {
+  title: string;
+  tool: string | null;
+  status: string | null;
+}): string {
+  const details = [formatAgentDeckTool(target.tool), target.status || "unknown"];
+  return `${target.title} · ${details.join(" · ")}`;
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -55,14 +92,22 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     switchMode,
     projectPath,
     liveEditorSession,
-    clearLiveEditorSession,
-    newSession,
+    projectSessions,
+    agentDeckTargets,
+    agentDeckTargetsLoading,
+    refreshAgentDeckTargets,
+    createAgentDeckTargetSession,
+    selectedAgentDeckTargetId,
+    setSelectedAgentDeckTargetId,
     lastSavedFile,
     sessionId,
     agentType,
     setAgentType,
     previewUrl,
     controllerVersion,
+    controllerRuntimeRoot,
+    controllerRuntimeLayout,
+    controllerAcpxBridgeAvailable,
     recentProjects,
     setProject,
     pendingControllerUpdate,
@@ -74,15 +119,30 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
 
-  const { connected, selectedElements, clearElements } = useLiveEditorStore();
+  const {
+    connected,
+    selectedElements,
+    clearElements,
+    newSession: resetLiveEditorThread,
+  } = useLiveEditorStore();
   const { appState } = useAppStore();
   const shouldDisableStackUpdates =
     appState === AppState.CODING || appState === AppState.CODE_READY;
   const hasActiveSession = !!sessionId || !!liveEditorSession;
+  const canRetargetLiveEditor = !liveEditorSession;
+  const selectedAgentDeckTarget = agentDeckTargets.find(
+    (target) => target.id === selectedAgentDeckTargetId
+  ) ?? null;
+  const selectedTargetThread = selectedAgentDeckTarget
+    ? projectSessions.find(
+        (session) => session.agentDeckSessionId === selectedAgentDeckTarget.id
+      ) ?? null
+    : null;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareSemver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
+  const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
   const updateStatus = !pendingControllerUpdate
     ? {
         label: "Up to date",
@@ -157,6 +217,31 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       toast.error(message);
     } finally {
       setIsApplyingControllerUpdate(false);
+    }
+  }
+
+  async function handleRefreshAgentDeckTargets() {
+    try {
+      await refreshAgentDeckTargets();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh Agent Deck sessions";
+      toast.error(message);
+    }
+  }
+
+  async function handleCreateAgentDeckTarget() {
+    try {
+      const created = await createAgentDeckTargetSession({ agentType });
+      toast.success(`Created Agent Deck session ${created.title}`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to create Agent Deck session";
+      toast.error(message);
     }
   }
 
@@ -369,7 +454,48 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       {pendingControllerUpdate ? stagedVersionLabel : "none"}
                     </span>
                   </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Source</span>
+                    <span className="text-xs text-foreground">{runtimeLayoutLabel}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Live Editor Runtime</span>
+                    <span
+                      className={
+                        controllerAcpxBridgeAvailable
+                          ? "text-xs text-emerald-200"
+                          : "text-xs text-amber-200"
+                      }
+                    >
+                      {controllerAcpxBridgeAvailable
+                        ? "ACPX bridge available"
+                        : "No ACPX bridge detected"}
+                    </span>
+                  </div>
                 </div>
+
+                {controllerRuntimeRoot && (
+                  <div className="rounded-lg border border-border/70 bg-card/70 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Runtime Root
+                    </p>
+                    <p className="mt-1 break-all font-mono text-xs text-foreground">
+                      {controllerRuntimeRoot}
+                    </p>
+                  </div>
+                )}
+
+                {!controllerAcpxBridgeAvailable && (
+                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                    <p className="text-sm text-amber-100">
+                      This running controller does not include the ACPX bridge layer.
+                    </p>
+                    <p className="mt-1 text-xs text-amber-100/80">
+                      If the repo has newer ACPX-backed code, you still need to stage or install that
+                      controller build before this app is actually using it.
+                    </p>
+                  </div>
+                )}
 
                 {pendingControllerUpdate ? (
                   <>
@@ -462,6 +588,91 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   </div>
                 </div>
 
+                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Target Agent Deck Session
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          void handleRefreshAgentDeckTargets();
+                        }}
+                        disabled={!projectPath || agentDeckTargetsLoading}
+                        className="h-7 px-2 text-xs"
+                      >
+                        <RefreshCw
+                          className={`mr-1 h-3.5 w-3.5 ${
+                            agentDeckTargetsLoading ? "animate-spin" : ""
+                          }`}
+                        />
+                        Refresh
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void handleCreateAgentDeckTarget();
+                        }}
+                        disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
+                        className="h-7 px-2 text-xs"
+                      >
+                        New Session
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Select
+                    value={selectedAgentDeckTargetId ?? "__auto__"}
+                    onValueChange={(value) => {
+                      setSelectedAgentDeckTargetId(value === "__auto__" ? null : value);
+                    }}
+                    disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
+                  >
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder="Create on first send" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Create on first send</SelectItem>
+                      {agentDeckTargets.map((target) => (
+                        <SelectItem key={target.id} value={target.id}>
+                          {formatAgentDeckTargetLabel(target)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {liveEditorSession ? (
+                    <p className="text-xs text-muted-foreground">
+                      This live thread is already bound. Start a fresh live thread to retarget it.
+                    </p>
+                  ) : selectedAgentDeckTarget ? (
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="border-border/60 bg-background/70">
+                          {formatAgentDeckTool(selectedAgentDeckTarget.tool)}
+                        </Badge>
+                        <Badge variant="secondary" className="border-border/60 bg-background/70">
+                          {selectedAgentDeckTarget.status || "unknown"}
+                        </Badge>
+                      </div>
+                      {selectedTargetThread && (
+                        <p>
+                          Pixel Forge already has thread{" "}
+                          <span className="font-mono">{selectedTargetThread.threadId}</span>{" "}
+                          bound to this Agent Deck session.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      No target is preselected. Pixel Forge will create a new Agent Deck session on the first send.
+                    </p>
+                  )}
+                </div>
+
                 {liveEditorSession && (
                   <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
                     <div>
@@ -514,8 +725,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      clearLiveEditorSession();
-                      newSession();
+                      resetLiveEditorThread();
                       toast.success("Started a fresh Live Editor thread");
                     }}
                   >

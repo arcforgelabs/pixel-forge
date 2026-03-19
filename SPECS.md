@@ -1,35 +1,56 @@
 # Intent
 
-Make Pixel Forge the fastest way to visually edit a real running app, including Pixel Forge itself, while keeping the real agent runtime visible and controllable. Pixel Forge should own visual context assembly and request brokering, not a fake headless session layer.
+Make Pixel Forge the fastest way to visually edit a real running app, including Pixel Forge itself, while keeping the real agent runtime visible, targetable, and controllable. Agent Deck transparency is the operator viewport; Pixel Forge is the truthful visual-context and handoff surface. Pixel Forge should own visual context assembly and request brokering, not a fake headless session layer.
+
+## Primary Operator Loop
+
+1. The user can see active agents clearly in Agent Deck and switch between them quickly.
+2. The user can select the exact live element or region they mean inside Pixel Forge.
+3. Pixel Forge can bundle that truthful selected context, any live inspection handle it has, and the user's written instruction into one handoff.
+4. That handoff reaches the intended working agent/session without hiding the real runtime behind an opaque internal abstraction.
+5. The target agent can inspect and act on that exact selected surface truthfully.
+
+Everything else is subordinate to improving this loop.
 
 # Goals
 
-1. Live Editor sends selected-element context and attachments into a persistent real agent session without losing continuity on server restart.
-2. Every live-edit request is inspectable and reproducible from a disk-backed request pack instead of giant pasted blobs or process memory.
-3. Pixel Forge sessions show up in Agent Deck so the user can drop into the real session when the chat UI is not enough.
-4. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
-5. Pixel Forge can launch a faithful sibling Pixel Forge mirror runtime for self-edit loops without colliding with the controller instance or diverging from the UI being fixed.
-6. Selected-element context must stay truthful across DOM and canvas-like preview surfaces, and the working agent must be able to inspect the frozen selected state without replaying the browser path manually.
-7. Pixel Forge preview interaction must grow as a real tool system, with selection as the first tool rather than a permanent special case, so future capabilities can ship without sprawling across Live Editor state and shell glue.
-8. Working agents must use Pixel Forge-forged preview evidence truthfully instead of inferring or inventing live behavior from repo code when the user already navigated and selected the real target surface.
+1. Live Editor sends selected-element context, attachments, and written instruction into a persistent real endpoint agent session without losing continuity on server restart.
+2. The user can route that bundled handoff to a specific working agent/session while keeping that target visible, controllable, and natively interactive in Agent Deck.
+3. Agent Deck remains the default operator viewport for scanning and switching between active agents, and those visible sessions must stay native endpoint sessions while Pixel Forge remains the visual context and handoff surface.
+4. Every live-edit request is inspectable and reproducible from a disk-backed request pack instead of giant pasted blobs or process memory.
+5. Users can pull visual context from multiple preview tabs into one prompt while keeping one unified Live Editor chat and selection workflow for the project.
+6. Pixel Forge can launch a faithful sibling Pixel Forge mirror runtime for self-edit loops without colliding with the controller instance or diverging from the UI being fixed.
+7. Selected-element context must stay truthful across DOM and canvas-like preview surfaces, and the working agent must be able to inspect the frozen selected state without replaying the browser path manually.
+8. Pixel Forge preview interaction must grow as a real tool system, with selection as the first tool rather than a permanent special case, so future capabilities can ship without sprawling across Live Editor state and shell glue.
+9. Working agents must use Pixel Forge-forged preview evidence truthfully instead of inferring or inventing live behavior from repo code when the user already navigated and selected the real target surface.
 
 # Requirements
 
 ## Root Requirements
 
 ### Runtime Truth
-- `REQ-R-001:` Live Editor must run against a persistent Agent Deck session, not an in-process per-server-run Claude session manager.
-- `REQ-R-002:` One Pixel Forge Live Editor thread maps to one persistent Agent Deck session until the user explicitly starts a fresh thread.
+- `REQ-R-001:` Live Editor must run against a persistent Agent Deck endpoint session, not an in-process per-server-run Claude session manager.
+- `REQ-R-002:` One Pixel Forge Live Editor thread maps to one persistent Agent Deck endpoint session until the user explicitly starts a fresh thread, except for a one-off automatic migration when Pixel Forge upgrades a legacy live-edit binding onto the current runtime contract. Manual interaction inside that same visible endpoint session must remain part of the same underlying thread continuity rather than forking into an untracked side session.
 - `REQ-R-003:` Screenshot bootstrap may stay on the direct Claude CLI path until the Agent Deck-backed replacement is proven and faster.
+- `REQ-R-004:` The long-term agent session control plane should converge on a structured upstream runtime/protocol wrapped by Pixel Forge rather than grow bespoke repo-local orchestration when the upstream path better serves the primary operator loop.
+- `REQ-R-005:` Upstream runtime adoption must sit behind a thin Pixel Forge adapter boundary so versions can be pinned deliberately and local glue can be deleted as upstream capabilities replace it.
+- `REQ-R-006:` The default live-edit handoff model must bind directly to one chosen Agent Deck session rather than route through a rebinding broker abstraction.
+- `REQ-R-007:` When no suitable target session exists, Pixel Forge may use Agent Deck session-creation tooling to create a new session in the intended location and then bind directly to that created session.
+- `REQ-R-008:` Agent Deck should remain the operator-facing session identity layer, and the default visible Agent Deck pane for a Live Editor target must stay the real endpoint agent session rather than a custom proxy shell that replaces native operator behavior.
 
 ### Context Transport
 - `REQ-C-001:` Each Live Editor request must be written to a disk-backed request pack before it is sent to the agent runtime.
 - `REQ-C-002:` Request packs must include the user request, selected-element context, and any attachments in readable files instead of inline prompt blobs.
 - `REQ-C-003:` Request packs must be retained long enough to debug the current loop, then cleaned up automatically to avoid unbounded growth.
+- `REQ-C-004:` The dispatch unit must keep the user's written instruction, the selected-surface context, and any frozen/live inspection references bundled together all the way to the target agent/session. When the request is asking for captured evidence like a screenshot, Pixel Forge must also surface that captured evidence back into chat as a first-class artifact instead of only paraphrasing it.
+- `REQ-C-005:` Live Editor handoff framing must be bootstrap-once and delta-after. The first handoff to a new or rebound endpoint session may include the stable Pixel Forge workflow/setup framing, and Pixel Forge may persist that stable setup in a thread-level brief, but subsequent turns on the same visible endpoint session must send only the new request-pack reference and turn-specific context unless recovery or migration requires a fresh bootstrap.
 
 ### Transparency
 - `REQ-T-001:` Pixel Forge must surface the Agent Deck session identity it is using for a Live Editor thread.
 - `REQ-T-002:` Pixel Forge must preserve chat streaming when possible by adapting the underlying agent transcript instead of falling back blindly to black-box waits.
+- `REQ-T-003:` Agent Deck must remain the primary transparency surface for active agent sessions in this workflow. Pixel Forge may augment it, but it must not hide the real target session behind an internal-only broker abstraction.
+- `REQ-T-004:` A live-edit request must be able to target a specific intended working agent/session truthfully instead of disappearing into an opaque backend pool.
+- `REQ-T-005:` If an upstream ACP runtime is wrapped beneath Agent Deck, Agent Deck must store and expose the mapping between its own session id and the upstream runtime ids needed for backend control, while keeping the Agent Deck session id as the primary operator-facing handle and leaving the intermediate coordination layer invisible by default in the normal Agent Deck workflow.
 
 ## Support Requirements
 
@@ -85,6 +106,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-U-002:` Pixel Forge must expose agent-facing inspection paths for selected live surfaces. The minimum path is the frozen local selection tunnel; the target path is live attach into the already-running preview session without replaying login, navigation, or view reconstruction.
 - `REQ-U-003:` Canvas-like and other spatial selections must carry screenshot evidence into the request pack so the agent receives the visual state Pixel Forge forged, not an inferred substitute, and dispatch instructions must require the agent to state any remaining inspection limitation explicitly instead of guessing.
 - `REQ-U-004:` Agent-facing Pixel Forge operations must converge on the existing `pixel-forge` CLI plus a dedicated `using-pixel-forge` skill. Do not fork agent behavior across a second parallel CLI surface unless the canonical CLI proves insufficient.
+- `REQ-U-005:` For a targeted live-edit handoff, Pixel Forge must be able to pass the chosen agent enough truth to act on the exact selected surface: frozen evidence at minimum, live attach when available, and explicit indication when only the frozen lane exists.
 
 ### Self-Edit Runtime
 - `REQ-E-001:` Pixel Forge must be able to launch a sibling Pixel Forge target runtime for a compatible workspace, with isolated ports, runtime sandbox paths, and managed-browser profile paths.
@@ -101,7 +123,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `REQ-E-011:` `Run Pixel Forge` must default to the latest available mirror candidate for the workspace, while still allowing explicit selection of older mirror builds.
 - `REQ-E-012:` Mirror build artifacts belong in Pixel Forge state outside the repo so they do not pollute git status or require git-ignore churn in the workspace.
 - `REQ-E-013:` Applying a staged controller update must hand off to a detached update runner and close the active controller shell before install/restart begins. The update progress surface may be a separate dedicated updater window, but the controller being replaced must not remain responsible for its own update lifecycle.
-- `REQ-E-014:` Pixel Forge must keep one truthful semantic controller version and surface both the running controller version and any staged controller-update version/status inside Settings. Dismissing the header update notice must not hide the apply path from Settings.
+- `REQ-E-014:` Pixel Forge must keep one truthful semantic controller version and surface the running controller identity inside Settings: running version, staged controller-update version/status, runtime source/layout, and enough runtime metadata to tell whether the active controller is actually the expected build. Dismissing the header update notice must not hide the apply path from Settings.
 
 ### Deploy-Aware Feedback Loop
 - `REQ-D-001:` Pixel Forge must detect whether the preview target is remote (not localhost/127.0.0.1) and surface that awareness in the completion flow.
@@ -114,10 +136,10 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 # Current Limiting Factor
 
-- `[active]` Agent handoff fidelity is still weaker than the preview/session fidelity Pixel Forge already captures.
-- Why it is the limiter: Pixel Forge can capture the real selected surface, but working agents still fall back to repo-code inference too easily because the handoff is mostly a frozen request pack with no proven live attach path into the already-running preview session. That creates hallucinated behavior and missed deploy/apply steps even when the user already navigated to the truth.
-- Smallest complete unit to attack it: strengthen the handoff contract so agents must treat Pixel Forge-forged artifacts as authoritative evidence, then add a live attach path from the agent runtime into the existing preview session instead of forcing replay or guesswork.
-- Immediate proof target: prove one real agent workflow that reads the request pack, uses the selection tunnel instead of recreating navigation, applies the change to the active preview target, and states any remaining live-inspection limitation honestly.
+- `[active]` Live Editor continuity is cleaner now, but the transport is still mostly file-first and indirect once the native endpoint session is already established.
+- Why it is the limiter: the visible endpoint session is native again and Pixel Forge now avoids replaying its stable bootstrap on every turn, but richer per-turn context still arrives mainly by "read this new file" rather than through a more natural structured sidecar/update lane.
+- Smallest complete unit to attack it: preserve the native endpoint-session truth, keep the thread-level bootstrap brief stable, and make each new request pack as delta-focused as possible while ACPX stays pinned as the future structured sidecar foundation.
+- Immediate proof target: prove that later turns on the same native Agent Deck session reuse the stable thread brief, receive only the new per-turn request delta, and stay inspectable on disk without reintroducing repetitive bootstrap framing.
 
 # Current Proof Status
 
@@ -125,6 +147,15 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[validated]` Live Editor request context now lands on disk as request packs under `.pixel-forge/requests`. Basis: the backend writes request packs before dispatch.
 - `[validated]` Pixel Forge now dispatches Live Editor requests into Agent Deck sessions instead of spawning direct `claude -p` processes for that path. Basis: `/ws/live-editor` uses the Agent Deck bridge.
 - `[validated]` Pixel Forge surfaces Agent Deck session identity in the Live Editor UI. Basis: the frontend persists and displays Agent Deck session metadata.
+- `[validated]` Pixel Forge still has a version-pinned ACPX bridge in the repo for structured runtime experiments and legacy/runtime control paths. Current runtime: `acpx@0.3.1`. Basis: end-to-end websocket smokes previously bound ACPX-backed Agent Deck sessions, wrote ACPX ids into thread/request-pack state, and streamed ACPX tool activity and agent output through the real Live Editor route.
+- `[validated]` Live Editor now defaults back to real native Agent Deck endpoint sessions for new and migrated Claude/Codex threads instead of surfacing the custom ACPX shell as the operator pane. Basis: fresh Agent Deck probes returned `tool=claude`, `command=claude`, and a real `claude_session_id`; `agent-deck session send` answered normally; tmux capture showed the native Claude Code terminal UI launched as `claude --session-id ...`.
+- `[validated]` ACPX wrapper sessions are no longer part of the normal target-session picker, and legacy Live Editor threads now auto-migrate off ACPX wrapper bindings onto native Agent Deck sessions on first reuse. Basis: project session listing now excludes ACPX wrapper commands, reused-thread probing rebound a real wrapper-backed thread onto an existing native Claude session, and a wrapper-with-normal-title smoke renamed the wrapper to `...-acpx` before launching a native replacement with the original title.
+- `[validated]` Screenshot-style evidence requests now surface captured selection images back into assistant chat bubbles as first-class artifacts. Basis: frontend store regression coverage proves screenshot requests attach the captured selection image to the assistant message.
+- `[validated]` Live Editor dispatch is now continuity-aware: first handoff to a session uses the fuller Pixel Forge bootstrap framing, while later turns on the same visible session switch to a shorter delta prompt that assumes earlier setup context still holds. Basis: the dispatch builder now distinguishes bootstrap vs continuation turns using existing thread/session continuity and emits the shorter turn framing unless a new/rebound session requires re-bootstrap.
+- `[validated]` Live Editor request packs now separate stable session rules from per-turn request delta by writing a thread-level `session-brief.md` and keeping later `request.md` files continuity-aware. Basis: the request-pack writer now persists a stable thread brief under `.pixel-forge/threads/<thread-id>/session-brief.md`, bootstrap request packs point at that brief explicitly, and continuation request packs keep only the new turn request plus delta-specific references.
+- `[unvalidated]` Agent Deck can surface the real native endpoint Claude/Codex session while ACPX remains an invisible coordination layer behind that same session. Basis: this is still the intended end architecture, but the pinned ACPX runtime currently resumes ACP-created sessions only and does not yet prove a shared-session attach path into the native Agent Deck pane.
+- `[validated]` Direct bind to a chosen Agent Deck session is now the default Live Editor handoff model, with thin create-and-bind behavior when Pixel Forge needs a new working session. Basis: the backend enforces target-session binding, the frontend exposes explicit target selection/create flows, and the end-to-end websocket smoke used one chosen Agent Deck session id all the way through completion.
+- `[validated]` Agent Deck keeps its own operator-facing session ids while upstream runtime ids remain mapped backend metadata instead of replacing the operator UX identity. Basis: the Live Editor UI/API still target Agent Deck session ids, while `acpx_agent`, `acpx_session_name`, `acpx_record_id`, and `acp_session_id` now persist in Live Editor thread state and request packs.
 - `[validated]` Pixel Forge now separates workspace selection, preview URL, and generated output policy in the selector flow. Basis: the selector now binds a workspace, accepts any preview URL, and defaults scratch output to `.pixel-forge/generated/`.
 - `[validated]` Project/workspace metadata and resumable Live Editor session linkage now persist server-side in SQLite under `~/.pixel-forge/pixel-forge.db`. Basis: recent projects, preview URL history, and Live Editor session metadata now load from backend APIs instead of browser localStorage.
 - `[validated]` Shared Pixel Forge metadata now lives in a control-plane store that is visible to controller and mirror runtimes instead of being snapshotted into isolated mirror DB copies. Basis: the shared SQLite DB and staged controller-update state now resolve through the shared control-plane root while mirrors keep isolated runtime sandboxes for browser/build state.
@@ -142,7 +173,7 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 - `[validated]` The detached controller update runner now waits for the restarted controller to report the staged version before it declares the update complete. Basis: the runner reads the expected version from the staged source root and the update smoke now proves the version transition instead of stopping at first HTTP success.
 - `[validated]` The installed controller lane now keeps a real rollback build and can restore it after a staged update install. Basis: isolated smoke proved base install -> frozen staged update -> runtime version transition -> rollback -> original version restored.
 - `[validated]` Applying a staged controller update now relaunches the shell back into the same project/mode/preview context. Basis: the shell writes bootstrap state to disk before install/restart, then relaunches Electron so updated shell code can take effect without a manual close/reopen dance.
-- `[unvalidated]` Settings now surfaces the running controller version plus the staged controller-update version/status, and it retains the apply path after the header notice is dismissed. Basis: the controller/runtime metadata path and settings UI are being wired to one canonical semver source, but the full shell interaction proof still needs a fresh manual smoke.
+- `[unvalidated]` Settings now surfaces the running controller version, staged controller-update status, runtime source/layout, and ACPX-capability identity, and it retains the apply path after the header notice is dismissed. Basis: the controller/runtime metadata path now includes runtime root/layout plus ACPX bridge presence and the staged `1.2.0` update exists, but the full shell interaction proof still needs a fresh manual smoke after loading that build.
 - `[validated]` Sibling target runtimes can now surface the shared workspace-selector affordance and recursive self-launch controls inside the isolated target runtime. Basis: target mode now exposes a selector opener in-app and no longer suppresses `Run Pixel Forge` inside the target runtime.
 - `[unvalidated]` Mirror-target fidelity is high enough that fixing the target UI fixes the controller UI. Basis: the mirror launcher now targets the current runtime artifact and seeds isolated state from the current runtime, but end-to-end UI proof against the startup dialog mismatch has not yet been re-run after that change.
 - `[unvalidated]` Mirror runtimes are fully shell-capable when Pixel Forge runs inside Pixel Forge, including nested preview ownership and update affordances. Basis: the default self-edit target is now a faithful mirror build, but recursive shell capability inside that mirror runtime has not yet been completed.
@@ -169,7 +200,6 @@ Make Pixel Forge the fastest way to visually edit a real running app, including 
 
 # Open Questions
 
-- `[question]` Do we want Pixel Forge to embed an Agent Deck terminal pane directly, or is surfacing the session identity enough for the next cut?
 - `[question]` Should request-pack retention become content-addressed and deduplicated, or is bounded per-request storage sufficient in practice?
 - `[question]` Should the second source panel support its own independent deploy-aware refresh, or is one shared refresh sufficient?
 - `[question]` When we add behind-the-pixel probing later, should it stay on a separate modifier chord from ancestor cycling or become an explicit advanced selection sub-mode?

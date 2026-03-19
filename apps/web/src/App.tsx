@@ -32,6 +32,7 @@ import type {
   PixelForgeDesktopControllerUpdateApplyState,
   PixelForgeDesktopBootstrapState,
   PixelForgeDesktopPendingControllerUpdate,
+  PixelForgeDesktopRuntimeInfo,
 } from "./types/pixel-forge-desktop";
 
 function App() {
@@ -77,7 +78,7 @@ function App() {
     activeMode,
     projectsLoaded,
     hydrateProjects,
-    setControllerVersion,
+    setRuntimeInfo,
     setDismissedControllerUpdateId,
     setProject,
     setControllerUpdateApplyState,
@@ -114,6 +115,25 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
+    const applyRuntimeInfo = (runtimeInfo: Partial<PixelForgeDesktopRuntimeInfo> | null) => {
+      if (cancelled) {
+        return;
+      }
+
+      setRuntimeInfo({
+        controllerVersion: runtimeInfo?.controllerVersion?.trim() || null,
+        runtimeRoot:
+          typeof runtimeInfo?.runtimeRoot === "string"
+            ? runtimeInfo.runtimeRoot.trim() || null
+            : null,
+        runtimeLayout:
+          typeof runtimeInfo?.runtimeLayout === "string"
+            ? runtimeInfo.runtimeLayout.trim() || null
+            : null,
+        acpxBridgeAvailable: runtimeInfo?.acpxBridgeAvailable === true,
+      });
+    };
+
     if (!window.pixelForgeDesktop?.app) {
       void fetch(`${HTTP_BACKEND_URL}/api/runtime-info`, {
         credentials: "include",
@@ -122,12 +142,10 @@ function App() {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
-          return response.json() as Promise<{ controllerVersion?: string | null }>;
+          return response.json() as Promise<Partial<PixelForgeDesktopRuntimeInfo>>;
         })
         .then((payload) => {
-          if (!cancelled) {
-            setControllerVersion(payload.controllerVersion?.trim() || null);
-          }
+          applyRuntimeInfo(payload);
         })
         .catch((error) => {
           console.error("[app] Failed to load runtime info:", error);
@@ -168,9 +186,7 @@ function App() {
     void window.pixelForgeDesktop.app
       .getRuntimeInfo()
       .then((runtimeInfo) => {
-        if (!cancelled) {
-          setControllerVersion(runtimeInfo.controllerVersion?.trim() || null);
-        }
+        applyRuntimeInfo(runtimeInfo);
       })
       .catch((error) => {
         console.error("[app] Failed to load runtime info:", error);
@@ -239,7 +255,7 @@ function App() {
       window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);
     };
   }, [
-    setControllerVersion,
+    setRuntimeInfo,
     setControllerUpdateApplyState,
     setDismissedControllerUpdateId,
     setPendingControllerUpdate,

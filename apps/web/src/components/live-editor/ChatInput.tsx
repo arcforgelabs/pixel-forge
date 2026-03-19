@@ -32,10 +32,19 @@ export function ChatInput() {
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const agentPickerRef = useRef<HTMLDivElement>(null)
   const { sendMessage, isStreaming, selectedElements } = useLiveEditorStore()
-  const { agentType, setAgentType } = useSessionStore()
+  const {
+    agentType,
+    setAgentType,
+    liveEditorSession,
+    selectedAgentDeckTargetId,
+    agentDeckTargets,
+  } = useSessionStore()
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
   ).size
+  const selectedAgentDeckTarget = agentDeckTargets.find(
+    (target) => target.id === selectedAgentDeckTargetId
+  )
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -168,6 +177,14 @@ export function ChatInput() {
               across {sourceCount} tabs
             </span>
           )}
+        </div>
+      )}
+
+      {(selectedAgentDeckTarget || liveEditorSession?.agentDeckSessionTitle) && (
+        <div className="mb-2 text-xs text-muted-foreground">
+          {liveEditorSession
+            ? `Bound to Agent Deck session ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || liveEditorSession.threadId}.`
+            : `Targeting Agent Deck session ${selectedAgentDeckTarget?.title || selectedAgentDeckTarget?.id}.`}
         </div>
       )}
 

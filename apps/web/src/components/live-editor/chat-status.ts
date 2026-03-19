@@ -43,7 +43,13 @@ export function summarizeToolStatus(
         ? input.pattern
         : typeof input.command === 'string' && input.command
           ? input.command
-          : ''
+          : typeof input.path === 'string' && input.path
+            ? input.path
+            : typeof input.cwd === 'string' && input.cwd
+              ? input.cwd
+              : typeof input.title === 'string' && input.title
+                ? input.title
+                : ''
 
   const compactTarget =
     target.length > 48

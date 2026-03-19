@@ -109,7 +109,7 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
         )
         conn.execute(
             """
-            INSERT INTO sessions (
+            INSERT OR IGNORE INTO sessions (
                 project_path,
                 thread_id,
                 backend,
@@ -118,12 +118,6 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
                 created_at,
                 last_active
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-                project_path = excluded.project_path,
-                backend = excluded.backend,
-                agent_deck_session_id = excluded.agent_deck_session_id,
-                agent_deck_session_title = excluded.agent_deck_session_title,
-                last_active = excluded.last_active
             """,
             (
                 normalized_path,
@@ -234,7 +228,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                     normalized_path = normalize_project_path(row["project_path"])
                     conn.execute(
                         """
-                        INSERT INTO sessions (
+                        INSERT OR IGNORE INTO sessions (
                             project_path,
                             thread_id,
                             backend,
@@ -243,13 +237,6 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                             created_at,
                             last_active
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(thread_id) DO UPDATE SET
-                            project_path = excluded.project_path,
-                            backend = excluded.backend,
-                            agent_deck_session_id = excluded.agent_deck_session_id,
-                            agent_deck_session_title = excluded.agent_deck_session_title,
-                            created_at = MIN(sessions.created_at, excluded.created_at),
-                            last_active = MAX(sessions.last_active, excluded.last_active)
                         """,
                         (
                             normalized_path,

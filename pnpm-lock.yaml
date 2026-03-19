@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      acpx:
+        specifier: 0.3.1
+        version: 0.3.1(zod@3.25.76)
 
   apps/desktop:
     dependencies:
@@ -203,6 +207,11 @@ importers:
 
 packages:
 
+  '@agentclientprotocol/sdk@0.15.0':
+    resolution: {integrity: sha512-TH4utu23Ix8ec34srBHmDD4p3HI0cYleS1jN9lghRczPfhFlMBNrQgZWeBBe12DWy27L11eIrtciY2MXFSEiDg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
@@ -286,6 +295,12 @@ packages:
   '@babel/types@7.29.0':
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
+
+  '@clack/core@1.1.0':
+    resolution: {integrity: sha512-SVcm4Dqm2ukn64/8Gub2wnlA5nS2iWJyCkdNHcvNHPIeBTGojpdJ+9cZKwLfmqy7irD4N5qLteSilJlE0WLAtA==}
+
+  '@clack/prompts@1.1.0':
+    resolution: {integrity: sha512-pkqbPGtohJAvm4Dphs2M8xE29ggupihHdy1x84HNojZuMtFsHiUlRvqD24tM2+XmI+61LlfNceM3Wr7U5QES5g==}
 
   '@codemirror/autocomplete@6.20.1':
     resolution: {integrity: sha512-1cvg3Vz1dSSToCNlJfRA2WSI4ht3K+WplO0UMOgmUYPivCyy2oueZY6Lx7M9wThm7SDUBViRmuT+OG/i8+ON9A==}
@@ -1237,6 +1252,11 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
+  acpx@0.3.1:
+    resolution: {integrity: sha512-761rkCnL1q9D6S5g5MP9C/aK7XdeoO4KkLFkCCxFExmi+/luwlrpNWcjPTDCap2WUXbTBy1vPTfGlSBiiGEIng==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
+
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
@@ -1474,6 +1494,10 @@ packages:
 
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
+
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
 
   commander@4.1.1:
     resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
@@ -2618,6 +2642,14 @@ packages:
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
+  sisteransi@1.0.5:
+    resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
+  skillflag@0.1.4:
+    resolution: {integrity: sha512-egFg+XCF5sloOWdtzxZivTX7n4UDj5pxQoY33wbT8h+YSDjMQJ76MZUg2rXQIBXmIDtlZhLgirS1g/3R5/qaHA==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   smart-buffer@4.2.0:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
@@ -3094,6 +3126,10 @@ packages:
 
 snapshots:
 
+  '@agentclientprotocol/sdk@0.15.0(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
+
   '@alloc/quick-lru@5.2.0': {}
 
   '@anthropic-ai/sdk@0.79.0(zod@3.25.76)':
@@ -3203,6 +3239,15 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
+
+  '@clack/core@1.1.0':
+    dependencies:
+      sisteransi: 1.0.5
+
+  '@clack/prompts@1.1.0':
+    dependencies:
+      '@clack/core': 1.1.0
+      sisteransi: 1.0.5
 
   '@codemirror/autocomplete@6.20.1':
     dependencies:
@@ -4228,6 +4273,17 @@ snapshots:
 
   acorn@8.16.0: {}
 
+  acpx@0.3.1(zod@3.25.76):
+    dependencies:
+      '@agentclientprotocol/sdk': 0.15.0(zod@3.25.76)
+      commander: 14.0.3
+      skillflag: 0.1.4
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - zod
+
   agent-base@7.1.4: {}
 
   ajv@6.14.0:
@@ -4449,6 +4505,8 @@ snapshots:
   color-name@1.1.4: {}
 
   comma-separated-tokens@2.0.3: {}
+
+  commander@14.0.3: {}
 
   commander@4.1.1: {}
 
@@ -5740,6 +5798,17 @@ snapshots:
   shebang-regex@3.0.0: {}
 
   siginfo@2.0.0: {}
+
+  sisteransi@1.0.5: {}
+
+  skillflag@0.1.4:
+    dependencies:
+      '@clack/prompts': 1.1.0
+      tar-stream: 3.1.8
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
 
   smart-buffer@4.2.0: {}
 

@@ -23,6 +23,10 @@ class LiveEditorThreadRecord:
     backend: str
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
+    acpx_agent: str | None
+    acpx_session_name: str | None
+    acpx_record_id: str | None
+    acp_session_id: str | None
     claude_session_id: str | None
     last_request_id: str | None
     created_at: str
@@ -59,7 +63,9 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
         rows = legacy_conn.execute(
             """
             SELECT thread_id, project_path, backend, agent_deck_session_id,
-                   agent_deck_session_title, claude_session_id, last_request_id,
+                   agent_deck_session_title, NULL AS acpx_agent,
+                   NULL AS acpx_session_name, NULL AS acpx_record_id,
+                   NULL AS acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
             FROM live_editor_threads
             """
@@ -74,11 +80,15 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title,
+                acpx_agent,
+                acpx_session_name,
+                acpx_record_id,
+                acp_session_id,
                 claude_session_id,
                 last_request_id,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["thread_id"],
@@ -86,6 +96,10 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
                 row["backend"],
                 row["agent_deck_session_id"],
                 row["agent_deck_session_title"],
+                row["acpx_agent"],
+                row["acpx_session_name"],
+                row["acpx_record_id"],
+                row["acp_session_id"],
                 row["claude_session_id"],
                 row["last_request_id"],
                 row["created_at"],
@@ -114,7 +128,9 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
             rows = legacy_conn.execute(
                 """
                 SELECT thread_id, project_path, backend, agent_deck_session_id,
-                       agent_deck_session_title, claude_session_id, last_request_id,
+                       agent_deck_session_title, NULL AS acpx_agent,
+                       NULL AS acpx_session_name, NULL AS acpx_record_id,
+                       NULL AS acp_session_id, claude_session_id, last_request_id,
                        created_at, updated_at
                 FROM live_editor_threads
                 """
@@ -123,26 +139,21 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
         for row in rows:
             conn.execute(
                 """
-                INSERT INTO live_editor_threads (
+                INSERT OR IGNORE INTO live_editor_threads (
                     thread_id,
                     project_path,
                     backend,
                     agent_deck_session_id,
                     agent_deck_session_title,
+                    acpx_agent,
+                    acpx_session_name,
+                    acpx_record_id,
+                    acp_session_id,
                     claude_session_id,
                     last_request_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(thread_id) DO UPDATE SET
-                    project_path = excluded.project_path,
-                    backend = excluded.backend,
-                    agent_deck_session_id = excluded.agent_deck_session_id,
-                    agent_deck_session_title = excluded.agent_deck_session_title,
-                    claude_session_id = excluded.claude_session_id,
-                    last_request_id = excluded.last_request_id,
-                    created_at = MIN(live_editor_threads.created_at, excluded.created_at),
-                    updated_at = MAX(live_editor_threads.updated_at, excluded.updated_at)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["thread_id"],
@@ -150,6 +161,10 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                     row["backend"],
                     row["agent_deck_session_id"],
                     row["agent_deck_session_title"],
+                    row["acpx_agent"],
+                    row["acpx_session_name"],
+                    row["acpx_record_id"],
+                    row["acp_session_id"],
                     row["claude_session_id"],
                     row["last_request_id"],
                     row["created_at"],
@@ -175,6 +190,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 backend TEXT NOT NULL,
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
+                acpx_agent TEXT,
+                acpx_session_name TEXT,
+                acpx_record_id TEXT,
+                acp_session_id TEXT,
                 claude_session_id TEXT,
                 last_request_id TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -182,6 +201,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             )
             """
         )
+        existing_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(live_editor_threads)").fetchall()
+        }
+        for column_name in (
+            "acpx_agent",
+            "acpx_session_name",
+            "acpx_record_id",
+            "acp_session_id",
+        ):
+            if column_name in existing_columns:
+                continue
+            conn.execute(
+                f"ALTER TABLE live_editor_threads ADD COLUMN {column_name} TEXT"
+            )
         _migrate_legacy_rows(conn)
         _migrate_legacy_instance_rows(conn)
         conn.commit()
@@ -195,6 +229,10 @@ def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
         backend=row["backend"],
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
+        acpx_agent=row["acpx_agent"],
+        acpx_session_name=row["acpx_session_name"],
+        acpx_record_id=row["acpx_record_id"],
+        acp_session_id=row["acp_session_id"],
         claude_session_id=row["claude_session_id"],
         last_request_id=row["last_request_id"],
         created_at=row["created_at"],
@@ -207,7 +245,8 @@ def get_live_editor_thread(thread_id: str) -> LiveEditorThreadRecord | None:
         row = conn.execute(
             """
             SELECT thread_id, project_path, backend, agent_deck_session_id,
-                   agent_deck_session_title, claude_session_id, last_request_id,
+                   agent_deck_session_title, acpx_agent, acpx_session_name,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE thread_id = ?
@@ -261,6 +300,10 @@ def update_live_editor_thread(
     *,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
+    acpx_agent: str | None = None,
+    acpx_session_name: str | None = None,
+    acpx_record_id: str | None = None,
+    acp_session_id: str | None = None,
     claude_session_id: str | None = None,
     last_request_id: str | None = None,
 ) -> LiveEditorThreadRecord:
@@ -273,6 +316,18 @@ def update_live_editor_thread(
     if agent_deck_session_title is not None:
         assignments.append("agent_deck_session_title = ?")
         values.append(agent_deck_session_title)
+    if acpx_agent is not None:
+        assignments.append("acpx_agent = ?")
+        values.append(acpx_agent)
+    if acpx_session_name is not None:
+        assignments.append("acpx_session_name = ?")
+        values.append(acpx_session_name)
+    if acpx_record_id is not None:
+        assignments.append("acpx_record_id = ?")
+        values.append(acpx_record_id)
+    if acp_session_id is not None:
+        assignments.append("acp_session_id = ?")
+        values.append(acp_session_id)
     if claude_session_id is not None:
         assignments.append("claude_session_id = ?")
         values.append(claude_session_id)

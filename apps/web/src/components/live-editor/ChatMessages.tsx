@@ -140,9 +140,35 @@ export function ChatMessages({
               >
                 {msg.role === 'assistant' ? (
                   <div className="space-y-2">
-                    <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    </div>
+                    {msg.content && (
+                      <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                    )}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {msg.attachments.map((attachment) => (
+                          attachment.kind === 'image' ? (
+                            <img
+                              key={attachment.id}
+                              src={attachment.dataUrl}
+                              alt={attachment.name}
+                              className="max-h-48 rounded-lg border border-border/40 object-contain"
+                            />
+                          ) : (
+                            <div
+                              key={attachment.id}
+                              className="flex max-w-[16rem] items-center gap-2 rounded-lg border border-border/40 bg-background/50 px-3 py-2 text-foreground"
+                            >
+                              <FileText className="h-4 w-4 shrink-0" />
+                              <span className="truncate text-xs font-medium">
+                                {attachment.name}
+                              </span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
                     {msg.isRemoteComplete && onRefreshPreview && (
                       <Button
                         variant="outline"

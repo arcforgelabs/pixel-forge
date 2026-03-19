@@ -100,6 +100,9 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
 
 export interface PixelForgeDesktopRuntimeInfo {
   controllerVersion: string
+  runtimeRoot: string | null
+  runtimeLayout: string | null
+  acpxBridgeAvailable: boolean
 }
 
 export interface PixelForgeDesktopAppAPI {

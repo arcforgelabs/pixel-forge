@@ -23,6 +23,8 @@ class RequestPack:
     request_id: str
     directory: Path
     relative_directory: str
+    session_brief_file: Path | None
+    relative_session_brief_file: str | None
     request_file: Path
     relative_request_file: str
     manifest_file: Path
@@ -46,6 +48,14 @@ def _request_root(project_path: str) -> Path:
     request_root.mkdir(parents=True, exist_ok=True)
     _ensure_project_exclude(project_root)
     return request_root
+
+
+def _thread_root(project_path: str, thread_id: str) -> Path:
+    project_root = Path(project_path).resolve()
+    thread_root = project_root / ".pixel-forge" / "threads" / _safe_name(thread_id, "thread")
+    thread_root.mkdir(parents=True, exist_ok=True)
+    _ensure_project_exclude(project_root)
+    return thread_root
 
 
 def _ensure_project_exclude(project_root: Path) -> None:
@@ -135,6 +145,56 @@ def _is_remote_preview(url: str | None) -> bool:
     return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
 
 
+def _write_session_brief(
+    project_path: str,
+    thread_id: str,
+    *,
+    agent_deck_session_id: str | None = None,
+    agent_deck_session_title: str | None = None,
+    session_working_rules: list[str] | None = None,
+) -> tuple[Path, str]:
+    project_root = Path(project_path).resolve()
+    session_brief_path = _thread_root(project_path, thread_id) / "session-brief.md"
+    relative_session_brief_path = str(session_brief_path.relative_to(project_root))
+
+    brief_sections = [
+        "# Pixel Forge Live Edit Session Brief",
+        "",
+        f"- Thread ID: `{thread_id}`",
+        "- This file holds stable Pixel Forge workflow context for this same Live Editor thread.",
+        "- Later request packs should normally be treated as deltas, not as a full session reboot.",
+    ]
+
+    if agent_deck_session_id and agent_deck_session_title:
+        brief_sections.append(
+            f"- Visible Agent Deck Session: `{agent_deck_session_title}` (`{agent_deck_session_id}`)"
+        )
+    elif agent_deck_session_id:
+        brief_sections.append(f"- Visible Agent Deck Session ID: `{agent_deck_session_id}`")
+
+    stable_working_rules = [
+        "- Read each new request pack before changing code.",
+        "- Treat the request-pack artifacts as the source of truth for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge has already captured evidence.",
+        "- If the captured selection tunnel or attachments are still insufficient to verify a live behavior claim, say that explicitly instead of guessing.",
+        "- Do not use AskUserQuestion for this request flow. Make the smallest reasonable assumption and state it in the final confirmation if needed.",
+        "- Briefly confirm what you changed when you are done.",
+    ]
+    if session_working_rules:
+        stable_working_rules.extend(session_working_rules)
+
+    brief_sections.extend(
+        [
+            "",
+            "## Stable Working Rules",
+            "",
+            *stable_working_rules,
+        ]
+    )
+
+    session_brief_path.write_text("\n".join(brief_sections) + "\n", encoding="utf-8")
+    return session_brief_path, relative_session_brief_path
+
+
 def create_request_pack(
     project_path: str,
     thread_id: str,
@@ -143,14 +203,28 @@ def create_request_pack(
     attachments: list[dict[str, str]],
     *,
     agent_deck_session_id: str | None = None,
+    agent_deck_session_title: str | None = None,
+    acpx_agent: str | None = None,
+    acpx_session_name: str | None = None,
+    acpx_record_id: str | None = None,
+    acp_session_id: str | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
-    extra_working_rules: list[str] | None = None,
+    bootstrap: bool = True,
+    session_working_rules: list[str] | None = None,
+    turn_working_rules: list[str] | None = None,
 ) -> RequestPack:
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
     pack_dir = request_root / request_id
     pack_dir.mkdir(parents=True, exist_ok=False)
+    session_brief_path, relative_session_brief_path = _write_session_brief(
+        project_path,
+        thread_id,
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=agent_deck_session_title,
+        session_working_rules=session_working_rules,
+    )
 
     selected_path: Path | None = None
     relative_selected_path: str | None = None
@@ -199,24 +273,54 @@ def create_request_pack(
         f"- Thread ID: `{thread_id}`",
         f"- Request ID: `{request_id}`",
     ]
-    if agent_deck_session_id:
+    if agent_deck_session_id and agent_deck_session_title:
+        request_sections.append(
+            f"- Agent Deck Session: `{agent_deck_session_title}` (`{agent_deck_session_id}`)"
+        )
+    elif agent_deck_session_id:
         request_sections.append(f"- Agent Deck Session ID: `{agent_deck_session_id}`")
-    working_rules = [
-        "- Read this request pack before changing code.",
-        "- Make the smallest correct change.",
-        "- Treat the request-pack artifacts as the source of truth for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge has already captured evidence.",
-        "- If the captured selection tunnel or attachments are still insufficient to verify a live behavior claim, say that explicitly instead of guessing.",
-        "- Do not use AskUserQuestion for this request. Make the smallest reasonable assumption and state it in the final confirmation if needed.",
-        "- Briefly confirm what you changed when you are done.",
-    ]
-    if extra_working_rules:
-        working_rules.extend(extra_working_rules)
+    if acpx_agent and acpx_session_name:
+        request_sections.append(
+            f"- ACPX Session: `{acpx_session_name}` via `{acpx_agent}`"
+        )
+    if acpx_record_id:
+        request_sections.append(f"- ACPX Record ID: `{acpx_record_id}`")
+    if acp_session_id:
+        request_sections.append(f"- ACP Session ID: `{acp_session_id}`")
+
+    if bootstrap:
+        request_intro = [
+            "",
+            "## Session Bootstrap",
+            "",
+            f"- Read `{relative_session_brief_path}` before you act on this thread.",
+            "- Treat this request pack as the first Pixel Forge handoff for the current endpoint-session continuity.",
+        ]
+        working_rules = [
+            "- Read this request pack before changing code.",
+            "- Make the smallest correct change.",
+        ]
+    else:
+        request_intro = [
+            "",
+            "## Session Continuity",
+            "",
+            "- This turn is a delta, not a full session reboot.",
+            f"- Stable thread brief: `{relative_session_brief_path}`. Re-read it only if needed.",
+        ]
+        working_rules = [
+            "- Read this request pack before changing code.",
+            "- Make the smallest correct change.",
+        ]
+    if turn_working_rules:
+        working_rules.extend(turn_working_rules)
     request_sections.extend(
         [
             "",
             "## User Request",
             "",
             message.strip() or "Use the attached request context and make the requested live edit.",
+            *request_intro,
             "",
             "## Working Rules",
             "",
@@ -277,7 +381,14 @@ def create_request_pack(
                 "request_id": request_id,
                 "thread_id": thread_id,
                 "agent_deck_session_id": agent_deck_session_id,
+                "agent_deck_session_title": agent_deck_session_title,
+                "acpx_agent": acpx_agent,
+                "acpx_session_name": acpx_session_name,
+                "acpx_record_id": acpx_record_id,
+                "acp_session_id": acp_session_id,
                 "preview_url": preview_url,
+                "bootstrap": bootstrap,
+                "session_brief_file": relative_session_brief_path,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
                 "selection_tunnel_file": relative_selection_tunnel_path,
@@ -296,6 +407,8 @@ def create_request_pack(
         request_id=request_id,
         directory=pack_dir,
         relative_directory=str(pack_dir.relative_to(Path(project_path).resolve())),
+        session_brief_file=session_brief_path,
+        relative_session_brief_file=relative_session_brief_path,
         request_file=request_file,
         relative_request_file=relative_request_file,
         manifest_file=manifest_file,

@@ -30,6 +30,7 @@ import {
 
 export interface ToolActivity {
   id: string
+  toolCallId?: string | null
   tool: string
   input: Record<string, unknown>
   result?: string
@@ -73,6 +74,7 @@ interface LiveEditorChatStore {
   messages: ChatMessage[]
   isStreaming: boolean
   currentStreamContent: string
+  pendingAssistantAttachments: ChatAttachment[]
   currentTool: ToolActivity | null
   currentStatusMessage: string
   currentSelectionCount: number
@@ -145,6 +147,28 @@ function buildAttachmentSummary(attachments: ChatAttachment[]): string {
   }
 
   return `Attached ${imageCount} image${imageCount === 1 ? '' : 's'} and ${fileCount} file${fileCount === 1 ? '' : 's'}.`
+}
+
+function shouldMirrorSelectionAttachmentsToAssistant(
+  content: string,
+  selectionAttachments: ChatAttachment[]
+): boolean {
+  if (selectionAttachments.length === 0) {
+    return false
+  }
+
+  const normalized = content.trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+
+  return (
+    /\bscreenshot\b|\bscreen\s*shot\b|\bimage\b|\bpicture\b|\bphoto\b/.test(normalized)
+    || (
+      /\b(show|share|send)\b/.test(normalized)
+      && /\b(this|that|it)\b/.test(normalized)
+    )
+  )
 }
 
 function cloneSelectedElement(element: SelectedElement): SelectedElement {
@@ -245,6 +269,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
   currentStreamContent: '',
+  pendingAssistantAttachments: [],
   currentTool: null,
   currentStatusMessage: '',
   currentSelectionCount: 0,
@@ -302,10 +327,21 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
         case 'tool_use': {
           // Tool execution started
+          const toolCallId =
+            typeof data.tool_call_id === 'string' && data.tool_call_id
+              ? data.tool_call_id
+              : null
           const toolActivity: ToolActivity = {
             id: generateId(),
-            tool: data.tool,
-            input: data.input,
+            toolCallId,
+            tool:
+              typeof data.tool === 'string' && data.tool
+                ? data.tool
+                : 'Tool',
+            input:
+              data.input && typeof data.input === 'object'
+                ? (data.input as Record<string, unknown>)
+                : {},
             status: 'running',
           }
           set((state) => ({
@@ -332,27 +368,47 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
         case 'tool_result': {
           // Tool execution completed
           const { currentTool, messages } = get()
-          if (currentTool) {
+          const toolCallId =
+            typeof data.tool_call_id === 'string' && data.tool_call_id
+              ? data.tool_call_id
+              : null
+          const matchingMessage = [...messages].reverse().find((msg) => {
+            if (msg.role !== 'tool' || !msg.toolActivity) {
+              return false
+            }
+            if (toolCallId) {
+              return msg.toolActivity.toolCallId === toolCallId
+            }
+            return currentTool ? msg.id === currentTool.id : false
+          })
+          if (matchingMessage?.toolActivity) {
+            const updatedTool = {
+              ...matchingMessage.toolActivity,
+              result:
+                typeof data.content === 'string'
+                  ? data.content
+                  : String(data.content ?? ''),
+              isError: Boolean(data.is_error),
+              status: 'complete' as const,
+            }
             const updatedMessages = messages.map((msg) =>
-              msg.id === currentTool.id
+              msg.id === matchingMessage.id
                 ? {
                     ...msg,
-                    toolActivity: {
-                      ...currentTool,
-                      result: data.content,
-                      isError: data.is_error,
-                      status: 'complete' as const,
-                    },
+                    toolActivity: updatedTool,
                   }
                 : msg
             )
             set({
               messages: updatedMessages,
-              currentTool: null,
+              currentTool:
+                currentTool && currentTool.id === matchingMessage.toolActivity.id
+                  ? null
+                  : currentTool,
               currentStatusMessage: summarizeToolStatus(
-                currentTool.tool,
-                currentTool.input,
-                data.is_error ? 'error' : 'complete'
+                updatedTool.tool,
+                updatedTool.input,
+                updatedTool.isError ? 'error' : 'complete'
               ),
             })
           }
@@ -361,7 +417,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
         case 'complete': {
           // Response complete
-          const { currentStreamContent, messages: msgs } = get()
+          const {
+            currentStreamContent,
+            messages: msgs,
+            pendingAssistantAttachments,
+          } = get()
           const isRemoteTarget = !!data.is_remote_target
           const isSelfEditSafeMode = !!data.self_edit_safe_mode
           const canStageControllerUpdate = isSelfEditSafeMode && !!window.pixelForgeDesktop?.app
@@ -397,23 +457,43 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
                   id: generateId(),
                   role: 'assistant',
                   content: currentStreamContent,
+                  attachments:
+                    pendingAssistantAttachments.length > 0
+                      ? pendingAssistantAttachments
+                      : undefined,
                   timestamp: new Date(),
                 },
                 completionMessage,
               ],
               currentStreamContent: '',
+              pendingAssistantAttachments: [],
               isStreaming: false,
               currentStatusMessage: '',
               currentSelectionCount: 0,
               currentRequestId: null,
             })
           } else {
+            const nextMessages =
+              pendingAssistantAttachments.length > 0
+                ? [
+                    ...get().messages,
+                    {
+                      id: generateId(),
+                      role: 'assistant' as const,
+                      content: '',
+                      attachments: pendingAssistantAttachments,
+                      timestamp: new Date(),
+                    },
+                    completionMessage,
+                  ]
+                : [
+                    ...get().messages,
+                    completionMessage,
+                  ]
             set({
-              messages: [
-                ...get().messages,
-                completionMessage,
-              ],
+              messages: nextMessages,
               isStreaming: false,
+              pendingAssistantAttachments: [],
               currentStatusMessage: '',
               currentSelectionCount: 0,
               currentRequestId: null,
@@ -481,6 +561,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             ],
             isStreaming: false,
             currentStreamContent: '',
+            pendingAssistantAttachments: [],
             currentStatusMessage: '',
             currentSelectionCount: 0,
             currentRequestId: null,
@@ -502,6 +583,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
         isStreaming,
         currentStreamContent,
         messages,
+        pendingAssistantAttachments,
       } = get()
 
       if (isStreaming) {
@@ -511,6 +593,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             id: generateId(),
             role: 'assistant',
             content: currentStreamContent,
+            attachments:
+              pendingAssistantAttachments.length > 0
+                ? pendingAssistantAttachments
+                : undefined,
             timestamp: new Date(),
           })
         }
@@ -526,6 +612,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           connected: false,
           isStreaming: false,
           currentStreamContent: '',
+          pendingAssistantAttachments: [],
           currentStatusMessage: '',
           currentSelectionCount: 0,
           currentRequestId: null,
@@ -546,7 +633,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
   disconnect: () => {
     get().ws?.close()
-    set({ ws: null, connected: false })
+    set({ ws: null, connected: false, pendingAssistantAttachments: [] })
   },
 
   // -------------------------------------------------------------------------
@@ -594,6 +681,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       selectionAttachments,
     } = buildSelectionPayload()
     const requestAttachments = [...selectionAttachments, ...attachments]
+    const pendingAssistantAttachments = shouldMirrorSelectionAttachmentsToAssistant(
+      trimmedContent,
+      selectionAttachments
+    )
+      ? selectionAttachments
+      : []
     const userVisibleContent =
       trimmedContent ||
       buildAttachmentSummary(attachments)
@@ -612,6 +705,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       ],
       isStreaming: true,
       currentStreamContent: '',
+      pendingAssistantAttachments,
       currentStatusMessage:
         selectionTunnel.selections.length > 0
           ? `Preparing request with ${selectionTunnel.selections.length} selection${selectionTunnel.selections.length === 1 ? '' : 's'}...`
@@ -622,6 +716,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
     const previewUrl = useSessionStore.getState().previewUrl
     const agentType = useSessionStore.getState().agentType
+    const targetAgentDeckSessionId =
+      useSessionStore.getState().selectedAgentDeckTargetId
     const payload: Record<string, unknown> = {
       message: trimmedContent,
       project_path: projectPath,
@@ -647,6 +743,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       payload.thread_id = sessionId
     }
 
+    if (targetAgentDeckSessionId) {
+      payload.target_agent_deck_session_id = targetAgentDeckSessionId
+    }
+
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       set((state) => ({
         queuedMessages: [...state.queuedMessages, { payload }],
@@ -663,6 +763,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     set({
       messages: [],
       currentStreamContent: '',
+      pendingAssistantAttachments: [],
       currentStatusMessage: '',
       currentSelectionCount: 0,
       currentRequestId: null,
@@ -674,6 +775,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
     set({
       messages: [],
       currentStreamContent: '',
+      pendingAssistantAttachments: [],
       currentStatusMessage: '',
       currentSelectionCount: 0,
       currentRequestId: null,

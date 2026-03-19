@@ -16,6 +16,17 @@ export interface LiveEditorSessionMeta {
   requestId?: string | null;
 }
 
+export interface AgentDeckSessionTarget {
+  id: string;
+  title: string;
+  path: string;
+  group: string | null;
+  tool: string | null;
+  command: string | null;
+  status: string | null;
+  createdAt: string | null;
+}
+
 export interface SavedProject {
   path: string;
   name: string;
@@ -39,6 +50,13 @@ export interface LastSavedFile {
   timestamp: string;
 }
 
+export interface ControllerRuntimeInfo {
+  controllerVersion: string | null;
+  runtimeRoot: string | null;
+  runtimeLayout: string | null;
+  acpxBridgeAvailable: boolean;
+}
+
 interface SessionStore {
   // Current project
   projectPath: string | null;
@@ -53,6 +71,8 @@ interface SessionStore {
   // Server-backed project/session state
   recentProjects: SavedProject[];
   projectSessions: ProjectSessionRecord[];
+  agentDeckTargets: AgentDeckSessionTarget[];
+  agentDeckTargetsLoading: boolean;
   projectsLoaded: boolean;
   projectsLoading: boolean;
 
@@ -61,6 +81,9 @@ interface SessionStore {
   customOutputPath: string | null;
   lastSavedFile: LastSavedFile | null;
   controllerVersion: string | null;
+  controllerRuntimeRoot: string | null;
+  controllerRuntimeLayout: string | null;
+  controllerAcpxBridgeAvailable: boolean;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   dismissedControllerUpdateId: string | null;
   controllerUpdateApplyState: PixelForgeDesktopControllerUpdateApplyState;
@@ -78,6 +101,13 @@ interface SessionStore {
   switchMode: (mode: ActiveMode) => void;
   newSession: () => void;
   clearLiveEditorSession: () => void;
+  refreshAgentDeckTargets: () => Promise<void>;
+  createAgentDeckTargetSession: (options?: {
+    agentType?: string;
+    title?: string | null;
+  }) => Promise<AgentDeckSessionTarget>;
+  selectedAgentDeckTargetId: string | null;
+  setSelectedAgentDeckTargetId: (sessionId: string | null) => void;
   clearProject: () => void;
   setPreviewUrl: (url: string | null) => Promise<void>;
   setOutputSettings: (
@@ -100,7 +130,7 @@ interface SessionStore {
 
   // Helpers
   getCurrentProjectUrls: () => string[];
-  setControllerVersion: (version: string | null) => void;
+  setRuntimeInfo: (runtimeInfo: ControllerRuntimeInfo) => void;
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
   ) => void;
@@ -137,6 +167,17 @@ interface ApiSession {
   last_active: string;
 }
 
+interface ApiAgentDeckSessionTarget {
+  id: string;
+  title: string;
+  path: string;
+  group: string | null;
+  tool: string | null;
+  command: string | null;
+  status: string | null;
+  created_at: string | null;
+}
+
 function getProjectName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] || path;
@@ -164,6 +205,21 @@ function normalizeSession(session: ApiSession): ProjectSessionRecord {
     createdAt: session.created_at,
     lastActive: session.last_active,
     requestId: null,
+  };
+}
+
+function normalizeAgentDeckTarget(
+  session: ApiAgentDeckSessionTarget
+): AgentDeckSessionTarget {
+  return {
+    id: session.id,
+    title: session.title,
+    path: session.path,
+    group: session.group,
+    tool: session.tool,
+    command: session.command,
+    status: session.status,
+    createdAt: session.created_at,
   };
 }
 
@@ -197,6 +253,30 @@ function mergeSession(
       };
 
   return [merged, ...sessions.filter((entry) => entry.threadId !== merged.threadId)];
+}
+
+function ensureAgentDeckTargetPresent(
+  targets: AgentDeckSessionTarget[],
+  session: LiveEditorSessionMeta | null
+): AgentDeckSessionTarget[] {
+  const sessionId = session?.agentDeckSessionId ?? null;
+  if (!sessionId || targets.some((target) => target.id === sessionId)) {
+    return targets;
+  }
+
+  return [
+    {
+      id: sessionId,
+      title: session?.agentDeckSessionTitle || sessionId,
+      path: "",
+      group: null,
+      tool: null,
+      command: null,
+      status: "unknown",
+      createdAt: null,
+    },
+    ...targets,
+  ];
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -275,6 +355,35 @@ async function fetchProjectSessions(projectPath: string): Promise<ProjectSession
   return payload.sessions.map(normalizeSession);
 }
 
+async function fetchAgentDeckTargets(
+  projectPath: string
+): Promise<AgentDeckSessionTarget[]> {
+  const payload = await requestJson<{ sessions: ApiAgentDeckSessionTarget[] }>(
+    `/api/projects/${encodeURIComponent(projectPath)}/agent-deck-sessions`
+  );
+  return payload.sessions.map(normalizeAgentDeckTarget);
+}
+
+async function createAgentDeckTarget(
+  projectPath: string,
+  options: {
+    agentType: string;
+    title?: string | null;
+  }
+): Promise<AgentDeckSessionTarget> {
+  const payload = await requestJson<ApiAgentDeckSessionTarget>(
+    `/api/projects/${encodeURIComponent(projectPath)}/agent-deck-sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        agent_type: options.agentType,
+        title: options.title ?? null,
+      }),
+    }
+  );
+  return normalizeAgentDeckTarget(payload);
+}
+
 export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Current project
   projectPath: null,
@@ -289,6 +398,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Server-backed project/session state
   recentProjects: [],
   projectSessions: [],
+  agentDeckTargets: [],
+  agentDeckTargetsLoading: false,
   projectsLoaded: false,
   projectsLoading: false,
 
@@ -297,6 +408,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   customOutputPath: null,
   lastSavedFile: null,
   controllerVersion: null,
+  controllerRuntimeRoot: null,
+  controllerRuntimeLayout: null,
+  controllerAcpxBridgeAvailable: false,
   pendingControllerUpdate: null,
   dismissedControllerUpdateId: null,
   controllerUpdateApplyState: {
@@ -369,15 +483,23 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: nextCustomOutputPath,
     });
 
-    const [previewUrls, projectSessions] = await Promise.all([
+    const [previewUrls, projectSessions, agentDeckTargets] = await Promise.all([
       previewUrl?.trim()
         ? touchProjectUrl(savedProject.path, previewUrl.trim())
         : fetchProjectUrls(savedProject.path),
       fetchProjectSessions(savedProject.path),
+      fetchAgentDeckTargets(savedProject.path).catch((error) => {
+        console.error("[session-store] Failed to load Agent Deck sessions:", error);
+        return [];
+      }),
     ]);
 
     const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
     const currentSession = projectSessions[0] ?? null;
+    const hydratedTargets = ensureAgentDeckTargetPresent(
+      agentDeckTargets,
+      currentSession
+    );
     const updatedProject: SavedProject = {
       ...savedProject,
       previewUrls,
@@ -392,8 +514,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: savedProject.customOutputPath ?? null,
       sessionId: null,
       liveEditorSession: currentSession,
+      selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
       projectSessions,
+      agentDeckTargets: hydratedTargets,
     }));
   },
 
@@ -404,7 +528,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
+      selectedAgentDeckTargetId:
+        session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
     }));
   },
 
@@ -420,6 +547,70 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ liveEditorSession: null });
   },
 
+  refreshAgentDeckTargets: async () => {
+    const { projectPath, liveEditorSession, selectedAgentDeckTargetId } = get();
+    if (!projectPath) {
+      set({ agentDeckTargets: [], selectedAgentDeckTargetId: null });
+      return;
+    }
+
+    set({ agentDeckTargetsLoading: true });
+    try {
+      const targets = ensureAgentDeckTargetPresent(
+        await fetchAgentDeckTargets(projectPath),
+        liveEditorSession
+      );
+      const nextSelectedTargetId = liveEditorSession?.agentDeckSessionId
+        ?? (selectedAgentDeckTargetId && targets.some((target) => target.id === selectedAgentDeckTargetId)
+          ? selectedAgentDeckTargetId
+          : null);
+
+      set({
+        agentDeckTargets: targets,
+        selectedAgentDeckTargetId: nextSelectedTargetId,
+        agentDeckTargetsLoading: false,
+      });
+    } catch (error) {
+      set({ agentDeckTargetsLoading: false });
+      throw error;
+    }
+  },
+
+  createAgentDeckTargetSession: async (options) => {
+    const { projectPath, agentType, liveEditorSession } = get();
+    if (!projectPath) {
+      throw new Error("Project path is required");
+    }
+
+    set({ agentDeckTargetsLoading: true });
+    try {
+      const created = await createAgentDeckTarget(projectPath, {
+        agentType: options?.agentType ?? agentType,
+        title: options?.title ?? null,
+      });
+      set((state) => ({
+        agentDeckTargetsLoading: false,
+        selectedAgentDeckTargetId: created.id,
+        agentDeckTargets: ensureAgentDeckTargetPresent(
+          [
+            created,
+            ...state.agentDeckTargets.filter((target) => target.id !== created.id),
+          ],
+          liveEditorSession
+        ),
+      }));
+      return created;
+    } catch (error) {
+      set({ agentDeckTargetsLoading: false });
+      throw error;
+    }
+  },
+
+  selectedAgentDeckTargetId: null,
+  setSelectedAgentDeckTargetId: (sessionId) => {
+    set({ selectedAgentDeckTargetId: sessionId });
+  },
+
   clearProject: () => {
     set({
       projectPath: null,
@@ -431,6 +622,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: null,
       lastSavedFile: null,
       projectSessions: [],
+      agentDeckTargets: [],
+      agentDeckTargetsLoading: false,
+      selectedAgentDeckTargetId: null,
     });
   },
 
@@ -504,8 +698,13 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     });
   },
 
-  setControllerVersion: (controllerVersion) => {
-    set({ controllerVersion });
+  setRuntimeInfo: (runtimeInfo) => {
+    set({
+      controllerVersion: runtimeInfo.controllerVersion,
+      controllerRuntimeRoot: runtimeInfo.runtimeRoot,
+      controllerRuntimeLayout: runtimeInfo.runtimeLayout,
+      controllerAcpxBridgeAvailable: runtimeInfo.acpxBridgeAvailable,
+    });
   },
 
   setPendingControllerUpdate: (update) => {

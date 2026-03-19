@@ -6,7 +6,9 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
+from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
 from live_editor_threads import LiveEditorThreadRecord
 
 
@@ -19,8 +21,24 @@ STREAM_POLL_INTERVAL_SECONDS = 0.2
 class AgentDeckSessionInfo:
     agent_deck_session_id: str
     agent_deck_session_title: str
+    acpx_agent: str | None
+    acpx_session_name: str | None
+    acpx_record_id: str | None
+    acp_session_id: str | None
     claude_session_id: str | None
     jsonl_path: Path | None
+
+
+@dataclass(slots=True)
+class AgentDeckSessionTarget:
+    id: str
+    title: str
+    path: str
+    group: str | None
+    tool: str | None
+    command: str | None
+    status: str | None
+    created_at: str | None
 
 
 @dataclass(slots=True)
@@ -46,6 +64,10 @@ def _group_path(project_path: str) -> str:
     return f"pixel-forge/{_project_slug(project_path)}"
 
 
+def _normalize_path(path: str) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
 async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -57,18 +79,40 @@ async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, st
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
-async def _run_json_command(args: list[str], cwd: str | None = None) -> dict[str, object]:
-    code, stdout, stderr = await _run_command(args, cwd=cwd)
-    if code != 0:
-        error_output = stderr.strip() or stdout.strip() or "Unknown error"
-        raise AgentDeckBridgeError(error_output)
-
+def _decode_json_output(stdout: str, args: list[str]) -> object:
     try:
         return json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise AgentDeckBridgeError(
             f"Agent Deck returned non-JSON output for {' '.join(args)}"
         ) from exc
+
+
+async def _run_json_command(args: list[str], cwd: str | None = None) -> object:
+    code, stdout, stderr = await _run_command(args, cwd=cwd)
+    if code != 0:
+        error_output = stderr.strip() or stdout.strip() or "Unknown error"
+        raise AgentDeckBridgeError(error_output)
+
+    return _decode_json_output(stdout, args)
+
+
+async def _run_json_object_command(args: list[str], cwd: str | None = None) -> dict[str, object]:
+    payload = await _run_json_command(args, cwd=cwd)
+    if not isinstance(payload, dict):
+        raise AgentDeckBridgeError(
+            f"Agent Deck returned an unexpected JSON shape for {' '.join(args)}"
+        )
+    return payload
+
+
+async def _run_json_array_command(args: list[str], cwd: str | None = None) -> list[object]:
+    payload = await _run_json_command(args, cwd=cwd)
+    if not isinstance(payload, list):
+        raise AgentDeckBridgeError(
+            f"Agent Deck returned an unexpected JSON shape for {' '.join(args)}"
+        )
+    return payload
 
 
 def _convert_to_claude_dir_name(path: str) -> str:
@@ -103,7 +147,7 @@ def claude_jsonl_path(project_path: str, claude_session_id: str | None) -> Path 
 
 
 async def session_show(agent_deck_session_id: str) -> dict[str, object]:
-    return await _run_json_command(
+    return await _run_json_object_command(
         ["agent-deck", "session", "show", agent_deck_session_id, "-json"]
     )
 
@@ -116,22 +160,342 @@ async def _start_existing_session(agent_deck_session_id: str) -> None:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to start Agent Deck session")
 
 
+async def _rename_session(agent_deck_session_id: str, new_title: str) -> None:
+    code, _, stderr = await _run_command(
+        ["agent-deck", "rename", agent_deck_session_id, new_title]
+    )
+    if code != 0:
+        raise AgentDeckBridgeError(stderr.strip() or "Failed to rename Agent Deck session")
+
+
 async def _launch_new_session(
     project_path: str,
-    thread: LiveEditorThreadRecord,
+    *,
+    session_title: str,
     agent_type: str = "claude",
 ) -> dict[str, object]:
-    return await _run_json_command(
+    normalized_agent_type = agent_type.strip().lower() or "claude"
+    tool_arg = f"-c={normalized_agent_type}"
+    return await _run_json_object_command(
         [
             "agent-deck",
             "launch",
             "-json",
             "-no-wait",
-            f"-t={_session_title(project_path, thread.thread_id)}",
+            f"-t={session_title}",
             f"-g={_group_path(project_path)}",
-            f"-c={agent_type}",
+            tool_arg,
             project_path,
         ]
+    )
+
+
+def _session_tool(payload: dict[str, object], default: str = "claude") -> str:
+    tool = payload.get("tool")
+    if isinstance(tool, str) and tool.strip():
+        return tool.strip().lower()
+    return default
+
+
+def _parsed_acpx_payload(payload: dict[str, object]) -> tuple[str, str] | None:
+    command = payload.get("command")
+    return parse_agent_deck_acpx_command(
+        command if isinstance(command, str) else None
+    )
+
+
+def _is_acpx_backed_payload(payload: dict[str, object]) -> bool:
+    return _parsed_acpx_payload(payload) is not None
+
+
+def _session_title_for_target(project_path: str, suffix: str | None = None) -> str:
+    raw_suffix = suffix.strip() if isinstance(suffix, str) else ""
+    normalized_suffix = re.sub(r"[^a-z0-9-]+", "-", raw_suffix.lower()).strip("-")
+    if not normalized_suffix:
+        normalized_suffix = uuid4().hex[:8]
+    return f"pixel-forge-{_project_slug(project_path)}-{normalized_suffix}"
+
+
+def _payload_to_session_target(payload: dict[str, object]) -> AgentDeckSessionTarget:
+    session_id = str(payload.get("id") or "").strip()
+    if not session_id:
+        raise AgentDeckBridgeError("Agent Deck session payload is missing an id")
+
+    path = str(payload.get("path") or "").strip()
+    command = str(payload.get("command")).strip() if isinstance(payload.get("command"), str) and str(payload.get("command")).strip() else None
+    parsed_acpx_command = parse_agent_deck_acpx_command(command)
+    tool_value: str | None
+    if parsed_acpx_command is not None:
+        tool_value = parsed_acpx_command[0]
+    else:
+        tool_value = str(payload.get("tool")).strip() if isinstance(payload.get("tool"), str) and str(payload.get("tool")).strip() else None
+    return AgentDeckSessionTarget(
+        id=session_id,
+        title=str(payload.get("title") or session_id),
+        path=path,
+        group=str(payload.get("group")).strip() if isinstance(payload.get("group"), str) and str(payload.get("group")).strip() else None,
+        tool=tool_value,
+        command=command,
+        status=str(payload.get("status")).strip() if isinstance(payload.get("status"), str) and str(payload.get("status")).strip() else None,
+        created_at=str(payload.get("created_at")).strip() if isinstance(payload.get("created_at"), str) and str(payload.get("created_at")).strip() else None,
+    )
+
+
+def _require_matching_project_path(project_path: str, payload: dict[str, object]) -> None:
+    payload_path = payload.get("path")
+    if not isinstance(payload_path, str) or not payload_path.strip():
+        raise AgentDeckBridgeError("Agent Deck session is missing a workspace path")
+
+    normalized_project_path = _normalize_path(project_path)
+    normalized_session_path = _normalize_path(payload_path)
+    if normalized_session_path != normalized_project_path:
+        raise AgentDeckBridgeError(
+            "Chosen Agent Deck session is bound to a different workspace path"
+        )
+
+
+async def _list_project_session_targets(
+    project_path: str,
+    *,
+    include_acpx_backed: bool,
+) -> list[AgentDeckSessionTarget]:
+    normalized_project_path = _normalize_path(project_path)
+    payload = await _run_json_array_command(["agent-deck", "ls", "-json"])
+    sessions: list[AgentDeckSessionTarget] = []
+
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+
+        session_path = entry.get("path")
+        if not isinstance(session_path, str) or not session_path.strip():
+            continue
+
+        if _normalize_path(session_path) != normalized_project_path:
+            continue
+
+        if not include_acpx_backed and _is_acpx_backed_payload(entry):
+            continue
+
+        sessions.append(_payload_to_session_target(entry))
+
+    return sessions
+
+
+async def list_project_agent_deck_sessions(project_path: str) -> list[AgentDeckSessionTarget]:
+    return await _list_project_session_targets(
+        project_path,
+        include_acpx_backed=False,
+    )
+
+
+async def create_agent_deck_session_target(
+    project_path: str,
+    *,
+    agent_type: str = "claude",
+    title: str | None = None,
+) -> AgentDeckSessionTarget:
+    session_title = title.strip() if isinstance(title, str) and title.strip() else _session_title_for_target(project_path)
+    payload = await _launch_new_session(
+        project_path,
+        session_title=session_title,
+        agent_type=agent_type.strip() or "claude",
+    )
+    return _payload_to_session_target(payload)
+
+
+async def _load_existing_session(
+    project_path: str,
+    agent_deck_session_id: str,
+) -> dict[str, object]:
+    payload = await session_show(agent_deck_session_id)
+    _require_matching_project_path(project_path, payload)
+
+    status = str(payload.get("status") or "")
+    if status not in {"running", "waiting", "idle", "starting"}:
+        await _start_existing_session(agent_deck_session_id)
+        payload = await session_show(agent_deck_session_id)
+        _require_matching_project_path(project_path, payload)
+
+    return payload
+
+
+def _migration_session_title(
+    payload: dict[str, object],
+    *,
+    project_path: str,
+    thread_id: str,
+) -> str:
+    base_title = str(payload.get("title") or _session_title(project_path, thread_id)).strip()
+    if not base_title:
+        base_title = _session_title(project_path, thread_id)
+    if base_title.endswith("-acpx"):
+        base_title = base_title[: -len("-acpx")].rstrip("-")
+    return base_title or _session_title(project_path, thread_id)
+
+
+def _archived_migration_session_title(
+    payload: dict[str, object],
+    *,
+    project_path: str,
+    thread_id: str,
+) -> str:
+    base_title = str(payload.get("title") or "").strip()
+    if not base_title:
+        base_title = _session_title(project_path, thread_id)
+    if base_title.endswith("-acpx"):
+        return base_title
+    return f"{base_title}-acpx"
+
+
+def _unique_session_title(existing_titles: set[str], preferred_title: str) -> str:
+    candidate = preferred_title
+    counter = 2
+    while candidate in existing_titles:
+        candidate = f"{preferred_title}-{counter}"
+        counter += 1
+    return candidate
+
+
+def _migration_agent_type(
+    payload: dict[str, object],
+    requested_agent_type: str,
+) -> str:
+    session_tool = _session_tool(payload, default=requested_agent_type or "claude")
+    if session_tool in {"claude", "codex"}:
+        return session_tool
+    normalized_requested_type = requested_agent_type.strip().lower()
+    if normalized_requested_type in {"claude", "codex"}:
+        return normalized_requested_type
+    return "claude"
+
+
+async def _migrate_legacy_session_payload(
+    project_path: str,
+    thread: LiveEditorThreadRecord,
+    payload: dict[str, object],
+    *,
+    requested_agent_type: str,
+) -> dict[str, object]:
+    if not _is_acpx_backed_payload(payload):
+        return payload
+
+    parsed_payload = _parsed_acpx_payload(payload)
+    session_tool = (
+        parsed_payload[0]
+        if parsed_payload is not None
+        else _session_tool(payload, default=requested_agent_type or "claude")
+    )
+    normalized_requested_type = requested_agent_type.strip().lower()
+    if session_tool not in {"claude", "codex"} and normalized_requested_type not in {"claude", "codex"}:
+        return payload
+
+    migration_title = _migration_session_title(
+        payload,
+        project_path=project_path,
+        thread_id=thread.thread_id,
+    )
+    expected_agent = _migration_agent_type(payload, requested_agent_type)
+
+    project_sessions = await _list_project_session_targets(
+        project_path,
+        include_acpx_backed=True,
+    )
+    existing_titles = {session.title for session in project_sessions if session.title}
+    existing_session_id = str(payload.get("id") or "").strip()
+    archived_title = _unique_session_title(
+        existing_titles,
+        _archived_migration_session_title(
+            payload,
+            project_path=project_path,
+            thread_id=thread.thread_id,
+        ),
+    )
+    current_title = str(payload.get("title") or "").strip()
+
+    for session_target in project_sessions:
+        if session_target.id == payload.get("id"):
+            continue
+        if session_target.title != migration_title:
+            continue
+        if _is_acpx_backed_payload(
+            {
+                "command": session_target.command,
+                "tool": session_target.tool,
+            }
+        ):
+            continue
+        if session_target.tool != expected_agent:
+            continue
+        if existing_session_id and current_title != archived_title:
+            await _rename_session(existing_session_id, archived_title)
+        return await _load_existing_session(project_path, session_target.id)
+
+    if existing_session_id and current_title != archived_title:
+        await _rename_session(existing_session_id, archived_title)
+        payload = await session_show(existing_session_id)
+
+    return await _launch_new_session(
+        project_path,
+        session_title=migration_title,
+        agent_type=expected_agent,
+    )
+
+
+async def _build_session_info(
+    project_path: str,
+    payload: dict[str, object],
+    *,
+    fallback_title: str,
+) -> AgentDeckSessionInfo:
+    agent_deck_session_id = str(payload.get("id") or "").strip()
+    if not agent_deck_session_id:
+        raise AgentDeckBridgeError("Agent Deck did not return a session ID")
+
+    agent_deck_title = str(payload.get("title") or fallback_title)
+    session_tool = _session_tool(payload)
+    acpx_agent: str | None = None
+    acpx_session_name: str | None = None
+    acpx_record_id: str | None = None
+    acp_session_id: str | None = None
+    claude_session_id: str | None = None
+    jsonl_path: Path | None = None
+
+    parsed_acpx_command = _parsed_acpx_payload(payload)
+    if parsed_acpx_command is not None:
+        acpx_agent, acpx_session_name = parsed_acpx_command
+        acpx_session = await ensure_acpx_session(
+            acpx_agent,
+            project_path,
+            acpx_session_name,
+        )
+        acpx_record_id = acpx_session.acpx_record_id
+        acp_session_id = acpx_session.acp_session_id
+    elif session_tool == "claude":
+        fallback_claude_id = payload.get("claude_session_id")
+        if isinstance(fallback_claude_id, str) and fallback_claude_id:
+            claude_session_id = fallback_claude_id
+            jsonl_path = claude_jsonl_path(project_path, claude_session_id)
+        else:
+            claude_session_id, jsonl_path, payload = await _wait_for_claude_session_id(
+                agent_deck_session_id,
+                project_path,
+            )
+            if not claude_session_id:
+                fallback_claude_id = payload.get("claude_session_id")
+                if isinstance(fallback_claude_id, str) and fallback_claude_id:
+                    claude_session_id = fallback_claude_id
+                    jsonl_path = claude_jsonl_path(project_path, claude_session_id)
+
+    return AgentDeckSessionInfo(
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=agent_deck_title,
+        acpx_agent=acpx_agent,
+        acpx_session_name=acpx_session_name,
+        acpx_record_id=acpx_record_id,
+        acp_session_id=acp_session_id,
+        claude_session_id=claude_session_id,
+        jsonl_path=jsonl_path,
     )
 
 
@@ -160,45 +524,60 @@ async def ensure_agent_deck_session(
     project_path: str,
     thread: LiveEditorThreadRecord,
     agent_type: str = "claude",
+    *,
+    target_agent_deck_session_id: str | None = None,
 ) -> AgentDeckSessionInfo:
     payload: dict[str, object]
-    agent_deck_session_id = thread.agent_deck_session_id
-
-    if agent_deck_session_id:
-        try:
-            payload = await session_show(agent_deck_session_id)
-        except AgentDeckBridgeError:
-            payload = await _launch_new_session(project_path, thread, agent_type)
-            agent_deck_session_id = str(payload["id"])
-        else:
-            status = str(payload.get("status") or "")
-            if status not in {"running", "waiting", "idle", "starting"}:
-                await _start_existing_session(agent_deck_session_id)
-                payload = await session_show(agent_deck_session_id)
-    else:
-        payload = await _launch_new_session(project_path, thread, agent_type)
-        agent_deck_session_id = str(payload["id"])
-
-    if not agent_deck_session_id:
-        raise AgentDeckBridgeError("Agent Deck did not return a session ID")
-
-    agent_deck_title = str(payload.get("title") or _session_title(project_path, thread.thread_id))
-    claude_session_id, jsonl_path, payload = await _wait_for_claude_session_id(
-        agent_deck_session_id,
-        project_path,
+    bound_session_id = (
+        thread.agent_deck_session_id.strip()
+        if isinstance(thread.agent_deck_session_id, str) and thread.agent_deck_session_id.strip()
+        else None
+    )
+    explicit_target_id = (
+        target_agent_deck_session_id.strip()
+        if isinstance(target_agent_deck_session_id, str) and target_agent_deck_session_id.strip()
+        else None
     )
 
-    if not claude_session_id:
-        fallback_claude_id = payload.get("claude_session_id")
-        if isinstance(fallback_claude_id, str) and fallback_claude_id:
-            claude_session_id = fallback_claude_id
-            jsonl_path = claude_jsonl_path(project_path, claude_session_id)
+    if explicit_target_id and bound_session_id and explicit_target_id != bound_session_id:
+        raise AgentDeckBridgeError(
+            "This Live Editor thread is already bound to a different Agent Deck session. Start a fresh live thread to retarget it."
+        )
 
-    return AgentDeckSessionInfo(
-        agent_deck_session_id=agent_deck_session_id,
-        agent_deck_session_title=agent_deck_title,
-        claude_session_id=claude_session_id,
-        jsonl_path=jsonl_path,
+    if explicit_target_id:
+        payload = await _load_existing_session(project_path, explicit_target_id)
+        payload = await _migrate_legacy_session_payload(
+            project_path,
+            thread,
+            payload,
+            requested_agent_type=agent_type,
+        )
+    elif bound_session_id:
+        try:
+            payload = await _load_existing_session(project_path, bound_session_id)
+            payload = await _migrate_legacy_session_payload(
+                project_path,
+                thread,
+                payload,
+                requested_agent_type=agent_type,
+            )
+        except AgentDeckBridgeError:
+            payload = await _launch_new_session(
+                project_path,
+                session_title=_session_title(project_path, thread.thread_id),
+                agent_type=agent_type,
+            )
+    else:
+        payload = await _launch_new_session(
+            project_path,
+            session_title=_session_title(project_path, thread.thread_id),
+            agent_type=agent_type,
+        )
+
+    return await _build_session_info(
+        project_path,
+        payload,
+        fallback_title=_session_title(project_path, thread.thread_id),
     )
 
 

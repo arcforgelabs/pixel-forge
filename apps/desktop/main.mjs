@@ -530,8 +530,32 @@ async function rewritePendingControllerUpdate(update) {
 }
 
 async function readRuntimeInfo() {
-  return {
-    controllerVersion: await readControllerVersion(),
+  try {
+    const runtimeInfoUrl = new URL('/api/runtime-info', SHELL_URL).toString()
+    const response = await fetch(runtimeInfoUrl, { cache: 'no-store' })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    const payload = await response.json()
+    return {
+      controllerVersion:
+        typeof payload?.controllerVersion === 'string'
+          ? payload.controllerVersion
+          : await readControllerVersion(),
+      runtimeRoot:
+        typeof payload?.runtimeRoot === 'string' ? payload.runtimeRoot : null,
+      runtimeLayout:
+        typeof payload?.runtimeLayout === 'string' ? payload.runtimeLayout : null,
+      acpxBridgeAvailable: payload?.acpxBridgeAvailable === true,
+    }
+  } catch (error) {
+    console.error('[desktop] Failed to load controller runtime info:', error)
+    return {
+      controllerVersion: await readControllerVersion(),
+      runtimeRoot: null,
+      runtimeLayout: null,
+      acpxBridgeAvailable: false,
+    }
   }
 }
 

@@ -19,16 +19,21 @@ from urllib.parse import urlencode
 
 from agent_deck_bridge import (
     AgentDeckBridgeError,
+    AgentDeckSessionTarget,
+    create_agent_deck_session_target,
     get_last_output,
     ensure_agent_deck_session,
+    list_project_agent_deck_sessions,
     start_agent_deck_send,
     stream_claude_jsonl,
 )
+from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnect
 from live_editor_threads import (
     get_or_create_live_editor_thread,
     update_live_editor_thread,
@@ -53,7 +58,7 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
-from runtime_version import read_runtime_version
+from runtime_version import read_runtime_info
 from local_targets import (
     list_pixel_forge_targets,
     serialize_local_target,
@@ -274,6 +279,11 @@ class ProjectUrlRequest(BaseModel):
     url: str
 
 
+class AgentDeckSessionRequest(BaseModel):
+    agent_type: str = "claude"
+    title: str | None = None
+
+
 class LivePreviewLoadRequest(BaseModel):
     target_url: str
     proxy_session_id: str | None = None
@@ -402,6 +412,21 @@ def serialize_session(session_record) -> dict[str, object]:
     }
 
 
+def serialize_agent_deck_session_target(
+    session_target: AgentDeckSessionTarget,
+) -> dict[str, object]:
+    return {
+        "id": session_target.id,
+        "title": session_target.title,
+        "path": session_target.path,
+        "group": session_target.group,
+        "tool": session_target.tool,
+        "command": session_target.command,
+        "status": session_target.status,
+        "created_at": session_target.created_at,
+    }
+
+
 @app.get("/api/projects")
 async def get_projects():
     return {"projects": [serialize_project(project) for project in list_projects()]}
@@ -450,6 +475,51 @@ async def get_project_sessions(project_path: str):
     }
 
 
+@app.get("/api/projects/{project_path:path}/agent-deck-sessions")
+async def get_project_agent_deck_sessions(project_path: str):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    try:
+        sessions = await list_project_agent_deck_sessions(normalized_project_path)
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "sessions": [
+            serialize_agent_deck_session_target(session)
+            for session in sessions
+        ]
+    }
+
+
+@app.post("/api/projects/{project_path:path}/agent-deck-sessions")
+async def create_project_agent_deck_session(
+    project_path: str,
+    request: AgentDeckSessionRequest,
+):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    upsert_project(
+        normalized_project_path,
+        name=project_name_for_path(normalized_project_path),
+    )
+
+    try:
+        session = await create_agent_deck_session_target(
+            normalized_project_path,
+            agent_type=request.agent_type,
+            title=request.title,
+        )
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return serialize_agent_deck_session_target(session)
+
+
 @app.post("/api/local-targets/pixel-forge/start")
 async def start_local_pixel_forge_target(payload: LocalTargetStartRequest):
     try:
@@ -491,8 +561,7 @@ async def get_pending_controller_update():
 
 @app.get("/api/runtime-info")
 async def get_runtime_info():
-    controller_version = await asyncio.to_thread(read_runtime_version)
-    return {"controllerVersion": controller_version}
+    return await asyncio.to_thread(read_runtime_info)
 
 
 @app.post("/api/controller-update")
@@ -1123,25 +1192,42 @@ def build_live_editor_dispatch_prompt(
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
     self_edit_safe_mode: bool = False,
+    bootstrap: bool = True,
 ) -> str:
-    base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
+    if bootstrap:
+        base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
 
 Start by reading the request file itself, then read every referenced context file before changing code.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-    base += """
-
-If the `using-pixel-forge` skill is available, use it for this request."""
-
-    if selection_tunnel_url:
-        base += f"""
-
-If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
         base += """
 
+If the `using-pixel-forge` skill is available, use it for this request."""
+    else:
+        base = f"""New Pixel Forge turn for this existing session.
+
+Read `{request_file_path}` and any context files it references.
+Treat this request pack as the new delta for this turn, not as a full session reboot.
+Assume the earlier Pixel Forge session setup and workflow constraints for this same session still apply unless this request pack overrides them.
+Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+        base += """
+
+If the `using-pixel-forge` skill is available and you have not already used it in this session, use it for this request."""
+
+    if selection_tunnel_url:
+        if bootstrap:
+            base += f"""
+
+If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
+            base += """
+
 Treat the request pack, selected-elements artifact, and selection tunnel as authoritative evidence for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge already captured the relevant state. If the frozen tunnel is still insufficient to verify a claim, say that explicitly instead of guessing."""
+        else:
+            base += f"""
+
+If you need the frozen selection state for this turn, use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
-    if len(selection_sources) > 1:
+    if bootstrap and len(selection_sources) > 1:
         source_lines = "\n".join(
             f"- {label or 'Preview'} ({count} selection{'s' if count != 1 else ''}) at {url}"
             for label, url, count in selection_sources
@@ -1151,13 +1237,13 @@ Treat the request pack, selected-elements artifact, and selection tunnel as auth
 Selections span multiple preview sources. Use the grouped sources in the request pack as the source of truth for target-vs-reference context, and do not collapse them into one preview URL:
 {source_lines}"""
 
-    if self_edit_safe_mode:
+    if bootstrap and self_edit_safe_mode:
         base += """
 
 This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
 Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
 
-    if preview_url:
+    if preview_url and bootstrap:
         base += f"""
 
 The active preview target for this request is {preview_url}. If this workspace controls that target, do not stop at code changes: apply the update to that preview target and verify this exact URL/path reflects the change before you finish."""
@@ -1836,6 +1922,7 @@ async def live_editor_chat(websocket: WebSocket):
             project_path = data.get("project_path", "")
             preview_url = data.get("preview_url", "")
             agent_type = data.get("agent_type", "claude")
+            target_agent_deck_session_id = data.get("target_agent_deck_session_id")
 
             if not attachments and legacy_images:
                 attachments = [
@@ -1891,6 +1978,8 @@ async def live_editor_chat(websocket: WebSocket):
                     project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
                 )
+                previous_request_id = thread.last_request_id
+                previous_agent_deck_session_id = thread.agent_deck_session_id
 
                 await websocket.send_json(
                     {
@@ -1899,11 +1988,24 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
 
-                session_info = await ensure_agent_deck_session(project_path, thread, agent_type=agent_type)
+                session_info = await ensure_agent_deck_session(
+                    project_path,
+                    thread,
+                    agent_type=agent_type,
+                    target_agent_deck_session_id=(
+                        target_agent_deck_session_id
+                        if isinstance(target_agent_deck_session_id, str)
+                        else None
+                    ),
+                )
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
+                    acpx_agent=session_info.acpx_agent or "",
+                    acpx_session_name=session_info.acpx_session_name or "",
+                    acpx_record_id=session_info.acpx_record_id or "",
+                    acp_session_id=session_info.acp_session_id or "",
                     claude_session_id=session_info.claude_session_id or "",
                 )
                 upsert_session(
@@ -1913,6 +2015,10 @@ async def live_editor_chat(websocket: WebSocket):
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                 )
+                bootstrap_dispatch = (
+                    not previous_request_id
+                    or previous_agent_deck_session_id != session_info.agent_deck_session_id
+                )
 
                 request_pack = create_request_pack(
                     project_path,
@@ -1921,9 +2027,15 @@ async def live_editor_chat(websocket: WebSocket):
                     element_context,
                     attachments,
                     agent_deck_session_id=session_info.agent_deck_session_id,
+                    agent_deck_session_title=session_info.agent_deck_session_title,
+                    acpx_agent=session_info.acpx_agent,
+                    acpx_session_name=session_info.acpx_session_name,
+                    acpx_record_id=session_info.acpx_record_id,
+                    acp_session_id=session_info.acp_session_id,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
-                    extra_working_rules=[
+                    bootstrap=bootstrap_dispatch,
+                    session_working_rules=[
                         "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
                         "- Leave install/restart activation for after the request completes. Use verification commands that do not replace the running controller.",
                     ] if self_edit_safe_mode else None,
@@ -1940,6 +2052,10 @@ async def live_editor_chat(websocket: WebSocket):
                         "backend": thread.backend,
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "acpx_agent": session_info.acpx_agent,
+                        "acpx_session_name": session_info.acpx_session_name,
+                        "acpx_record_id": session_info.acpx_record_id,
+                        "acp_session_id": session_info.acp_session_id,
                         "request_id": request_pack.request_id,
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,
@@ -1968,52 +2084,84 @@ async def live_editor_chat(websocket: WebSocket):
                         else None
                     ),
                     self_edit_safe_mode=self_edit_safe_mode,
+                    bootstrap=bootstrap_dispatch,
                 )
-                jsonl_path = session_info.jsonl_path
-                start_offset = (
-                    jsonl_path.stat().st_size
-                    if jsonl_path and jsonl_path.exists()
-                    else 0
-                )
-
-                send_proc = await start_agent_deck_send(
-                    session_info,
-                    project_path=project_path,
-                    prompt=dispatch_prompt,
-                )
-                send_task = asyncio.create_task(send_proc.communicate())
-
-                stream_stats = None
-                if jsonl_path:
-                    stream_stats = await stream_claude_jsonl(
-                        websocket,
-                        jsonl_path,
-                        start_offset,
-                        send_task,
+                if session_info.acpx_agent and session_info.acpx_session_name:
+                    refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(
+                        session_info.acpx_agent,
+                        project_path,
+                        session_info.acpx_session_name,
+                        dispatch_prompt,
+                        websocket=websocket,
                     )
-
-                stdout, stderr = await send_task
-                stdout_text = stdout.decode().strip()
-                stderr_text = stderr.decode().strip()
-
-                if send_proc.returncode != 0:
-                    raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
-
-                if not stream_stats or not stream_stats.streamed_text:
-                    fallback_output = stdout_text or await get_last_output(
-                        session_info.agent_deck_session_id
+                    thread = update_live_editor_thread(
+                        thread.thread_id,
+                        acpx_agent=refreshed_acpx_session.agent or "",
+                        acpx_session_name=refreshed_acpx_session.session_name or "",
+                        acpx_record_id=refreshed_acpx_session.acpx_record_id or "",
+                        acp_session_id=refreshed_acpx_session.acp_session_id or "",
                     )
-                    if fallback_output:
+                    if fallback_output and not streamed_text:
                         await websocket.send_json(
                             {
                                 "type": "chunk",
                                 "content": fallback_output,
                             }
                         )
+                else:
+                    jsonl_path = session_info.jsonl_path
+                    start_offset = (
+                        jsonl_path.stat().st_size
+                        if jsonl_path and jsonl_path.exists()
+                        else 0
+                    )
 
-                refreshed_session = await ensure_agent_deck_session(project_path, thread, agent_type=agent_type)
+                    send_proc = await start_agent_deck_send(
+                        session_info,
+                        project_path=project_path,
+                        prompt=dispatch_prompt,
+                    )
+                    send_task = asyncio.create_task(send_proc.communicate())
+
+                    stream_stats = None
+                    if jsonl_path:
+                        stream_stats = await stream_claude_jsonl(
+                            websocket,
+                            jsonl_path,
+                            start_offset,
+                            send_task,
+                        )
+
+                    stdout, stderr = await send_task
+                    stdout_text = stdout.decode().strip()
+                    stderr_text = stderr.decode().strip()
+
+                    if send_proc.returncode != 0:
+                        raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
+
+                    if not stream_stats or not stream_stats.streamed_text:
+                        fallback_output = stdout_text or await get_last_output(
+                            session_info.agent_deck_session_id
+                        )
+                        if fallback_output:
+                            await websocket.send_json(
+                                {
+                                    "type": "chunk",
+                                    "content": fallback_output,
+                                }
+                            )
+
+                refreshed_session = await ensure_agent_deck_session(
+                    project_path,
+                    thread,
+                    agent_type=agent_type,
+                )
                 update_live_editor_thread(
                     thread.thread_id,
+                    acpx_agent=refreshed_session.acpx_agent or "",
+                    acpx_session_name=refreshed_session.acpx_session_name or "",
+                    acpx_record_id=refreshed_session.acpx_record_id or "",
+                    acp_session_id=refreshed_session.acp_session_id or "",
                     claude_session_id=refreshed_session.claude_session_id or "",
                 )
                 upsert_session(
@@ -2031,6 +2179,10 @@ async def live_editor_chat(websocket: WebSocket):
                         "backend": thread.backend,
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "acpx_agent": refreshed_session.acpx_agent,
+                        "acpx_session_name": refreshed_session.acpx_session_name,
+                        "acpx_record_id": refreshed_session.acpx_record_id,
+                        "acp_session_id": refreshed_session.acp_session_id,
                         "request_id": request_pack.request_id,
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,
@@ -2038,7 +2190,7 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
 
-            except (AgentDeckBridgeError, ValueError) as e:
+            except (AgentDeckBridgeError, AcpxBridgeError, ValueError) as e:
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -2059,6 +2211,8 @@ async def live_editor_chat(websocket: WebSocket):
                 if send_proc and send_proc.returncode is None:
                     send_proc.kill()
 
+    except WebSocketDisconnect:
+        pass
     except Exception as e:
         import traceback
         print(f"[live-editor] Error: {e}", flush=True)

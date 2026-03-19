@@ -4,6 +4,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from runtime_config import source_root as runtime_source_root
+
 
 DEFAULT_CONTROLLER_VERSION = "0.0.0-dev"
 
@@ -49,3 +51,36 @@ def read_runtime_version() -> str:
         if version:
             return version
     return DEFAULT_CONTROLLER_VERSION
+
+
+def _detect_runtime_layout(root: Path) -> str:
+    if (
+        (root / "main.py").is_file()
+        and (root / "requirements.txt").is_file()
+        and (root / "frontend" / "index.html").is_file()
+    ):
+        return "installed"
+    if (root / "apps" / "api" / "main.py").is_file():
+        return "workspace"
+    return "unknown"
+
+
+def _has_acpx_bridge(root: Path) -> bool:
+    return any(
+        candidate.is_file()
+        for candidate in (
+            root / "acpx_bridge.py",
+            root / "apps" / "api" / "acpx_bridge.py",
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def read_runtime_info() -> dict[str, str | bool]:
+    root = runtime_source_root().expanduser().resolve()
+    return {
+        "controllerVersion": read_runtime_version(),
+        "runtimeRoot": str(root),
+        "runtimeLayout": _detect_runtime_layout(root),
+        "acpxBridgeAvailable": _has_acpx_bridge(root),
+    }
