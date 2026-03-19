@@ -2243,10 +2243,10 @@ export function LiveEditorPane() {
             </TabsTrigger>
           </TabsList>
 
-          <div className="mt-2 flex-1 min-h-0 overflow-hidden">
+          <div className="mt-2 flex flex-1 min-h-0 flex-col overflow-hidden">
             <TabsContent
               value="chat"
-              className="m-0 flex h-full min-w-0 flex-col overflow-hidden"
+              className="m-0 flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden"
             >
               <ChatMessages
                 onRefreshPreview={() => void refreshApp()}
@@ -2257,7 +2257,7 @@ export function LiveEditorPane() {
 
             <TabsContent
               value="elements"
-              className="m-0 h-full overflow-y-auto p-3"
+              className="m-0 min-h-0 flex-1 overflow-hidden p-3"
             >
               <SelectedElementsList
                 onClearAll={handleClearElements}

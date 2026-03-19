@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { ChevronUp, FileText, Paperclip, Send, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, Unlink, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
 import { useSessionStore } from '@/store/session-store'
@@ -32,12 +32,19 @@ export function ChatInput() {
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const agentPickerRef = useRef<HTMLDivElement>(null)
   const { sendMessage, isStreaming, selectedElements } = useLiveEditorStore()
+  const [showSessionPicker, setShowSessionPicker] = useState(false)
+  const sessionPickerRef = useRef<HTMLDivElement>(null)
   const {
     agentType,
     setAgentType,
     liveEditorSession,
     selectedAgentDeckTargetId,
     agentDeckTargets,
+    agentDeckTargetsLoading,
+    setSelectedAgentDeckTargetId,
+    refreshAgentDeckTargets,
+    createAgentDeckTargetSession,
+    newSession,
   } = useSessionStore()
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
@@ -84,6 +91,18 @@ export function ChatInput() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showAgentPicker])
+
+  // Close session picker on outside click
+  useEffect(() => {
+    if (!showSessionPicker) return
+    const handler = (e: MouseEvent) => {
+      if (sessionPickerRef.current && !sessionPickerRef.current.contains(e.target as Node)) {
+        setShowSessionPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showSessionPicker])
 
   // Focus textarea on mount with delay to handle iframe focus conflicts
   useEffect(() => {
@@ -181,10 +200,104 @@ export function ChatInput() {
       )}
 
       {(selectedAgentDeckTarget || liveEditorSession?.agentDeckSessionTitle) && (
-        <div className="mb-2 text-xs text-muted-foreground">
-          {liveEditorSession
-            ? `Bound to Agent Deck session ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || liveEditorSession.threadId}.`
-            : `Targeting Agent Deck session ${selectedAgentDeckTarget?.title || selectedAgentDeckTarget?.id}.`}
+        <div className="relative mb-2" ref={sessionPickerRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSessionPicker((v) => !v)
+              if (!showSessionPicker) {
+                void refreshAgentDeckTargets()
+              }
+            }}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>
+              {liveEditorSession
+                ? `Bound to ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || 'session'}`
+                : `Targeting ${selectedAgentDeckTarget?.title || selectedAgentDeckTarget?.id || 'session'}`}
+            </span>
+            <ChevronDown className={`h-3 w-3 transition-transform ${showSessionPicker ? 'rotate-180' : ''}`} />
+          </button>
+          {showSessionPicker && (
+            <div className="absolute bottom-full left-0 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+              {/* Available sessions */}
+              {agentDeckTargets.length > 0 && (
+                <>
+                  <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    Sessions
+                  </div>
+                  {agentDeckTargets.map((target) => {
+                    const isCurrent = liveEditorSession?.agentDeckSessionId === target.id
+                      || selectedAgentDeckTargetId === target.id
+                    return (
+                      <button
+                        key={target.id}
+                        type="button"
+                        onClick={() => {
+                          if (!isCurrent) {
+                            newSession()
+                            setSelectedAgentDeckTargetId(target.id)
+                          }
+                          setShowSessionPicker(false)
+                        }}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                          isCurrent ? 'text-primary font-medium' : 'text-foreground'
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-left">{target.title || target.id}</span>
+                        {isCurrent && (
+                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </>
+              )}
+              {agentDeckTargetsLoading && (
+                <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading...
+                </div>
+              )}
+              {/* Actions */}
+              <div className="mt-0.5 border-t border-border/40 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void createAgentDeckTargetSession().then(() => {
+                      setShowSessionPicker(false)
+                    })
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/10"
+                >
+                  <Plus className="h-3 w-3" />
+                  New session
+                </button>
+                {liveEditorSession && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      newSession()
+                      setSelectedAgentDeckTargetId(null)
+                      setShowSessionPicker(false)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+                  >
+                    <Unlink className="h-3 w-3" />
+                    Unbind session
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void refreshAgentDeckTargets()}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+                >
+                  <RefreshCw className={`h-3 w-3 ${agentDeckTargetsLoading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

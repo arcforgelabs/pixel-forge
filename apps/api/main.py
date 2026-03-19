@@ -12,6 +12,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Literal
@@ -76,6 +77,37 @@ from session_manager import (
 TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
 GRID_COLS = 4  # 4 columns in the frame grid
 FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
+INFORMATIONAL_REQUEST_HINTS = (
+    "what is",
+    "what's",
+    "what element",
+    "which element",
+    "tell me what",
+    "tell me about",
+    "describe",
+    "identify",
+    "explain",
+    "share a screenshot",
+    "show me a screenshot",
+)
+MUTATING_REQUEST_HINTS = (
+    "change",
+    "edit",
+    "update",
+    "modify",
+    "fix",
+    "make ",
+    "make it",
+    "add ",
+    "remove",
+    "delete",
+    "replace",
+    "implement",
+    "refactor",
+    "rename",
+    "restyle",
+    "move ",
+)
 
 
 def extract_video_frames(video_data_url: str) -> list[Image.Image]:
@@ -1185,6 +1217,20 @@ def _selection_source_summary(
     return grouped
 
 
+def _is_informational_live_editor_request(message: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (message or "").strip().lower())
+    if not normalized:
+        return False
+
+    if any(hint in normalized for hint in MUTATING_REQUEST_HINTS):
+        return False
+
+    if "screenshot" in normalized:
+        return True
+
+    return any(hint in normalized for hint in INFORMATIONAL_REQUEST_HINTS)
+
+
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
@@ -1193,28 +1239,54 @@ def build_live_editor_dispatch_prompt(
     selection_tunnel_url: str | None = None,
     self_edit_safe_mode: bool = False,
     bootstrap: bool = True,
+    informational_only: bool = False,
 ) -> str:
-    if bootstrap:
-        base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
+    if informational_only:
+        if bootstrap:
+            base = f"""Read `{request_file_path}` and answer that Pixel Forge request.
+
+Start by reading the request file itself, then the referenced selected-surface artifacts.
+This is an informational inspection request. Do not edit code, rebuild, restart, deploy, or reload unless the user explicitly asks.
+Prefer answering directly from the captured Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
+Keep the reply concise and directly answer the user's question."""
+        else:
+            base = f"""New Pixel Forge turn for this existing session.
+
+Read `{request_file_path}` and the referenced artifacts for this turn.
+This is an informational delta, not a full session reboot and not a code-change request.
+Prefer answering directly from the new Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
+Keep the reply concise and directly answer the user's question."""
+    else:
+        if bootstrap:
+            base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
 
 Start by reading the request file itself, then read every referenced context file before changing code.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-        base += """
-
-If the `using-pixel-forge` skill is available, use it for this request."""
-    else:
-        base = f"""New Pixel Forge turn for this existing session.
+        else:
+            base = f"""New Pixel Forge turn for this existing session.
 
 Read `{request_file_path}` and any context files it references.
 Treat this request pack as the new delta for this turn, not as a full session reboot.
 Assume the earlier Pixel Forge session setup and workflow constraints for this same session still apply unless this request pack overrides them.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-        base += """
 
-If the `using-pixel-forge` skill is available and you have not already used it in this session, use it for this request."""
+    if not informational_only:
+        if bootstrap:
+            base += """
+
+If you need Pixel Forge-specific CLI or tunnel workflow help beyond what the request pack already gives you, the `using-pixel-forge` skill can help."""
+        else:
+            base += """
+
+If you need extra Pixel Forge-specific CLI or tunnel workflow help beyond this request pack and the existing session context, the `using-pixel-forge` skill can help."""
 
     if selection_tunnel_url:
-        if bootstrap:
+        if informational_only:
+            base += f"""
+
+Use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack if you need the frozen structured selection state for this turn.
+Treat the request pack, selected-elements artifact, selection tunnel, and attachments as the primary truth for the selected live surface."""
+        elif bootstrap:
             base += f"""
 
 If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
@@ -1244,23 +1316,28 @@ This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge re
 Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
 
     if preview_url and bootstrap:
-        base += f"""
+        if informational_only:
+            base += f"""
+
+The active preview target for this request is {preview_url}. This request is informational only, so do not rebuild, restart, deploy, or reload unless the user explicitly asks."""
+        else:
+            base += f"""
 
 The active preview target for this request is {preview_url}. If this workspace controls that target, do not stop at code changes: apply the update to that preview target and verify this exact URL/path reflects the change before you finish."""
-        if self_edit_safe_mode:
-            base += """
+            if self_edit_safe_mode:
+                base += """
 
 For Pixel Forge self-edit requests, do not replace the active controller mid-stream. Use the staged preview/controller update flow instead, and finish by stating whether the updated preview/controller build is ready to load."""
-        elif _is_remote_preview(preview_url):
-            base += """
+            elif _is_remote_preview(preview_url):
+                base += """
 
 For repo-controlled remote previews, deploy using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar."""
-        else:
-            base += """
+            else:
+                base += """
 
 For local/dev previews, rebuild, restart, or reload the service serving this URL so the preview updates in place."""
 
-        base += """
+            base += """
 
 If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload."""
 
@@ -1961,6 +2038,7 @@ async def live_editor_chat(websocket: WebSocket):
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
+                informational_only = _is_informational_live_editor_request(request_message)
                 self_edit_safe_mode = _is_pixel_forge_workspace(project_path)
                 selection_count = 0
                 if isinstance(selection_tunnel, dict):
@@ -2035,6 +2113,7 @@ async def live_editor_chat(websocket: WebSocket):
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     bootstrap=bootstrap_dispatch,
+                    informational_only=informational_only,
                     session_working_rules=[
                         "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
                         "- Leave install/restart activation for after the request completes. Use verification commands that do not replace the running controller.",
@@ -2085,6 +2164,7 @@ async def live_editor_chat(websocket: WebSocket):
                     ),
                     self_edit_safe_mode=self_edit_safe_mode,
                     bootstrap=bootstrap_dispatch,
+                    informational_only=informational_only,
                 )
                 if session_info.acpx_agent and session_info.acpx_session_name:
                     refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(

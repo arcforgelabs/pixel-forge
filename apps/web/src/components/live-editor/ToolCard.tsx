@@ -109,7 +109,7 @@ export function ToolCard({ activity }: ToolCardProps) {
   const isComplete = activity.status === 'complete'
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 w-full">
       <div
         className={`forge-animate-in w-full min-w-0 max-w-[calc(100%-1.5rem)] overflow-hidden rounded-lg ${
           activity.isError

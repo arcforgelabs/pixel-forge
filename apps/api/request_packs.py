@@ -211,6 +211,7 @@ def create_request_pack(
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     bootstrap: bool = True,
+    informational_only: bool = False,
     session_working_rules: list[str] | None = None,
     turn_working_rules: list[str] | None = None,
 ) -> RequestPack:
@@ -296,10 +297,18 @@ def create_request_pack(
             f"- Read `{relative_session_brief_path}` before you act on this thread.",
             "- Treat this request pack as the first Pixel Forge handoff for the current endpoint-session continuity.",
         ]
-        working_rules = [
-            "- Read this request pack before changing code.",
-            "- Make the smallest correct change.",
-        ]
+        if informational_only:
+            working_rules = [
+                "- Read this request pack before answering.",
+                "- This is an informational inspection request, not a code-change request.",
+                "- Prefer answering directly from the selected-elements artifact, selection tunnel, and attachments. Only inspect source if those artifacts are insufficient.",
+                "- Keep the reply concise and directly answer the user's question.",
+            ]
+        else:
+            working_rules = [
+                "- Read this request pack before changing code.",
+                "- Make the smallest correct change.",
+            ]
     else:
         request_intro = [
             "",
@@ -308,10 +317,18 @@ def create_request_pack(
             "- This turn is a delta, not a full session reboot.",
             f"- Stable thread brief: `{relative_session_brief_path}`. Re-read it only if needed.",
         ]
-        working_rules = [
-            "- Read this request pack before changing code.",
-            "- Make the smallest correct change.",
-        ]
+        if informational_only:
+            working_rules = [
+                "- Read this request pack before answering.",
+                "- This is an informational inspection request, not a code-change request.",
+                "- Prefer the new request-pack artifacts over repo/source digging unless the artifacts are insufficient.",
+                "- Keep the reply concise and directly answer the user's question.",
+            ]
+        else:
+            working_rules = [
+                "- Read this request pack before changing code.",
+                "- Make the smallest correct change.",
+            ]
     if turn_working_rules:
         working_rules.extend(turn_working_rules)
     request_sections.extend(
@@ -328,28 +345,42 @@ def create_request_pack(
         ]
     )
     if preview_url:
-        request_sections.extend(
-            [
-                "",
-                "## Active Preview Target",
-                "",
-                f"- Active preview target when this request was sent: `{preview_url}`.",
-                "- If this workspace controls that target, do not stop at code changes. Apply the update to that preview target and verify that this exact location reflects the change before you finish.",
-                (
-                    "- For local/dev previews, rebuild, restart, or reload the local service serving this URL."
-                    if not _is_remote_preview(preview_url)
-                    else "- For repo-controlled remote previews, deploy using the workspace's deployment process."
-                ),
-                "- If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload.",
-            ]
-        )
+        preview_lines = [
+            "",
+            "## Active Preview Target",
+            "",
+            f"- Active preview target when this request was sent: `{preview_url}`.",
+        ]
+        if informational_only:
+            preview_lines.extend(
+                [
+                    "- This request is informational only. Do not rebuild, restart, deploy, or reload the preview target unless the user explicitly asks for that.",
+                ]
+            )
+        else:
+            preview_lines.extend(
+                [
+                    "- If this workspace controls that target, do not stop at code changes. Apply the update to that preview target and verify that this exact location reflects the change before you finish.",
+                    (
+                        "- For local/dev previews, rebuild, restart, or reload the local service serving this URL."
+                        if not _is_remote_preview(preview_url)
+                        else "- For repo-controlled remote previews, deploy using the workspace's deployment process."
+                    ),
+                    "- If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload.",
+                ]
+            )
+        request_sections.extend(preview_lines)
     if relative_selected_path:
         request_sections.extend(
             [
                 "",
                 "## Selected Elements",
                 "",
-                f"- Read `{relative_selected_path}` for the selected element context captured from the running app.",
+                (
+                    f"- Read `{relative_selected_path}` for the selected element context captured from the running app before answering."
+                    if informational_only
+                    else f"- Read `{relative_selected_path}` for the selected element context captured from the running app."
+                ),
             ]
         )
     if relative_selection_tunnel_path:
@@ -368,7 +399,14 @@ def create_request_pack(
                 "",
                 "## Attachments",
                 "",
-                *[f"- Read `{path}` before editing." for path in relative_attachment_paths],
+                *[
+                    (
+                        f"- Read `{path}` before answering."
+                        if informational_only
+                        else f"- Read `{path}` before editing."
+                    )
+                    for path in relative_attachment_paths
+                ],
             ]
         )
 
@@ -388,6 +426,7 @@ def create_request_pack(
                 "acp_session_id": acp_session_id,
                 "preview_url": preview_url,
                 "bootstrap": bootstrap,
+                "informational_only": informational_only,
                 "session_brief_file": relative_session_brief_path,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
