@@ -1,7 +1,7 @@
 {
   "name": "pixel-forge",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Visual app editor with screenshot bootstrap and live editing for real running apps.",
   "type": "module",
   "packageManager": "pnpm@10.25.0",

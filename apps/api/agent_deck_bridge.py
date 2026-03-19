@@ -50,6 +50,15 @@ class AgentDeckBridgeError(RuntimeError):
     pass
 
 
+def _is_missing_session_error(error: BaseException | str) -> bool:
+    message = str(error).lower()
+    return (
+        "not_found" in message
+        or "not found" in message
+        or "session missing" in message
+    )
+
+
 def _project_slug(project_path: str) -> str:
     project_name = Path(project_path).resolve().name or "project"
     slug = re.sub(r"[^a-z0-9-]+", "-", project_name.lower()).strip("-")
@@ -545,13 +554,26 @@ async def ensure_agent_deck_session(
         )
 
     if explicit_target_id:
-        payload = await _load_existing_session(project_path, explicit_target_id)
-        payload = await _migrate_legacy_session_payload(
-            project_path,
-            thread,
-            payload,
-            requested_agent_type=agent_type,
-        )
+        try:
+            payload = await _load_existing_session(project_path, explicit_target_id)
+            payload = await _migrate_legacy_session_payload(
+                project_path,
+                thread,
+                payload,
+                requested_agent_type=agent_type,
+            )
+        except AgentDeckBridgeError as exc:
+            if (
+                explicit_target_id == bound_session_id
+                and _is_missing_session_error(exc)
+            ):
+                payload = await _launch_new_session(
+                    project_path,
+                    session_title=_session_title(project_path, thread.thread_id),
+                    agent_type=agent_type,
+                )
+            else:
+                raise
     elif bound_session_id:
         try:
             payload = await _load_existing_session(project_path, bound_session_id)
