@@ -314,6 +314,7 @@ class ProjectUrlRequest(BaseModel):
 class AgentDeckSessionRequest(BaseModel):
     agent_type: str = "claude"
     title: str | None = None
+    workspace_mode: Literal["clone", "root"] = "clone"
 
 
 class LivePreviewLoadRequest(BaseModel):
@@ -435,6 +436,7 @@ def serialize_session(session_record) -> dict[str, object]:
     return {
         "id": session_record.id,
         "project_path": session_record.project_path,
+        "workspace_path": session_record.workspace_path,
         "thread_id": session_record.thread_id,
         "backend": session_record.backend,
         "agent_deck_session_id": session_record.agent_deck_session_id,
@@ -545,6 +547,7 @@ async def create_project_agent_deck_session(
             normalized_project_path,
             agent_type=request.agent_type,
             title=request.title,
+            workspace_mode=request.workspace_mode,
         )
     except AgentDeckBridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2027,7 +2030,8 @@ async def live_editor_chat(websocket: WebSocket):
                 continue
 
             # Verify project path exists
-            if not os.path.isdir(project_path):
+            normalized_project_path = normalize_project_path(project_path)
+            if not os.path.isdir(normalized_project_path):
                 await websocket.send_json({
                     "type": "error",
                     "message": f"Project path does not exist: {project_path}"
@@ -2039,7 +2043,7 @@ async def live_editor_chat(websocket: WebSocket):
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
                 informational_only = _is_informational_live_editor_request(request_message)
-                self_edit_safe_mode = _is_pixel_forge_workspace(project_path)
+                self_edit_safe_mode = _is_pixel_forge_workspace(normalized_project_path)
                 selection_count = 0
                 if isinstance(selection_tunnel, dict):
                     raw_selections = selection_tunnel.get("selections")
@@ -2047,13 +2051,13 @@ async def live_editor_chat(websocket: WebSocket):
                         selection_count = len(raw_selections)
 
                 upsert_project(
-                    project_path,
-                    name=project_name_for_path(project_path),
+                    normalized_project_path,
+                    name=project_name_for_path(normalized_project_path),
                 )
                 if preview_url:
-                    touch_project_url(project_path, preview_url)
+                    touch_project_url(normalized_project_path, preview_url)
                 thread = get_or_create_live_editor_thread(
-                    project_path,
+                    normalized_project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
                 )
                 previous_request_id = thread.last_request_id
@@ -2067,7 +2071,7 @@ async def live_editor_chat(websocket: WebSocket):
                 )
 
                 session_info = await ensure_agent_deck_session(
-                    project_path,
+                    normalized_project_path,
                     thread,
                     agent_type=agent_type,
                     target_agent_deck_session_id=(
@@ -2078,6 +2082,7 @@ async def live_editor_chat(websocket: WebSocket):
                 )
                 thread = update_live_editor_thread(
                     thread.thread_id,
+                    workspace_path=session_info.workspace_path,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                     acpx_agent=session_info.acpx_agent or "",
@@ -2087,9 +2092,10 @@ async def live_editor_chat(websocket: WebSocket):
                     claude_session_id=session_info.claude_session_id or "",
                 )
                 upsert_session(
-                    project_path,
+                    normalized_project_path,
                     thread_id=thread.thread_id,
                     backend=thread.backend,
+                    workspace_path=session_info.workspace_path,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                 )
@@ -2099,7 +2105,7 @@ async def live_editor_chat(websocket: WebSocket):
                 )
 
                 request_pack = create_request_pack(
-                    project_path,
+                    session_info.workspace_path,
                     thread.thread_id,
                     request_message,
                     element_context,
@@ -2129,6 +2135,7 @@ async def live_editor_chat(websocket: WebSocket):
                         "type": "session",
                         "session_id": thread.thread_id,
                         "backend": thread.backend,
+                        "workspace_path": session_info.workspace_path,
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
                         "acpx_agent": session_info.acpx_agent,
@@ -2155,7 +2162,7 @@ async def live_editor_chat(websocket: WebSocket):
                         f"http://pixel-forge.localhost:{runtime_api_port()}/api/live-editor/selection-tunnel?"
                         + urlencode(
                             {
-                                "project_path": project_path,
+                                "project_path": session_info.workspace_path,
                                 "request_id": request_pack.request_id,
                             }
                         )
@@ -2169,7 +2176,7 @@ async def live_editor_chat(websocket: WebSocket):
                 if session_info.acpx_agent and session_info.acpx_session_name:
                     refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(
                         session_info.acpx_agent,
-                        project_path,
+                        session_info.workspace_path,
                         session_info.acpx_session_name,
                         dispatch_prompt,
                         websocket=websocket,
@@ -2198,7 +2205,7 @@ async def live_editor_chat(websocket: WebSocket):
 
                     send_proc = await start_agent_deck_send(
                         session_info,
-                        project_path=project_path,
+                        project_path=session_info.workspace_path,
                         prompt=dispatch_prompt,
                     )
                     send_task = asyncio.create_task(send_proc.communicate())
@@ -2232,12 +2239,13 @@ async def live_editor_chat(websocket: WebSocket):
                             )
 
                 refreshed_session = await ensure_agent_deck_session(
-                    project_path,
+                    normalized_project_path,
                     thread,
                     agent_type=agent_type,
                 )
                 update_live_editor_thread(
                     thread.thread_id,
+                    workspace_path=refreshed_session.workspace_path,
                     acpx_agent=refreshed_session.acpx_agent or "",
                     acpx_session_name=refreshed_session.acpx_session_name or "",
                     acpx_record_id=refreshed_session.acpx_record_id or "",
@@ -2245,9 +2253,10 @@ async def live_editor_chat(websocket: WebSocket):
                     claude_session_id=refreshed_session.claude_session_id or "",
                 )
                 upsert_session(
-                    project_path,
+                    normalized_project_path,
                     thread_id=thread.thread_id,
                     backend=thread.backend,
+                    workspace_path=refreshed_session.workspace_path,
                     agent_deck_session_id=refreshed_session.agent_deck_session_id,
                     agent_deck_session_title=refreshed_session.agent_deck_session_title,
                 )
@@ -2257,8 +2266,9 @@ async def live_editor_chat(websocket: WebSocket):
                         "type": "complete",
                         "session_id": thread.thread_id,
                         "backend": thread.backend,
-                        "agent_deck_session_id": session_info.agent_deck_session_id,
-                        "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "workspace_path": refreshed_session.workspace_path,
+                        "agent_deck_session_id": refreshed_session.agent_deck_session_id,
+                        "agent_deck_session_title": refreshed_session.agent_deck_session_title,
                         "acpx_agent": refreshed_session.acpx_agent,
                         "acpx_session_name": refreshed_session.acpx_session_name,
                         "acpx_record_id": refreshed_session.acpx_record_id,

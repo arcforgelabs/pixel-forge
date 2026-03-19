@@ -36,6 +36,7 @@ class ProjectRecord:
 class SessionRecord:
     id: int
     project_path: str
+    workspace_path: str
     thread_id: str
     backend: str
     agent_deck_session_id: str | None
@@ -78,7 +79,7 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
 
         rows = legacy_conn.execute(
             """
-            SELECT thread_id, project_path, backend, agent_deck_session_id,
+            SELECT thread_id, project_path, project_path AS workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, created_at, updated_at
             FROM live_editor_threads
             ORDER BY updated_at DESC
@@ -111,15 +112,17 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
             """
             INSERT OR IGNORE INTO sessions (
                 project_path,
+                workspace_path,
                 thread_id,
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title,
                 created_at,
                 last_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                normalized_path,
                 normalized_path,
                 row["thread_id"],
                 row["backend"],
@@ -218,7 +221,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
             if "sessions" in tables:
                 rows = legacy_conn.execute(
                     """
-                    SELECT project_path, thread_id, backend, agent_deck_session_id,
+                    SELECT project_path, project_path AS workspace_path, thread_id, backend, agent_deck_session_id,
                            agent_deck_session_title, created_at, last_active
                     FROM sessions
                     ORDER BY last_active DESC
@@ -230,16 +233,18 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                         """
                         INSERT OR IGNORE INTO sessions (
                             project_path,
+                            workspace_path,
                             thread_id,
                             backend,
                             agent_deck_session_id,
                             agent_deck_session_title,
                             created_at,
                             last_active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             normalized_path,
+                            normalize_project_path(row["workspace_path"]),
                             row["thread_id"],
                             row["backend"],
                             row["agent_deck_session_id"],
@@ -282,6 +287,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             CREATE TABLE IF NOT EXISTS sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_path TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
                 thread_id TEXT NOT NULL UNIQUE,
                 backend TEXT NOT NULL,
                 agent_deck_session_id TEXT,
@@ -297,6 +303,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON project_urls (project_path, last_used DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_last_active
                 ON sessions (project_path, last_active DESC);
+            """
+        )
+        existing_session_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        if "workspace_path" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN workspace_path TEXT"
+            )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET workspace_path = project_path
+            WHERE workspace_path IS NULL OR TRIM(workspace_path) = ''
             """
         )
         _migrate_legacy_live_editor_state(conn)
@@ -317,6 +338,7 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
     return SessionRecord(
         id=row["id"],
         project_path=row["project_path"],
+        workspace_path=row["workspace_path"] or row["project_path"],
         thread_id=row["thread_id"],
         backend=row["backend"],
         agent_deck_session_id=row["agent_deck_session_id"],
@@ -349,7 +371,7 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, project_path, thread_id, backend, agent_deck_session_id,
+            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
                    agent_deck_session_title, created_at, last_active
             FROM sessions
             WHERE project_path = ?
@@ -520,6 +542,7 @@ def upsert_session(
     *,
     thread_id: str,
     backend: str,
+    workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
 ) -> SessionRecord:
@@ -543,13 +566,15 @@ def upsert_session(
             """
             INSERT INTO sessions (
                 project_path,
+                workspace_path,
                 thread_id,
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 project_path = excluded.project_path,
+                workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
@@ -557,6 +582,7 @@ def upsert_session(
             """,
             (
                 normalized_path,
+                normalize_project_path(workspace_path or project_path),
                 thread_id.strip(),
                 backend.strip() or "agent-deck",
                 agent_deck_session_id,
@@ -575,7 +601,7 @@ def upsert_session(
 
         row = conn.execute(
             """
-            SELECT id, project_path, thread_id, backend, agent_deck_session_id,
+            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
                    agent_deck_session_title, created_at, last_active
             FROM sessions
             WHERE thread_id = ?

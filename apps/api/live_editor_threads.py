@@ -20,6 +20,7 @@ _DB_INITIALIZED = False
 class LiveEditorThreadRecord:
     thread_id: str
     project_path: str
+    workspace_path: str
     backend: str
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
@@ -62,7 +63,7 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
 
         rows = legacy_conn.execute(
             """
-            SELECT thread_id, project_path, backend, agent_deck_session_id,
+            SELECT thread_id, project_path, project_path AS workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, NULL AS acpx_agent,
                    NULL AS acpx_session_name, NULL AS acpx_record_id,
                    NULL AS acp_session_id, claude_session_id, last_request_id,
@@ -77,6 +78,7 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
             INSERT OR IGNORE INTO live_editor_threads (
                 thread_id,
                 project_path,
+                workspace_path,
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title,
@@ -88,11 +90,12 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
                 last_request_id,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["thread_id"],
                 str(Path(row["project_path"]).resolve()),
+                str(Path(row["workspace_path"]).resolve()),
                 row["backend"],
                 row["agent_deck_session_id"],
                 row["agent_deck_session_title"],
@@ -127,7 +130,7 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
 
             rows = legacy_conn.execute(
                 """
-                SELECT thread_id, project_path, backend, agent_deck_session_id,
+                SELECT thread_id, project_path, project_path AS workspace_path, backend, agent_deck_session_id,
                        agent_deck_session_title, NULL AS acpx_agent,
                        NULL AS acpx_session_name, NULL AS acpx_record_id,
                        NULL AS acp_session_id, claude_session_id, last_request_id,
@@ -142,6 +145,7 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                 INSERT OR IGNORE INTO live_editor_threads (
                     thread_id,
                     project_path,
+                    workspace_path,
                     backend,
                     agent_deck_session_id,
                     agent_deck_session_title,
@@ -153,11 +157,12 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                     last_request_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["thread_id"],
                     str(Path(row["project_path"]).resolve()),
+                    str(Path(row["workspace_path"]).resolve()),
                     row["backend"],
                     row["agent_deck_session_id"],
                     row["agent_deck_session_title"],
@@ -187,6 +192,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             CREATE TABLE IF NOT EXISTS live_editor_threads (
                 thread_id TEXT PRIMARY KEY,
                 project_path TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
                 backend TEXT NOT NULL,
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
@@ -206,6 +212,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             for row in conn.execute("PRAGMA table_info(live_editor_threads)").fetchall()
         }
         for column_name in (
+            "workspace_path",
             "acpx_agent",
             "acpx_session_name",
             "acpx_record_id",
@@ -216,6 +223,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE live_editor_threads ADD COLUMN {column_name} TEXT"
             )
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET workspace_path = project_path
+            WHERE workspace_path IS NULL OR TRIM(workspace_path) = ''
+            """
+        )
         _migrate_legacy_rows(conn)
         _migrate_legacy_instance_rows(conn)
         conn.commit()
@@ -226,6 +240,7 @@ def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
     return LiveEditorThreadRecord(
         thread_id=row["thread_id"],
         project_path=row["project_path"],
+        workspace_path=row["workspace_path"] or row["project_path"],
         backend=row["backend"],
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
@@ -244,7 +259,7 @@ def get_live_editor_thread(thread_id: str) -> LiveEditorThreadRecord | None:
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT thread_id, project_path, backend, agent_deck_session_id,
+            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
@@ -282,10 +297,11 @@ def get_or_create_live_editor_thread(
             INSERT INTO live_editor_threads (
                 thread_id,
                 project_path,
+                workspace_path,
                 backend
-            ) VALUES (?, ?, ?)
+            ) VALUES (?, ?, ?, ?)
             """,
-            (record_id, normalized_project_path, "agent-deck"),
+            (record_id, normalized_project_path, normalized_project_path, "agent-deck"),
         )
         conn.commit()
 
@@ -298,6 +314,7 @@ def get_or_create_live_editor_thread(
 def update_live_editor_thread(
     thread_id: str,
     *,
+    workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     acpx_agent: str | None = None,
@@ -313,6 +330,9 @@ def update_live_editor_thread(
     if agent_deck_session_id is not None:
         assignments.append("agent_deck_session_id = ?")
         values.append(agent_deck_session_id)
+    if workspace_path is not None:
+        assignments.append("workspace_path = ?")
+        values.append(str(Path(workspace_path).resolve()))
     if agent_deck_session_title is not None:
         assignments.append("agent_deck_session_title = ?")
         values.append(agent_deck_session_title)

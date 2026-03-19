@@ -65,9 +65,10 @@ Current architectural facts:
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, and mirror instance metadata.
 - Live Editor writes request packs into the target workspace and dispatches into a persistent native Agent Deck endpoint session.
+- New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree, while still tracking the canonical repo root as the project identity.
 - Live Editor handoff now has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
 - Stable Live Editor workflow rules now live in a thread-level `session-brief.md`, while each per-turn `request.md` focuses on the new delta context for that turn.
-- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` defaults to the latest available mirror candidate for the workspace, with staged snapshots preferred when one exists.
+- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` now prefers the bound Live Editor workspace when one exists, otherwise the latest available mirror candidate for the workspace, with staged snapshots preferred when one exists.
 - Controller updates stage a frozen snapshot, hand off to a detached updater, reinstall from that frozen source, restart through the installed launcher, wait for the expected controller version, relaunch the shell, and keep a rollback build.
 
 ### Current Handoff Lanes

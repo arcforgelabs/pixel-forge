@@ -21,6 +21,7 @@ STREAM_POLL_INTERVAL_SECONDS = 0.2
 class AgentDeckSessionInfo:
     agent_deck_session_id: str
     agent_deck_session_title: str
+    workspace_path: str
     acpx_agent: str | None
     acpx_session_name: str | None
     acpx_record_id: str | None
@@ -75,6 +76,33 @@ def _group_path(project_path: str) -> str:
 
 def _normalize_path(path: str) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+def _clone_root(project_path: str) -> str:
+    return str(Path(_normalize_path(project_path)) / ".agents")
+
+
+def _is_descendant_path(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def _session_belongs_to_project(project_path: str, session_path: str) -> bool:
+    normalized_project_path = _normalize_path(project_path)
+    normalized_session_path = _normalize_path(session_path)
+    if normalized_session_path == normalized_project_path:
+        return True
+    return _is_descendant_path(
+        normalized_session_path,
+        _clone_root(normalized_project_path),
+    )
+
+
+def _clone_name(session_title: str) -> str:
+    normalized = re.sub(r"[^a-z0-9-]+", "-", session_title.lower()).strip("-")
+    return normalized or uuid4().hex[:8]
 
 
 async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str]:
@@ -182,21 +210,23 @@ async def _launch_new_session(
     *,
     session_title: str,
     agent_type: str = "claude",
+    workspace_mode: str = "clone",
 ) -> dict[str, object]:
     normalized_agent_type = agent_type.strip().lower() or "claude"
     tool_arg = f"-c={normalized_agent_type}"
-    return await _run_json_object_command(
-        [
-            "agent-deck",
-            "launch",
-            "-json",
-            "-no-wait",
-            f"-t={session_title}",
-            f"-g={_group_path(project_path)}",
-            tool_arg,
-            project_path,
-        ]
-    )
+    args = [
+        "agent-deck",
+        "launch",
+        "-json",
+        "-no-wait",
+        f"-t={session_title}",
+        f"-g={_group_path(project_path)}",
+        tool_arg,
+    ]
+    if workspace_mode == "clone":
+        args.append(f"-clone={_clone_name(session_title)}")
+    args.append(project_path)
+    return await _run_json_object_command(args)
 
 
 def _session_tool(payload: dict[str, object], default: str = "claude") -> str:
@@ -255,9 +285,7 @@ def _require_matching_project_path(project_path: str, payload: dict[str, object]
     if not isinstance(payload_path, str) or not payload_path.strip():
         raise AgentDeckBridgeError("Agent Deck session is missing a workspace path")
 
-    normalized_project_path = _normalize_path(project_path)
-    normalized_session_path = _normalize_path(payload_path)
-    if normalized_session_path != normalized_project_path:
+    if not _session_belongs_to_project(project_path, payload_path):
         raise AgentDeckBridgeError(
             "Chosen Agent Deck session is bound to a different workspace path"
         )
@@ -268,7 +296,6 @@ async def _list_project_session_targets(
     *,
     include_acpx_backed: bool,
 ) -> list[AgentDeckSessionTarget]:
-    normalized_project_path = _normalize_path(project_path)
     payload = await _run_json_array_command(["agent-deck", "ls", "-json"])
     sessions: list[AgentDeckSessionTarget] = []
 
@@ -280,7 +307,7 @@ async def _list_project_session_targets(
         if not isinstance(session_path, str) or not session_path.strip():
             continue
 
-        if _normalize_path(session_path) != normalized_project_path:
+        if not _session_belongs_to_project(project_path, session_path):
             continue
 
         if not include_acpx_backed and _is_acpx_backed_payload(entry):
@@ -303,12 +330,14 @@ async def create_agent_deck_session_target(
     *,
     agent_type: str = "claude",
     title: str | None = None,
+    workspace_mode: str = "clone",
 ) -> AgentDeckSessionTarget:
     session_title = title.strip() if isinstance(title, str) and title.strip() else _session_title_for_target(project_path)
     payload = await _launch_new_session(
         project_path,
         session_title=session_title,
         agent_type=agent_type.strip() or "claude",
+        workspace_mode=workspace_mode.strip().lower() if isinstance(workspace_mode, str) else "clone",
     )
     return _payload_to_session_target(payload)
 
@@ -462,6 +491,7 @@ async def _build_session_info(
         raise AgentDeckBridgeError("Agent Deck did not return a session ID")
 
     agent_deck_title = str(payload.get("title") or fallback_title)
+    workspace_path = str(payload.get("path") or "").strip() or _normalize_path(project_path)
     session_tool = _session_tool(payload)
     acpx_agent: str | None = None
     acpx_session_name: str | None = None
@@ -475,7 +505,7 @@ async def _build_session_info(
         acpx_agent, acpx_session_name = parsed_acpx_command
         acpx_session = await ensure_acpx_session(
             acpx_agent,
-            project_path,
+            workspace_path,
             acpx_session_name,
         )
         acpx_record_id = acpx_session.acpx_record_id
@@ -484,21 +514,22 @@ async def _build_session_info(
         fallback_claude_id = payload.get("claude_session_id")
         if isinstance(fallback_claude_id, str) and fallback_claude_id:
             claude_session_id = fallback_claude_id
-            jsonl_path = claude_jsonl_path(project_path, claude_session_id)
+            jsonl_path = claude_jsonl_path(workspace_path, claude_session_id)
         else:
             claude_session_id, jsonl_path, payload = await _wait_for_claude_session_id(
                 agent_deck_session_id,
-                project_path,
+                workspace_path,
             )
             if not claude_session_id:
                 fallback_claude_id = payload.get("claude_session_id")
                 if isinstance(fallback_claude_id, str) and fallback_claude_id:
                     claude_session_id = fallback_claude_id
-                    jsonl_path = claude_jsonl_path(project_path, claude_session_id)
+                    jsonl_path = claude_jsonl_path(workspace_path, claude_session_id)
 
     return AgentDeckSessionInfo(
         agent_deck_session_id=agent_deck_session_id,
         agent_deck_session_title=agent_deck_title,
+        workspace_path=workspace_path,
         acpx_agent=acpx_agent,
         acpx_session_name=acpx_session_name,
         acpx_record_id=acpx_record_id,
@@ -571,6 +602,7 @@ async def ensure_agent_deck_session(
                     project_path,
                     session_title=_session_title(project_path, thread.thread_id),
                     agent_type=agent_type,
+                    workspace_mode="clone",
                 )
             else:
                 raise
@@ -588,12 +620,14 @@ async def ensure_agent_deck_session(
                 project_path,
                 session_title=_session_title(project_path, thread.thread_id),
                 agent_type=agent_type,
+                workspace_mode="clone",
             )
     else:
         payload = await _launch_new_session(
             project_path,
             session_title=_session_title(project_path, thread.thread_id),
             agent_type=agent_type,
+            workspace_mode="clone",
         )
 
     return await _build_session_info(

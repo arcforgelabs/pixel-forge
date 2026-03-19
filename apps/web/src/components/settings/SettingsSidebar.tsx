@@ -235,7 +235,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   async function handleCreateAgentDeckTarget() {
     try {
       const created = await createAgentDeckTargetSession({ agentType });
-      toast.success(`Created Agent Deck session ${created.title}`);
+      toast.success(`Created isolated Agent Deck session ${created.title}`);
     } catch (error) {
       const message =
         error instanceof Error
@@ -619,7 +619,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
                         className="h-7 px-2 text-xs"
                       >
-                        New Session
+                        New Isolated Session
                       </Button>
                     </div>
                   </div>
@@ -632,10 +632,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
                   >
                     <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder="Create on first send" />
+                      <SelectValue placeholder="Create isolated session on first send" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__auto__">Create on first send</SelectItem>
+                      <SelectItem value="__auto__">Create isolated session on first send</SelectItem>
                       {agentDeckTargets.map((target) => (
                         <SelectItem key={target.id} value={target.id}>
                           {formatAgentDeckTargetLabel(target)}
@@ -668,7 +668,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      No target is preselected. Pixel Forge will create a new Agent Deck session on the first send.
+                      No target is preselected. Pixel Forge will create a new isolated Agent Deck clone on the first send.
                     </p>
                   )}
                 </div>
@@ -695,6 +695,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                           Agent Deck ID
                         </label>
                         <p className="mt-0.5 break-all font-mono text-xs">{liveEditorSession.agentDeckSessionId}</p>
+                      </div>
+                    )}
+                    {liveEditorSession.workspacePath && (
+                      <div>
+                        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Workspace
+                        </label>
+                        <p className="mt-0.5 break-all font-mono text-xs">{liveEditorSession.workspacePath}</p>
                       </div>
                     )}
                   </div>

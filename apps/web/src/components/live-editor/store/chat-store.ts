@@ -503,6 +503,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             useSessionStore.getState().setLiveEditorSession({
               threadId: data.session_id,
               backend: data.backend || 'agent-deck',
+              workspacePath: data.workspace_path ?? null,
               agentDeckSessionId: data.agent_deck_session_id ?? null,
               agentDeckSessionTitle: data.agent_deck_session_title ?? null,
               requestId: data.request_id ?? null,
@@ -530,6 +531,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             useSessionStore.getState().setLiveEditorSession({
               threadId: data.session_id,
               backend: data.backend || 'agent-deck',
+              workspacePath: data.workspace_path ?? null,
               agentDeckSessionId: data.agent_deck_session_id ?? null,
               agentDeckSessionTitle: data.agent_deck_session_title ?? null,
               requestId: data.request_id ?? null,

@@ -11,6 +11,7 @@ export type OutputMode = "scratch" | "custom";
 export interface LiveEditorSessionMeta {
   threadId: string;
   backend: string;
+  workspacePath: string | null;
   agentDeckSessionId: string | null;
   agentDeckSessionTitle: string | null;
   requestId?: string | null;
@@ -159,6 +160,7 @@ interface ApiProject {
 interface ApiSession {
   id: number;
   project_path: string;
+  workspace_path: string;
   thread_id: string;
   backend: string;
   agent_deck_session_id: string | null;
@@ -198,6 +200,7 @@ function normalizeSession(session: ApiSession): ProjectSessionRecord {
   return {
     id: session.id,
     projectPath: session.project_path,
+    workspacePath: session.workspace_path,
     threadId: session.thread_id,
     backend: session.backend,
     agentDeckSessionId: session.agent_deck_session_id,

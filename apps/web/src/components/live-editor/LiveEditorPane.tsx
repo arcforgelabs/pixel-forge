@@ -363,6 +363,7 @@ export function LiveEditorPane() {
     projectPath,
     previewUrl,
     activeMode,
+    liveEditorSession,
     setPreviewUrl,
     pendingControllerUpdate,
   } = useSessionStore()
@@ -1233,9 +1234,10 @@ export function LiveEditorPane() {
     setIsLaunchingPixelForgeTarget(true)
     try {
       const preferredSourceRoot =
-        pendingControllerUpdate?.projectPath === projectPath
+        liveEditorSession?.workspacePath
+          || (pendingControllerUpdate?.projectPath === projectPath
           ? pendingControllerUpdate.snapshotPath
-          : (mirrorBuilds[0]?.source_root || null)
+          : (mirrorBuilds[0]?.source_root || null))
 
       const record = await startPixelForgeMirror({
         sourceRoot: preferredSourceRoot,
@@ -1258,7 +1260,7 @@ export function LiveEditorPane() {
     } finally {
       setIsLaunchingPixelForgeTarget(false)
     }
-  }, [mirrorBuilds, pendingControllerUpdate?.projectPath, pendingControllerUpdate?.snapshotPath, projectPath, startPixelForgeMirror])
+  }, [liveEditorSession?.workspacePath, mirrorBuilds, pendingControllerUpdate?.projectPath, pendingControllerUpdate?.snapshotPath, projectPath, startPixelForgeMirror])
 
   const closePreviewTab = useCallback(async (tabId: string) => {
     const closingIndex = previewTabsRef.current.findIndex((entry) => entry.id === tabId)
@@ -1894,9 +1896,10 @@ export function LiveEditorPane() {
   const activeMirrorTarget = activePreviewTab?.localTarget
   const latestMirrorBuild = mirrorBuilds[0] ?? null
   const nextMirrorSourceRoot =
-    pendingControllerUpdate?.projectPath === projectPath
-      ? (pendingControllerUpdate.snapshotPath || null)
-      : (latestMirrorBuild?.source_root || null)
+    liveEditorSession?.workspacePath
+      || (pendingControllerUpdate?.projectPath === projectPath
+        ? (pendingControllerUpdate.snapshotPath || null)
+        : (latestMirrorBuild?.source_root || null))
   const hasNewerMirrorBuild =
     !!activeMirrorTarget
     && !!nextMirrorSourceRoot
