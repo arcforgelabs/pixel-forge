@@ -43,9 +43,10 @@ import {
   Settings as SettingsIcon,
   BookOpen,
   Loader2,
-  MoreHorizontal,
+  MoreVertical,
   PencilLine,
   Trash2,
+  X,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -211,9 +212,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     controllerAcpxBridgeAvailable,
     controllerInstalledAt,
     recentProjects,
+    hydrateProjects,
     setProject,
     switchToThread,
     clearLiveEditorSession,
+    clearProject,
     installedSkills,
     skillSourceRoots,
     skillInstallDestinations,
@@ -231,6 +234,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
   const [isRefreshingChatTargets, setIsRefreshingChatTargets] = useState(false);
   const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
+  const [projectActionMenuOpenPath, setProjectActionMenuOpenPath] = useState<string | null>(null);
   const [renameDialogItem, setRenameDialogItem] = useState<ChatSidebarActionItem | null>(null);
   const [renameTitleDraft, setRenameTitleDraft] = useState("");
   const [isRenamingChat, setIsRenamingChat] = useState(false);
@@ -238,6 +242,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [deleteAssessment, setDeleteAssessment] = useState<ChatDeleteAssessment | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
+  const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
 
   const {
     connected,
@@ -471,6 +476,54 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     } finally {
       setLoadingProjectPaths((current) =>
         current.filter((entry) => entry !== targetProjectPath)
+      );
+    }
+  }
+
+  async function handleCloseProject(
+    targetProjectPath: string,
+    targetProjectName: string,
+    isActiveProject: boolean
+  ) {
+    if (isActiveProject && isStreaming) {
+      toast.error(
+        "Finish the current Live Editor request before closing this folder"
+      );
+      return;
+    }
+
+    try {
+      setClosingProjectPath(targetProjectPath);
+      setProjectActionMenuOpenPath(null);
+
+      await requestSidebarJson<{ status: "deleted" }>(
+        `/api/projects/${encodeURIComponent(targetProjectPath)}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      setExpandedProjectPaths((current) =>
+        current.filter((entry) => entry !== targetProjectPath)
+      );
+      setLoadingProjectPaths((current) =>
+        current.filter((entry) => entry !== targetProjectPath)
+      );
+
+      await hydrateProjects();
+
+      if (isActiveProject) {
+        clearProject();
+      }
+
+      toast.success(`Closed folder ${targetProjectName}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to close folder"
+      );
+    } finally {
+      setClosingProjectPath((current) =>
+        current === targetProjectPath ? null : current
       );
     }
   }
@@ -742,11 +795,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   ? "bg-muted/50 text-foreground"
                   : "text-muted-foreground opacity-0 group-hover/chat-row:opacity-100 group-focus-within/chat-row:opacity-100 hover:bg-muted/40 hover:text-foreground"
                 }
-              `}
+            `}
               aria-label={`More options for ${item.label}`}
               title={`More options for ${item.label}`}
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
+              <MoreVertical className="h-3.5 w-3.5" />
             </button>
           </PopoverTrigger>
           <PopoverContent
@@ -901,7 +954,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
                       return (
                         <div key={project.path}>
-                          <div className="flex items-center gap-1">
+                          <div className="group/project-row flex items-center gap-1">
                             <button
                               onClick={() => {
                                 if (isActive || isStreaming) {
@@ -929,6 +982,71 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
                               )}
                             </button>
+                            <Popover
+                              open={projectActionMenuOpenPath === project.path}
+                              onOpenChange={(open) => {
+                                setProjectActionMenuOpenPath(
+                                  open ? project.path : null
+                                );
+                              }}
+                            >
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                  }}
+                                  className={`
+                                    flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md
+                                    transition-colors duration-100
+                                    ${projectActionMenuOpenPath === project.path
+                                      ? "bg-muted/50 text-foreground"
+                                      : "text-muted-foreground opacity-0 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 hover:bg-muted/40 hover:text-foreground"
+                                    }
+                                    ${closingProjectPath === project.path ? "cursor-wait opacity-100" : ""}
+                                  `}
+                                  aria-label={`More options for ${project.name}`}
+                                  title={`More options for ${project.name}`}
+                                  disabled={closingProjectPath === project.path}
+                                >
+                                  <MoreVertical className="h-3.5 w-3.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                align="end"
+                                sideOffset={6}
+                                className="w-48 p-1"
+                                onOpenAutoFocus={(event) => event.preventDefault()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleCloseProject(
+                                      project.path,
+                                      project.name,
+                                      isActive
+                                    );
+                                  }}
+                                  disabled={
+                                    closingProjectPath === project.path
+                                    || (isActive && isStreaming)
+                                  }
+                                  title={
+                                    isActive && isStreaming
+                                      ? "Finish the current Live Editor request before closing this folder"
+                                      : "Close folder"
+                                  }
+                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {closingProjectPath === project.path ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <X className="h-4 w-4" />
+                                  )}
+                                  <span>Close Folder</span>
+                                </button>
+                              </PopoverContent>
+                            </Popover>
                             <button
                               type="button"
                               onClick={() => {
