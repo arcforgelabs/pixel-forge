@@ -7,12 +7,13 @@
  * Pattern: Adapted from aim-up/dashboard/frontend/src/components/chat/ChatMessages.tsx
  */
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
+import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
-import { AlertTriangle, CheckCircle2, FileText, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, X } from 'lucide-react'
 
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
@@ -33,6 +34,41 @@ export function ChatMessages({
   } = useLiveEditorStore()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
+
+  const closeLightbox = useCallback(() => setLightboxImage(null), [])
+
+  const downloadImage = useCallback(() => {
+    if (!lightboxImage) return
+    const a = document.createElement('a')
+    a.href = lightboxImage.dataUrl
+    a.download = lightboxImage.name || 'image.png'
+    a.click()
+  }, [lightboxImage])
+
+  const copyImage = useCallback(async () => {
+    if (!lightboxImage) return
+    try {
+      const res = await fetch(lightboxImage.dataUrl)
+      const blob = await res.blob()
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob }),
+      ])
+    } catch {
+      // Fallback: copy data URL as text
+      await navigator.clipboard.writeText(lightboxImage.dataUrl)
+    }
+  }, [lightboxImage])
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!lightboxImage) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [lightboxImage, closeLightbox])
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -153,7 +189,8 @@ export function ChatMessages({
                               key={attachment.id}
                               src={attachment.dataUrl}
                               alt={attachment.name}
-                              className="max-h-48 rounded-lg border border-border/40 object-contain"
+                              className="max-h-48 cursor-pointer rounded-lg border border-border/40 object-contain transition-opacity hover:opacity-80"
+                              onClick={() => setLightboxImage(attachment)}
                             />
                           ) : (
                             <div
@@ -196,7 +233,8 @@ export function ChatMessages({
                               key={attachment.id}
                               src={attachment.dataUrl}
                               alt={attachment.name}
-                              className="h-20 w-20 rounded-lg border border-primary-foreground/20 object-cover"
+                              className="h-20 w-20 cursor-pointer rounded-lg border border-primary-foreground/20 object-cover transition-opacity hover:opacity-80"
+                              onClick={() => setLightboxImage(attachment)}
                             />
                           ) : (
                             <div
@@ -257,6 +295,57 @@ export function ChatMessages({
         {/* Scroll anchor */}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Image lightbox */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={closeLightbox}
+        >
+          {/* Toolbar */}
+          <div
+            className="absolute right-3 top-3 flex items-center gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={copyImage}
+              className="rounded-lg bg-white/10 p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+              title="Copy image"
+            >
+              <Copy className="h-4 w-4" />
+            </button>
+            <button
+              onClick={downloadImage}
+              className="rounded-lg bg-white/10 p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+              title="Download image"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+            <button
+              onClick={closeLightbox}
+              className="rounded-lg bg-white/10 p-2 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Full-size image */}
+          <img
+            src={lightboxImage.dataUrl}
+            alt={lightboxImage.name}
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+
+          {/* Filename */}
+          {lightboxImage.name && (
+            <div className="absolute bottom-4 text-xs text-white/50">
+              {lightboxImage.name}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
