@@ -19,6 +19,24 @@ export interface MirrorAgentDeckTargetRef {
   path: string | null | undefined
 }
 
+export interface MirrorPreviewUpdateRef {
+  projectPath: string
+  workspacePath: string
+  agentDeckSessionId: string | null | undefined
+}
+
+export interface MirrorTabLocalTargetRef {
+  kind: 'pixel-forge'
+  runtimeKind: 'mirror' | 'dev'
+  sourceRoot: string
+  audienceWorkspacePath?: string | null | undefined
+}
+
+export interface MirrorPreviewTabRef {
+  id: string
+  localTarget: MirrorTabLocalTargetRef | null | undefined
+}
+
 export interface ResolvedIsolatedMirrorTarget {
   workspacePath: string
   agentDeckSessionId: string
@@ -97,6 +115,93 @@ export function resolveIsolatedMirrorSourceRoot(options: {
   return null
 }
 
+function matchesMirrorAudience(options: {
+  localTarget: MirrorTabLocalTargetRef | null | undefined
+  audienceWorkspacePath: string | null | undefined
+}): boolean {
+  const audienceWorkspacePath = options.audienceWorkspacePath?.trim() || null
+  const localTarget = options.localTarget
+  if (!audienceWorkspacePath || !localTarget) {
+    return false
+  }
+
+  if (localTarget.kind !== 'pixel-forge' || localTarget.runtimeKind !== 'mirror') {
+    return false
+  }
+
+  const localTargetAudienceWorkspacePath =
+    localTarget.audienceWorkspacePath?.trim() || null
+  const localTargetSourceRoot = localTarget.sourceRoot?.trim() || null
+  return (
+    localTargetAudienceWorkspacePath === audienceWorkspacePath
+    || localTargetSourceRoot === audienceWorkspacePath
+  )
+}
+
+export function findReusableMirrorTabId(options: {
+  previewTabs: MirrorPreviewTabRef[]
+  audienceWorkspacePath: string | null | undefined
+  activeTabId: string | null | undefined
+  preferActiveTab?: boolean
+}): string | null {
+  const audienceWorkspacePath = options.audienceWorkspacePath?.trim() || null
+  if (!audienceWorkspacePath) {
+    return null
+  }
+
+  const activeTabId = options.activeTabId?.trim() || null
+  if (options.preferActiveTab && activeTabId) {
+    const activeTab = options.previewTabs.find((tab) => tab.id === activeTabId) || null
+    if (
+      activeTab
+      && matchesMirrorAudience({
+        localTarget: activeTab.localTarget,
+        audienceWorkspacePath,
+      })
+    ) {
+      return activeTab.id
+    }
+  }
+
+  return (
+    options.previewTabs.find((tab) =>
+      matchesMirrorAudience({
+        localTarget: tab.localTarget,
+        audienceWorkspacePath,
+      })
+    )?.id || null
+  )
+}
+
+export function isPendingPreviewUpdateForAudience(options: {
+  pendingPreviewUpdate: MirrorPreviewUpdateRef | null | undefined
+  projectPath: string | null | undefined
+  audienceWorkspacePath: string | null | undefined
+  audienceSessionId: string | null | undefined
+}): boolean {
+  const pendingPreviewUpdate = options.pendingPreviewUpdate
+  if (!pendingPreviewUpdate) {
+    return false
+  }
+
+  const projectPath = options.projectPath?.trim() || null
+  const audienceWorkspacePath = options.audienceWorkspacePath?.trim() || null
+  const audienceSessionId = options.audienceSessionId?.trim() || null
+  if (!projectPath || pendingPreviewUpdate.projectPath !== projectPath) {
+    return false
+  }
+
+  if (audienceSessionId) {
+    return (pendingPreviewUpdate.agentDeckSessionId?.trim() || null) === audienceSessionId
+  }
+
+  if (!audienceWorkspacePath) {
+    return false
+  }
+
+  return pendingPreviewUpdate.workspacePath === audienceWorkspacePath
+}
+
 export function normalizeMirrorUrl(url: string | null | undefined): string | null {
   if (typeof url !== 'string') {
     return null
@@ -112,6 +217,25 @@ export function normalizeMirrorUrl(url: string | null | undefined): string | nul
     return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`
   } catch {
     return trimmed.replace(/\/+$/, '')
+  }
+}
+
+export function isPixelForgeTargetUrl(url: string | null | undefined): boolean {
+  const normalizedUrl = normalizeMirrorUrl(url)
+  if (!normalizedUrl) {
+    return false
+  }
+
+  try {
+    const parsed = new URL(normalizedUrl)
+    const hostname = parsed.hostname.toLowerCase()
+    return (
+      hostname === 'pixel-forge.localhost'
+      || hostname.includes('-mirror-target-')
+      || hostname.includes('-dev-target-')
+    )
+  } catch {
+    return false
   }
 }
 

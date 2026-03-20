@@ -396,6 +396,7 @@ def _run_logged_shell(
 
 def _ensure_mirror_runtime(
     *,
+    project_path: str,
     source_root: str,
     state_dir: Path,
     instance_slug: str,
@@ -432,7 +433,9 @@ def _ensure_mirror_runtime(
                 "PIXEL_FORGE_INSTANCE_SLUG": instance_slug,
                 "PIXEL_FORGE_RUNTIME_KIND": "mirror",
                 "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": str(launch_source.root),
+                "PIXEL_FORGE_TARGET_PROJECT_PATH": project_path,
                 "VITE_PIXEL_FORGE_RUNTIME_KIND": "mirror",
+                "VITE_PIXEL_FORGE_TARGET_PROJECT_PATH": project_path,
             }
         )
 
@@ -491,6 +494,7 @@ def _ensure_mirror_runtime(
             "PIXEL_FORGE_RUNTIME_ROLE": "target",
             "PIXEL_FORGE_RUNTIME_KIND": "mirror",
             "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": str(launch_source.root),
+            "PIXEL_FORGE_TARGET_PROJECT_PATH": project_path,
             "PIXEL_FORGE_API_PORT": str(api_port),
             "PIXEL_FORGE_WEB_PORT": str(api_port),
             "PIXEL_FORGE_WEB_HOST": web_host,
@@ -636,6 +640,7 @@ def start_pixel_forge_target(
         if normalized_runtime_kind == "mirror":
             command, env, api_url, web_url, launch_cwd = _ensure_mirror_runtime(
                 source_root=normalized_source_root,
+                project_path=normalized_project_path,
                 state_dir=state_dir,
                 instance_slug=instance_slug,
                 api_port=api_port,

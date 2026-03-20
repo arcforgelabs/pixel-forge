@@ -20,7 +20,7 @@ import OutputSettingsSection from "./OutputSettingsSection";
 import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
-import { HTTP_BACKEND_URL, IS_TARGET_MODE } from "@/config";
+import { HTTP_BACKEND_URL, IS_TARGET_MODE, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
 import {
   Dialog,
   DialogContent,
@@ -243,6 +243,13 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
+  const visibleProjects = recentProjects.filter((project) => (
+    !(
+      RUNTIME_KIND !== "controller"
+      && TARGET_PROJECT_PATH
+      && project.path === TARGET_PROJECT_PATH
+    )
+  ));
 
   const {
     connected,
@@ -941,10 +948,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                 {/* Expandable project list */}
                 {projectsExpanded && (
                   <div className="ml-3 flex flex-col gap-0.5 border-l border-border/30 pl-3 py-1">
-                    {recentProjects.length === 0 && (
+                    {visibleProjects.length === 0 && (
                       <span className="text-xs text-muted-foreground py-1">No projects yet</span>
                     )}
-                    {recentProjects.map((project) => {
+                    {visibleProjects.map((project) => {
                       const isActive = project.path === projectPath;
                       const isExpanded = expandedProjectPaths.includes(project.path);
                       const isLoadingProjectChats = loadingProjectPaths.includes(project.path);

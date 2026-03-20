@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  findReusableMirrorTabId,
   findMirrorTargetByPreviewUrl,
   isCloneWorkspaceBound,
+  isPixelForgeTargetUrl,
+  isPendingPreviewUpdateForAudience,
   resolveUsableIsolatedMirrorTarget,
   resolveIsolatedMirrorSourceRoot,
   resolveUpdatedMirrorTarget,
@@ -95,6 +98,17 @@ describe('mirror target resolution', () => {
     ).toEqual(workspaceMirror)
   })
 
+  it('detects controller and target Pixel Forge urls so mirrors can refuse nested self-preview', () => {
+    expect(isPixelForgeTargetUrl('http://pixel-forge.localhost:7001')).toBe(true)
+    expect(
+      isPixelForgeTargetUrl('http://pixel-forge-mirror-target-14673d35.localhost:7103/')
+    ).toBe(true)
+    expect(
+      isPixelForgeTargetUrl('http://lab-flow-dev-target-14673d35.localhost:5175/')
+    ).toBe(true)
+    expect(isPixelForgeTargetUrl('https://www.google.com/')).toBe(false)
+  })
+
   it('treats clone-backed sessions as distinct from the canonical project root', () => {
     expect(
       isCloneWorkspaceBound({
@@ -171,5 +185,124 @@ describe('mirror target resolution', () => {
       workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
       agentDeckSessionId: 'clone-b',
     })
+  })
+
+  it('reuses the first mirror tab for the same clone audience workspace by default', () => {
+    expect(
+      findReusableMirrorTabId({
+        previewTabs: [
+          {
+            id: 'tab-google',
+            localTarget: null,
+          },
+          {
+            id: 'tab-mirror-primary',
+            localTarget: {
+              kind: 'pixel-forge',
+              runtimeKind: 'mirror',
+              sourceRoot: '/tmp/pixel-forge-preview-updates/update-a',
+              audienceWorkspacePath:
+                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+            },
+          },
+          {
+            id: 'tab-mirror-secondary',
+            localTarget: {
+              kind: 'pixel-forge',
+              runtimeKind: 'mirror',
+              sourceRoot: '/tmp/pixel-forge-preview-updates/update-b',
+              audienceWorkspacePath:
+                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+            },
+          },
+        ],
+        audienceWorkspacePath:
+          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+        activeTabId: 'tab-google',
+      })
+    ).toBe('tab-mirror-primary')
+  })
+
+  it('can prefer the active mirror tab when explicitly requested', () => {
+    expect(
+      findReusableMirrorTabId({
+        previewTabs: [
+          {
+            id: 'tab-mirror-primary',
+            localTarget: {
+              kind: 'pixel-forge',
+              runtimeKind: 'mirror',
+              sourceRoot: '/tmp/pixel-forge-preview-updates/update-a',
+              audienceWorkspacePath:
+                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+            },
+          },
+          {
+            id: 'tab-mirror-active',
+            localTarget: {
+              kind: 'pixel-forge',
+              runtimeKind: 'mirror',
+              sourceRoot: '/tmp/pixel-forge-preview-updates/update-b',
+              audienceWorkspacePath:
+                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+            },
+          },
+        ],
+        audienceWorkspacePath:
+          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+        activeTabId: 'tab-mirror-active',
+        preferActiveTab: true,
+      })
+    ).toBe('tab-mirror-active')
+  })
+
+  it('treats a workspace-root mirror as belonging to that same workspace even without stored audience metadata', () => {
+    expect(
+      findReusableMirrorTabId({
+        previewTabs: [
+          {
+            id: 'tab-mirror',
+            localTarget: {
+              kind: 'pixel-forge',
+              runtimeKind: 'mirror',
+              sourceRoot: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+            },
+          },
+        ],
+        audienceWorkspacePath:
+          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+        activeTabId: 'tab-mirror',
+      })
+    ).toBe('tab-mirror')
+  })
+
+  it('only offers a pending preview update for the active chat audience', () => {
+    expect(
+      isPendingPreviewUpdateForAudience({
+        pendingPreviewUpdate: {
+          projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+          workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          agentDeckSessionId: 'clone-a-session',
+        },
+        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        audienceWorkspacePath:
+          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+        audienceSessionId: 'clone-b-session',
+      })
+    ).toBe(false)
+
+    expect(
+      isPendingPreviewUpdateForAudience({
+        pendingPreviewUpdate: {
+          projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+          workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          agentDeckSessionId: 'clone-a-session',
+        },
+        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        audienceWorkspacePath:
+          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+        audienceSessionId: 'clone-a-session',
+      })
+    ).toBe(true)
   })
 })

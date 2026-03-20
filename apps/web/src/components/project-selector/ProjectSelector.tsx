@@ -9,7 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { HTTP_BACKEND_URL } from "@/config";
+import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
 import { useSessionStore } from "@/store/session-store";
 import { FaClock, FaFolder, FaFolderOpen, FaGlobe, FaWrench } from "react-icons/fa";
 import toast from "react-hot-toast";
@@ -53,6 +53,13 @@ export function ProjectSelector({
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
   const projectPathInputRef = useRef<HTMLInputElement | null>(null);
+  const visibleRecentProjects = recentProjects.filter((project) => (
+    !(
+      RUNTIME_KIND !== "controller"
+      && TARGET_PROJECT_PATH
+      && project.path === TARGET_PROJECT_PATH
+    )
+  ));
 
   useEffect(() => {
     if (open) {
@@ -191,11 +198,11 @@ export function ProjectSelector({
 
           <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pb-4">
             {/* Recent Projects */}
-            {recentProjects.length > 0 && (
+            {visibleRecentProjects.length > 0 && (
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Projects</Label>
                 <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
-                  {recentProjects.map((project) => (
+                  {visibleRecentProjects.map((project) => (
                     <div
                       key={project.path}
                       className="overflow-hidden rounded-md border border-border"

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
 import { useSessionStore } from '@/store/session-store'
+import { getDesktopApp } from '@/lib/desktop-app'
 import toast from 'react-hot-toast'
 import {
   applySkillAutocomplete,
@@ -60,6 +61,7 @@ export function ChatInput() {
   const [activeSkillIndex, setActiveSkillIndex] = useState(0)
   const [dismissedSkillToken, setDismissedSkillToken] = useState<string | null>(null)
   const agentPickerRef = useRef<HTMLDivElement>(null)
+  const desktopAppRef = useRef(getDesktopApp())
   const {
     sendMessage,
     isStreaming,
@@ -219,14 +221,14 @@ export function ChatInput() {
   // Focus textarea on mount with delay to handle iframe focus conflicts
   useEffect(() => {
     const timer = setTimeout(() => {
-      void window.pixelForgeDesktop?.app?.focusShell?.()
+      void desktopAppRef.current?.focusShell?.()
       textareaRef.current?.focus()
     }, 100)
     return () => clearTimeout(timer)
   }, [])
 
   const syncShellFocus = useCallback(() => {
-    void window.pixelForgeDesktop?.app?.focusShell?.()
+    void desktopAppRef.current?.focusShell?.()
   }, [])
 
   // Handle click on container to ensure focus reaches textarea

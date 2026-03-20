@@ -1,4 +1,4 @@
-import { HTTP_BACKEND_URL } from "@/config";
+import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
 import { create } from "zustand";
 import type {
   PixelForgeDesktopControllerUpdateApplyState,
@@ -1032,6 +1032,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     const trimmedPath = path.trim();
     if (!trimmedPath) {
       throw new Error("Project path is required");
+    }
+    if (
+      RUNTIME_KIND !== "controller"
+      && TARGET_PROJECT_PATH
+      && trimmedPath === TARGET_PROJECT_PATH
+    ) {
+      throw new Error(
+        "This target runtime cannot reopen the originating Pixel Forge workspace inside itself."
+      );
     }
 
     const state = get();

@@ -350,6 +350,10 @@ function App() {
     if (desktopBootstrapState || projectPath || profileRestoreAttemptedRef.current) {
       return;
     }
+    if (RUNTIME_KIND !== "controller") {
+      profileRestoreAttemptedRef.current = true;
+      return;
+    }
 
     const activeProjectPath = profileState?.activeProjectPath?.trim() || "";
     if (!activeProjectPath) {
@@ -395,7 +399,9 @@ function App() {
   // Show project selector on first render if no project is configured
   useEffect(() => {
     const hasRestorableProfileProject =
-      !!profileState?.activeProjectPath?.trim() && !desktopBootstrapState;
+      RUNTIME_KIND === "controller"
+      && !!profileState?.activeProjectPath?.trim()
+      && !desktopBootstrapState;
     if (
       projectsLoaded &&
       profileLoaded &&

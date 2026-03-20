@@ -10,7 +10,7 @@
 import { create } from 'zustand'
 
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
-import { hasDesktopAppMethod } from '@/lib/desktop-app'
+import { getDesktopApp, hasDesktopAppMethod } from '@/lib/desktop-app'
 import type {
   PersistedPreviewTab,
   PersistedThreadEditorState,
@@ -86,7 +86,7 @@ export interface LocalTargetMeta {
   instanceSlug: string
   projectPath: string
   sourceRoot: string
-  audienceWorkspacePath: string | null
+  audienceWorkspacePath?: string | null
   buildLabel: string
   createdAt: string | null
 }
@@ -653,10 +653,7 @@ async function stageControllerUpdateNotice(options: {
 
   const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
   const summary = `Pixel Forge update from ${requestLabel} is ready to load.`
-  const desktopApp =
-    typeof window !== 'undefined'
-      ? window.pixelForgeDesktop?.app
-      : undefined
+  const desktopApp = getDesktopApp()
   let update: PixelForgeDesktopPendingControllerUpdate
 
   if (hasDesktopAppMethod(desktopApp, 'stageControllerUpdate')) {
@@ -1257,10 +1254,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             || (isSelfEditSafeMode && cloneWorkspaceBound)
           const canStageControllerUpdate = selfEditScope === 'controller'
             || (isSelfEditSafeMode && !cloneWorkspaceBound)
-          const desktopApp =
-            typeof window !== 'undefined'
-              ? window.pixelForgeDesktop?.app
-              : undefined
+          const desktopApp = getDesktopApp()
           const canApplyControllerUpdate =
             canStageControllerUpdate
             && (

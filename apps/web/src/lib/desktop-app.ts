@@ -1,9 +1,34 @@
-import type { PixelForgeDesktopAppAPI } from "@/types/pixel-forge-desktop";
+import { RUNTIME_KIND } from "@/config";
+import type {
+  PixelForgeDesktopAppAPI,
+  PixelForgeDesktopOverlayAPI,
+  PixelForgeDesktopPreviewAPI,
+} from "@/types/pixel-forge-desktop";
 
 type AppMethodName = keyof PixelForgeDesktopAppAPI;
 
-export function getDesktopApp(): PixelForgeDesktopAppAPI | null {
+export function shouldUseControllerAppBridge(
+  runtimeKind: string | null | undefined
+): boolean {
+  return runtimeKind === "controller";
+}
+
+export function getDesktopPreview(): PixelForgeDesktopPreviewAPI | null {
   if (typeof window === "undefined") {
+    return null;
+  }
+  return window.pixelForgeDesktop?.preview ?? null;
+}
+
+export function getDesktopOverlay(): PixelForgeDesktopOverlayAPI | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.pixelForgeDesktop?.overlay ?? null;
+}
+
+export function getDesktopApp(): PixelForgeDesktopAppAPI | null {
+  if (typeof window === "undefined" || !shouldUseControllerAppBridge(RUNTIME_KIND)) {
     return null;
   }
   return window.pixelForgeDesktop?.app ?? null;

@@ -625,3 +625,97 @@ describe("session-store chat creation", () => {
     expect(state.defaultAgentType).toBe("claude");
   });
 });
+
+describe("createAgentDeckTargetSession", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.includes("/api/projects/")
+          && url.includes("/agent-deck-sessions")
+          && init?.method === "POST"
+        ) {
+          return new Response(
+            JSON.stringify({
+              id: "deck-thread-a",
+              title: "pixel-forge-thread-a",
+              path: "/tmp/example-project/.agents/pixel-forge-thread-a",
+              group: null,
+              tool: "claude",
+              command: null,
+              status: "idle",
+              created_at: "2026-03-21T00:00:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/chats")) {
+          throw new Error(`Unexpected project chat refresh in session-store test: ${url}`);
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    const existingChat = {
+      id: "thread-a",
+      projectPath: "/tmp/example-project",
+      title: "Existing chat",
+      threadId: "thread-a",
+      workspacePath: "/tmp/example-project",
+      backend: "agent-deck" as const,
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: "Existing chat",
+      agentDeckTool: null,
+      agentDeckSessionStatus: null,
+      bindingState: "detached" as const,
+      workspaceKind: "root" as const,
+      originKind: "managed" as const,
+      createdAt: "2026-03-21T00:00:00Z",
+      lastActive: "2026-03-21T00:00:00Z",
+    };
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [existingChat],
+      projectChatsByProject: {
+        "/tmp/example-project": [existingChat],
+      },
+      agentDeckTargets: [],
+      selectedAgentDeckTargetId: null,
+      defaultAgentType: "claude",
+      liveEditorSession: null,
+      projectSessions: [],
+      projectSessionsByProject: {},
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("can create an Agent Deck lane without refreshing adopted project chats yet", async () => {
+    const created = await useSessionStore.getState().createAgentDeckTargetSession({
+      refreshProjectChats: false,
+    });
+
+    const state = useSessionStore.getState();
+    expect(created).toMatchObject({
+      id: "deck-thread-a",
+      path: "/tmp/example-project/.agents/pixel-forge-thread-a",
+      tool: "claude",
+    });
+    expect(state.selectedAgentDeckTargetId).toBe("deck-thread-a");
+    expect(state.agentDeckTargets[0]).toMatchObject({
+      id: "deck-thread-a",
+      path: "/tmp/example-project/.agents/pixel-forge-thread-a",
+    });
+    expect(state.projectChats).toHaveLength(1);
+    expect(state.projectChats[0]).toMatchObject({
+      id: "thread-a",
+      title: "Existing chat",
+    });
+  });
+});

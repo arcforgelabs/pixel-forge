@@ -83,7 +83,9 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
 - Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface.
 - Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
-- Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update launches a distinct mirror candidate in a new tab instead of rebuilding over the current preview tab.
+- Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update reuses the chat's primary mirror tab for that workspace by default, while still allowing separate mirror candidates to coexist when the operator opens them deliberately.
+- Non-controller runtimes do not auto-restore persisted Pixel Forge local-target tabs on startup. That guard prevents mirror-in-mirror recursion while still preserving the tab metadata for deliberate reload.
+- Non-controller runtimes keep ordinary preview capability for external apps, but they do not reopen the originating Pixel Forge workspace or launch nested Pixel Forge target runtimes inside themselves. Mirror depth for Pixel Forge itself is intentionally capped at one layer.
 
 ### Simple Working Model
 
@@ -112,7 +114,7 @@ The important boundary is:
 
 - clone creation starts from local git state, not raw working-tree copying
 - request packs, direct edits, and committed selections happen in the bound thread lane workspace
-- clone preview publication freezes a clone snapshot per session and loads that snapshot into a new mirror tab
+- clone preview publication freezes a clone snapshot per session and reloads the primary mirror tab for that workspace by default, without removing the ability to keep multiple mirror candidates open
 - controller install reads from the staged frozen snapshot, not the live repo
 
 ### Current Handoff Lanes
