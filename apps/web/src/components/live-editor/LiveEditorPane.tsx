@@ -25,6 +25,7 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ChevronDown,
+  ExternalLink,
   Globe2,
   Layers,
   MessageSquare,
@@ -377,6 +378,7 @@ export function LiveEditorPane() {
     previewUrl,
     activeMode,
     liveEditorSession,
+    projectSessions,
     agentDeckTargets,
     createAgentDeckTargetSession,
     selectedAgentDeckTargetId,
@@ -389,9 +391,11 @@ export function LiveEditorPane() {
   const previewTabsRef = useRef<PreviewTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
+  const lastLiveEditorProjectPathRef = useRef<string | null | undefined>(undefined)
   const internalPreviewUrlRef = useRef<string | null>(null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
+  const autoProvisionedProjectRef = useRef<string | null>(null)
   const previewHostRef = useRef<HTMLDivElement | null>(null)
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
@@ -524,7 +528,9 @@ export function LiveEditorPane() {
 
   const {
     connect,
-    disconnect,
+    disconnectAll,
+    activateThread,
+    resetForProject,
     connected,
     addElement,
     removeElement,
@@ -562,8 +568,55 @@ export function LiveEditorPane() {
 
   useEffect(() => {
     connect()
-    return () => disconnect()
-  }, [connect, disconnect])
+    return () => disconnectAll()
+  }, [connect, disconnectAll])
+
+  useEffect(() => {
+    if (lastLiveEditorProjectPathRef.current === projectPath) {
+      return
+    }
+    lastLiveEditorProjectPathRef.current = projectPath
+    resetForProject()
+    if (liveEditorSession?.threadId) {
+      activateThread(liveEditorSession.threadId)
+    }
+  }, [projectPath, liveEditorSession?.threadId, activateThread, resetForProject])
+
+  useEffect(() => {
+    if (liveEditorSession?.threadId) {
+      activateThread(liveEditorSession.threadId)
+    }
+  }, [activateThread, liveEditorSession?.threadId])
+
+  useEffect(() => {
+    if (activeMode !== 'live-editor' || !projectPath) {
+      return
+    }
+    if (liveEditorSession || selectedAgentDeckTargetId || projectSessions.length > 0) {
+      autoProvisionedProjectRef.current = null
+      return
+    }
+    if (autoProvisionedProjectRef.current === projectPath) {
+      return
+    }
+
+    autoProvisionedProjectRef.current = projectPath
+    void createAgentDeckTargetSession()
+      .then((created) => {
+        useLiveEditorStore.getState().newSession(created.id)
+      })
+      .catch((error) => {
+        autoProvisionedProjectRef.current = null
+        console.error('[live-editor] Failed to auto-provision isolated session:', error)
+      })
+  }, [
+    activeMode,
+    createAgentDeckTargetSession,
+    liveEditorSession,
+    projectPath,
+    projectSessions.length,
+    selectedAgentDeckTargetId,
+  ])
 
   useEffect(() => {
     const timer1 = setTimeout(() => setActiveTab('elements'), 500)
@@ -1076,7 +1129,7 @@ export function LiveEditorPane() {
           previewUrl,
           activeMode,
         })
-      } else {
+      } else if (desktopApp.applyControllerUpdate) {
         if (!projectPath) {
           throw new Error('No project is selected.')
         }
@@ -1085,6 +1138,8 @@ export function LiveEditorPane() {
           previewUrl,
           activeMode,
         })
+      } else {
+        throw new Error('This runtime cannot apply controller updates directly.')
       }
       toast.dismiss(toastId)
     } catch (error) {
@@ -2150,7 +2205,7 @@ export function LiveEditorPane() {
                 className="h-7 gap-1 border-border/60 px-2.5 text-xs"
                 title="Launch or rebuild the isolated Pixel Forge mirror for this session"
               >
-                <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
+                <ExternalLink className="h-3 w-3" />
                 {isLaunchingPixelForgeTarget ? 'Launching...' : 'Mirror'}
               </Button>
             )}

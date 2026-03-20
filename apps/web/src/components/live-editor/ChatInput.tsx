@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, Unlink, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
 import { useSessionStore } from '@/store/session-store'
@@ -41,20 +41,26 @@ export function ChatInput() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const agentPickerRef = useRef<HTMLDivElement>(null)
-  const { sendMessage, isStreaming, selectedElements } = useLiveEditorStore()
+  const {
+    sendMessage,
+    isStreaming,
+    selectedElements,
+    activateThread,
+    newSession: startLiveThread,
+  } = useLiveEditorStore()
   const [showSessionPicker, setShowSessionPicker] = useState(false)
   const sessionPickerRef = useRef<HTMLDivElement>(null)
   const {
     agentType,
     setAgentType,
     liveEditorSession,
+    projectSessions,
     selectedAgentDeckTargetId,
     agentDeckTargets,
     agentDeckTargetsLoading,
-    setSelectedAgentDeckTargetId,
     refreshAgentDeckTargets,
     createAgentDeckTargetSession,
-    newSession,
+    switchToThread,
   } = useSessionStore()
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
@@ -71,7 +77,7 @@ export function ChatInput() {
     ? `Bound to ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || 'session'}`
     : selectedAgentDeckTarget
       ? `Targeting ${selectedAgentDeckTarget.title || selectedAgentDeckTarget.id || 'session'}`
-      : 'Create isolated session automatically'
+      : 'Start isolated session'
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -248,6 +254,11 @@ export function ChatInput() {
                   Sessions
                 </div>
                 {agentDeckTargets.map((target) => {
+                  const claimedThread = projectSessions.find(
+                    (session) =>
+                      session.agentDeckSessionId === target.id
+                      && session.threadId !== liveEditorSession?.threadId
+                  ) ?? null
                   const isCurrent = liveEditorSession?.agentDeckSessionId === target.id
                     || selectedAgentDeckTargetId === target.id
                   return (
@@ -255,17 +266,29 @@ export function ChatInput() {
                       key={target.id}
                       type="button"
                       onClick={() => {
-                        if (!isCurrent) {
-                          newSession()
-                          setSelectedAgentDeckTargetId(target.id)
+                        if (claimedThread) {
+                          switchToThread(claimedThread)
+                          activateThread(claimedThread.threadId)
+                        } else if (!isCurrent) {
+                          startLiveThread(target.id)
                         }
                         setShowSessionPicker(false)
                       }}
-                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60 ${
                         isCurrent ? 'text-primary font-medium' : 'text-foreground'
                       }`}
+                      title={
+                        claimedThread
+                          ? `Already claimed by thread ${claimedThread.threadId}`
+                          : target.title || target.id
+                      }
                     >
                       <span className="min-w-0 flex-1 truncate text-left">{target.title || target.id}</span>
+                      {claimedThread && !isCurrent && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                          {claimedThread.threadId.slice(0, 8)}
+                        </span>
+                      )}
                       {isCurrent && (
                         <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
                       )}
@@ -276,7 +299,7 @@ export function ChatInput() {
             )}
             {!agentDeckTargetsLoading && agentDeckTargets.length === 0 && (
               <div className="px-3 py-2 text-xs text-muted-foreground">
-                No sessions yet. Create an isolated session now, or let Pixel Forge create one for preview/send automatically.
+                No sessions yet. Create an isolated session to open a fresh chat lane.
               </div>
             )}
             {agentDeckTargetsLoading && (
@@ -290,29 +313,24 @@ export function ChatInput() {
               <button
                 type="button"
                 onClick={() => {
-                  void createAgentDeckTargetSession().then(() => {
-                    setShowSessionPicker(false)
-                  })
+                  void createAgentDeckTargetSession()
+                    .then((created) => {
+                      startLiveThread(created.id)
+                      setShowSessionPicker(false)
+                    })
+                    .catch((error) => {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : 'Failed to create Agent Deck session'
+                      )
+                    })
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/10"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Plus className="h-3 w-3" />
                 New Isolated Session
               </button>
-              {liveEditorSession && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    newSession()
-                    setSelectedAgentDeckTargetId(null)
-                    setShowSessionPicker(false)
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
-                >
-                  <Unlink className="h-3 w-3" />
-                  Unbind session
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => void refreshAgentDeckTargets()}

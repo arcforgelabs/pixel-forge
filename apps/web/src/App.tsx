@@ -27,6 +27,7 @@ import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import ControllerUpdateApplyOverlay from "./components/layout/ControllerUpdateApplyOverlay";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
+import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
 import { FolderOpen } from "lucide-react";
 import type {
   PixelForgeDesktopControllerUpdateApplyState,
@@ -94,12 +95,13 @@ function App() {
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
 
   useEffect(() => {
-    if (!window.pixelForgeDesktop?.app) {
+    const desktopApp = getDesktopApp();
+    if (!hasDesktopAppMethod(desktopApp, "consumeBootstrapState")) {
       setDesktopBootstrapLoaded(true);
       return;
     }
 
-    void window.pixelForgeDesktop.app
+    void desktopApp
       .consumeBootstrapState()
       .then((state) => {
         setDesktopBootstrapState(state);
@@ -114,6 +116,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const desktopApp = getDesktopApp();
 
     const applyRuntimeInfo = (runtimeInfo: Partial<PixelForgeDesktopRuntimeInfo> | null) => {
       if (cancelled) {
@@ -138,8 +141,8 @@ function App() {
       });
     };
 
-    if (!window.pixelForgeDesktop?.app) {
-      void fetch(`${HTTP_BACKEND_URL}/api/runtime-info`, {
+    const fetchRuntimeInfo = () =>
+      fetch(`${HTTP_BACKEND_URL}/api/runtime-info`, {
         credentials: "include",
       })
         .then(async (response) => {
@@ -155,15 +158,8 @@ function App() {
           console.error("[app] Failed to load runtime info:", error);
         });
 
-      setControllerUpdateApplyState({
-        status: "idle",
-        updateId: null,
-        phase: "idle",
-        progress: 0,
-        message: "",
-        error: null,
-      });
-      void fetch(`${HTTP_BACKEND_URL}/api/controller-update`, {
+    const fetchPendingControllerUpdate = () =>
+      fetch(`${HTTP_BACKEND_URL}/api/controller-update`, {
         credentials: "include",
       })
         .then(async (response) => {
@@ -182,52 +178,84 @@ function App() {
         .catch((error) => {
           console.error("[app] Failed to load pending controller update:", error);
         });
+
+    const resetControllerUpdateApplyState = () => {
+      setControllerUpdateApplyState({
+        status: "idle",
+        updateId: null,
+        phase: "idle",
+        progress: 0,
+        message: "",
+        error: null,
+      });
+    };
+
+    if (!desktopApp) {
+      void fetchRuntimeInfo();
+      resetControllerUpdateApplyState();
+      void fetchPendingControllerUpdate();
       return () => {
         cancelled = true;
       };
     }
 
-    void window.pixelForgeDesktop.app
-      .getRuntimeInfo()
-      .then((runtimeInfo) => {
-        applyRuntimeInfo(runtimeInfo);
-      })
-      .catch((error) => {
-        console.error("[app] Failed to load runtime info:", error);
-      });
+    if (hasDesktopAppMethod(desktopApp, "getRuntimeInfo")) {
+      void desktopApp
+        .getRuntimeInfo()
+        .then((runtimeInfo) => {
+          applyRuntimeInfo(runtimeInfo);
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load runtime info:", error);
+        });
+    } else {
+      void fetchRuntimeInfo();
+    }
 
-    void window.pixelForgeDesktop.app
-      .getPendingControllerUpdate()
-      .then((update) => {
-        if (!cancelled) {
-          setPendingControllerUpdate(update);
-        }
-      })
-      .catch((error) => {
-        console.error("[app] Failed to load pending controller update:", error);
-      });
+    if (hasDesktopAppMethod(desktopApp, "getPendingControllerUpdate")) {
+      void desktopApp
+        .getPendingControllerUpdate()
+        .then((update) => {
+          if (!cancelled) {
+            setPendingControllerUpdate(update);
+          }
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load pending controller update:", error);
+        });
+    } else {
+      void fetchPendingControllerUpdate();
+    }
 
-    void window.pixelForgeDesktop.app
-      .getDismissedControllerUpdateId()
-      .then((updateId) => {
-        if (!cancelled) {
-          setDismissedControllerUpdateId(updateId);
-        }
-      })
-      .catch((error) => {
-        console.error("[app] Failed to load dismissed controller update:", error);
-      });
+    if (hasDesktopAppMethod(desktopApp, "getDismissedControllerUpdateId")) {
+      void desktopApp
+        .getDismissedControllerUpdateId()
+        .then((updateId) => {
+          if (!cancelled) {
+            setDismissedControllerUpdateId(updateId);
+          }
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load dismissed controller update:", error);
+        });
+    } else if (!cancelled) {
+      setDismissedControllerUpdateId(null);
+    }
 
-    void window.pixelForgeDesktop.app
-      .getControllerUpdateApplyState()
-      .then((state) => {
-        if (!cancelled) {
-          setControllerUpdateApplyState(state);
-        }
-      })
-      .catch((error) => {
-        console.error("[app] Failed to load controller update apply state:", error);
-      });
+    if (hasDesktopAppMethod(desktopApp, "getControllerUpdateApplyState")) {
+      void desktopApp
+        .getControllerUpdateApplyState()
+        .then((state) => {
+          if (!cancelled) {
+            setControllerUpdateApplyState(state);
+          }
+        })
+        .catch((error) => {
+          console.error("[app] Failed to load controller update apply state:", error);
+        });
+    } else {
+      resetControllerUpdateApplyState();
+    }
 
     const handleAppEvent = (rawEvent: Event) => {
       const event = rawEvent as CustomEvent<{
@@ -253,7 +281,9 @@ function App() {
       }
     };
 
-    window.addEventListener("pixel-forge-app", handleAppEvent as EventListener);
+    if (hasDesktopAppMethod(desktopApp, "getPendingControllerUpdate")) {
+      window.addEventListener("pixel-forge-app", handleAppEvent as EventListener);
+    }
     return () => {
       cancelled = true;
       window.removeEventListener("pixel-forge-app", handleAppEvent as EventListener);

@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
 import { capitalize } from "@/lib/utils";
 import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
@@ -35,6 +36,7 @@ import {
   Pencil,
   FolderOpen,
   ChevronDown,
+  MessageSquare,
   RefreshCw,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -91,6 +93,16 @@ function formatAgentDeckTargetLabel(target: {
   return `${target.title} · ${details.join(" · ")}`;
 }
 
+function formatRelativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -111,7 +123,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     refreshAgentDeckTargets,
     createAgentDeckTargetSession,
     selectedAgentDeckTargetId,
-    setSelectedAgentDeckTargetId,
     lastSavedFile,
     sessionId,
     agentType,
@@ -124,20 +135,26 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     controllerInstalledAt,
     recentProjects,
     setProject,
+    switchToThread,
     pendingControllerUpdate,
     dismissedControllerUpdateId,
     setDismissedControllerUpdateId,
   } = useSessionStore();
 
   const [projectsExpanded, setProjectsExpanded] = useState(false);
+  const [expandedProjectPath, setExpandedProjectPath] = useState<string | null>(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
 
   const {
     connected,
+    isStreaming,
     selectedElements,
+    activateThread,
     clearElements,
     newSession: resetLiveEditorThread,
+    setTargetAgentDeckSessionId,
+    getThreadStatus,
   } = useLiveEditorStore();
   const { appState } = useAppStore();
   const shouldDisableStackUpdates =
@@ -149,7 +166,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   ) ?? null;
   const selectedTargetThread = selectedAgentDeckTarget
     ? projectSessions.find(
-        (session) => session.agentDeckSessionId === selectedAgentDeckTarget.id
+        (session) =>
+          session.agentDeckSessionId === selectedAgentDeckTarget.id
+          && session.threadId !== liveEditorSession?.threadId
       ) ?? null
     : null;
   const effectiveAgentType =
@@ -163,6 +182,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
   const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
+  const desktopApp = getDesktopApp();
+  const canLoadControllerUpdate = Boolean(
+    desktopApp
+      && (
+        hasDesktopAppMethod(desktopApp, "startPendingControllerUpdate")
+        || hasDesktopAppMethod(desktopApp, "applyPendingControllerUpdate")
+      )
+  );
   const updateStatus = !pendingControllerUpdate
     ? {
         label: "Up to date",
@@ -209,7 +236,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleLoadControllerUpdate() {
-    const desktopApp = window.pixelForgeDesktop?.app;
     if (!desktopApp || !pendingControllerUpdate) {
       return;
     }
@@ -224,6 +250,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
             activeMode ?? pendingControllerUpdate.activeMode ?? "live-editor",
         });
         return;
+      }
+      if (!desktopApp.applyPendingControllerUpdate) {
+        throw new Error("This runtime cannot apply controller updates directly.");
       }
       await desktopApp.applyPendingControllerUpdate({
         projectPath: projectPath ?? pendingControllerUpdate.projectPath,
@@ -252,9 +281,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     }
   }
 
-  async function handleCreateAgentDeckTarget() {
+  async function handleCreateAgentDeckTarget(startFreshThread = false) {
     try {
       const created = await createAgentDeckTargetSession({ agentType });
+      if (startFreshThread) {
+        resetLiveEditorThread(created.id);
+        toast.success(`Started fresh Live Editor thread · ${created.title}`);
+        return;
+      }
       toast.success(`Created isolated Agent Deck session ${created.title}`);
     } catch (error) {
       const message =
@@ -371,29 +405,121 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     {recentProjects.length === 0 && (
                       <span className="text-xs text-muted-foreground py-1">No projects yet</span>
                     )}
-                    {recentProjects.map((project) => (
-                      <button
-                        key={project.path}
-                        onClick={() => {
-                          void setProject({ path: project.path });
-                          setProjectsExpanded(false);
-                        }}
-                        className={`
-                          flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
-                          transition-colors duration-100
-                          ${project.path === projectPath
-                            ? "bg-primary/10 text-primary"
-                            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                          }
-                        `}
-                        title={project.path}
-                      >
-                        <span className="truncate">{project.name}</span>
-                        {project.path === projectPath && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                        )}
-                      </button>
-                    ))}
+                    {recentProjects.map((project) => {
+                      const isActive = project.path === projectPath;
+                      const isExpanded = isActive && expandedProjectPath === project.path;
+                      const threads = isActive ? projectSessions : [];
+
+                      return (
+                        <div key={project.path}>
+                          <button
+                            onClick={() => {
+                              if (!isActive) {
+                                if (isStreaming) {
+                                  return;
+                                }
+                                void setProject({ path: project.path });
+                                setExpandedProjectPath(project.path);
+                                return;
+                              }
+
+                              setExpandedProjectPath(isExpanded ? null : project.path);
+                            }}
+                            disabled={!isActive && isStreaming}
+                            className={`
+                              flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
+                              transition-colors duration-100 w-full disabled:cursor-not-allowed disabled:opacity-60
+                              ${isActive
+                                ? "bg-primary/10 text-primary"
+                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                              }
+                            `}
+                            title={
+                              !isActive && isStreaming
+                                ? "Finish the current Live Editor request before switching projects"
+                                : project.path
+                            }
+                          >
+                            <span className="truncate flex-1 text-left">{project.name}</span>
+                            {isActive && (
+                              <ChevronDown
+                                className={`h-3 w-3 flex-shrink-0 transition-transform duration-150 ${
+                                  isExpanded ? "rotate-180" : ""
+                                }`}
+                              />
+                            )}
+                            {isActive && !isExpanded && (
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+                            )}
+                          </button>
+
+                          {isExpanded && (
+                            <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
+                              {threads.map((session) => {
+                                const isActiveThread = liveEditorSession?.threadId === session.threadId;
+                                const threadStatus = getThreadStatus(session.threadId);
+                                const label =
+                                  session.agentDeckSessionTitle
+                                  || `Chat ${session.threadId.slice(0, 8)}`;
+
+                                return (
+                                  <button
+                                    key={session.threadId}
+                                    onClick={() => {
+                                      if (isActiveThread) {
+                                        return;
+                                      }
+                                      switchToThread(session);
+                                      activateThread(session.threadId);
+                                    }}
+                                    className={`
+                                      flex items-center gap-1.5 rounded-md px-2 py-1 text-xs w-full
+                                      transition-colors duration-100
+                                      ${isActiveThread
+                                        ? "text-primary"
+                                        : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                                      }
+                                    `}
+                                    title={label}
+                                  >
+                                    <MessageSquare className="h-3 w-3 flex-shrink-0" />
+                                    <span className="truncate flex-1 text-left">{label}</span>
+                                    {threadStatus.isStreaming && (
+                                      <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
+                                        Live
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
+                                      {formatRelativeTime(session.lastActive)}
+                                    </span>
+                                    {isActiveThread && (
+                                      <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+
+                              {threads.length === 0 && !liveEditorSession && (
+                                <span className="px-2 py-1 text-[10px] text-muted-foreground">
+                                  No chats yet
+                                </span>
+                              )}
+
+                              <button
+                                onClick={() => {
+                                  void handleCreateAgentDeckTarget(true);
+                                }}
+                                disabled={agentDeckTargetsLoading}
+                                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                                title="Start a fresh chat with its own isolated session"
+                              >
+                                + New chat
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
 
                     {/* Add new project */}
                     <button
@@ -544,7 +670,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         variant="outline"
                         size="sm"
                         onClick={() => void handleLoadControllerUpdate()}
-                        disabled={!window.pixelForgeDesktop?.app || isApplyingControllerUpdate}
+                        disabled={!canLoadControllerUpdate || isApplyingControllerUpdate}
                         className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${isApplyingControllerUpdate ? "animate-spin" : ""}`} />
@@ -556,10 +682,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                           size="sm"
                           onClick={() => {
                             void (async () => {
-                              if (window.pixelForgeDesktop?.app?.setDismissedControllerUpdateId) {
-                                await window.pixelForgeDesktop.app.setDismissedControllerUpdateId(
-                                  null
-                                );
+                              if (hasDesktopAppMethod(desktopApp, "setDismissedControllerUpdateId")) {
+                                await desktopApp.setDismissedControllerUpdateId(null);
                               }
                               setDismissedControllerUpdateId(null);
                             })();
@@ -640,9 +764,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                          void handleCreateAgentDeckTarget();
+                          void handleCreateAgentDeckTarget(true);
                         }}
-                        disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
+                        disabled={
+                          !projectPath
+                          || agentDeckTargetsLoading
+                        }
                         className="h-7 px-2 text-xs"
                       >
                         New Isolated Session
@@ -653,9 +780,31 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   <Select
                     value={selectedAgentDeckTargetId ?? "__auto__"}
                     onValueChange={(value) => {
-                      setSelectedAgentDeckTargetId(value === "__auto__" ? null : value);
+                      const nextTargetId = value === "__auto__" ? null : value;
+                      const claimedThread = nextTargetId
+                        ? projectSessions.find(
+                            (session) =>
+                              session.agentDeckSessionId === nextTargetId
+                              && session.threadId !== liveEditorSession?.threadId
+                          ) ?? null
+                        : null;
+
+                      if (claimedThread) {
+                        switchToThread(claimedThread);
+                        activateThread(claimedThread.threadId);
+                        toast.success(
+                          `Switched to Live Editor thread ${claimedThread.threadId.slice(0, 8)}`
+                        );
+                        return;
+                      }
+
+                      setTargetAgentDeckSessionId(nextTargetId);
                     }}
-                    disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
+                    disabled={
+                      !projectPath
+                      || agentDeckTargetsLoading
+                      || !canRetargetLiveEditor
+                    }
                   >
                     <SelectTrigger className="h-9 text-xs">
                       <SelectValue placeholder="Create isolated session automatically" />
@@ -663,7 +812,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     <SelectContent>
                       <SelectItem value="__auto__">Create isolated session automatically</SelectItem>
                       {agentDeckTargets.map((target) => (
-                        <SelectItem key={target.id} value={target.id}>
+                        <SelectItem
+                          key={target.id}
+                          value={target.id}
+                          disabled={Boolean(
+                            projectSessions.find(
+                              (session) =>
+                                session.agentDeckSessionId === target.id
+                                && session.threadId !== liveEditorSession?.threadId
+                            )
+                          )}
+                        >
                           {formatAgentDeckTargetLabel(target)}
                         </SelectItem>
                       ))}
@@ -688,7 +847,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         <p>
                           Pixel Forge already has thread{" "}
                           <span className="font-mono">{selectedTargetThread.threadId}</span>{" "}
-                          bound to this Agent Deck session.
+                          bound to this Agent Deck session. Switch to that thread instead of reusing the lane.
                         </p>
                       )}
                     </div>
@@ -759,9 +918,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      resetLiveEditorThread();
-                      toast.success("Started a fresh Live Editor thread");
+                      void handleCreateAgentDeckTarget(true);
                     }}
+                    disabled={agentDeckTargetsLoading || !projectPath}
                   >
                     New Live Thread
                   </Button>

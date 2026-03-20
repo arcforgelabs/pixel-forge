@@ -69,8 +69,9 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
-- New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree while the canonical repo root remains the project identity.
-- One Live Editor thread has one default writable workspace root. The default self-edit mirror source follows that same bound workspace.
+- Fresh Live Editor chats provision isolated Agent Deck clone workspaces under the project `.agents/` tree up front while the canonical repo root remains the project identity.
+- One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped selection/history state. The default self-edit mirror source follows that same bound workspace.
+- Agent Deck session ownership is exclusive at the Live Editor thread level. If one thread already owns a session, another thread must switch to that thread or create a different session instead of sharing the lane.
 - Live Editor handoff has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
 - Stable Live Editor workflow rules live in a thread-level `session-brief.md`, while each per-turn `request.md` carries the new delta context for that turn.
 - Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
@@ -84,6 +85,7 @@ Use these identities consistently:
 
 - `project root`: the canonical repo identity the operator chose
 - `isolated session`: the clone-backed working copy under `.agents/<name>`
+- `lane`: the thread-owned binding of Agent Deck session, writable workspace, and thread-scoped selection/chat state
 - `mirror`: a runnable Pixel Forge preview built from one source root or frozen clone snapshot
 - `staged update`: the frozen controller-install candidate
 - `controller`: the installed runtime under `~/.local/lib/pixel-forge`
@@ -103,7 +105,7 @@ flowchart LR
 The important boundary is:
 
 - clone creation starts from local git state, not raw working-tree copying
-- request packs and direct edits happen in the bound clone workspace
+- request packs, direct edits, and committed selections happen in the bound thread lane workspace
 - clone preview publication freezes a clone snapshot per session and loads that snapshot into a new mirror tab
 - controller install reads from the staged frozen snapshot, not the live repo
 

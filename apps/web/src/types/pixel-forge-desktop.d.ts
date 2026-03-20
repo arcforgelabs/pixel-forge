@@ -136,17 +136,17 @@ export interface PixelForgeDesktopRuntimeInfo {
 export interface PixelForgeDesktopAppAPI {
   focusShell?(): Promise<{ ok: true }>
   getPreviewInputState?(): Promise<PixelForgeDesktopPreviewInputState>
-  applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
-  applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
+  applyControllerUpdate?(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
+  applyPendingControllerUpdate?(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   startControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void
   startPendingControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void
-  consumeBootstrapState(): Promise<PixelForgeDesktopBootstrapState | null>
-  getPendingControllerUpdate(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
-  getRuntimeInfo(): Promise<PixelForgeDesktopRuntimeInfo>
-  getDismissedControllerUpdateId(): Promise<string | null>
-  setDismissedControllerUpdateId(updateId: string | null): Promise<string | null>
-  getControllerUpdateApplyState(): Promise<PixelForgeDesktopControllerUpdateApplyState>
-  stageControllerUpdate(payload: {
+  consumeBootstrapState?(): Promise<PixelForgeDesktopBootstrapState | null>
+  getPendingControllerUpdate?(): Promise<PixelForgeDesktopPendingControllerUpdate | null>
+  getRuntimeInfo?(): Promise<PixelForgeDesktopRuntimeInfo>
+  getDismissedControllerUpdateId?(): Promise<string | null>
+  setDismissedControllerUpdateId?(updateId: string | null): Promise<string | null>
+  getControllerUpdateApplyState?(): Promise<PixelForgeDesktopControllerUpdateApplyState>
+  stageControllerUpdate?(payload: {
     projectPath: string
     previewUrl?: string | null
     activeMode?: 'screenshot' | 'live-editor' | null
@@ -157,7 +157,7 @@ export interface PixelForgeDesktopAppAPI {
     gitRef?: string | null
     allowNoncanonicalProject?: boolean
   }): Promise<PixelForgeDesktopPendingControllerUpdate>
-  dismissPendingControllerUpdate(): Promise<{ ok: true }>
+  dismissPendingControllerUpdate?(): Promise<{ ok: true }>
 }
 
 declare global {

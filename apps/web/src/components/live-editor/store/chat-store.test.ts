@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { type SelectedElement, useLiveEditorStore } from './chat-store'
+import {
+  type SelectedElement,
+  type ThreadChatState,
+  useLiveEditorStore,
+} from './chat-store'
 import { useSessionStore } from '@/store/session-store'
 
 function createSelection(
@@ -49,6 +53,37 @@ class MockWebSocket extends EventTarget {
   }
 }
 
+function setActiveThreadState(partial: Partial<ThreadChatState>) {
+  useLiveEditorStore.setState((state) => {
+    const activeThreadState = state.threadStates[state.activeThreadKey]
+    const nextThreadState: ThreadChatState = {
+      ...activeThreadState,
+      ...partial,
+    }
+
+    return {
+      threadStates: {
+        ...state.threadStates,
+        [state.activeThreadKey]: nextThreadState,
+      },
+      messages: nextThreadState.messages,
+      isStreaming: nextThreadState.isStreaming,
+      currentStreamContent: nextThreadState.currentStreamContent,
+      pendingAssistantAttachments: nextThreadState.pendingAssistantAttachments,
+      currentTool: nextThreadState.currentTool,
+      currentStatusMessage: nextThreadState.currentStatusMessage,
+      currentSelectionCount: nextThreadState.currentSelectionCount,
+      currentRequestId: nextThreadState.currentRequestId,
+      ws: nextThreadState.ws,
+      connected: nextThreadState.connected,
+      queuedMessages: nextThreadState.queuedMessages,
+      selectedElements: nextThreadState.selectedElements,
+      selectionUndoStack: nextThreadState.selectionUndoStack,
+      selectionRedoStack: nextThreadState.selectionRedoStack,
+    }
+  })
+}
+
 describe('live editor selection history', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
@@ -86,22 +121,7 @@ describe('live editor selection history', () => {
       agentType: 'claude',
       settingsSidebarOpen: false,
     })
-    useLiveEditorStore.setState({
-      selectedElements: [],
-      selectionUndoStack: [],
-      selectionRedoStack: [],
-      messages: [],
-      isStreaming: false,
-      currentStreamContent: '',
-      pendingAssistantAttachments: [],
-      currentTool: null,
-      currentStatusMessage: '',
-      currentSelectionCount: 0,
-      currentRequestId: null,
-      ws: null,
-      connected: false,
-      queuedMessages: [],
-    })
+    useLiveEditorStore.getState().resetForProject()
   })
 
   it('preserves selection order through replace, undo, and redo', () => {
@@ -162,8 +182,37 @@ describe('live editor selection history', () => {
     ])
   })
 
+  it('keeps selections and target session state isolated per thread', () => {
+    const store = useLiveEditorStore.getState()
+    const firstThreadKey = store.activeThreadKey
+
+    store.setTargetAgentDeckSessionId('deck-session-a')
+    store.addElement(createSelection('one'))
+
+    store.newSession('deck-session-b')
+    const secondThreadKey = useLiveEditorStore.getState().activeThreadKey
+    useLiveEditorStore.getState().addElement(createSelection('two'))
+
+    expect(useLiveEditorStore.getState().getTargetAgentDeckSessionId()).toBe('deck-session-b')
+    expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual([
+      'two',
+    ])
+
+    useLiveEditorStore.getState().activateThread(firstThreadKey)
+
+    expect(useLiveEditorStore.getState().getTargetAgentDeckSessionId()).toBe('deck-session-a')
+    expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual([
+      'one',
+    ])
+
+    useLiveEditorStore.getState().activateThread(secondThreadKey)
+
+    expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual([
+      'two',
+    ])
+  })
+
   it('includes the selected Agent Deck target in outbound live-edit payloads', () => {
-    const send = vi.fn()
     useSessionStore.setState({
       selectedAgentDeckTargetId: 'deck-session-123',
       agentDeckTargets: [
@@ -179,12 +228,12 @@ describe('live editor selection history', () => {
         },
       ],
     })
-    useLiveEditorStore.setState({
-      ws: {
-        readyState: 1,
-        send,
-      } as unknown as WebSocket,
-    })
+    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
 
     useLiveEditorStore.getState().sendMessage('Retarget this change')
 
@@ -199,7 +248,6 @@ describe('live editor selection history', () => {
   })
 
   it('uses the bound session tool for outbound live-edit payloads', () => {
-    const send = vi.fn()
     useSessionStore.setState({
       liveEditorSession: {
         threadId: 'thread-1',
@@ -225,12 +273,12 @@ describe('live editor selection history', () => {
       ],
       agentType: 'claude',
     })
-    useLiveEditorStore.setState({
-      ws: {
-        readyState: 1,
-        send,
-      } as unknown as WebSocket,
-    })
+    useLiveEditorStore.getState().activateThread('thread-1')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
 
     useLiveEditorStore.getState().sendMessage('Use the bound session tool')
 
@@ -245,7 +293,7 @@ describe('live editor selection history', () => {
   it('matches tool results to the correct running tool by tool call id', () => {
     const now = new Date()
 
-    useLiveEditorStore.setState({
+    setActiveThreadState({
       messages: [
         {
           id: 'tool-msg-1',

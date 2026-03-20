@@ -577,6 +577,11 @@ def upsert_session(
     normalized_path = normalize_project_path(project_path)
     if not thread_id.strip():
         raise ValueError("thread_id is required")
+    normalized_agent_deck_session_id = (
+        agent_deck_session_id.strip()
+        if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
+        else None
+    )
 
     with _connect() as conn:
         project_exists = conn.execute(
@@ -589,6 +594,45 @@ def upsert_session(
         ).fetchone()
         if project_exists is None:
             raise ValueError("Project does not exist")
+
+        conflicting_record: SessionRecord | None = None
+        stale_ids: list[int] = []
+        if normalized_agent_deck_session_id:
+            rows = conn.execute(
+                """
+                SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
+                       agent_deck_session_title, agent_deck_tool, created_at, last_active
+                FROM sessions
+                WHERE project_path = ?
+                  AND agent_deck_session_id = ?
+                  AND thread_id <> ?
+                ORDER BY last_active DESC, id DESC
+                """,
+                (
+                    normalized_path,
+                    normalized_agent_deck_session_id,
+                    thread_id.strip(),
+                ),
+            ).fetchall()
+            for row in rows:
+                record = _row_to_session_record(row)
+                if _is_stale_clone_session(record):
+                    stale_ids.append(record.id)
+                    continue
+                conflicting_record = record
+                break
+            if stale_ids:
+                placeholders = ",".join("?" for _ in stale_ids)
+                conn.execute(
+                    f"DELETE FROM sessions WHERE id IN ({placeholders})",
+                    stale_ids,
+                )
+            if conflicting_record is not None:
+                raise ValueError(
+                    "Agent Deck session "
+                    f"{normalized_agent_deck_session_id} is already bound to Live Editor thread "
+                    f"{conflicting_record.thread_id}"
+                )
 
         conn.execute(
             """
@@ -615,7 +659,7 @@ def upsert_session(
                 normalize_project_path(workspace_path or project_path),
                 thread_id.strip(),
                 backend.strip() or "agent-deck",
-                agent_deck_session_id,
+                normalized_agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
             ),

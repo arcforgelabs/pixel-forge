@@ -1314,6 +1314,31 @@ def _resolve_self_edit_scope(
     return "controller"
 
 
+def _assert_agent_deck_lane_available(
+    project_path: str,
+    thread_id: str,
+    agent_deck_session_id: str | None,
+) -> None:
+    normalized_agent_deck_session_id = (
+        agent_deck_session_id.strip()
+        if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
+        else None
+    )
+    if not normalized_agent_deck_session_id:
+        return
+
+    for session in list_project_sessions(project_path):
+        if session.thread_id == thread_id:
+            continue
+        if session.agent_deck_session_id != normalized_agent_deck_session_id:
+            continue
+        raise ValueError(
+            "Agent Deck session "
+            f"{normalized_agent_deck_session_id} is already bound to Live Editor thread "
+            f"{session.thread_id}. Switch to that thread or choose a different session."
+        )
+
+
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
@@ -2175,6 +2200,11 @@ async def live_editor_chat(websocket: WebSocket):
                         else None
                     ),
                 )
+                _assert_agent_deck_lane_available(
+                    normalized_project_path,
+                    thread.thread_id,
+                    session_info.agent_deck_session_id,
+                )
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     workspace_path=session_info.workspace_path,
@@ -2386,6 +2416,11 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread,
                     agent_type=agent_type,
+                )
+                _assert_agent_deck_lane_available(
+                    normalized_project_path,
+                    thread.thread_id,
+                    refreshed_session.agent_deck_session_id,
                 )
                 update_live_editor_thread(
                     thread.thread_id,

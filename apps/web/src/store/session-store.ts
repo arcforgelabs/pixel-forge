@@ -103,10 +103,12 @@ interface SessionStore {
     customOutputPath?: string | null;
   }) => Promise<void>;
   setSessionId: (sessionId: string | null) => void;
+  upsertProjectSession: (session: LiveEditorSessionMeta | null) => void;
   setLiveEditorSession: (session: LiveEditorSessionMeta | null) => void;
   switchMode: (mode: ActiveMode) => void;
   newSession: () => void;
   clearLiveEditorSession: () => void;
+  switchToThread: (session: ProjectSessionRecord | null) => void;
   refreshAgentDeckTargets: () => Promise<void>;
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
@@ -574,6 +576,17 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ sessionId });
   },
 
+  upsertProjectSession: (session) => {
+    if (!session) {
+      return;
+    }
+
+    set((state) => ({
+      projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
+    }));
+  },
+
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
@@ -594,7 +607,28 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   clearLiveEditorSession: () => {
-    set({ liveEditorSession: null });
+    set({ liveEditorSession: null, selectedAgentDeckTargetId: null });
+  },
+
+  switchToThread: (session) => {
+    if (!session) {
+      set({ liveEditorSession: null, selectedAgentDeckTargetId: null });
+      return;
+    }
+
+    set((state) => ({
+      liveEditorSession: {
+        threadId: session.threadId,
+        backend: session.backend,
+        workspacePath: session.workspacePath,
+        agentDeckSessionId: session.agentDeckSessionId,
+        agentDeckSessionTitle: session.agentDeckSessionTitle,
+        agentDeckTool: session.agentDeckTool,
+        requestId: session.requestId,
+      },
+      selectedAgentDeckTargetId: session.agentDeckSessionId,
+      agentType: session.agentDeckTool ?? state.agentType,
+    }));
   },
 
   refreshAgentDeckTargets: async () => {

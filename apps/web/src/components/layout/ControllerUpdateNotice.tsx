@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 import { RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSessionStore } from "@/store/session-store";
+import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
 
 function formatSource(source: string): string {
   if (!source.trim()) {
@@ -23,7 +24,14 @@ export function ControllerUpdateNotice() {
   const [isApplying, setIsApplying] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
 
-  const desktopApp = window.pixelForgeDesktop?.app;
+  const desktopApp = getDesktopApp();
+  const canApplyControllerUpdate = Boolean(
+    desktopApp
+      && (
+        hasDesktopAppMethod(desktopApp, "startPendingControllerUpdate")
+        || hasDesktopAppMethod(desktopApp, "applyPendingControllerUpdate")
+      )
+  );
   const summary = useMemo(() => {
     if (!pendingControllerUpdate) {
       return "";
@@ -31,7 +39,7 @@ export function ControllerUpdateNotice() {
     return pendingControllerUpdate.summary.trim() || "Update ready to load.";
   }, [pendingControllerUpdate]);
 
-  if (!pendingControllerUpdate || !desktopApp) {
+  if (!pendingControllerUpdate || !canApplyControllerUpdate || !desktopApp) {
     return null;
   }
 
@@ -51,7 +59,7 @@ export function ControllerUpdateNotice() {
         });
         return;
       }
-      await desktopApp.applyPendingControllerUpdate({
+      await desktopApp.applyPendingControllerUpdate?.({
         projectPath: projectPath ?? pendingControllerUpdate.projectPath,
         previewUrl: previewUrl ?? pendingControllerUpdate.previewUrl,
         activeMode:

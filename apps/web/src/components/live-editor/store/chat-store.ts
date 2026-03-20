@@ -1,17 +1,16 @@
 /**
  * Live Editor Chat Store
  *
- * Manages chat state, streaming responses, tool visualization,
- * and element selection for the Live Editor.
- *
- * Session Management: Uses session-store as single source of truth for
- * projectPath and the Live Editor broker session metadata.
- *
- * Pattern: Adapted from aim-up/dashboard/frontend/src/store/chat-store.ts
+ * Thread state is the source of truth. Each Live Editor thread owns its
+ * transport lane, messages, target Agent Deck binding, and selection history.
+ * The top-level chat/selection fields below are active-thread aliases so the
+ * existing UI can render the current thread without drilling through maps.
  */
 
 import { create } from 'zustand'
+
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
+import { hasDesktopAppMethod } from '@/lib/desktop-app'
 import type {
   PixelForgeDesktopPendingControllerUpdate,
   PixelForgePendingPreviewUpdate,
@@ -50,10 +49,6 @@ export interface ChatAttachment {
   kind: 'image' | 'file'
 }
 
-interface PendingOutboundMessage {
-  payload: Record<string, unknown>
-}
-
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
@@ -71,10 +66,11 @@ export interface SelectedElement extends SelectionRecord {
   timestamp: Date
 }
 
-const MAX_SELECTION_HISTORY = 100
+interface PendingOutboundMessage {
+  payload: Record<string, unknown>
+}
 
-interface LiveEditorChatStore {
-  // Chat state
+export interface ThreadChatState {
   messages: ChatMessage[]
   isStreaming: boolean
   currentStreamContent: string
@@ -83,27 +79,56 @@ interface LiveEditorChatStore {
   currentStatusMessage: string
   currentSelectionCount: number
   currentRequestId: string | null
-
-  // Connection state
   ws: WebSocket | null
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
-
-  // Selection state (task_2_3)
+  targetAgentDeckSessionId: string | null
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
+}
 
-  // NOTE: projectPath and Live Editor broker session metadata are read from session-store
+interface ActiveThreadViewState {
+  messages: ChatMessage[]
+  isStreaming: boolean
+  currentStreamContent: string
+  pendingAssistantAttachments: ChatAttachment[]
+  currentTool: ToolActivity | null
+  currentStatusMessage: string
+  currentSelectionCount: number
+  currentRequestId: string | null
+  ws: WebSocket | null
+  connected: boolean
+  queuedMessages: PendingOutboundMessage[]
+  selectedElements: SelectedElement[]
+  selectionUndoStack: SelectedElement[][]
+  selectionRedoStack: SelectedElement[][]
+}
 
-  // Actions - Chat
+interface SelectionPayload {
+  elementContext: string
+  selectionTunnel: {
+    selections: ReturnType<typeof buildSelectionArtifacts>['tunnel']['selections']
+  }
+  selectionAttachments: ChatAttachment[]
+}
+
+interface LiveEditorChatStore extends ActiveThreadViewState {
+  activeThreadKey: string
+  threadStates: Record<string, ThreadChatState>
+
+  // NOTE: projectPath and persisted bound session metadata live in session-store.
+  activateThread: (threadKey: string | null) => void
+  resetForProject: () => void
   connect: (endpoint?: string) => void
-  disconnect: () => void
+  disconnect: (threadKey?: string | null) => void
+  disconnectAll: () => void
   sendMessage: (content: string, attachments?: ChatAttachment[]) => void
   clearMessages: () => void
-  newSession: () => void
+  newSession: (targetAgentDeckSessionId?: string | null) => void
+  setTargetAgentDeckSessionId: (sessionId: string | null) => void
+  getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
 
-  // Actions - Selection
   addElement: (element: Omit<SelectedElement, 'timestamp'>) => void
   removeElement: (id: string) => void
   removeElements: (ids: string[]) => void
@@ -112,14 +137,13 @@ interface LiveEditorChatStore {
   undoSelectionChange: () => void
   redoSelectionChange: () => void
 
-  // Helpers
-  buildSelectionPayload: () => {
-    elementContext: string
-    selectionTunnel: { selections: ReturnType<typeof buildSelectionArtifacts>['tunnel']['selections'] }
-    selectionAttachments: ChatAttachment[]
-  }
+  buildSelectionPayload: () => SelectionPayload
 
-  // Getters for session state (reads from session-store)
+  getActiveThreadState: () => ThreadChatState
+  getThreadState: (threadKey: string | null | undefined) => ThreadChatState
+  getThreadStatus: (
+    threadKey: string | null | undefined
+  ) => Pick<ThreadChatState, 'connected' | 'currentStatusMessage' | 'isStreaming'>
   getSessionId: () => string | null
   getProjectPath: () => string | null
 }
@@ -128,8 +152,116 @@ interface LiveEditorChatStore {
 // Helpers
 // ============================================================================
 
+const MAX_SELECTION_HISTORY = 100
+
 function generateId(): string {
   return Math.random().toString(36).substring(2, 15)
+}
+
+function createDraftThreadKey(): string {
+  return `draft-${generateId()}`
+}
+
+function cloneSelectedElement(element: SelectedElement): SelectedElement {
+  return {
+    ...element,
+    classList: [...element.classList],
+    rootClassList: [...element.rootClassList],
+    region: element.region ? { ...element.region } : null,
+    timestamp: new Date(element.timestamp),
+  }
+}
+
+function cloneSelectionState(elements: SelectedElement[]): SelectedElement[] {
+  return elements.map(cloneSelectedElement)
+}
+
+function pushUndoSnapshot(
+  history: SelectedElement[][],
+  snapshot: SelectedElement[]
+): SelectedElement[][] {
+  const nextHistory = [...history, cloneSelectionState(snapshot)]
+  return nextHistory.slice(-MAX_SELECTION_HISTORY)
+}
+
+function createEmptyThreadState(): ThreadChatState {
+  return {
+    messages: [],
+    isStreaming: false,
+    currentStreamContent: '',
+    pendingAssistantAttachments: [],
+    currentTool: null,
+    currentStatusMessage: '',
+    currentSelectionCount: 0,
+    currentRequestId: null,
+    ws: null,
+    connected: false,
+    queuedMessages: [],
+    targetAgentDeckSessionId: null,
+    selectedElements: [],
+    selectionUndoStack: [],
+    selectionRedoStack: [],
+  }
+}
+
+function getThreadStateSnapshot(
+  threadStates: Record<string, ThreadChatState>,
+  threadKey: string | null | undefined
+): ThreadChatState {
+  if (!threadKey) {
+    return createEmptyThreadState()
+  }
+  return threadStates[threadKey] ?? createEmptyThreadState()
+}
+
+function buildActiveThreadViewState(
+  threadState: ThreadChatState
+): ActiveThreadViewState {
+  return {
+    messages: threadState.messages,
+    isStreaming: threadState.isStreaming,
+    currentStreamContent: threadState.currentStreamContent,
+    pendingAssistantAttachments: threadState.pendingAssistantAttachments,
+    currentTool: threadState.currentTool,
+    currentStatusMessage: threadState.currentStatusMessage,
+    currentSelectionCount: threadState.currentSelectionCount,
+    currentRequestId: threadState.currentRequestId,
+    ws: threadState.ws,
+    connected: threadState.connected,
+    queuedMessages: threadState.queuedMessages,
+    selectedElements: threadState.selectedElements,
+    selectionUndoStack: threadState.selectionUndoStack,
+    selectionRedoStack: threadState.selectionRedoStack,
+  }
+}
+
+function createStoreState(
+  activeThreadKey: string,
+  threadStates: Record<string, ThreadChatState>
+): Pick<
+  LiveEditorChatStore,
+  | 'activeThreadKey'
+  | 'threadStates'
+  | keyof ActiveThreadViewState
+> {
+  const activeThreadState = getThreadStateSnapshot(threadStates, activeThreadKey)
+  return {
+    activeThreadKey,
+    threadStates,
+    ...buildActiveThreadViewState(activeThreadState),
+  }
+}
+
+function createInitialStoreState(): Pick<
+  LiveEditorChatStore,
+  | 'activeThreadKey'
+  | 'threadStates'
+  | keyof ActiveThreadViewState
+> {
+  const initialDraftKey = createDraftThreadKey()
+  return createStoreState(initialDraftKey, {
+    [initialDraftKey]: createEmptyThreadState(),
+  })
 }
 
 function buildAttachmentSummary(attachments: ChatAttachment[]): string {
@@ -175,26 +307,24 @@ function shouldMirrorSelectionAttachmentsToAssistant(
   )
 }
 
-function cloneSelectedElement(element: SelectedElement): SelectedElement {
+function resetThreadRuntimeState(
+  threadState: ThreadChatState,
+  overrides?: Partial<ThreadChatState>
+): ThreadChatState {
   return {
-    ...element,
-    classList: [...element.classList],
-    rootClassList: [...element.rootClassList],
-    region: element.region ? { ...element.region } : null,
-    timestamp: new Date(element.timestamp),
+    ...threadState,
+    isStreaming: false,
+    currentStreamContent: '',
+    pendingAssistantAttachments: [],
+    currentTool: null,
+    currentStatusMessage: '',
+    currentSelectionCount: 0,
+    currentRequestId: null,
+    ws: null,
+    connected: false,
+    queuedMessages: [],
+    ...overrides,
   }
-}
-
-function cloneSelectionState(elements: SelectedElement[]): SelectedElement[] {
-  return elements.map(cloneSelectedElement)
-}
-
-function pushUndoSnapshot(
-  history: SelectedElement[][],
-  snapshot: SelectedElement[]
-): SelectedElement[][] {
-  const nextHistory = [...history, cloneSelectionState(snapshot)]
-  return nextHistory.slice(-MAX_SELECTION_HISTORY)
 }
 
 async function stageControllerUpdateNotice(options: {
@@ -206,6 +336,7 @@ async function stageControllerUpdateNotice(options: {
   if (typeof fetch === 'undefined') {
     return
   }
+
   const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
   const summary = `Pixel Forge update from ${requestLabel} is ready to load.`
   const desktopApp =
@@ -214,7 +345,7 @@ async function stageControllerUpdateNotice(options: {
       : undefined
   let update: PixelForgeDesktopPendingControllerUpdate
 
-  if (desktopApp) {
+  if (hasDesktopAppMethod(desktopApp, 'stageControllerUpdate')) {
     update = await desktopApp.stageControllerUpdate({
       projectPath: options.projectPath,
       previewUrl: options.previewUrl,
@@ -324,53 +455,191 @@ async function stagePreviewUpdateNotice(options: {
 // Store
 // ============================================================================
 
-export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
-  // Initial state
-  messages: [],
-  isStreaming: false,
-  currentStreamContent: '',
-  pendingAssistantAttachments: [],
-  currentTool: null,
-  currentStatusMessage: '',
-  currentSelectionCount: 0,
-  currentRequestId: null,
-  ws: null,
-  connected: false,
-  queuedMessages: [],
-  selectedElements: [],
-  selectionUndoStack: [],
-  selectionRedoStack: [],
+export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
+  const resolveThreadSession = (threadKey: string | null | undefined) => {
+    if (!threadKey) {
+      return null
+    }
+    const sessionState = useSessionStore.getState()
+    if (sessionState.liveEditorSession?.threadId === threadKey) {
+      return sessionState.liveEditorSession
+    }
+    return sessionState.projectSessions.find((session) => session.threadId === threadKey) ?? null
+  }
 
-  // Getters - read from session-store for Live Editor session management
-  getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
-  getProjectPath: () => useSessionStore.getState().projectPath,
+  const syncActiveThreadTargetSelection = (threadKey: string | null | undefined) => {
+    const resolvedThreadKey = threadKey?.trim() || null
+    const threadState = getThreadStateSnapshot(get().threadStates, resolvedThreadKey)
+    const boundSession = resolveThreadSession(resolvedThreadKey)
+    useSessionStore.getState().setSelectedAgentDeckTargetId(
+      boundSession?.agentDeckSessionId ?? threadState.targetAgentDeckSessionId ?? null
+    )
+  }
 
-  // -------------------------------------------------------------------------
-  // Connection Management
-  // -------------------------------------------------------------------------
+  const updateThreadState = (
+    threadKey: string,
+    updater: (threadState: ThreadChatState) => ThreadChatState
+  ) => {
+    set((state) => {
+      const nextThreadState = updater(
+        getThreadStateSnapshot(state.threadStates, threadKey)
+      )
+      const nextThreadStates = {
+        ...state.threadStates,
+        [threadKey]: nextThreadState,
+      }
 
-  connect: (endpoint = '/ws/live-editor') => {
-    const { ws } = get()
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+      if (threadKey === state.activeThreadKey) {
+        return {
+          threadStates: nextThreadStates,
+          ...buildActiveThreadViewState(nextThreadState),
+        }
+      }
+
+      return { threadStates: nextThreadStates }
+    })
+  }
+
+  const closeThreadSocket = (threadKey: string, silent = true) => {
+    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const ws = threadState.ws
+    if (!ws) {
+      return
+    }
+    if (silent) {
+      ws.onclose = null
+      ws.onerror = null
+      ws.onmessage = null
+      ws.onopen = null
+    }
+    try {
+      ws.close()
+    } catch {
+      // Ignore socket teardown races.
+    }
+  }
+
+  const migrateThreadState = (fromKey: string, toKey: string): string => {
+    if (!fromKey || !toKey || fromKey === toKey) {
+      return toKey || fromKey
+    }
+
+    set((state) => {
+      const fromState = getThreadStateSnapshot(state.threadStates, fromKey)
+      const nextThreadStates = {
+        ...state.threadStates,
+        [toKey]: fromState,
+      }
+      delete nextThreadStates[fromKey]
+
+      return createStoreState(
+        state.activeThreadKey === fromKey ? toKey : state.activeThreadKey,
+        nextThreadStates
+      )
+    })
+
+    syncActiveThreadTargetSelection(get().activeThreadKey)
+    return toKey
+  }
+
+  const syncSessionRecord = (
+    payload: {
+      threadId: string
+      backend: string
+      workspacePath: string | null
+      agentDeckSessionId: string | null
+      agentDeckSessionTitle: string | null
+      agentDeckTool: string | null
+      requestId: string | null
+    },
+    options?: { activate?: boolean; sourceThreadKey?: string | null }
+  ) => {
+    const sessionStore = useSessionStore.getState()
+    const session = {
+      threadId: payload.threadId,
+      backend: payload.backend,
+      workspacePath: payload.workspacePath,
+      agentDeckSessionId: payload.agentDeckSessionId,
+      agentDeckSessionTitle: payload.agentDeckSessionTitle,
+      agentDeckTool: payload.agentDeckTool,
+      requestId: payload.requestId,
+    }
+
+    sessionStore.upsertProjectSession(session)
+
+    const activeThreadId = sessionStore.liveEditorSession?.threadId ?? null
+    if (
+      options?.activate
+      || activeThreadId === payload.threadId
+      || (options?.sourceThreadKey && activeThreadId === options.sourceThreadKey)
+    ) {
+      sessionStore.setLiveEditorSession(session)
+    }
+  }
+
+  const appendSystemError = (threadKey: string, message: string) => {
+    updateThreadState(threadKey, (threadState) => ({
+      ...threadState,
+      messages: [
+        ...threadState.messages,
+        {
+          id: generateId(),
+          role: 'system',
+          content: message,
+          timestamp: new Date(),
+          systemTone: 'error',
+        },
+      ],
+      isStreaming: false,
+      currentStreamContent: '',
+      pendingAssistantAttachments: [],
+      currentStatusMessage: '',
+      currentSelectionCount: 0,
+      currentRequestId: null,
+    }))
+  }
+
+  const connectThread = (
+    initialThreadKey: string,
+    endpoint = '/ws/live-editor'
+  ) => {
+    const existingThreadState = getThreadStateSnapshot(
+      get().threadStates,
+      initialThreadKey
+    )
+    if (
+      existingThreadState.ws
+      && (
+        existingThreadState.ws.readyState === WebSocket.OPEN
+        || existingThreadState.ws.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return
+    }
 
     const wsUrl = endpoint.startsWith('ws://') || endpoint.startsWith('wss://')
       ? endpoint
       : `${WS_BACKEND_URL}${endpoint}`
     const newWs = new WebSocket(wsUrl)
+    let threadKeyRef = initialThreadKey
 
     newWs.onopen = () => {
-      set({ connected: true })
-      console.log('[live-editor] WebSocket connected')
+      updateThreadState(threadKeyRef, (threadState) => {
+        if (threadState.ws !== newWs) {
+          return threadState
+        }
 
-      const { queuedMessages, ws: activeWs } = get()
-      if (!activeWs || activeWs.readyState !== WebSocket.OPEN || queuedMessages.length === 0) {
-        return
-      }
+        for (const queuedMessage of threadState.queuedMessages) {
+          newWs.send(JSON.stringify(queuedMessage.payload))
+        }
 
-      for (const queuedMessage of queuedMessages) {
-        activeWs.send(JSON.stringify(queuedMessage.payload))
-      }
-      set({ queuedMessages: [] })
+        return {
+          ...threadState,
+          connected: true,
+          queuedMessages: [],
+        }
+      })
+      console.log(`[live-editor] WebSocket connected for ${threadKeyRef}`)
     }
 
     newWs.onmessage = (event) => {
@@ -378,15 +647,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
 
       switch (data.type) {
         case 'chunk':
-          // Streaming text content
-          set((state) => ({
-            currentStreamContent: state.currentStreamContent + data.content,
-            currentStatusMessage: state.currentStatusMessage || 'Receiving agent response...',
+          updateThreadState(threadKeyRef, (threadState) => ({
+            ...threadState,
+            currentStreamContent: threadState.currentStreamContent + data.content,
+            currentStatusMessage:
+              threadState.currentStatusMessage || 'Receiving agent response...',
           }))
           break
 
         case 'tool_use': {
-          // Tool execution started
           const toolCallId =
             typeof data.tool_call_id === 'string' && data.tool_call_id
               ? data.tool_call_id
@@ -404,7 +673,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
                 : {},
             status: 'running',
           }
-          set((state) => ({
+
+          updateThreadState(threadKeyRef, (threadState) => ({
+            ...threadState,
             currentTool: toolActivity,
             currentStatusMessage: summarizeToolStatus(
               toolActivity.tool,
@@ -412,7 +683,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               'running'
             ),
             messages: [
-              ...state.messages,
+              ...threadState.messages,
               {
                 id: toolActivity.id,
                 role: 'tool',
@@ -426,22 +697,28 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
         }
 
         case 'tool_result': {
-          // Tool execution completed
-          const { currentTool, messages } = get()
           const toolCallId =
             typeof data.tool_call_id === 'string' && data.tool_call_id
               ? data.tool_call_id
               : null
-          const matchingMessage = [...messages].reverse().find((msg) => {
-            if (msg.role !== 'tool' || !msg.toolActivity) {
-              return false
+
+          updateThreadState(threadKeyRef, (threadState) => {
+            const matchingMessage = [...threadState.messages].reverse().find((msg) => {
+              if (msg.role !== 'tool' || !msg.toolActivity) {
+                return false
+              }
+              if (toolCallId) {
+                return msg.toolActivity.toolCallId === toolCallId
+              }
+              return threadState.currentTool
+                ? msg.id === threadState.currentTool.id
+                : false
+            })
+
+            if (!matchingMessage?.toolActivity) {
+              return threadState
             }
-            if (toolCallId) {
-              return msg.toolActivity.toolCallId === toolCallId
-            }
-            return currentTool ? msg.id === currentTool.id : false
-          })
-          if (matchingMessage?.toolActivity) {
+
             const updatedTool = {
               ...matchingMessage.toolActivity,
               result:
@@ -451,48 +728,127 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               isError: Boolean(data.is_error),
               status: 'complete' as const,
             }
-            const updatedMessages = messages.map((msg) =>
-              msg.id === matchingMessage.id
-                ? {
-                    ...msg,
-                    toolActivity: updatedTool,
-                  }
-                : msg
-            )
-            set({
-              messages: updatedMessages,
+
+            return {
+              ...threadState,
+              messages: threadState.messages.map((msg) =>
+                msg.id === matchingMessage.id
+                  ? {
+                      ...msg,
+                      toolActivity: updatedTool,
+                    }
+                  : msg
+              ),
               currentTool:
-                currentTool && currentTool.id === matchingMessage.toolActivity.id
+                threadState.currentTool
+                && threadState.currentTool.id === matchingMessage.toolActivity.id
                   ? null
-                  : currentTool,
+                  : threadState.currentTool,
               currentStatusMessage: summarizeToolStatus(
                 updatedTool.tool,
                 updatedTool.input,
                 updatedTool.isError ? 'error' : 'complete'
               ),
-            })
+            }
+          })
+          break
+        }
+
+        case 'session': {
+          const wasActiveThread = get().activeThreadKey === threadKeyRef
+          const nextThreadId =
+            typeof data.session_id === 'string' && data.session_id
+              ? data.session_id
+              : null
+
+          if (nextThreadId) {
+            threadKeyRef = migrateThreadState(threadKeyRef, nextThreadId)
+            syncSessionRecord(
+              {
+                threadId: nextThreadId,
+                backend: data.backend || 'agent-deck',
+                workspacePath: data.workspace_path ?? null,
+                agentDeckSessionId: data.agent_deck_session_id ?? null,
+                agentDeckSessionTitle: data.agent_deck_session_title ?? null,
+                agentDeckTool: data.agent_deck_tool ?? null,
+                requestId: data.request_id ?? null,
+              },
+              { activate: wasActiveThread, sourceThreadKey: initialThreadKey }
+            )
+          }
+
+          updateThreadState(threadKeyRef, (threadState) => ({
+            ...threadState,
+            currentRequestId:
+              typeof data.request_id === 'string' && data.request_id
+                ? data.request_id
+                : threadState.currentRequestId,
+            currentSelectionCount:
+              Number.isFinite(Number(data.selection_count))
+                ? Number(data.selection_count)
+                : threadState.currentSelectionCount,
+            targetAgentDeckSessionId:
+              typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
+                ? data.agent_deck_session_id
+                : threadState.targetAgentDeckSessionId,
+          }))
+
+          if (wasActiveThread) {
+            syncActiveThreadTargetSelection(threadKeyRef)
           }
           break
         }
 
         case 'complete': {
-          // Response complete
-          const {
-            currentStreamContent,
-            messages: msgs,
-            pendingAssistantAttachments,
-          } = get()
+          const threadState = getThreadStateSnapshot(get().threadStates, threadKeyRef)
+          const wasActiveThread = get().activeThreadKey === threadKeyRef
+          const nextThreadId =
+            typeof data.session_id === 'string' && data.session_id
+              ? data.session_id
+              : null
+          if (nextThreadId) {
+            threadKeyRef = migrateThreadState(threadKeyRef, nextThreadId)
+          }
+
+          const sessionState = useSessionStore.getState()
+          const knownSession =
+            resolveThreadSession(threadKeyRef)
+          const resolvedWorkspacePath =
+            typeof data.workspace_path === 'string' && data.workspace_path.trim()
+              ? data.workspace_path.trim()
+              : knownSession?.workspacePath ?? null
+          const resolvedAgentDeckSessionId =
+            typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
+              ? data.agent_deck_session_id
+              : knownSession?.agentDeckSessionId ?? null
+
+          if (nextThreadId) {
+            syncSessionRecord(
+              {
+                threadId: nextThreadId,
+                backend: data.backend || 'agent-deck',
+                workspacePath: resolvedWorkspacePath,
+                agentDeckSessionId: resolvedAgentDeckSessionId,
+                agentDeckSessionTitle:
+                  data.agent_deck_session_title
+                  ?? knownSession?.agentDeckSessionTitle
+                  ?? null,
+                agentDeckTool:
+                  data.agent_deck_tool
+                  ?? knownSession?.agentDeckTool
+                  ?? null,
+                requestId: data.request_id ?? null,
+              },
+              { activate: wasActiveThread, sourceThreadKey: initialThreadKey }
+            )
+          }
+
           const isRemoteTarget = !!data.is_remote_target
           const isSelfEditSafeMode = !!data.self_edit_safe_mode
           const selfEditScope =
             data.self_edit_scope === 'preview' || data.self_edit_scope === 'controller'
               ? data.self_edit_scope
               : null
-          const sessionState = useSessionStore.getState()
-          const resolvedWorkspacePath =
-            typeof data.workspace_path === 'string' && data.workspace_path.trim()
-              ? data.workspace_path.trim()
-              : sessionState.liveEditorSession?.workspacePath ?? null
           const cloneWorkspaceBound = isCloneWorkspaceBound({
             projectPath: sessionState.projectPath,
             workspacePath: resolvedWorkspacePath,
@@ -501,18 +857,25 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             || (isSelfEditSafeMode && cloneWorkspaceBound)
           const canStageControllerUpdate = selfEditScope === 'controller'
             || (isSelfEditSafeMode && !cloneWorkspaceBound)
+          const desktopApp =
+            typeof window !== 'undefined'
+              ? window.pixelForgeDesktop?.app
+              : undefined
           const canApplyControllerUpdate =
             canStageControllerUpdate
-            && typeof window !== 'undefined'
-            && !!window.pixelForgeDesktop?.app
+            && (
+              hasDesktopAppMethod(desktopApp, 'startPendingControllerUpdate')
+              || hasDesktopAppMethod(desktopApp, 'applyPendingControllerUpdate')
+              || hasDesktopAppMethod(desktopApp, 'applyControllerUpdate')
+            )
           const requestId =
             typeof data.request_id === 'string' && data.request_id
               ? data.request_id
-              : get().currentRequestId
+              : threadState.currentRequestId
           const selectionCount =
             Number.isFinite(Number(data.selection_count))
               ? Number(data.selection_count)
-              : get().currentSelectionCount
+              : threadState.currentSelectionCount
           const completionMessage: ChatMessage = {
             id: generateId(),
             role: 'system',
@@ -530,68 +893,41 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             canApplyControllerUpdate: canApplyControllerUpdate || undefined,
           }
 
-          if (currentStreamContent) {
-            set({
-              messages: [
-                ...msgs,
-                {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: currentStreamContent,
-                  attachments:
-                    pendingAssistantAttachments.length > 0
-                      ? pendingAssistantAttachments
-                      : undefined,
-                  timestamp: new Date(),
-                },
-                completionMessage,
-              ],
-              currentStreamContent: '',
-              pendingAssistantAttachments: [],
-              isStreaming: false,
-              currentStatusMessage: '',
-              currentSelectionCount: 0,
-              currentRequestId: null,
-            })
-          } else {
-            const nextMessages =
-              pendingAssistantAttachments.length > 0
-                ? [
-                    ...get().messages,
-                    {
-                      id: generateId(),
-                      role: 'assistant' as const,
-                      content: '',
-                      attachments: pendingAssistantAttachments,
-                      timestamp: new Date(),
-                    },
-                    completionMessage,
-                  ]
-                : [
-                    ...get().messages,
-                    completionMessage,
-                  ]
-            set({
+          updateThreadState(threadKeyRef, (currentThreadState) => {
+            const nextMessages = [...currentThreadState.messages]
+            if (currentThreadState.currentStreamContent) {
+              nextMessages.push({
+                id: generateId(),
+                role: 'assistant',
+                content: currentThreadState.currentStreamContent,
+                attachments:
+                  currentThreadState.pendingAssistantAttachments.length > 0
+                    ? currentThreadState.pendingAssistantAttachments
+                    : undefined,
+                timestamp: new Date(),
+              })
+            } else if (currentThreadState.pendingAssistantAttachments.length > 0) {
+              nextMessages.push({
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                attachments: currentThreadState.pendingAssistantAttachments,
+                timestamp: new Date(),
+              })
+            }
+            nextMessages.push(completionMessage)
+
+            return resetThreadRuntimeState(currentThreadState, {
               messages: nextMessages,
-              isStreaming: false,
-              pendingAssistantAttachments: [],
-              currentStatusMessage: '',
-              currentSelectionCount: 0,
-              currentRequestId: null,
+              targetAgentDeckSessionId:
+                resolvedAgentDeckSessionId ?? currentThreadState.targetAgentDeckSessionId,
             })
+          })
+
+          if (wasActiveThread) {
+            syncActiveThreadTargetSelection(threadKeyRef)
           }
-          if (data.session_id) {
-            useSessionStore.getState().setLiveEditorSession({
-              threadId: data.session_id,
-              backend: data.backend || 'agent-deck',
-              workspacePath: data.workspace_path ?? null,
-              agentDeckSessionId: data.agent_deck_session_id ?? null,
-              agentDeckSessionTitle: data.agent_deck_session_title ?? null,
-              agentDeckTool: data.agent_deck_tool ?? null,
-              requestId: data.request_id ?? null,
-            })
-            console.log('[live-editor] Session synced to session-store:', data.session_id)
-          }
+
           if (canLoadPreviewUpdate) {
             if (sessionState.projectPath && resolvedWorkspacePath) {
               void stagePreviewUpdateNotice({
@@ -600,10 +936,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
                 previewUrl: sessionState.previewUrl,
                 activeMode: sessionState.activeMode,
                 requestId,
-                agentDeckSessionId:
-                  typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
-                    ? data.agent_deck_session_id
-                    : sessionState.liveEditorSession?.agentDeckSessionId ?? null,
+                agentDeckSessionId: resolvedAgentDeckSessionId,
               }).catch((error) => {
                 console.error('[live-editor] Failed to stage preview update notice:', error)
               })
@@ -623,79 +956,46 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           break
         }
 
-        case 'session': {
-          if (data.session_id) {
-            useSessionStore.getState().setLiveEditorSession({
-              threadId: data.session_id,
-              backend: data.backend || 'agent-deck',
-              workspacePath: data.workspace_path ?? null,
-              agentDeckSessionId: data.agent_deck_session_id ?? null,
-              agentDeckSessionTitle: data.agent_deck_session_title ?? null,
-              agentDeckTool: data.agent_deck_tool ?? null,
-              requestId: data.request_id ?? null,
-            })
-          }
-          set({
-            currentRequestId:
-              typeof data.request_id === 'string' && data.request_id
-                ? data.request_id
-                : get().currentRequestId,
-            currentSelectionCount:
-              Number.isFinite(Number(data.selection_count))
-                ? Number(data.selection_count)
-                : get().currentSelectionCount,
-          })
-          break
-        }
-
         case 'error':
-          set({
-            messages: [
-              ...get().messages,
-              {
-                id: generateId(),
-                role: 'assistant',
-                content: `Error: ${data.message}`,
-                timestamp: new Date(),
-              },
-            ],
-            isStreaming: false,
-            currentStreamContent: '',
-            pendingAssistantAttachments: [],
-            currentStatusMessage: '',
-            currentSelectionCount: 0,
-            currentRequestId: null,
-          })
+          updateThreadState(threadKeyRef, (threadState) =>
+            resetThreadRuntimeState(threadState, {
+              messages: [
+                ...threadState.messages,
+                {
+                  id: generateId(),
+                  role: 'assistant',
+                  content: `Error: ${data.message}`,
+                  timestamp: new Date(),
+                },
+              ],
+            })
+          )
           break
 
         case 'status':
-          set({
+          updateThreadState(threadKeyRef, (threadState) => ({
+            ...threadState,
             currentStatusMessage: summarizeBackendStatus(
               typeof data.message === 'string' ? data.message : ''
             ),
-          })
+          }))
           break
       }
     }
 
     newWs.onclose = () => {
-      const {
-        isStreaming,
-        currentStreamContent,
-        messages,
-        pendingAssistantAttachments,
-      } = get()
+      const threadState = getThreadStateSnapshot(get().threadStates, threadKeyRef)
 
-      if (isStreaming) {
-        const nextMessages = [...messages]
-        if (currentStreamContent) {
+      if (threadState.isStreaming) {
+        const nextMessages = [...threadState.messages]
+        if (threadState.currentStreamContent) {
           nextMessages.push({
             id: generateId(),
             role: 'assistant',
-            content: currentStreamContent,
+            content: threadState.currentStreamContent,
             attachments:
-              pendingAssistantAttachments.length > 0
-                ? pendingAssistantAttachments
+              threadState.pendingAssistantAttachments.length > 0
+                ? threadState.pendingAssistantAttachments
                 : undefined,
             timestamp: new Date(),
           })
@@ -707,336 +1007,450 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           timestamp: new Date(),
           systemTone: 'error',
         })
-        set({
+        updateThreadState(threadKeyRef, (currentThreadState) =>
+          resetThreadRuntimeState(currentThreadState, {
+            messages: nextMessages,
+          })
+        )
+      } else {
+        updateThreadState(threadKeyRef, (currentThreadState) => ({
+          ...currentThreadState,
           ws: null,
           connected: false,
-          isStreaming: false,
-          currentStreamContent: '',
-          pendingAssistantAttachments: [],
-          currentStatusMessage: '',
-          currentSelectionCount: 0,
-          currentRequestId: null,
-          messages: nextMessages,
-        })
-      } else {
-        set({ ws: null, connected: false })
+        }))
       }
-      console.log('[live-editor] WebSocket disconnected')
+      console.log(`[live-editor] WebSocket disconnected for ${threadKeyRef}`)
     }
 
     newWs.onerror = (error) => {
       console.error('[live-editor] WebSocket error:', error)
     }
 
-    set({ ws: newWs })
-  },
+    updateThreadState(threadKeyRef, (threadState) => ({
+      ...threadState,
+      ws: newWs,
+      connected: false,
+    }))
+  }
 
-  disconnect: () => {
-    get().ws?.close()
-    set({ ws: null, connected: false, pendingAssistantAttachments: [] })
-  },
+  return {
+    ...createInitialStoreState(),
 
-  // -------------------------------------------------------------------------
-  // Chat Actions
-  // -------------------------------------------------------------------------
+    getActiveThreadState: () =>
+      getThreadStateSnapshot(get().threadStates, get().activeThreadKey),
+    getThreadState: (threadKey) =>
+      getThreadStateSnapshot(get().threadStates, threadKey),
+    getThreadStatus: (threadKey) => {
+      const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+      return {
+        connected: threadState.connected,
+        currentStatusMessage: threadState.currentStatusMessage,
+        isStreaming: threadState.isStreaming,
+      }
+    },
+    getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
+    getProjectPath: () => useSessionStore.getState().projectPath,
+    getTargetAgentDeckSessionId: (threadKey) => {
+      const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
+      const boundSession = resolveThreadSession(resolvedThreadKey)
+      if (boundSession?.agentDeckSessionId) {
+        return boundSession.agentDeckSessionId
+      }
+      return getThreadStateSnapshot(get().threadStates, resolvedThreadKey).targetAgentDeckSessionId
+    },
 
-  sendMessage: (content: string, attachments: ChatAttachment[] = []) => {
-    const {
-      ws,
-      messages,
-      buildSelectionPayload,
-      getSessionId,
-      getProjectPath,
-    } = get()
-    const trimmedContent = content.trim()
-    const hasAttachments = attachments.length > 0
+    activateThread: (threadKey) => {
+      const nextThreadKey = threadKey?.trim() || createDraftThreadKey()
+      set((state) => {
+        const nextThreadStates = state.threadStates[nextThreadKey]
+          ? state.threadStates
+          : {
+              ...state.threadStates,
+              [nextThreadKey]: createEmptyThreadState(),
+            }
+        return createStoreState(nextThreadKey, nextThreadStates)
+      })
+      syncActiveThreadTargetSelection(nextThreadKey)
+    },
 
-    // Read from session-store (Live Editor session management)
-    const sessionId = getSessionId()
-    const projectPath = getProjectPath()
+    resetForProject: () => {
+      const currentThreadStates = get().threadStates
+      for (const threadKey of Object.keys(currentThreadStates)) {
+        closeThreadSocket(threadKey, true)
+      }
+      set(createInitialStoreState())
+    },
 
-    if (!trimmedContent && !hasAttachments) {
-      return
-    }
+    connect: (endpoint = '/ws/live-editor') => {
+      connectThread(get().activeThreadKey, endpoint)
+    },
 
-    if (!projectPath) {
-      set({
+    disconnect: (threadKey) => {
+      const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
+      closeThreadSocket(resolvedThreadKey, true)
+      updateThreadState(resolvedThreadKey, (threadState) =>
+        resetThreadRuntimeState(threadState)
+      )
+    },
+
+    disconnectAll: () => {
+      const currentThreadStates = get().threadStates
+      for (const threadKey of Object.keys(currentThreadStates)) {
+        closeThreadSocket(threadKey, true)
+      }
+      set((state) => {
+        const nextThreadStates = Object.fromEntries(
+          Object.entries(state.threadStates).map(([threadKey, threadState]) => [
+            threadKey,
+            resetThreadRuntimeState(threadState),
+          ])
+        )
+        return createStoreState(state.activeThreadKey, nextThreadStates)
+      })
+    },
+
+    sendMessage: (content, attachments = []) => {
+      const activeThreadKey = get().activeThreadKey
+      const activeThreadState = getThreadStateSnapshot(
+        get().threadStates,
+        activeThreadKey
+      )
+      const { buildSelectionPayload, getProjectPath } = get()
+      const trimmedContent = content.trim()
+      const hasAttachments = attachments.length > 0
+      const projectPath = getProjectPath()
+
+      if (!trimmedContent && !hasAttachments) {
+        return
+      }
+
+      if (!projectPath) {
+        appendSystemError(
+          activeThreadKey,
+          'No project path configured. Please select a project first.'
+        )
+        return
+      }
+
+      const {
+        elementContext,
+        selectionTunnel,
+        selectionAttachments,
+      } = buildSelectionPayload()
+      const requestAttachments = [...selectionAttachments, ...attachments]
+      const pendingAssistantAttachments = shouldMirrorSelectionAttachmentsToAssistant(
+        trimmedContent,
+        selectionAttachments
+      )
+        ? selectionAttachments
+        : []
+      const userVisibleContent =
+        trimmedContent
+        || buildAttachmentSummary(attachments)
+      const sessionState = useSessionStore.getState()
+      const boundSession = resolveThreadSession(activeThreadKey)
+      const targetAgentDeckSessionId =
+        boundSession?.agentDeckSessionId
+        ?? activeThreadState.targetAgentDeckSessionId
+        ?? null
+      const conflictingThread = targetAgentDeckSessionId
+        ? sessionState.projectSessions.find(
+            (session) =>
+              session.threadId !== activeThreadKey
+              && session.agentDeckSessionId === targetAgentDeckSessionId
+          ) ?? null
+        : null
+
+      if (conflictingThread) {
+        appendSystemError(
+          activeThreadKey,
+          `Agent Deck session ${targetAgentDeckSessionId} is already bound to Live Editor thread ${conflictingThread.threadId}. Switch to that thread or choose a different session.`
+        )
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
         messages: [
-          ...messages,
+          ...threadState.messages,
           {
             id: generateId(),
-            role: 'assistant',
-            content: 'Error: No project path configured. Please select a project first.',
+            role: 'user',
+            content: userVisibleContent,
+            attachments: hasAttachments ? attachments : undefined,
             timestamp: new Date(),
           },
         ],
-      })
-      return
-    }
-
-    // Build element context
-    const {
-      elementContext,
-      selectionTunnel,
-      selectionAttachments,
-    } = buildSelectionPayload()
-    const requestAttachments = [...selectionAttachments, ...attachments]
-    const pendingAssistantAttachments = shouldMirrorSelectionAttachmentsToAssistant(
-      trimmedContent,
-      selectionAttachments
-    )
-      ? selectionAttachments
-      : []
-    const userVisibleContent =
-      trimmedContent ||
-      buildAttachmentSummary(attachments)
-
-    // Add user message to chat
-    set({
-      messages: [
-        ...messages,
-        {
-          id: generateId(),
-          role: 'user',
-          content: userVisibleContent,
-          attachments: hasAttachments ? attachments : undefined,
-          timestamp: new Date(),
-        },
-      ],
-      isStreaming: true,
-      currentStreamContent: '',
-      pendingAssistantAttachments,
-      currentStatusMessage:
-        selectionTunnel.selections.length > 0
-          ? `Preparing request with ${selectionTunnel.selections.length} selection${selectionTunnel.selections.length === 1 ? '' : 's'}...`
-          : 'Preparing live edit request...',
-      currentSelectionCount: selectionTunnel.selections.length,
-      currentRequestId: null,
-    })
-
-    const sessionState = useSessionStore.getState()
-    const previewUrl = sessionState.previewUrl
-    const targetAgentDeckSessionId = sessionState.selectedAgentDeckTargetId
-    const selectedTarget =
-      sessionState.agentDeckTargets.find((target) => target.id === targetAgentDeckSessionId)
-      ?? null
-    const agentType =
-      sessionState.liveEditorSession?.agentDeckTool
-      || selectedTarget?.tool
-      || sessionState.agentType
-      || 'claude'
-    const payload: Record<string, unknown> = {
-      message: trimmedContent,
-      project_path: projectPath,
-      element_context: elementContext,
-      preview_url: previewUrl || '',
-      agent_type: agentType,
-    }
-
-    if (requestAttachments.length > 0) {
-      payload.attachments = requestAttachments.map((attachment) => ({
-        name: attachment.name,
-        mime_type: attachment.mimeType,
-        data_url: attachment.dataUrl,
-        kind: attachment.kind,
+        isStreaming: true,
+        currentStreamContent: '',
+        pendingAssistantAttachments,
+        currentStatusMessage:
+          selectionTunnel.selections.length > 0
+            ? `Preparing request with ${selectionTunnel.selections.length} selection${selectionTunnel.selections.length === 1 ? '' : 's'}...`
+            : 'Preparing live edit request...',
+        currentSelectionCount: selectionTunnel.selections.length,
+        currentRequestId: null,
       }))
-    }
 
-    if (selectionTunnel.selections.length > 0) {
-      payload.selection_tunnel = selectionTunnel
-    }
-
-    if (sessionId) {
-      payload.thread_id = sessionId
-    }
-
-    if (targetAgentDeckSessionId) {
-      payload.target_agent_deck_session_id = targetAgentDeckSessionId
-    }
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      set((state) => ({
-        queuedMessages: [...state.queuedMessages, { payload }],
-        currentStatusMessage: 'Reconnecting Live Editor… request queued.',
-      }))
-      get().connect()
-      return
-    }
-
-    ws.send(JSON.stringify(payload))
-  },
-
-  clearMessages: () => {
-    set({
-      messages: [],
-      currentStreamContent: '',
-      pendingAssistantAttachments: [],
-      currentStatusMessage: '',
-      currentSelectionCount: 0,
-      currentRequestId: null,
-    })
-  },
-
-  newSession: () => {
-    useSessionStore.getState().clearLiveEditorSession()
-    set({
-      messages: [],
-      currentStreamContent: '',
-      pendingAssistantAttachments: [],
-      currentStatusMessage: '',
-      currentSelectionCount: 0,
-      currentRequestId: null,
-      selectedElements: [],
-      selectionUndoStack: [],
-      selectionRedoStack: [],
-    })
-  },
-
-  // -------------------------------------------------------------------------
-  // Selection Actions (task_2_3)
-  // -------------------------------------------------------------------------
-
-  addElement: (element) => {
-    const { selectedElements, selectionUndoStack } = get()
-
-    if (selectedElements.some((entry) => entry.id === element.id)) {
-      console.log('[live-editor] Element already selected')
-      return
-    }
-
-    const newElement: SelectedElement = {
-      ...element,
-      timestamp: new Date(),
-    }
-
-    set({
-      selectedElements: [...selectedElements, newElement],
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: [],
-    })
-  },
-
-  removeElement: (id: string) => {
-    const { selectedElements, selectionUndoStack } = get()
-    if (!selectedElements.some((entry) => entry.id === id)) {
-      return
-    }
-
-    set({
-      selectedElements: selectedElements.filter((entry) => entry.id !== id),
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: [],
-    })
-  },
-
-  removeElements: (ids: string[]) => {
-    const idSet = new Set(ids)
-    if (idSet.size === 0) {
-      return
-    }
-
-    const { selectedElements, selectionUndoStack } = get()
-    const nextSelections = selectedElements.filter((entry) => !idSet.has(entry.id))
-    if (nextSelections.length === selectedElements.length) {
-      return
-    }
-
-    set({
-      selectedElements: nextSelections,
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: [],
-    })
-  },
-
-  replaceElement: (id, element) => {
-    const { selectedElements, selectionUndoStack } = get()
-    const targetIndex = selectedElements.findIndex((entry) => entry.id === id)
-    if (targetIndex < 0) {
-      return
-    }
-
-    const nextSelections = cloneSelectionState(selectedElements)
-    nextSelections[targetIndex] = {
-      ...element,
-      id,
-      timestamp: new Date(),
-    }
-
-    set({
-      selectedElements: nextSelections,
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: [],
-    })
-  },
-
-  clearElements: () => {
-    const { selectedElements, selectionUndoStack } = get()
-    if (selectedElements.length === 0) {
-      return
-    }
-
-    set({
-      selectedElements: [],
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: [],
-    })
-  },
-
-  undoSelectionChange: () => {
-    const { selectionUndoStack, selectionRedoStack, selectedElements } = get()
-    if (selectionUndoStack.length === 0) {
-      return
-    }
-
-    const previousSnapshot = selectionUndoStack[selectionUndoStack.length - 1]
-    set({
-      selectedElements: cloneSelectionState(previousSnapshot),
-      selectionUndoStack: selectionUndoStack.slice(0, -1),
-      selectionRedoStack: pushUndoSnapshot(selectionRedoStack, selectedElements),
-    })
-  },
-
-  redoSelectionChange: () => {
-    const { selectionUndoStack, selectionRedoStack, selectedElements } = get()
-    if (selectionRedoStack.length === 0) {
-      return
-    }
-
-    const nextSnapshot = selectionRedoStack[selectionRedoStack.length - 1]
-    set({
-      selectedElements: cloneSelectionState(nextSnapshot),
-      selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
-      selectionRedoStack: selectionRedoStack.slice(0, -1),
-    })
-  },
-
-  // Note: setProjectPath removed - use useSessionStore.setProject() instead
-
-  // -------------------------------------------------------------------------
-  // Context Building
-  // -------------------------------------------------------------------------
-
-  buildSelectionPayload: () => {
-    const { selectedElements } = get()
-
-    if (selectedElements.length === 0) {
-      return {
-        elementContext: '',
-        selectionTunnel: { selections: [] },
-        selectionAttachments: [],
+      const previewUrl = sessionState.previewUrl
+      const selectedTarget =
+        sessionState.agentDeckTargets.find(
+          (target) => target.id === targetAgentDeckSessionId
+        ) ?? null
+      const agentType =
+        boundSession?.agentDeckTool
+        || selectedTarget?.tool
+        || sessionState.agentType
+        || 'claude'
+      const payload: Record<string, unknown> = {
+        message: trimmedContent,
+        project_path: projectPath,
+        element_context: elementContext,
+        preview_url: previewUrl || '',
+        agent_type: agentType,
       }
-    }
-    const artifacts = buildSelectionArtifacts(selectedElements)
-    return {
-      elementContext: artifacts.elementContext,
-      selectionTunnel: artifacts.tunnel,
-      selectionAttachments: artifacts.attachments.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        dataUrl: attachment.dataUrl,
-        kind: attachment.kind,
-      })),
-    }
-  },
-}))
+
+      if (requestAttachments.length > 0) {
+        payload.attachments = requestAttachments.map((attachment) => ({
+          name: attachment.name,
+          mime_type: attachment.mimeType,
+          data_url: attachment.dataUrl,
+          kind: attachment.kind,
+        }))
+      }
+
+      if (selectionTunnel.selections.length > 0) {
+        payload.selection_tunnel = selectionTunnel
+      }
+
+      if (boundSession?.threadId) {
+        payload.thread_id = boundSession.threadId
+      }
+
+      if (targetAgentDeckSessionId) {
+        payload.target_agent_deck_session_id = targetAgentDeckSessionId
+      }
+
+      if (!activeThreadState.ws || activeThreadState.ws.readyState !== WebSocket.OPEN) {
+        updateThreadState(activeThreadKey, (threadState) => ({
+          ...threadState,
+          queuedMessages: [...threadState.queuedMessages, { payload }],
+          currentStatusMessage: 'Reconnecting Live Editor… request queued.',
+        }))
+        connectThread(activeThreadKey)
+        return
+      }
+
+      activeThreadState.ws.send(JSON.stringify(payload))
+    },
+
+    clearMessages: () => {
+      updateThreadState(get().activeThreadKey, (threadState) =>
+        resetThreadRuntimeState(threadState, {
+          messages: [],
+        })
+      )
+    },
+
+    newSession: (targetAgentDeckSessionId = null) => {
+      const nextDraftKey = createDraftThreadKey()
+      const nextThreadState = {
+        ...createEmptyThreadState(),
+        targetAgentDeckSessionId: targetAgentDeckSessionId?.trim() || null,
+      }
+      useSessionStore.getState().clearLiveEditorSession()
+      useSessionStore.getState().setSelectedAgentDeckTargetId(
+        nextThreadState.targetAgentDeckSessionId
+      )
+      set((state) =>
+        createStoreState(nextDraftKey, {
+          ...state.threadStates,
+          [nextDraftKey]: nextThreadState,
+        })
+      )
+    },
+
+    setTargetAgentDeckSessionId: (sessionId) => {
+      const activeThreadKey = get().activeThreadKey
+      const normalizedSessionId = sessionId?.trim() || null
+      const boundSession = resolveThreadSession(activeThreadKey)
+      if (
+        boundSession?.agentDeckSessionId
+        && boundSession.agentDeckSessionId !== normalizedSessionId
+      ) {
+        appendSystemError(
+          activeThreadKey,
+          'This Live Editor thread is already bound. Start a fresh live thread to target a different Agent Deck session.'
+        )
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        targetAgentDeckSessionId: normalizedSessionId,
+      }))
+      useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
+    },
+
+    addElement: (element) => {
+      const activeThreadKey = get().activeThreadKey
+      const { selectedElements, selectionUndoStack } = get().getActiveThreadState()
+
+      if (selectedElements.some((entry) => entry.id === element.id)) {
+        console.log('[live-editor] Element already selected')
+        return
+      }
+
+      const newElement: SelectedElement = {
+        ...element,
+        timestamp: new Date(),
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: [...selectedElements, newElement],
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: [],
+      }))
+    },
+
+    removeElement: (id) => {
+      const activeThreadKey = get().activeThreadKey
+      const { selectedElements, selectionUndoStack } = get().getActiveThreadState()
+      if (!selectedElements.some((entry) => entry.id === id)) {
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: selectedElements.filter((entry) => entry.id !== id),
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: [],
+      }))
+    },
+
+    removeElements: (ids) => {
+      const idSet = new Set(ids)
+      if (idSet.size === 0) {
+        return
+      }
+
+      const activeThreadKey = get().activeThreadKey
+      const { selectedElements, selectionUndoStack } = get().getActiveThreadState()
+      const nextSelections = selectedElements.filter((entry) => !idSet.has(entry.id))
+      if (nextSelections.length === selectedElements.length) {
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: nextSelections,
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: [],
+      }))
+    },
+
+    replaceElement: (id, element) => {
+      const activeThreadKey = get().activeThreadKey
+      const { selectedElements, selectionUndoStack } = get().getActiveThreadState()
+      const targetIndex = selectedElements.findIndex((entry) => entry.id === id)
+      if (targetIndex < 0) {
+        return
+      }
+
+      const nextSelections = cloneSelectionState(selectedElements)
+      nextSelections[targetIndex] = {
+        ...element,
+        id,
+        timestamp: new Date(),
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: nextSelections,
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: [],
+      }))
+    },
+
+    clearElements: () => {
+      const activeThreadKey = get().activeThreadKey
+      const { selectedElements, selectionUndoStack } = get().getActiveThreadState()
+      if (selectedElements.length === 0) {
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: [],
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: [],
+      }))
+    },
+
+    undoSelectionChange: () => {
+      const activeThreadKey = get().activeThreadKey
+      const {
+        selectionUndoStack,
+        selectionRedoStack,
+        selectedElements,
+      } = get().getActiveThreadState()
+      if (selectionUndoStack.length === 0) {
+        return
+      }
+
+      const previousSnapshot = selectionUndoStack[selectionUndoStack.length - 1]
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: cloneSelectionState(previousSnapshot),
+        selectionUndoStack: selectionUndoStack.slice(0, -1),
+        selectionRedoStack: pushUndoSnapshot(selectionRedoStack, selectedElements),
+      }))
+    },
+
+    redoSelectionChange: () => {
+      const activeThreadKey = get().activeThreadKey
+      const {
+        selectionUndoStack,
+        selectionRedoStack,
+        selectedElements,
+      } = get().getActiveThreadState()
+      if (selectionRedoStack.length === 0) {
+        return
+      }
+
+      const nextSnapshot = selectionRedoStack[selectionRedoStack.length - 1]
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: cloneSelectionState(nextSnapshot),
+        selectionUndoStack: pushUndoSnapshot(selectionUndoStack, selectedElements),
+        selectionRedoStack: selectionRedoStack.slice(0, -1),
+      }))
+    },
+
+    buildSelectionPayload: () => {
+      const { selectedElements } = get().getActiveThreadState()
+
+      if (selectedElements.length === 0) {
+        return {
+          elementContext: '',
+          selectionTunnel: { selections: [] },
+          selectionAttachments: [],
+        }
+      }
+
+      const artifacts = buildSelectionArtifacts(selectedElements)
+      return {
+        elementContext: artifacts.elementContext,
+        selectionTunnel: artifacts.tunnel,
+        selectionAttachments: artifacts.attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          dataUrl: attachment.dataUrl,
+          kind: attachment.kind,
+        })),
+      }
+    },
+  }
+})
