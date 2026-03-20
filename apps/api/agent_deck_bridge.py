@@ -24,6 +24,7 @@ class AgentDeckSessionInfo:
     agent_deck_session_id: str
     agent_deck_session_title: str
     workspace_path: str
+    tmux_session: str | None
     tool: str
     status: str | None
     acpx_agent: str | None
@@ -238,6 +239,15 @@ def _session_tool(payload: dict[str, object], default: str = "claude") -> str:
     if isinstance(tool, str) and tool.strip():
         return tool.strip().lower()
     return default
+
+
+def _tmux_target(tmux_session: str | None) -> str | None:
+    if not isinstance(tmux_session, str):
+        return None
+    normalized = tmux_session.strip()
+    if not normalized:
+        return None
+    return f"{normalized}:0.0"
 
 
 def _parsed_acpx_payload(payload: dict[str, object]) -> tuple[str, str] | None:
@@ -496,6 +506,11 @@ async def _build_session_info(
 
     agent_deck_title = str(payload.get("title") or fallback_title)
     workspace_path = str(payload.get("path") or "").strip() or _normalize_path(project_path)
+    tmux_session = (
+        str(payload.get("tmux_session")).strip()
+        if isinstance(payload.get("tmux_session"), str) and str(payload.get("tmux_session")).strip()
+        else None
+    )
     session_tool = _session_tool(payload)
     status = (
         str(payload.get("status")).strip()
@@ -539,6 +554,7 @@ async def _build_session_info(
         agent_deck_session_id=agent_deck_session_id,
         agent_deck_session_title=agent_deck_title,
         workspace_path=workspace_path,
+        tmux_session=tmux_session,
         tool=session_tool,
         status=status,
         acpx_agent=acpx_agent,
@@ -793,6 +809,53 @@ async def start_agent_deck_send(
     )
 
 
+async def submit_agent_deck_prompt(
+    session_info: AgentDeckSessionInfo,
+) -> None:
+    target = _tmux_target(session_info.tmux_session)
+    if not target:
+        raise AgentDeckBridgeError(
+            f"Agent Deck session `{session_info.agent_deck_session_title}` is missing a tmux target"
+        )
+
+    code, stdout, stderr = await _run_command(
+        ["tmux", "send-keys", "-t", target, "Enter"],
+        cwd=session_info.workspace_path,
+    )
+    if code != 0:
+        raise AgentDeckBridgeError(
+            stderr.strip() or stdout.strip() or "Failed to submit Agent Deck prompt"
+        )
+
+
+async def type_agent_deck_prompt(
+    session_info: AgentDeckSessionInfo,
+    *,
+    prompt: str,
+    chunk_size: int = 256,
+) -> None:
+    target = _tmux_target(session_info.tmux_session)
+    if not target:
+        raise AgentDeckBridgeError(
+            f"Agent Deck session `{session_info.agent_deck_session_title}` is missing a tmux target"
+        )
+
+    normalized_prompt = " ".join(prompt.split())
+    if not normalized_prompt:
+        raise AgentDeckBridgeError("Refusing to send an empty Agent Deck prompt")
+
+    for start in range(0, len(normalized_prompt), chunk_size):
+        chunk = normalized_prompt[start : start + chunk_size]
+        code, stdout, stderr = await _run_command(
+            ["tmux", "send-keys", "-t", target, "-l", chunk],
+            cwd=session_info.workspace_path,
+        )
+        if code != 0:
+            raise AgentDeckBridgeError(
+                stderr.strip() or stdout.strip() or "Failed to type Agent Deck prompt"
+            )
+
+
 async def send_agent_deck_prompt_nowait(
     session_info: AgentDeckSessionInfo,
     *,
@@ -815,6 +878,49 @@ async def send_agent_deck_prompt_nowait(
         raise AgentDeckBridgeError(
             stderr.strip() or stdout.strip() or "Agent Deck live-edit request failed"
         )
+
+
+async def wait_for_agent_deck_turn_completion(
+    session_info: AgentDeckSessionInfo,
+    *,
+    startup_timeout_seconds: float = 20.0,
+    completion_timeout_seconds: float = 600.0,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    loop = asyncio.get_running_loop()
+    startup_deadline = loop.time() + startup_timeout_seconds
+    completion_deadline = loop.time() + completion_timeout_seconds
+    saw_running = False
+    settled_polls = 0
+
+    while loop.time() < completion_deadline:
+        payload = await session_show(session_info.agent_deck_session_id)
+        status = str(payload.get("status") or "").strip().lower()
+
+        if status in {"running", "busy"}:
+            saw_running = True
+            settled_polls = 0
+        elif status in {"waiting", "idle", ""}:
+            if saw_running:
+                settled_polls += 1
+                if settled_polls >= 2:
+                    return
+            elif loop.time() >= startup_deadline:
+                raise AgentDeckBridgeError(
+                    f"Agent Deck session `{session_info.agent_deck_session_title}` never started processing the live-edit request."
+                )
+        else:
+            settled_polls = 0
+            if not saw_running and loop.time() >= startup_deadline:
+                raise AgentDeckBridgeError(
+                    f"Agent Deck session `{session_info.agent_deck_session_title}` did not enter a running state (status: {status or 'unknown'})."
+                )
+
+        await asyncio.sleep(poll_interval_seconds)
+
+    raise AgentDeckBridgeError(
+        f"Timed out waiting for Agent Deck session `{session_info.agent_deck_session_title}` to finish the live-edit request."
+    )
 
 
 def _codex_output_looks_ready(output: str) -> bool:

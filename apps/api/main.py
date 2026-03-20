@@ -28,6 +28,9 @@ from agent_deck_bridge import (
     send_codex_prompt_and_capture_output,
     start_agent_deck_send,
     stream_claude_jsonl,
+    submit_agent_deck_prompt,
+    type_agent_deck_prompt,
+    wait_for_agent_deck_turn_completion,
 )
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
@@ -2130,6 +2133,7 @@ async def live_editor_chat(websocket: WebSocket):
                 continue
 
             send_proc: asyncio.subprocess.Process | None = None
+            turn_wait_task: asyncio.Task[None] | None = None
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
@@ -2328,12 +2332,23 @@ async def live_editor_chat(websocket: WebSocket):
                         else 0
                     )
 
-                    send_proc = await start_agent_deck_send(
-                        session_info,
-                        project_path=session_info.workspace_path,
-                        prompt=dispatch_prompt,
-                    )
-                    send_task = asyncio.create_task(send_proc.communicate())
+                    if session_info.tool == "claude":
+                        await type_agent_deck_prompt(
+                            session_info,
+                            prompt=dispatch_prompt,
+                        )
+                        await submit_agent_deck_prompt(session_info)
+                        turn_wait_task = asyncio.create_task(
+                            wait_for_agent_deck_turn_completion(session_info)
+                        )
+                        send_task: asyncio.Task[tuple[bytes, bytes]] | asyncio.Task[None] = turn_wait_task
+                    else:
+                        send_proc = await start_agent_deck_send(
+                            session_info,
+                            project_path=session_info.workspace_path,
+                            prompt=dispatch_prompt,
+                        )
+                        send_task = asyncio.create_task(send_proc.communicate())
 
                     stream_stats = None
                     if jsonl_path:
@@ -2344,12 +2359,16 @@ async def live_editor_chat(websocket: WebSocket):
                             send_task,
                         )
 
-                    stdout, stderr = await send_task
-                    stdout_text = stdout.decode().strip()
-                    stderr_text = stderr.decode().strip()
+                    stdout_text = ""
+                    if turn_wait_task is not None:
+                        await turn_wait_task
+                    else:
+                        stdout, stderr = await send_task
+                        stdout_text = stdout.decode().strip()
+                        stderr_text = stderr.decode().strip()
 
-                    if send_proc.returncode != 0:
-                        raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
+                        if send_proc.returncode != 0:
+                            raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
 
                     if not stream_stats or not stream_stats.streamed_text:
                         fallback_output = stdout_text or await get_last_output(
@@ -2426,6 +2445,8 @@ async def live_editor_chat(websocket: WebSocket):
             except Exception as e:
                 if send_proc and send_proc.returncode is None:
                     send_proc.kill()
+                if turn_wait_task and not turn_wait_task.done():
+                    turn_wait_task.cancel()
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -2436,6 +2457,8 @@ async def live_editor_chat(websocket: WebSocket):
             finally:
                 if send_proc and send_proc.returncode is None:
                     send_proc.kill()
+                if turn_wait_task and not turn_wait_task.done():
+                    turn_wait_task.cancel()
 
     except WebSocketDisconnect:
         pass
