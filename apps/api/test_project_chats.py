@@ -5,7 +5,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from agent_deck_bridge import AgentDeckSessionTarget
-from project_chats import reconcile_project_chats
+from project_chats import (
+    find_project_chat_by_agent_deck_session_id,
+    reconcile_project_chats,
+)
 from project_store import SessionRecord
 
 
@@ -122,6 +125,27 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(chats[0].thread_id, "thread-a")
         self.assertEqual(chats[0].agent_deck_session_id, "deck-root")
         self.assertEqual(chats[0].binding_state, "attached")
+
+    def test_finds_reconciled_chat_by_agent_deck_session_id(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[],
+            visible_targets=[
+                create_target(
+                    id="deck-root",
+                    title="closeout-root",
+                    path="/tmp/project",
+                    tool="codex",
+                    status="idle",
+                )
+            ],
+        )
+
+        matched = find_project_chat_by_agent_deck_session_id(chats, "deck-root")
+
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.id, "agent-deck:deck-root")
+        self.assertEqual(matched.title, "closeout-root")
 
 
 if __name__ == "__main__":

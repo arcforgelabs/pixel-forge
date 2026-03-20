@@ -213,6 +213,10 @@ interface SessionStore {
   refreshProjectChats: (projectPath?: string | null) => Promise<ProjectChatRecord[]>;
   refreshAgentDeckTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
+  createProjectChatSession: (options?: {
+    agentType?: string;
+    title?: string | null;
+  }) => Promise<ProjectChatRecord>;
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
     title?: string | null;
@@ -487,6 +491,13 @@ function mergeSession(
   return [merged, ...sessions.filter((entry) => entry.threadId !== merged.threadId)];
 }
 
+function mergeProjectChat(
+  chats: ProjectChatRecord[],
+  chat: ProjectChatRecord
+): ProjectChatRecord[] {
+  return [chat, ...chats.filter((entry) => entry.id !== chat.id)];
+}
+
 function setProjectSessionsForPath(
   sessionsByProject: Record<string, ProjectSessionRecord[]>,
   projectPath: string | null,
@@ -572,6 +583,28 @@ function ensureAgentDeckTargetPresent(
     },
     ...targets,
   ];
+}
+
+function agentDeckTargetFromProjectChat(
+  chat: ProjectChatRecord
+): AgentDeckSessionTarget | null {
+  const sessionId = chat.agentDeckSessionId?.trim() || null;
+  if (!sessionId) {
+    return null;
+  }
+
+  return {
+    id: sessionId,
+    title: chat.agentDeckSessionTitle || chat.title || sessionId,
+    path: chat.workspacePath,
+    group: null,
+    tool: chat.agentDeckTool,
+    command: null,
+    status:
+      chat.agentDeckSessionStatus
+      || (chat.bindingState === "attached" ? "unknown" : null),
+    createdAt: chat.createdAt,
+  };
 }
 
 function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | null>(
@@ -686,6 +719,26 @@ async function fetchProjectChats(projectPath: string): Promise<ProjectChatRecord
     `/api/projects/${encodeURIComponent(projectPath)}/chats`
   );
   return payload.chats.map(normalizeProjectChat);
+}
+
+async function createProjectChat(
+  projectPath: string,
+  options: {
+    agentType: string;
+    title?: string | null;
+  }
+): Promise<ProjectChatRecord> {
+  const payload = await requestJson<ApiProjectChat>(
+    `/api/projects/${encodeURIComponent(projectPath)}/chats`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        agent_type: options.agentType,
+        title: options.title ?? null,
+      }),
+    }
+  );
+  return normalizeProjectChat(payload);
 }
 
 async function fetchProfileState(): Promise<ProfileStateRecord> {
@@ -1334,6 +1387,55 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
     } catch (error) {
       set({ skillsLoading: false });
+      throw error;
+    }
+  },
+
+  createProjectChatSession: async (options) => {
+    const { projectPath, agentType, liveEditorSession } = get();
+    if (!projectPath) {
+      throw new Error("Project path is required");
+    }
+
+    set({ agentDeckTargetsLoading: true });
+    try {
+      const created = await createProjectChat(projectPath, {
+        agentType: options?.agentType ?? agentType,
+        title: options?.title ?? null,
+      });
+      const createdTarget = agentDeckTargetFromProjectChat(created);
+      set((state) => {
+        const nextProjectChats = mergeProjectChat(
+          state.projectChatsByProject[projectPath] ?? [],
+          created
+        );
+        return {
+          agentDeckTargetsLoading: false,
+          agentType: created.agentDeckTool ?? state.agentType,
+          selectedAgentDeckTargetId:
+            created.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
+          agentDeckTargets: createdTarget
+            ? ensureAgentDeckTargetPresent(
+                [
+                  createdTarget,
+                  ...state.agentDeckTargets.filter(
+                    (target) => target.id !== createdTarget.id
+                  ),
+                ],
+                liveEditorSession
+              )
+            : state.agentDeckTargets,
+          projectChats: mergeProjectChat(state.projectChats, created),
+          projectChatsByProject: setProjectChatsForPath(
+            state.projectChatsByProject,
+            projectPath,
+            nextProjectChats
+          ),
+        };
+      });
+      return created;
+    } catch (error) {
+      set({ agentDeckTargetsLoading: false });
       throw error;
     }
   },

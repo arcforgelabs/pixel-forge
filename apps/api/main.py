@@ -69,7 +69,10 @@ from project_store import (
     upsert_profile_state,
     upsert_session,
 )
-from project_chats import reconcile_project_chats
+from project_chats import (
+    find_project_chat_by_agent_deck_session_id,
+    reconcile_project_chats,
+)
 from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
@@ -676,6 +679,43 @@ def _serialize_delete_assessment(
     }
 
 
+async def _load_reconciled_project_chats(
+    project_path: str,
+    *,
+    extra_visible_targets: list[AgentDeckSessionTarget] | None = None,
+) -> tuple[str, list[object]]:
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    try:
+        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
+        visible_sessions = await list_project_agent_deck_sessions(normalized_project_path)
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    visible_sessions_by_id = {session.id: session for session in visible_sessions}
+    for session in extra_visible_targets or []:
+        visible_sessions_by_id.setdefault(session.id, session)
+
+    live_session_ids = {session.id for session in live_sessions}
+    sessions = detach_missing_agent_deck_session_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
+    detach_missing_agent_deck_thread_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
+
+    chats = reconcile_project_chats(
+        normalized_project_path,
+        sessions=sessions,
+        visible_targets=list(visible_sessions_by_id.values()),
+    )
+    return normalized_project_path, chats
+
+
 def serialize_skill_registry_location(location: object) -> dict[str, object]:
     return {
         "id": getattr(location, "id"),
@@ -766,31 +806,7 @@ async def get_project_sessions(project_path: str):
 
 @app.get("/api/projects/{project_path:path}/chats")
 async def get_project_chats(project_path: str):
-    normalized_project_path = normalize_project_path(project_path)
-    if not os.path.isdir(normalized_project_path):
-        raise HTTPException(status_code=404, detail="Project path does not exist")
-
-    try:
-        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
-        visible_sessions = await list_project_agent_deck_sessions(normalized_project_path)
-    except AgentDeckBridgeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    live_session_ids = {session.id for session in live_sessions}
-    sessions = detach_missing_agent_deck_session_bindings(
-        normalized_project_path,
-        live_session_ids,
-    )
-    detach_missing_agent_deck_thread_bindings(
-        normalized_project_path,
-        live_session_ids,
-    )
-
-    chats = reconcile_project_chats(
-        normalized_project_path,
-        sessions=sessions,
-        visible_targets=visible_sessions,
-    )
+    _, chats = await _load_reconciled_project_chats(project_path)
 
     return {
         "chats": [serialize_project_chat(chat) for chat in chats]
@@ -896,6 +912,47 @@ async def create_project_agent_deck_session(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return serialize_agent_deck_session_target(session)
+
+
+@app.post("/api/projects/{project_path:path}/chats")
+async def create_project_chat(
+    project_path: str,
+    request: AgentDeckSessionRequest,
+):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    upsert_project(
+        normalized_project_path,
+        name=project_name_for_path(normalized_project_path),
+    )
+
+    try:
+        created_session = await create_agent_deck_session_target(
+            normalized_project_path,
+            agent_type=request.agent_type,
+            title=request.title,
+            workspace_mode=request.workspace_mode,
+        )
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    _, chats = await _load_reconciled_project_chats(
+        normalized_project_path,
+        extra_visible_targets=[created_session],
+    )
+    created_chat = find_project_chat_by_agent_deck_session_id(
+        chats,
+        created_session.id,
+    )
+    if created_chat is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Created chat could not be reconciled",
+        )
+
+    return serialize_project_chat(created_chat)
 
 
 @app.post("/api/projects/{project_path:path}/chat-items/rename")

@@ -195,3 +195,25 @@ def reconcile_project_chats(
         key=lambda chat: (_sort_timestamp(chat), chat.title.lower(), chat.id),
         reverse=True,
     )
+
+
+def find_project_chat_by_agent_deck_session_id(
+    chats: list[ProjectChatRecord],
+    agent_deck_session_id: str | None,
+) -> ProjectChatRecord | None:
+    normalized_session_id = (
+        agent_deck_session_id.strip()
+        if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
+        else None
+    )
+    if normalized_session_id is None:
+        return None
+
+    for chat in chats:
+        if (
+            isinstance(chat.agent_deck_session_id, str)
+            and chat.agent_deck_session_id.strip() == normalized_session_id
+        ):
+            return chat
+
+    return None

@@ -9,13 +9,24 @@ export function ModeTabBar() {
     settingsSidebarOpen,
     toggleSettingsSidebar,
     liveEditorSession,
-    agentDeckTargets,
+    projectChats,
     selectedAgentDeckTargetId,
   } = useSessionStore();
 
   const activeChatTitle =
-    liveEditorSession?.agentDeckSessionTitle
-    || agentDeckTargets.find((target) => target.id === selectedAgentDeckTargetId)?.title
+    (
+      liveEditorSession?.threadId
+        ? projectChats.find((chat) => chat.threadId === liveEditorSession.threadId)?.title
+        : null
+    )
+    || (
+      selectedAgentDeckTargetId
+        ? projectChats.find(
+            (chat) => chat.agentDeckSessionId === selectedAgentDeckTargetId
+          )?.title
+        : null
+    )
+    || liveEditorSession?.agentDeckSessionTitle
     || null;
 
   return (

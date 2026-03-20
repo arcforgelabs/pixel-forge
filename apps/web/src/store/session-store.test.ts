@@ -532,3 +532,88 @@ describe("session-store thread switching", () => {
     });
   });
 });
+
+describe("session-store chat creation", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.includes("/api/projects/")
+          && url.includes("/chats")
+          && init?.method === "POST"
+        ) {
+          return new Response(
+            JSON.stringify({
+              id: "agent-deck:deck-session-b",
+              project_path: "/tmp/example-project",
+              title: "pixel-forge-thread-b",
+              thread_id: null,
+              workspace_path: "/tmp/example-project/.agents/thread-b",
+              backend: "agent-deck",
+              agent_deck_session_id: "deck-session-b",
+              agent_deck_session_title: "pixel-forge-thread-b",
+              agent_deck_tool: "codex",
+              agent_deck_session_status: "running",
+              binding_state: "attached",
+              workspace_kind: "clone",
+              origin_kind: "adopted",
+              created_at: "2026-03-21T00:00:00Z",
+              last_active: "2026-03-21T00:00:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [],
+      projectChatsByProject: {},
+      agentDeckTargets: [],
+      selectedAgentDeckTargetId: null,
+      agentType: "claude",
+      liveEditorSession: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("creates a fresh chat and hydrates the backing lane metadata", async () => {
+    const created = await useSessionStore.getState().createProjectChatSession({
+      agentType: "codex",
+    });
+
+    const state = useSessionStore.getState();
+    expect(created).toMatchObject({
+      id: "agent-deck:deck-session-b",
+      agentDeckSessionId: "deck-session-b",
+      workspacePath: "/tmp/example-project/.agents/thread-b",
+      agentDeckTool: "codex",
+    });
+    expect(state.projectChats[0]).toMatchObject({
+      id: "agent-deck:deck-session-b",
+      title: "pixel-forge-thread-b",
+      agentDeckSessionId: "deck-session-b",
+    });
+    expect(state.projectChatsByProject["/tmp/example-project"][0]).toMatchObject({
+      id: "agent-deck:deck-session-b",
+      title: "pixel-forge-thread-b",
+    });
+    expect(state.agentDeckTargets[0]).toMatchObject({
+      id: "deck-session-b",
+      title: "pixel-forge-thread-b",
+      path: "/tmp/example-project/.agents/thread-b",
+      tool: "codex",
+      status: "running",
+    });
+    expect(state.selectedAgentDeckTargetId).toBe("deck-session-b");
+    expect(state.agentType).toBe("codex");
+  });
+});

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useSessionStore } from "@/store/session-store";
+import { type ProjectChatRecord, useSessionStore } from "@/store/session-store";
 import { useLiveEditorStore } from "@/components/live-editor/store/chat-store";
 import { Settings } from "@/types";
 import { Switch } from "@/components/ui/switch";
@@ -89,15 +89,6 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
     : tool === "codex"
       ? "Codex"
       : capitalize(tool);
-}
-
-function formatAgentDeckTargetLabel(target: {
-  title: string;
-  tool: string | null;
-  status: string | null;
-}): string {
-  const details = [formatAgentDeckTool(target.tool), target.status || "unknown"];
-  return `${target.title} · ${details.join(" · ")}`;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -202,13 +193,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     projectSessions,
     projectChats,
     projectChatsByProject,
-    agentDeckTargets,
     agentDeckTargetsLoading,
     refreshProjectSessions,
     refreshProjectChats,
     refreshAgentDeckTargets,
     refreshSkills,
-    createAgentDeckTargetSession,
+    createProjectChatSession,
     selectedAgentDeckTargetId,
     lastSavedFile,
     sessionId,
@@ -239,6 +229,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [loadingProjectPaths, setLoadingProjectPaths] = useState<string[]>([]);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
+  const [isRefreshingChatTargets, setIsRefreshingChatTargets] = useState(false);
   const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
   const [renameDialogItem, setRenameDialogItem] = useState<ChatSidebarActionItem | null>(null);
   const [renameTitleDraft, setRenameTitleDraft] = useState("");
@@ -256,7 +247,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     clearElements,
     newSession: resetLiveEditorThread,
     removeThread,
-    setTargetAgentDeckSessionId,
     getThreadStatus,
     findThreadKeyByTargetAgentDeckSessionId,
     threadStates,
@@ -265,22 +255,43 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const shouldDisableStackUpdates =
     appState === AppState.CODING || appState === AppState.CODE_READY;
   const hasActiveSession = !!sessionId || !!liveEditorSession;
-  const canRetargetLiveEditor = !liveEditorSession;
-  const selectedAgentDeckTarget = agentDeckTargets.find(
-    (target) => target.id === selectedAgentDeckTargetId
-  ) ?? null;
-  const selectedTargetThread = selectedAgentDeckTarget
+  const activeProjectChats = projectChats.filter(
+    (chat) => chat.threadId !== null || chat.agentDeckSessionId !== null
+  );
+  const currentProjectChat = liveEditorSession?.threadId
+    ? activeProjectChats.find((chat) => chat.threadId === liveEditorSession.threadId) ?? null
+    : liveEditorSession?.agentDeckSessionId
+      ? activeProjectChats.find(
+          (chat) => chat.agentDeckSessionId === liveEditorSession.agentDeckSessionId
+        ) ?? null
+      : null;
+  const selectedProjectChat = currentProjectChat
+    ?? (
+      selectedAgentDeckTargetId
+        ? activeProjectChats.find(
+            (chat) => chat.agentDeckSessionId === selectedAgentDeckTargetId
+          ) ?? null
+        : null
+    );
+  const selectedProjectChatThread = selectedProjectChat?.threadId
     ? projectSessions.find(
         (session) =>
-          session.agentDeckSessionId === selectedAgentDeckTarget.id
+          session.threadId === selectedProjectChat.threadId
           && session.threadId !== liveEditorSession?.threadId
       ) ?? null
     : null;
+  const selectedProjectChatDraftThreadKey = selectedProjectChat?.agentDeckSessionId
+    ? findThreadKeyByTargetAgentDeckSessionId(selectedProjectChat.agentDeckSessionId)
+    : null;
+  const selectedProjectChatDraftStatus = selectedProjectChatDraftThreadKey
+    ? getThreadStatus(selectedProjectChatDraftThreadKey)
+    : null;
   const effectiveAgentType =
-    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool || agentType;
+    liveEditorSession?.agentDeckTool || selectedProjectChat?.agentDeckTool || agentType;
   const agentSelectionLocked = Boolean(
-    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool
+    liveEditorSession?.agentDeckTool || selectedProjectChat?.agentDeckTool
   );
+  const isUpdatingChatTargets = isRefreshingChatTargets || agentDeckTargetsLoading;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareSemver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
@@ -397,18 +408,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     }
   }
 
-  async function handleRefreshAgentDeckTargets() {
-    try {
-      await refreshAgentDeckTargets();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to refresh Agent Deck sessions";
-      toast.error(message);
-    }
-  }
-
   function closeRenameDialog() {
     setRenameDialogItem(null);
     setRenameTitleDraft("");
@@ -426,6 +425,25 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     ]);
     if (targetProjectPath === projectPath) {
       await refreshAgentDeckTargets();
+    }
+  }
+
+  async function handleRefreshChatTargets() {
+    if (!projectPath) {
+      return;
+    }
+
+    try {
+      setIsRefreshingChatTargets(true);
+      await reloadProjectChatState(projectPath);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh project chats";
+      toast.error(message);
+    } finally {
+      setIsRefreshingChatTargets(false);
     }
   }
 
@@ -598,7 +616,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     }
   }
 
-  async function handleCreateAgentDeckTarget(startFreshThread = false) {
+  async function handleCreateProjectChat(startFreshThread = false) {
     if (startFreshThread) {
       const emptyThreadKey = Object.entries(threadStates).find(
         ([, ts]) => ts.messages.length === 0
@@ -610,18 +628,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       }
     }
     try {
-      const created = await createAgentDeckTargetSession({ agentType });
+      const created = await createProjectChatSession({ agentType });
       if (startFreshThread) {
-        resetLiveEditorThread(created.id);
-        toast.success(`Started fresh Live Editor thread · ${created.title}`);
+        if (!created.agentDeckSessionId) {
+          throw new Error("Created chat is missing its session lane.");
+        }
+        resetLiveEditorThread(created.agentDeckSessionId);
+        toast.success(`Started fresh chat · ${created.title}`);
         return;
       }
-      toast.success(`Created isolated Agent Deck session ${created.title}`);
+      toast.success(`Created isolated chat ${created.title}`);
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : "Failed to create Agent Deck session";
+          : "Failed to create chat";
       toast.error(message);
     }
   }
@@ -632,13 +653,38 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       return false;
     }
 
-    if (liveEditorSession?.threadId === existingThreadKey) {
+    if (useSessionStore.getState().liveEditorSession?.threadId === existingThreadKey) {
       return true;
     }
 
     clearLiveEditorSession();
     activateThread(existingThreadKey);
     return true;
+  }
+
+  function focusProjectChat(chat: ProjectChatRecord): "switched" | "reopened" | "draft" {
+    const activeSessionStore = useSessionStore.getState();
+    const claimedThread = chat.threadId
+      ? activeSessionStore.projectSessions.find(
+          (session) => session.threadId === chat.threadId
+        ) ?? null
+      : null;
+
+    if (claimedThread) {
+      switchToThread(claimedThread);
+      activateThread(claimedThread.threadId);
+      return "switched";
+    }
+
+    if (
+      chat.agentDeckSessionId
+      && reopenExistingDraftTargetThread(chat.agentDeckSessionId)
+    ) {
+      return "reopened";
+    }
+
+    resetLiveEditorThread(chat.agentDeckSessionId);
+    return "draft";
   }
 
   function renderChatRow(item: ChatSidebarRow) {
@@ -951,26 +997,13 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                           preferredThreadId: chat.threadId ?? null,
                                         });
                                         if (!chat.threadId && chat.agentDeckSessionId) {
-                                          resetLiveEditorThread(chat.agentDeckSessionId);
+                                          focusProjectChat(chat);
                                         }
                                       })();
                                       return;
                                     }
 
-                                    if (claimedThread) {
-                                      switchToThread(claimedThread);
-                                      activateThread(claimedThread.threadId);
-                                      return;
-                                    }
-
-                                    if (
-                                      chat.agentDeckSessionId
-                                      && reopenExistingDraftTargetThread(chat.agentDeckSessionId)
-                                    ) {
-                                      return;
-                                    }
-
-                                    resetLiveEditorThread(chat.agentDeckSessionId);
+                                    focusProjectChat(chat);
                                   },
                                 });
                               })}
@@ -992,10 +1025,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                       }
                                       await setProject({ path: project.path });
                                     }
-                                    await handleCreateAgentDeckTarget(true);
+                                    await handleCreateProjectChat(true);
                                   })();
                                 }}
-                                disabled={agentDeckTargetsLoading || (!isActive && isStreaming)}
+                                disabled={isUpdatingChatTargets || (!isActive && isStreaming)}
                                 className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                                 title="Start a fresh chat with its own isolated session"
                               >
@@ -1358,124 +1391,101 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                 <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Target Agent Deck Session
+                      Target Chat
                     </label>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          void handleRefreshAgentDeckTargets();
-                        }}
-                        disabled={!projectPath || agentDeckTargetsLoading}
-                        className="h-7 px-2 text-xs"
-                      >
-                        <RefreshCw
-                          className={`mr-1 h-3.5 w-3.5 ${
-                            agentDeckTargetsLoading ? "animate-spin" : ""
-                          }`}
-                        />
-                        Refresh
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          void handleCreateAgentDeckTarget(true);
-                        }}
-                        disabled={
-                          !projectPath
-                          || agentDeckTargetsLoading
-                        }
-                        className="h-7 px-2 text-xs"
-                      >
-                        New Isolated Session
-                      </Button>
-                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        void handleRefreshChatTargets();
+                      }}
+                      disabled={!projectPath || isUpdatingChatTargets}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <RefreshCw
+                        className={`mr-1 h-3.5 w-3.5 ${
+                          isUpdatingChatTargets ? "animate-spin" : ""
+                        }`}
+                      />
+                      Refresh
+                    </Button>
                   </div>
 
                   <Select
-                    value={selectedAgentDeckTargetId ?? "__auto__"}
+                    value={selectedProjectChat?.id ?? "__fresh__"}
                     onValueChange={(value) => {
-                      const nextTargetId = value === "__auto__" ? null : value;
-                      const claimedThread = nextTargetId
-                        ? projectSessions.find(
-                            (session) =>
-                              session.agentDeckSessionId === nextTargetId
-                              && session.threadId !== liveEditorSession?.threadId
-                          ) ?? null
-                        : null;
-
-                      if (claimedThread) {
-                        switchToThread(claimedThread);
-                        activateThread(claimedThread.threadId);
-                        toast.success(
-                          `Switched to Live Editor thread ${claimedThread.threadId.slice(0, 8)}`
-                        );
+                      if (value === "__fresh__") {
+                        void handleCreateProjectChat(true);
                         return;
                       }
 
-                      if (nextTargetId && reopenExistingDraftTargetThread(nextTargetId)) {
-                        toast.success("Reopened the existing Live Editor draft thread");
+                      const nextChat = activeProjectChats.find((chat) => chat.id === value) ?? null;
+                      if (!nextChat || nextChat.id === currentProjectChat?.id) {
                         return;
                       }
 
-                      setTargetAgentDeckSessionId(nextTargetId);
+                      const outcome = focusProjectChat(nextChat);
+                      if (outcome === "switched") {
+                        toast.success(`Switched to chat ${nextChat.title}`);
+                        return;
+                      }
+                      if (outcome === "reopened") {
+                        toast.success("Reopened the existing draft chat");
+                        return;
+                      }
+                      toast.success(`Prepared chat ${nextChat.title}`);
                     }}
-                    disabled={
-                      !projectPath
-                      || agentDeckTargetsLoading
-                      || !canRetargetLiveEditor
-                    }
+                    disabled={!projectPath || isUpdatingChatTargets}
                   >
                     <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder="Create isolated session automatically" />
+                      <SelectValue placeholder="Fresh isolated chat" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__auto__">Create isolated session automatically</SelectItem>
-                      {agentDeckTargets.map((target) => (
-                        <SelectItem
-                          key={target.id}
-                          value={target.id}
-                          disabled={Boolean(
-                            projectSessions.find(
-                              (session) =>
-                                session.agentDeckSessionId === target.id
-                                && session.threadId !== liveEditorSession?.threadId
-                            )
-                          )}
-                        >
-                          {formatAgentDeckTargetLabel(target)}
+                      <SelectItem value="__fresh__">Fresh isolated chat</SelectItem>
+                      {activeProjectChats.map((chat) => (
+                        <SelectItem key={chat.id} value={chat.id}>
+                          {chat.title}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
 
-                  {liveEditorSession ? (
-                    <p className="text-xs text-muted-foreground">
-                      This live thread is already bound. Start a fresh live thread to retarget it.
-                    </p>
-                  ) : selectedAgentDeckTarget ? (
+                  {selectedProjectChat ? (
                     <div className="space-y-1 text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
-                          {formatAgentDeckTool(selectedAgentDeckTarget.tool)}
+                          {formatAgentDeckTool(selectedProjectChat.agentDeckTool)}
                         </Badge>
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
-                          {selectedAgentDeckTarget.status || "unknown"}
+                          {selectedProjectChat.bindingState === "detached"
+                            ? "detached"
+                            : selectedProjectChat.agentDeckSessionStatus || "attached"}
                         </Badge>
                       </div>
-                      {selectedTargetThread && (
+                      {currentProjectChat?.id === selectedProjectChat.id ? (
+                        <p>This chat is active.</p>
+                      ) : selectedProjectChatThread ? (
                         <p>
-                          Pixel Forge already has thread{" "}
-                          <span className="font-mono">{selectedTargetThread.threadId}</span>{" "}
-                          bound to this Agent Deck session. Switch to that thread instead of reusing the lane.
+                          This chat already owns a live lane. Selecting it switches back to that lane.
+                        </p>
+                      ) : selectedProjectChatDraftThreadKey ? (
+                        <p>
+                          This chat already has a draft lane. Selecting it reopens that draft instead of creating a second lane.
+                        </p>
+                      ) : selectedProjectChat.threadId ? (
+                        <p>Selecting this chat switches to its saved lane.</p>
+                      ) : (
+                        <p>Selecting this chat starts a fresh live thread on its existing lane.</p>
+                      )}
+                      {selectedProjectChatDraftStatus?.isStreaming && (
+                        <p>
+                          The draft lane already targeting this chat is currently streaming.
                         </p>
                       )}
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      No target is preselected. Pixel Forge will create a new isolated Agent Deck clone when preview or chat first needs one.
+                      Fresh isolated chat creates a new isolated Pixel Forge chat with its own Agent Deck lane.
                     </p>
                   )}
                 </div>
@@ -1540,11 +1550,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      void handleCreateAgentDeckTarget(true);
+                      void handleCreateProjectChat(true);
                     }}
-                    disabled={agentDeckTargetsLoading || !projectPath}
+                    disabled={isUpdatingChatTargets || !projectPath}
                   >
-                    New Live Thread
+                    New Chat
                   </Button>
                 </div>
               </section>
