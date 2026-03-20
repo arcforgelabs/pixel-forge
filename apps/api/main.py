@@ -21,13 +21,18 @@ from urllib.parse import urlencode
 
 from agent_deck_bridge import (
     AgentDeckBridgeError,
+    AgentDeckDeleteAssessment,
     AgentDeckSessionTarget,
+    assess_agent_deck_delete_state,
     create_agent_deck_session_target,
+    delete_agent_deck_session_target,
     get_last_output,
     ensure_agent_deck_session,
+    launch_agent_deck_closeout_session,
     list_project_agent_deck_sessions,
     list_live_editor_agent_deck_sessions,
     send_agent_deck_prompt_reliably,
+    rename_agent_deck_session_target,
     stream_claude_jsonl,
     submit_agent_deck_prompt,
     type_agent_deck_prompt,
@@ -42,6 +47,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from live_editor_threads import (
     detach_missing_agent_deck_thread_bindings,
+    delete_live_editor_thread,
+    get_live_editor_thread,
     get_or_create_live_editor_thread,
     update_live_editor_thread,
 )
@@ -50,11 +57,14 @@ from project_store import (
     delete_project,
     ensure_state_store_initialized,
     get_profile_state,
+    delete_session,
+    get_project_session,
     list_project_sessions,
     list_project_urls,
     list_projects,
     project_name_for_path,
     touch_project_url,
+    update_session_title,
     upsert_project,
     upsert_profile_state,
     upsert_session,
@@ -393,6 +403,25 @@ class AgentDeckSessionRequest(BaseModel):
     workspace_mode: Literal["clone", "root"] = "clone"
 
 
+class ChatItemRenameRequest(BaseModel):
+    thread_id: str | None = None
+    agent_deck_session_id: str | None = None
+    title: str
+
+
+class ChatItemDeleteRequest(BaseModel):
+    thread_id: str | None = None
+    agent_deck_session_id: str | None = None
+    force_clone_remove: bool = False
+
+
+class ChatItemCloseoutRequest(BaseModel):
+    thread_id: str | None = None
+    agent_deck_session_id: str | None = None
+    tool: str = "codex"
+    prompt: str | None = None
+
+
 class LivePreviewLoadRequest(BaseModel):
     target_url: str
     proxy_session_id: str | None = None
@@ -559,6 +588,70 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "active_mode": profile_state.active_mode,
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
         "updated_at": profile_state.updated_at,
+    }
+
+
+def _resolve_chat_item_context(
+    project_path: str,
+    *,
+    thread_id: str | None,
+    agent_deck_session_id: str | None,
+) -> tuple[str, str | None, object | None, object | None, str | None]:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_thread_id = thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None
+    session_record = (
+        get_project_session(normalized_project_path, normalized_thread_id)
+        if normalized_thread_id
+        else None
+    )
+    thread_record = (
+        get_live_editor_thread(normalized_thread_id)
+        if normalized_thread_id
+        else None
+    )
+
+    if thread_record is not None and thread_record.project_path != normalized_project_path:
+        raise HTTPException(status_code=404, detail="Chat thread does not belong to this project")
+
+    resolved_agent_deck_session_id = (
+        agent_deck_session_id.strip()
+        if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
+        else None
+    )
+    if not resolved_agent_deck_session_id and session_record is not None:
+        resolved_agent_deck_session_id = session_record.agent_deck_session_id
+    if not resolved_agent_deck_session_id and thread_record is not None:
+        resolved_agent_deck_session_id = thread_record.agent_deck_session_id
+
+    return (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_agent_deck_session_id,
+    )
+
+
+def _thread_has_activity(thread_record: object | None) -> bool:
+    last_request_id = getattr(thread_record, "last_request_id", None)
+    return isinstance(last_request_id, str) and bool(last_request_id.strip())
+
+
+def _serialize_delete_assessment(
+    assessment: AgentDeckDeleteAssessment,
+) -> dict[str, object]:
+    return {
+        "session_id": assessment.session_id,
+        "session_title": assessment.session_title,
+        "workspace_path": assessment.workspace_path,
+        "repo_root": assessment.repo_root,
+        "target_branch": assessment.target_branch,
+        "is_clone": assessment.is_clone,
+        "is_worktree": assessment.is_worktree,
+        "has_activity": assessment.has_activity,
+        "requires_closeout": assessment.requires_closeout,
+        "can_force_delete": assessment.can_force_delete,
+        "detail": assessment.detail,
     }
 
 
@@ -749,6 +842,177 @@ async def create_project_agent_deck_session(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return serialize_agent_deck_session_target(session)
+
+
+@app.post("/api/projects/{project_path:path}/chat-items/rename")
+async def rename_project_chat_item(
+    project_path: str,
+    request: ChatItemRenameRequest,
+):
+    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+        _resolve_chat_item_context(
+            project_path,
+            thread_id=request.thread_id,
+            agent_deck_session_id=request.agent_deck_session_id,
+        )
+    )
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    normalized_title = request.title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="Chat title cannot be empty")
+
+    if (
+        normalized_thread_id is None
+        and resolved_agent_deck_session_id is None
+        and session_record is None
+        and thread_record is None
+    ):
+        raise HTTPException(status_code=404, detail="Chat item not found")
+
+    if resolved_agent_deck_session_id:
+        try:
+            await rename_agent_deck_session_target(
+                normalized_project_path,
+                resolved_agent_deck_session_id,
+                normalized_title,
+            )
+        except AgentDeckBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if normalized_thread_id:
+        update_session_title(normalized_project_path, normalized_thread_id, normalized_title)
+        if thread_record is not None:
+            update_live_editor_thread(
+                normalized_thread_id,
+                agent_deck_session_title=normalized_title,
+            )
+
+    return {
+        "status": "renamed",
+        "thread_id": normalized_thread_id,
+        "agent_deck_session_id": resolved_agent_deck_session_id,
+        "title": normalized_title,
+    }
+
+
+@app.post("/api/projects/{project_path:path}/chat-items/delete")
+async def delete_project_chat_item(
+    project_path: str,
+    request: ChatItemDeleteRequest,
+):
+    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+        _resolve_chat_item_context(
+            project_path,
+            thread_id=request.thread_id,
+            agent_deck_session_id=request.agent_deck_session_id,
+        )
+    )
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    if (
+        normalized_thread_id is None
+        and resolved_agent_deck_session_id is None
+        and session_record is None
+        and thread_record is None
+    ):
+        raise HTTPException(status_code=404, detail="Chat item not found")
+
+    assessment: AgentDeckDeleteAssessment | None = None
+    if resolved_agent_deck_session_id:
+        try:
+            assessment = await assess_agent_deck_delete_state(
+                normalized_project_path,
+                resolved_agent_deck_session_id,
+                thread_has_activity=_thread_has_activity(thread_record),
+            )
+        except AgentDeckBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if assessment.requires_closeout and not request.force_clone_remove:
+            return {
+                "status": "requires_closeout",
+                "assessment": _serialize_delete_assessment(assessment),
+            }
+
+        try:
+            await delete_agent_deck_session_target(
+                normalized_project_path,
+                resolved_agent_deck_session_id,
+                force_clone_remove=bool(request.force_clone_remove and assessment.can_force_delete),
+            )
+        except AgentDeckBridgeError as exc:
+            if assessment is not None and assessment.can_force_delete and not request.force_clone_remove:
+                fallback_assessment = AgentDeckDeleteAssessment(
+                    session_id=assessment.session_id,
+                    session_title=assessment.session_title,
+                    workspace_path=assessment.workspace_path,
+                    repo_root=assessment.repo_root,
+                    target_branch=assessment.target_branch,
+                    is_clone=assessment.is_clone,
+                    is_worktree=assessment.is_worktree,
+                    has_activity=True,
+                    requires_closeout=True,
+                    can_force_delete=assessment.can_force_delete,
+                    detail=str(exc),
+                )
+                return {
+                    "status": "requires_closeout",
+                    "assessment": _serialize_delete_assessment(fallback_assessment),
+                }
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if normalized_thread_id:
+        delete_session(normalized_project_path, normalized_thread_id)
+        delete_live_editor_thread(normalized_thread_id)
+
+    return {
+        "status": "deleted",
+        "thread_id": normalized_thread_id,
+        "agent_deck_session_id": resolved_agent_deck_session_id,
+    }
+
+
+@app.post("/api/projects/{project_path:path}/chat-items/closeout")
+async def start_project_chat_item_closeout(
+    project_path: str,
+    request: ChatItemCloseoutRequest,
+):
+    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+        _resolve_chat_item_context(
+            project_path,
+            thread_id=request.thread_id,
+            agent_deck_session_id=request.agent_deck_session_id,
+        )
+    )
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    if (
+        normalized_thread_id is None
+        and resolved_agent_deck_session_id is None
+        and session_record is None
+        and thread_record is None
+    ):
+        raise HTTPException(status_code=404, detail="Chat item not found")
+    if not resolved_agent_deck_session_id:
+        raise HTTPException(status_code=400, detail="Chat is not bound to an Agent Deck session")
+
+    try:
+        closeout_session = await launch_agent_deck_closeout_session(
+            normalized_project_path,
+            resolved_agent_deck_session_id,
+            tool=request.tool,
+            user_prompt=request.prompt,
+        )
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "status": "started",
+        "session": serialize_agent_deck_session_target(closeout_session),
+    }
 
 
 @app.get("/api/skills")

@@ -188,6 +188,7 @@ interface SessionStore {
   newSession: () => void;
   clearLiveEditorSession: () => void;
   switchToThread: (session: ProjectSessionRecord | null) => void;
+  refreshProjectSessions: () => Promise<void>;
   refreshAgentDeckTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
   createAgentDeckTargetSession: (options?: {
@@ -1021,6 +1022,43 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       .catch((error) => {
         console.error("[session-store] Failed to persist profile state:", error);
       });
+  },
+
+  refreshProjectSessions: async () => {
+    const { projectPath, liveEditorSession, agentDeckTargets } = get();
+    if (!projectPath) {
+      set({ projectSessions: [], liveEditorSession: null });
+      return;
+    }
+
+    const rawSessions = await fetchProjectSessions(projectPath);
+    const sessions = rawSessions.map((session) =>
+      detachUnavailableAgentDeckSession(session, agentDeckTargets)
+    );
+    const matchingLiveEditorSession = liveEditorSession
+      ? sessions.find((session) => session.threadId === liveEditorSession.threadId) ?? null
+      : null;
+    const nextLiveEditorSession = matchingLiveEditorSession
+      ? {
+          threadId: matchingLiveEditorSession.threadId,
+          backend: matchingLiveEditorSession.backend,
+          workspacePath: matchingLiveEditorSession.workspacePath,
+          agentDeckSessionId: matchingLiveEditorSession.agentDeckSessionId,
+          agentDeckSessionTitle: matchingLiveEditorSession.agentDeckSessionTitle,
+          agentDeckTool: matchingLiveEditorSession.agentDeckTool,
+          requestId: matchingLiveEditorSession.requestId,
+          editorState: matchingLiveEditorSession.editorState ?? null,
+        }
+      : null;
+
+    set((state) => ({
+      projectSessions: sessions,
+      liveEditorSession: nextLiveEditorSession,
+      agentDeckTargets: ensureAgentDeckTargetPresent(
+        state.agentDeckTargets,
+        nextLiveEditorSession
+      ),
+    }));
   },
 
   refreshAgentDeckTargets: async () => {

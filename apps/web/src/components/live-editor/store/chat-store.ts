@@ -204,6 +204,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   sendMessage: (content: string, attachments?: ChatAttachment[]) => void
   clearMessages: () => void
   newSession: (targetAgentDeckSessionId?: string | null) => void
+  removeThread: (threadKey: string | null | undefined, fallbackThreadKey?: string | null) => void
   setTargetAgentDeckSessionId: (sessionId: string | null) => void
   getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
   findThreadKeyByTargetAgentDeckSessionId: (
@@ -1700,6 +1701,44 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         })
       )
       scheduleThreadPersistence(nextDraftKey, 0)
+    },
+
+    removeThread: (threadKey, fallbackThreadKey = null) => {
+      const resolvedThreadKey = threadKey?.trim() || null
+      if (!resolvedThreadKey) {
+        return
+      }
+
+      closeThreadSocket(resolvedThreadKey, true)
+      let nextActiveThreadKey: string | null = null
+
+      set((state) => {
+        const nextThreadStates = { ...state.threadStates }
+        delete nextThreadStates[resolvedThreadKey]
+
+        const normalizedFallbackThreadKey = fallbackThreadKey?.trim() || null
+        if (state.activeThreadKey === resolvedThreadKey) {
+          nextActiveThreadKey =
+            (normalizedFallbackThreadKey && nextThreadStates[normalizedFallbackThreadKey]
+              ? normalizedFallbackThreadKey
+              : null)
+            ?? Object.keys(nextThreadStates)[0]
+            ?? createDraftThreadKey()
+        } else {
+          nextActiveThreadKey = state.activeThreadKey
+        }
+
+        if (nextActiveThreadKey && !nextThreadStates[nextActiveThreadKey]) {
+          nextThreadStates[nextActiveThreadKey] = createEmptyThreadState()
+        }
+
+        return createStoreState(
+          nextActiveThreadKey ?? createDraftThreadKey(),
+          nextThreadStates
+        )
+      })
+
+      syncActiveThreadTargetSelection(nextActiveThreadKey)
     },
 
     setTargetAgentDeckSessionId: (sessionId) => {

@@ -48,6 +48,35 @@ class AgentDeckSessionTarget:
 
 
 @dataclass(slots=True)
+class AgentDeckSessionActionContext:
+    session_id: str
+    session_title: str
+    group_path: str | None
+    workspace_path: str
+    repo_root: str
+    target_branch: str | None
+    is_clone: bool
+    is_worktree: bool
+    clone_dirty: bool | None
+    clone_branch_state: str | None
+
+
+@dataclass(slots=True)
+class AgentDeckDeleteAssessment:
+    session_id: str
+    session_title: str
+    workspace_path: str
+    repo_root: str
+    target_branch: str | None
+    is_clone: bool
+    is_worktree: bool
+    has_activity: bool
+    requires_closeout: bool
+    can_force_delete: bool
+    detail: str
+
+
+@dataclass(slots=True)
 class ClaudeStreamStats:
     streamed_text: bool = False
 
@@ -336,6 +365,13 @@ def _payload_to_session_target(payload: dict[str, object]) -> AgentDeckSessionTa
     )
 
 
+def _normalized_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _require_matching_project_path(project_path: str, payload: dict[str, object]) -> None:
     payload_path = payload.get("path")
     if not isinstance(payload_path, str) or not payload_path.strip():
@@ -402,6 +438,309 @@ async def create_agent_deck_session_target(
         agent_type=agent_type.strip() or "claude",
         workspace_mode=workspace_mode.strip().lower() if isinstance(workspace_mode, str) else "clone",
     )
+    return _payload_to_session_target(payload)
+
+
+async def rename_agent_deck_session_target(
+    project_path: str,
+    agent_deck_session_id: str,
+    new_title: str,
+) -> None:
+    normalized_title = new_title.strip()
+    if not normalized_title:
+        raise AgentDeckBridgeError("Chat title cannot be empty")
+
+    payload = await session_show(agent_deck_session_id)
+    _require_matching_project_path(project_path, payload)
+    await _rename_session(agent_deck_session_id, normalized_title)
+
+
+def _session_output_has_meaningful_activity(output: str) -> bool:
+    if not output.strip():
+        return False
+
+    ignored_substrings = (
+        "Do you trust the contents of this directory?",
+        "Press enter to continue",
+        "Use /skills to list available skills",
+        "OpenAI Codex",
+        "Working with untrusted contents comes with higher risk",
+    )
+    ignored_prefixes = (
+        "samuelrodda@",
+        "model:",
+        "directory:",
+        "Tip:",
+        "1. Yes, continue",
+        "2. No, quit",
+        "1) Yes, continue",
+        "2) No, quit",
+        "› 1. Yes, continue",
+        "› Use /skills",
+    )
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("╭", "╰", "│")):
+            continue
+        if any(line.startswith(prefix) for prefix in ignored_prefixes):
+            continue
+        if any(fragment in line for fragment in ignored_substrings):
+            continue
+        return True
+
+    return False
+
+
+async def _default_local_branch(repo_root: str) -> str:
+    for args in (
+        ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+    ):
+        code, stdout, _ = await _run_command(args, cwd=repo_root)
+        if code != 0:
+            continue
+        branch = stdout.strip()
+        if branch.startswith("origin/"):
+            branch = branch[len("origin/") :]
+        if branch and branch != "HEAD":
+            return branch
+
+    for fallback in ("master", "main"):
+        code, _, _ = await _run_command(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{fallback}"],
+            cwd=repo_root,
+        )
+        if code == 0:
+            return fallback
+
+    return "main"
+
+
+async def _unique_group_session_title(group_path: str | None, preferred_title: str) -> str:
+    payload = await _run_json_array_command(["agent-deck", "ls", "-json"])
+    normalized_group_path = _normalized_text(group_path)
+    existing_titles = {
+        str(entry.get("title")).strip()
+        for entry in payload
+        if isinstance(entry, dict)
+        and _normalized_text(entry.get("group")) == normalized_group_path
+        and isinstance(entry.get("title"), str)
+        and str(entry.get("title")).strip()
+    }
+    return _unique_session_title(existing_titles, preferred_title)
+
+
+async def _load_session_action_context(
+    project_path: str,
+    agent_deck_session_id: str,
+) -> AgentDeckSessionActionContext:
+    payload = await session_show(agent_deck_session_id)
+    _require_matching_project_path(project_path, payload)
+
+    normalized_project_path = _normalize_path(project_path)
+    workspace_path = _normalized_text(payload.get("path")) or normalized_project_path
+    normalized_workspace_path = _normalize_path(workspace_path)
+    is_clone = _is_descendant_path(normalized_workspace_path, _clone_root(normalized_project_path))
+    is_worktree = normalized_workspace_path != normalized_project_path and not is_clone
+    session_title = _normalized_text(payload.get("title")) or agent_deck_session_id
+    group_path = _normalized_text(payload.get("group"))
+    repo_root = normalized_project_path
+    target_branch: str | None = None
+    clone_dirty: bool | None = None
+    clone_branch_state: str | None = None
+
+    if is_clone:
+        clone_payload = await _run_json_object_command(
+            ["agent-deck", "clone", "info", agent_deck_session_id, "-json"]
+        )
+        repo_root = _normalize_path(
+            _normalized_text(clone_payload.get("main_repo")) or normalized_project_path
+        )
+        target_branch = _normalized_text(clone_payload.get("target_branch"))
+        clone_dirty = bool(clone_payload.get("dirty"))
+        clone_branch_state = _normalized_text(clone_payload.get("branch_state"))
+    elif is_worktree:
+        target_branch = await _default_local_branch(repo_root)
+
+    return AgentDeckSessionActionContext(
+        session_id=agent_deck_session_id,
+        session_title=session_title,
+        group_path=group_path,
+        workspace_path=normalized_workspace_path,
+        repo_root=repo_root,
+        target_branch=target_branch,
+        is_clone=is_clone,
+        is_worktree=is_worktree,
+        clone_dirty=clone_dirty,
+        clone_branch_state=clone_branch_state,
+    )
+
+
+async def assess_agent_deck_delete_state(
+    project_path: str,
+    agent_deck_session_id: str,
+    *,
+    thread_has_activity: bool = False,
+) -> AgentDeckDeleteAssessment:
+    context = await _load_session_action_context(project_path, agent_deck_session_id)
+    session_output_activity = False
+    if not thread_has_activity:
+        session_output_activity = _session_output_has_meaningful_activity(
+            await get_last_output(agent_deck_session_id)
+        )
+
+    has_activity = (
+        thread_has_activity
+        or session_output_activity
+        or bool(context.clone_dirty)
+        or (
+            isinstance(context.clone_branch_state, str)
+            and context.clone_branch_state not in {"", "in_sync"}
+        )
+    )
+    requires_closeout = (context.is_clone or context.is_worktree) and has_activity
+
+    if requires_closeout:
+        detail = (
+            f"`{context.session_title}` has Agent Deck activity. Run closeout before deleting, "
+            "or use delete anyway for local no-merge cleanup."
+        )
+    elif context.is_clone and (context.clone_dirty or context.clone_branch_state not in {None, "", "in_sync"}):
+        detail = (
+            f"`{context.session_title}` has clone state that may need cleanup. "
+            "Delete anyway will use local no-merge cleanup."
+        )
+    else:
+        detail = f"`{context.session_title}` can be deleted immediately."
+
+    return AgentDeckDeleteAssessment(
+        session_id=context.session_id,
+        session_title=context.session_title,
+        workspace_path=context.workspace_path,
+        repo_root=context.repo_root,
+        target_branch=context.target_branch,
+        is_clone=context.is_clone,
+        is_worktree=context.is_worktree,
+        has_activity=has_activity,
+        requires_closeout=requires_closeout,
+        can_force_delete=context.is_clone,
+        detail=detail,
+    )
+
+
+async def delete_agent_deck_session_target(
+    project_path: str,
+    agent_deck_session_id: str,
+    *,
+    force_clone_remove: bool = False,
+) -> None:
+    context = await _load_session_action_context(project_path, agent_deck_session_id)
+
+    if force_clone_remove and context.is_clone:
+        args = [
+            "agent-deck",
+            "clone",
+            "finish",
+            agent_deck_session_id,
+            "--no-merge",
+            "--force",
+            "-json",
+        ]
+        payload = await _run_json_object_command(args)
+        if not payload:
+            return
+        return
+
+    code, stdout, stderr = await _run_command(
+        ["agent-deck", "rm", agent_deck_session_id, "-q"],
+        cwd=context.repo_root,
+    )
+    if code != 0:
+        error_output = stderr.strip() or stdout.strip() or "Failed to remove Agent Deck session"
+        raise AgentDeckBridgeError(error_output)
+
+
+def _build_closeout_prompt(
+    context: AgentDeckSessionActionContext,
+    *,
+    user_prompt: str | None = None,
+) -> str:
+    source_type = "clone" if context.is_clone else "worktree"
+    target_branch = context.target_branch or "master"
+    lines = [
+        "You are the AI closeout agent for one isolated Agent Deck session.",
+        "",
+        "Context:",
+        f"- source session: {context.session_title} ({context.session_id})",
+        f"- source isolation type: {source_type}",
+        f"- source workspace: {context.workspace_path}",
+        f"- canonical repo root: {context.repo_root}",
+        f"- target local branch: {target_branch}",
+        "",
+        "Intent:",
+        "Close out this isolated session in the way that best serves the canonical repo's current intent.",
+        "Extract the highest-value truthful outcome with the least unnecessary process.",
+        "",
+        "Requirements:",
+        "1. Stay within the named source session and the canonical repo root.",
+        "2. Inspect both the source workspace and canonical repo root before deciding what to do.",
+        "3. Preserve unrelated local work in the canonical root.",
+        "4. Keep Agent Deck state truthful and prefer Agent Deck-native cleanup.",
+        "5. Keep the final report concise: what changed, what was checked, what remains uncertain, and whether the source session is safe to remove.",
+        "",
+        "Useful starting points:",
+        f"- git -C {context.repo_root!r} status --short",
+        f"- git -C {context.workspace_path!r} status --short",
+        f"- git -C {context.repo_root!r} diff --stat",
+        f"- git -C {context.workspace_path!r} diff --stat",
+        f"- agent-deck session output {context.session_id!r} -q",
+    ]
+
+    if context.is_clone:
+        lines.append(
+            f"- Relevant closeout tools likely include `agent-deck clone finish {context.session_title!r} --into {target_branch}` "
+            f"and `agent-deck clone finish {context.session_title!r} --no-merge`."
+        )
+    else:
+        lines.append(f"- Relevant cleanup tools likely include `agent-deck rm {context.session_title!r}`.")
+
+    if user_prompt and user_prompt.strip():
+        lines.extend(["", "Additional operator instructions:", user_prompt.strip()])
+
+    return "\n".join(lines)
+
+
+async def launch_agent_deck_closeout_session(
+    project_path: str,
+    agent_deck_session_id: str,
+    *,
+    tool: str = "codex",
+    user_prompt: str | None = None,
+) -> AgentDeckSessionTarget:
+    context = await _load_session_action_context(project_path, agent_deck_session_id)
+    if not context.is_clone and not context.is_worktree:
+        raise AgentDeckBridgeError(
+            f"Session `{context.session_title}` is not an isolated clone/worktree session."
+        )
+
+    preferred_title = f"closeout: {context.session_title}".strip()
+    session_title = await _unique_group_session_title(context.group_path, preferred_title)
+    prompt = _build_closeout_prompt(context, user_prompt=user_prompt)
+    normalized_tool = tool.strip().lower() if isinstance(tool, str) and tool.strip() else "codex"
+    args = [
+        "agent-deck",
+        "launch",
+        "-json",
+        f"-t={session_title}",
+        f"-g={context.group_path or _group_path(project_path)}",
+        f"-c={normalized_tool}",
+        f"-m={prompt}",
+        context.repo_root,
+    ]
+    payload = await _run_json_object_command(args)
     return _payload_to_session_target(payload)
 
 

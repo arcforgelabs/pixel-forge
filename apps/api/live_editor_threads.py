@@ -440,3 +440,21 @@ def detach_missing_agent_deck_thread_bindings(
         ).fetchall()
 
     return [_row_to_record(row) for row in refreshed_rows]
+
+
+def delete_live_editor_thread(thread_id: str) -> bool:
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return False
+
+    with _connect() as conn:
+        result = conn.execute(
+            """
+            DELETE FROM live_editor_threads
+            WHERE thread_id = ?
+            """,
+            (normalized_thread_id,),
+        )
+        conn.commit()
+
+    return result.rowcount > 0

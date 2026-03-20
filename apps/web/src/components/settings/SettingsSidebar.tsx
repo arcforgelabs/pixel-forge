@@ -20,13 +20,15 @@ import OutputSettingsSection from "./OutputSettingsSection";
 import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
-import { IS_TARGET_MODE } from "@/config";
+import { HTTP_BACKEND_URL, IS_TARGET_MODE } from "@/config";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Palette,
   Layers,
@@ -40,6 +42,10 @@ import {
   RefreshCw,
   Settings as SettingsIcon,
   BookOpen,
+  Loader2,
+  MoreHorizontal,
+  PencilLine,
+  Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -104,6 +110,80 @@ function formatRelativeTime(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
+async function requestSidebarJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
+    credentials: "include",
+    ...init,
+    headers: {
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+
+  let payload: unknown = null;
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    payload = await response.json();
+  } else {
+    const text = await response.text();
+    payload = text ? { detail: text } : null;
+  }
+
+  if (!response.ok) {
+    const detail =
+      payload
+      && typeof payload === "object"
+      && "detail" in payload
+      && typeof (payload as { detail?: unknown }).detail === "string"
+        ? (payload as { detail: string }).detail
+        : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+
+  return payload as T;
+}
+
+interface ChatSidebarActionItem {
+  key: string;
+  label: string;
+  threadId: string | null;
+  agentDeckSessionId: string | null;
+}
+
+interface ChatSidebarRow extends ChatSidebarActionItem {
+  isActive: boolean;
+  isStreaming: boolean;
+  lastActiveLabel: string | null;
+  onSelect: () => void;
+}
+
+interface ChatDeleteAssessment {
+  session_id: string;
+  session_title: string;
+  workspace_path: string;
+  repo_root: string;
+  target_branch: string | null;
+  is_clone: boolean;
+  is_worktree: boolean;
+  has_activity: boolean;
+  requires_closeout: boolean;
+  can_force_delete: boolean;
+  detail: string;
+}
+
+interface ChatDeleteResponse {
+  status: "deleted" | "requires_closeout";
+  assessment?: ChatDeleteAssessment;
+}
+
+interface ChatCloseoutResponse {
+  status: "started";
+  session: {
+    id: string;
+    title: string;
+  };
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -121,6 +201,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     projectSessions,
     agentDeckTargets,
     agentDeckTargetsLoading,
+    refreshProjectSessions,
     refreshAgentDeckTargets,
     refreshSkills,
     createAgentDeckTargetSession,
@@ -153,6 +234,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [expandedProjectPath, setExpandedProjectPath] = useState<string | null>(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
+  const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
+  const [renameDialogItem, setRenameDialogItem] = useState<ChatSidebarActionItem | null>(null);
+  const [renameTitleDraft, setRenameTitleDraft] = useState("");
+  const [isRenamingChat, setIsRenamingChat] = useState(false);
+  const [deleteDialogItem, setDeleteDialogItem] = useState<ChatSidebarActionItem | null>(null);
+  const [deleteAssessment, setDeleteAssessment] = useState<ChatDeleteAssessment | null>(null);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
+  const [isStartingCloseout, setIsStartingCloseout] = useState(false);
 
   const {
     connected,
@@ -161,6 +250,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     activateThread,
     clearElements,
     newSession: resetLiveEditorThread,
+    removeThread,
     setTargetAgentDeckSessionId,
     getThreadStatus,
     findThreadKeyByTargetAgentDeckSessionId,
@@ -304,6 +394,155 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     }
   }
 
+  function closeRenameDialog() {
+    setRenameDialogItem(null);
+    setRenameTitleDraft("");
+  }
+
+  function closeDeleteDialog() {
+    setDeleteDialogItem(null);
+    setDeleteAssessment(null);
+  }
+
+  async function reloadProjectChatState() {
+    await refreshAgentDeckTargets();
+    await refreshProjectSessions();
+  }
+
+  function applyDeletedChatState(item: ChatSidebarActionItem, wasActiveChat: boolean) {
+    const sessionStore = useSessionStore.getState();
+    const fallbackSession = sessionStore.projectSessions[0] ?? null;
+
+    if (item.threadId) {
+      removeThread(item.threadId, fallbackSession?.threadId ?? null);
+    }
+
+    if (!wasActiveChat) {
+      return;
+    }
+
+    if (fallbackSession) {
+      switchToThread(fallbackSession);
+      activateThread(fallbackSession.threadId);
+      return;
+    }
+
+    sessionStore.clearLiveEditorSession();
+    resetLiveEditorThread(null);
+  }
+
+  async function handleRenameChatItem() {
+    if (!projectPath || !renameDialogItem) {
+      return;
+    }
+
+    const normalizedTitle = renameTitleDraft.trim();
+    if (!normalizedTitle) {
+      toast.error("Chat title cannot be empty");
+      return;
+    }
+
+    try {
+      setIsRenamingChat(true);
+      await requestSidebarJson(
+        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/rename`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            thread_id: renameDialogItem.threadId,
+            agent_deck_session_id: renameDialogItem.agentDeckSessionId,
+            title: normalizedTitle,
+          }),
+        }
+      );
+      await reloadProjectChatState();
+      closeRenameDialog();
+      toast.success(`Renamed chat to ${normalizedTitle}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to rename chat"
+      );
+    } finally {
+      setIsRenamingChat(false);
+    }
+  }
+
+  async function handleDeleteChatItem(forceCloneRemove = false) {
+    if (!projectPath || !deleteDialogItem) {
+      return;
+    }
+
+    const wasActiveChat =
+      liveEditorSession?.threadId === deleteDialogItem.threadId
+      || (
+        deleteDialogItem.agentDeckSessionId !== null
+        && selectedAgentDeckTargetId === deleteDialogItem.agentDeckSessionId
+      );
+
+    try {
+      setIsDeletingChat(true);
+      const payload = await requestSidebarJson<ChatDeleteResponse>(
+        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/delete`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            thread_id: deleteDialogItem.threadId,
+            agent_deck_session_id: deleteDialogItem.agentDeckSessionId,
+            force_clone_remove: forceCloneRemove,
+          }),
+        }
+      );
+
+      if (payload.status === "requires_closeout" && payload.assessment) {
+        setDeleteAssessment(payload.assessment);
+        return;
+      }
+
+      await reloadProjectChatState();
+      applyDeletedChatState(deleteDialogItem, wasActiveChat);
+      setDeleteDialogItem(null);
+      setDeleteAssessment(null);
+      toast.success(`Deleted ${deleteDialogItem.label}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete chat"
+      );
+    } finally {
+      setIsDeletingChat(false);
+    }
+  }
+
+  async function handleStartCloseout() {
+    if (!projectPath || !deleteDialogItem) {
+      return;
+    }
+
+    try {
+      setIsStartingCloseout(true);
+      const payload = await requestSidebarJson<ChatCloseoutResponse>(
+        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/closeout`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            thread_id: deleteDialogItem.threadId,
+            agent_deck_session_id: deleteDialogItem.agentDeckSessionId,
+            tool: "codex",
+          }),
+        }
+      );
+      await reloadProjectChatState();
+      setDeleteDialogItem(null);
+      setDeleteAssessment(null);
+      toast.success(`Started closeout session ${payload.session.title}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to start closeout session"
+      );
+    } finally {
+      setIsStartingCloseout(false);
+    }
+  }
+
   async function handleCreateAgentDeckTarget(startFreshThread = false) {
     if (startFreshThread) {
       const emptyThreadKey = Object.entries(threadStates).find(
@@ -345,6 +584,102 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     clearLiveEditorSession();
     activateThread(existingThreadKey);
     return true;
+  }
+
+  function renderChatRow(item: ChatSidebarRow) {
+    return (
+      <div
+        key={item.key}
+        className="group/chat-row flex items-center gap-1 rounded-md"
+      >
+        <button
+          onClick={item.onSelect}
+          className={`
+            flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs
+            transition-colors duration-100
+            ${item.isActive
+              ? "text-primary"
+              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            }
+          `}
+          title={item.label}
+        >
+          <MessageSquare className="h-3 w-3 flex-shrink-0" />
+          <span className="truncate flex-1 text-left">{item.label}</span>
+          {item.isStreaming && (
+            <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
+              Live
+            </span>
+          )}
+          {item.lastActiveLabel && (
+            <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
+              {item.lastActiveLabel}
+            </span>
+          )}
+          {item.isActive && (
+            <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+          )}
+        </button>
+
+        <Popover
+          open={chatActionMenuOpenId === item.key}
+          onOpenChange={(open) => {
+            setChatActionMenuOpenId(open ? item.key : null);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              className={`
+                flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-100
+                ${chatActionMenuOpenId === item.key
+                  ? "bg-muted/50 text-foreground"
+                  : "text-muted-foreground opacity-0 group-hover/chat-row:opacity-100 group-focus-within/chat-row:opacity-100 hover:bg-muted/40 hover:text-foreground"
+                }
+              `}
+              aria-label={`More options for ${item.label}`}
+              title={`More options for ${item.label}`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            sideOffset={6}
+            className="w-48 p-1"
+            onOpenAutoFocus={(event) => event.preventDefault()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setChatActionMenuOpenId(null);
+                setRenameDialogItem(item);
+                setRenameTitleDraft(item.label);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60"
+            >
+              <PencilLine className="h-4 w-4" />
+              <span>Rename</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setChatActionMenuOpenId(null);
+                setDeleteDialogItem(item);
+                setDeleteAssessment(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-destructive transition-colors hover:bg-destructive/10"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Delete</span>
+            </button>
+          </PopoverContent>
+        </Popover>
+      </div>
+    );
   }
 
   const navItems = [
@@ -518,47 +853,28 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                   : null;
                                 const label = target.title || target.id;
 
-                                return (
-                                  <button
-                                    key={target.id}
-                                    onClick={() => {
-                                      if (isActiveChat) return;
-                                      if (claimedThread) {
-                                        switchToThread(claimedThread);
-                                        activateThread(claimedThread.threadId);
-                                      } else if (reopenExistingDraftTargetThread(target.id)) {
-                                        return;
-                                      } else {
-                                        resetLiveEditorThread(target.id);
-                                      }
-                                    }}
-                                    className={`
-                                      flex items-center gap-1.5 rounded-md px-2 py-1 text-xs w-full
-                                      transition-colors duration-100
-                                      ${isActiveChat
-                                        ? "text-primary"
-                                        : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                                      }
-                                    `}
-                                    title={label}
-                                  >
-                                    <MessageSquare className="h-3 w-3 flex-shrink-0" />
-                                    <span className="truncate flex-1 text-left">{label}</span>
-                                    {threadStatus?.isStreaming && (
-                                      <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
-                                        Live
-                                      </span>
-                                    )}
-                                    {claimedThread && (
-                                      <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
-                                        {formatRelativeTime(claimedThread.lastActive)}
-                                      </span>
-                                    )}
-                                    {isActiveChat && (
-                                      <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                                    )}
-                                  </button>
-                                );
+                                return renderChatRow({
+                                  key: target.id,
+                                  label,
+                                  threadId: claimedThread?.threadId ?? null,
+                                  agentDeckSessionId: target.id,
+                                  isActive: isActiveChat,
+                                  isStreaming: Boolean(threadStatus?.isStreaming),
+                                  lastActiveLabel: claimedThread
+                                    ? formatRelativeTime(claimedThread.lastActive)
+                                    : null,
+                                  onSelect: () => {
+                                    if (isActiveChat) return;
+                                    if (claimedThread) {
+                                      switchToThread(claimedThread);
+                                      activateThread(claimedThread.threadId);
+                                    } else if (reopenExistingDraftTargetThread(target.id)) {
+                                      return;
+                                    } else {
+                                      resetLiveEditorThread(target.id);
+                                    }
+                                  },
+                                });
                               })}
 
                               {threads
@@ -572,41 +888,22 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                     session.agentDeckSessionTitle
                                     || `Chat ${session.threadId.slice(0, 8)}`;
 
-                                  return (
-                                    <button
-                                      key={session.threadId}
-                                      onClick={() => {
-                                        if (isActiveThread) {
-                                          return;
-                                        }
-                                        switchToThread(session);
-                                        activateThread(session.threadId);
-                                      }}
-                                      className={`
-                                        flex items-center gap-1.5 rounded-md px-2 py-1 text-xs w-full
-                                        transition-colors duration-100
-                                        ${isActiveThread
-                                          ? "text-primary"
-                                          : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                                        }
-                                      `}
-                                      title={label}
-                                    >
-                                      <MessageSquare className="h-3 w-3 flex-shrink-0" />
-                                      <span className="truncate flex-1 text-left">{label}</span>
-                                      {threadStatus.isStreaming && (
-                                        <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
-                                          Live
-                                        </span>
-                                      )}
-                                      <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
-                                        {formatRelativeTime(session.lastActive)}
-                                      </span>
-                                      {isActiveThread && (
-                                        <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                                      )}
-                                    </button>
-                                  );
+                                  return renderChatRow({
+                                    key: session.threadId,
+                                    label,
+                                    threadId: session.threadId,
+                                    agentDeckSessionId: session.agentDeckSessionId,
+                                    isActive: isActiveThread,
+                                    isStreaming: threadStatus.isStreaming,
+                                    lastActiveLabel: formatRelativeTime(session.lastActive),
+                                    onSelect: () => {
+                                      if (isActiveThread) {
+                                        return;
+                                      }
+                                      switchToThread(session);
+                                      activateThread(session.threadId);
+                                    },
+                                  });
                                 })}
 
                               {(isActive ? agentDeckTargets.length === 0 : true) && threads.length === 0 && !liveEditorSession && (
@@ -669,6 +966,137 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={Boolean(renameDialogItem)}
+        onOpenChange={(open) => {
+          if (!open && !isRenamingChat) {
+            closeRenameDialog();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename Chat</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="chat-rename-input">Chat title</Label>
+              <Input
+                id="chat-rename-input"
+                value={renameTitleDraft}
+                onChange={(event) => setRenameTitleDraft(event.target.value)}
+                placeholder="Chat title"
+                autoFocus
+                disabled={isRenamingChat}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleRenameChatItem();
+                  }
+                }}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={closeRenameDialog}
+                disabled={isRenamingChat}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  void handleRenameChatItem();
+                }}
+                disabled={isRenamingChat}
+              >
+                {isRenamingChat && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteDialogItem)}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingChat && !isStartingCloseout) {
+            closeDeleteDialog();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {deleteAssessment?.requires_closeout ? "Run Closeout First?" : "Delete Chat?"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              {deleteAssessment?.requires_closeout
+                ? deleteAssessment.detail
+                : `Delete ${deleteDialogItem?.label ?? "this chat"} from Pixel Forge${deleteDialogItem?.agentDeckSessionId ? " and Agent Deck" : ""}?`}
+            </p>
+
+            {deleteAssessment && (
+              <div className="rounded-lg border border-border/70 bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{deleteAssessment.session_title}</p>
+                <p className="mt-1 break-all">{deleteAssessment.workspace_path}</p>
+                {deleteAssessment.target_branch && (
+                  <p className="mt-1">Target branch: {deleteAssessment.target_branch}</p>
+                )}
+                {deleteAssessment.has_activity && (
+                  <p className="mt-2">
+                    This session has recorded activity. Starting closeout keeps the source session
+                    intact and launches a dedicated Agent Deck closeout lane.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={closeDeleteDialog}
+                disabled={isDeletingChat || isStartingCloseout}
+              >
+                Cancel
+              </Button>
+
+              {deleteAssessment?.requires_closeout && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void handleStartCloseout();
+                  }}
+                  disabled={isDeletingChat || isStartingCloseout}
+                >
+                  {isStartingCloseout && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Run closeout
+                </Button>
+              )}
+
+              {(!deleteAssessment?.requires_closeout || deleteAssessment.can_force_delete) && (
+                <Button
+                  variant={deleteAssessment?.requires_closeout ? "destructive" : "default"}
+                  onClick={() => {
+                    void handleDeleteChatItem(Boolean(deleteAssessment?.can_force_delete));
+                  }}
+                  disabled={isDeletingChat || isStartingCloseout}
+                >
+                  {isDeletingChat && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {deleteAssessment?.requires_closeout ? "Delete anyway" : "Delete"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Settings Dialog */}
       <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>

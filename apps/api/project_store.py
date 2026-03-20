@@ -712,6 +712,32 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
         return [record for record in records if record.id not in stale_ids]
 
 
+def get_project_session(
+    project_path: str,
+    thread_id: str,
+) -> SessionRecord | None:
+    normalized_path = normalize_project_path(project_path)
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return None
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
+                   agent_deck_session_title, agent_deck_tool, created_at, last_active
+            FROM sessions
+            WHERE project_path = ?
+              AND thread_id = ?
+            """,
+            (normalized_path, normalized_thread_id),
+        ).fetchone()
+
+    if row is None:
+        return None
+    return _row_to_session_record(row)
+
+
 def get_project(project_path: str) -> ProjectRecord | None:
     normalized_path = normalize_project_path(project_path)
 
@@ -1093,3 +1119,54 @@ def upsert_session(
     if row is None:
         raise RuntimeError("Session record disappeared during upsert")
     return _row_to_session_record(row)
+
+
+def update_session_title(
+    project_path: str,
+    thread_id: str,
+    title: str | None,
+) -> SessionRecord | None:
+    normalized_path = normalize_project_path(project_path)
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return None
+
+    normalized_title = title.strip() if isinstance(title, str) else None
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET agent_deck_session_title = ?,
+                last_active = CURRENT_TIMESTAMP
+            WHERE project_path = ?
+              AND thread_id = ?
+            """,
+            (normalized_title, normalized_path, normalized_thread_id),
+        )
+        conn.commit()
+
+    return get_project_session(normalized_path, normalized_thread_id)
+
+
+def delete_session(
+    project_path: str,
+    thread_id: str,
+) -> bool:
+    normalized_path = normalize_project_path(project_path)
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return False
+
+    with _connect() as conn:
+        result = conn.execute(
+            """
+            DELETE FROM sessions
+            WHERE project_path = ?
+              AND thread_id = ?
+            """,
+            (normalized_path, normalized_thread_id),
+        )
+        conn.commit()
+
+    return result.rowcount > 0
