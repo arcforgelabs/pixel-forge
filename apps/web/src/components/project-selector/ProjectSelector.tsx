@@ -288,8 +288,8 @@ export function ProjectSelector({
             )}
 
             {/* Manual Entry */}
-            <div className="mt-4 space-y-4 border-t pt-4">
-              <div className="space-y-2">
+            <div className="mt-5 space-y-5 border-t border-border/60 pt-5">
+              <div className="space-y-1.5">
                 <Label htmlFor="project-path">Workspace</Label>
                 <div className="flex gap-2">
                   <Input
@@ -313,7 +313,7 @@ export function ProjectSelector({
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="preview-url">
                   Preview URL{" "}
                   <span className="text-muted-foreground">(optional)</span>
@@ -327,42 +327,41 @@ export function ProjectSelector({
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label>Code Output</Label>
-                <div className="grid gap-2">
+                <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setOutputMode("scratch")}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
+                    className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
                       outputMode === "scratch"
                         ? "border-green-500 bg-green-500/10"
                         : "border-border hover:bg-muted/50"
                     }`}
                   >
-                    <div className="flex items-center gap-2 font-medium">
-                      <FaFolder className="text-green-500" />
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <FaFolder className="shrink-0 text-green-500" />
                       Scratch Output
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Save generated code under <code>.pixel-forge/generated/</code>{" "}
-                      inside the workspace.
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      <code>.pixel-forge/generated/</code>
                     </p>
                   </button>
                   <button
                     type="button"
                     onClick={() => setOutputMode("custom")}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
+                    className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
                       outputMode === "custom"
                         ? "border-blue-500 bg-blue-500/10"
                         : "border-border hover:bg-muted/50"
                     }`}
                   >
-                    <div className="flex items-center gap-2 font-medium">
-                      <FaWrench className="text-blue-500" />
-                      Custom Relative Path
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <FaWrench className="shrink-0 text-blue-500" />
+                      Custom Path
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Choose the exact repo-relative file path for generated code.
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      Repo-relative file path
                     </p>
                   </button>
                 </div>
@@ -373,6 +372,7 @@ export function ProjectSelector({
                     value={customOutputPath}
                     onChange={(e) => setCustomOutputPath(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && void handleSubmit()}
+                    className="mt-2"
                   />
                 )}
               </div>
