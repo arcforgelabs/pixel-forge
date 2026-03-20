@@ -841,26 +841,27 @@ async def stream_claude_jsonl(
     return stats
 
 
-async def start_agent_deck_send(
+async def send_agent_deck_prompt_reliably(
     session_info: AgentDeckSessionInfo,
     *,
     project_path: str,
     prompt: str,
-    timeout: str = "10m",
-) -> asyncio.subprocess.Process:
-    return await asyncio.create_subprocess_exec(
-        "agent-deck",
-        "session",
-        "send",
-        session_info.agent_deck_session_id,
-        prompt,
-        "-wait",
-        "-q",
-        f"-timeout={timeout}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+) -> None:
+    code, stdout, stderr = await _run_command(
+        [
+            "agent-deck",
+            "session",
+            "send",
+            session_info.agent_deck_session_id,
+            prompt,
+            "-q",
+        ],
         cwd=project_path,
     )
+    if code != 0:
+        raise AgentDeckBridgeError(
+            stderr.strip() or stdout.strip() or "Agent Deck live-edit request failed"
+        )
 
 
 async def submit_agent_deck_prompt(
@@ -908,30 +909,6 @@ async def type_agent_deck_prompt(
             raise AgentDeckBridgeError(
                 stderr.strip() or stdout.strip() or "Failed to type Agent Deck prompt"
             )
-
-
-async def send_agent_deck_prompt_nowait(
-    session_info: AgentDeckSessionInfo,
-    *,
-    project_path: str,
-    prompt: str,
-) -> None:
-    code, stdout, stderr = await _run_command(
-        [
-            "agent-deck",
-            "session",
-            "send",
-            session_info.agent_deck_session_id,
-            prompt,
-            "-no-wait",
-            "-q",
-        ],
-        cwd=project_path,
-    )
-    if code != 0:
-        raise AgentDeckBridgeError(
-            stderr.strip() or stdout.strip() or "Agent Deck live-edit request failed"
-        )
 
 
 async def wait_for_agent_deck_turn_completion(
@@ -1136,7 +1113,7 @@ async def send_codex_prompt_and_capture_output(
             "Open it in Agent Deck, clear any trust or startup prompt, then retry."
         )
 
-    await send_agent_deck_prompt_nowait(
+    await send_agent_deck_prompt_reliably(
         session_info,
         project_path=project_path,
         prompt=prompt,

@@ -9,6 +9,23 @@ import agent_deck_bridge
 from live_editor_threads import LiveEditorThreadRecord
 
 
+def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionInfo:
+    return agent_deck_bridge.AgentDeckSessionInfo(
+        agent_deck_session_id="deck-a",
+        agent_deck_session_title="pixel-forge-project-thread-a",
+        workspace_path="/tmp/project/.agents/thread-a",
+        tmux_session="tmux-a",
+        tool=tool,
+        status="waiting",
+        acpx_agent=None,
+        acpx_session_name=None,
+        acpx_record_id=None,
+        acp_session_id=None,
+        claude_session_id=None,
+        jsonl_path=None,
+    )
+
+
 class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
     async def test_detached_clone_lane_reuses_existing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -146,6 +163,44 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_mode="clone",
                 workspace_path=None,
             )
+
+
+class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
+    async def test_send_agent_deck_prompt_reliably_waits_for_ready_without_cli_wait_flag(self) -> None:
+        run_command = AsyncMock(return_value=(0, "", ""))
+
+        with patch.object(agent_deck_bridge, "_run_command", run_command):
+            await agent_deck_bridge.send_agent_deck_prompt_reliably(
+                _session_info(),
+                project_path="/tmp/project",
+                prompt="Fix the bug",
+            )
+
+        run_command.assert_awaited_once_with(
+            [
+                "agent-deck",
+                "session",
+                "send",
+                "deck-a",
+                "Fix the bug",
+                "-q",
+            ],
+            cwd="/tmp/project",
+        )
+
+    async def test_send_agent_deck_prompt_reliably_surfaces_agent_deck_errors(self) -> None:
+        run_command = AsyncMock(return_value=(1, "", "agent not ready after 30s"))
+
+        with patch.object(agent_deck_bridge, "_run_command", run_command):
+            with self.assertRaisesRegex(
+                agent_deck_bridge.AgentDeckBridgeError,
+                "agent not ready after 30s",
+            ):
+                await agent_deck_bridge.send_agent_deck_prompt_reliably(
+                    _session_info(),
+                    project_path="/tmp/project",
+                    prompt="Fix the bug",
+                )
 
 
 if __name__ == "__main__":

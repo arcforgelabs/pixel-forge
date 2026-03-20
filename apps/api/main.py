@@ -14,6 +14,7 @@ import mimetypes
 import os
 import re
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlencode
@@ -26,7 +27,7 @@ from agent_deck_bridge import (
     ensure_agent_deck_session,
     list_project_agent_deck_sessions,
     list_live_editor_agent_deck_sessions,
-    start_agent_deck_send,
+    send_agent_deck_prompt_reliably,
     stream_claude_jsonl,
     submit_agent_deck_prompt,
     type_agent_deck_prompt,
@@ -92,6 +93,8 @@ from session_manager import (
 TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
 GRID_COLS = 4  # 4 columns in the frame grid
 FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
+LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS = 60 * 60
+LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS = 20.0
 INFORMATIONAL_REQUEST_HINTS = (
     "what is",
     "what's",
@@ -123,6 +126,47 @@ MUTATING_REQUEST_HINTS = (
     "restyle",
     "move ",
 )
+
+
+def _format_elapsed_duration(elapsed_seconds: float) -> str:
+    total_seconds = max(0, int(elapsed_seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+async def _emit_live_editor_wait_heartbeat(
+    websocket: WebSocket,
+    *,
+    tool: str,
+    wait_task: asyncio.Task[None],
+    interval_seconds: float = LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS,
+) -> None:
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    tool_label = (tool or "agent").strip().capitalize() or "Agent"
+
+    while not wait_task.done():
+        await asyncio.sleep(interval_seconds)
+        if wait_task.done():
+            return
+        try:
+            await websocket.send_json(
+                {
+                    "type": "status",
+                    "message": (
+                        f"{tool_label} is still working in Agent Deck... "
+                        f"{_format_elapsed_duration(loop.time() - started_at)} elapsed."
+                    ),
+                }
+            )
+        except Exception:
+            return
 
 
 def extract_video_frames(video_data_url: str) -> list[Image.Image]:
@@ -2319,8 +2363,8 @@ async def live_editor_chat(websocket: WebSocket):
                 })
                 continue
 
-            send_proc: asyncio.subprocess.Process | None = None
             turn_wait_task: asyncio.Task[None] | None = None
+            status_heartbeat_task: asyncio.Task[None] | None = None
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
@@ -2521,16 +2565,39 @@ async def live_editor_chat(websocket: WebSocket):
                         )
                         await submit_agent_deck_prompt(session_info)
                         turn_wait_task = asyncio.create_task(
-                            wait_for_agent_deck_turn_completion(session_info)
+                            wait_for_agent_deck_turn_completion(
+                                session_info,
+                                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+                            )
                         )
-                        send_task: asyncio.Task[tuple[bytes, bytes]] | asyncio.Task[None] = turn_wait_task
+                        send_task: asyncio.Task[None] = turn_wait_task
                     else:
-                        send_proc = await start_agent_deck_send(
+                        await send_agent_deck_prompt_reliably(
                             session_info,
                             project_path=session_info.workspace_path,
                             prompt=dispatch_prompt,
                         )
-                        send_task = asyncio.create_task(send_proc.communicate())
+                        tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
+                        await websocket.send_json(
+                            {
+                                "type": "status",
+                                "message": f"Request delivered to {tool_label}. Waiting for completion...",
+                            }
+                        )
+                        turn_wait_task = asyncio.create_task(
+                            wait_for_agent_deck_turn_completion(
+                                session_info,
+                                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+                            )
+                        )
+                        status_heartbeat_task = asyncio.create_task(
+                            _emit_live_editor_wait_heartbeat(
+                                websocket,
+                                tool=session_info.tool,
+                                wait_task=turn_wait_task,
+                            )
+                        )
+                        send_task = turn_wait_task
 
                     stream_stats = None
                     if jsonl_path:
@@ -2541,19 +2608,10 @@ async def live_editor_chat(websocket: WebSocket):
                             send_task,
                         )
 
-                    stdout_text = ""
-                    if turn_wait_task is not None:
-                        await turn_wait_task
-                    else:
-                        stdout, stderr = await send_task
-                        stdout_text = stdout.decode().strip()
-                        stderr_text = stderr.decode().strip()
-
-                        if send_proc.returncode != 0:
-                            raise AgentDeckBridgeError(stderr_text or stdout_text or "Agent Deck live-edit request failed")
+                    await turn_wait_task
 
                     if not stream_stats or not stream_stats.streamed_text:
-                        fallback_output = stdout_text or await get_last_output(
+                        fallback_output = await get_last_output(
                             session_info.agent_deck_session_id
                         )
                         if fallback_output:
@@ -2630,10 +2688,10 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
             except Exception as e:
-                if send_proc and send_proc.returncode is None:
-                    send_proc.kill()
                 if turn_wait_task and not turn_wait_task.done():
                     turn_wait_task.cancel()
+                if status_heartbeat_task and not status_heartbeat_task.done():
+                    status_heartbeat_task.cancel()
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -2642,10 +2700,13 @@ async def live_editor_chat(websocket: WebSocket):
                 )
 
             finally:
-                if send_proc and send_proc.returncode is None:
-                    send_proc.kill()
                 if turn_wait_task and not turn_wait_task.done():
                     turn_wait_task.cancel()
+                if status_heartbeat_task and not status_heartbeat_task.done():
+                    status_heartbeat_task.cancel()
+                if status_heartbeat_task:
+                    with suppress(asyncio.CancelledError):
+                        await status_heartbeat_task
 
     except WebSocketDisconnect:
         pass
