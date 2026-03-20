@@ -56,6 +56,7 @@ class ProfileStateRecord:
     active_project_path: str | None
     active_mode: str
     active_live_editor_thread_id: str | None
+    default_agent_type: str
     updated_at: str
 
 
@@ -322,6 +323,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 active_project_path TEXT,
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
+                default_agent_type TEXT NOT NULL DEFAULT 'claude',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -366,6 +368,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN active_live_editor_thread_id TEXT"
                 )
+            if "default_agent_type" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN default_agent_type TEXT NOT NULL DEFAULT 'claude'"
+                )
             if "updated_at" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
@@ -409,6 +415,10 @@ def _normalize_active_mode(value: object | None) -> str:
     return "live-editor" if value == "live-editor" else "screenshot"
 
 
+def _normalize_agent_type(value: object | None) -> str:
+    return "codex" if value == "codex" else "claude"
+
+
 def _normalize_profile_id(profile_id: str | None = None) -> str:
     normalized = str(profile_id or "").strip()
     return normalized or DEFAULT_PROFILE_ID
@@ -440,6 +450,7 @@ def _normalize_local_target(value: object) -> dict[str, Any] | None:
     runtime_kind = str(value.get("runtimeKind") or "").strip()
     project_path = str(value.get("projectPath") or "").strip()
     source_root = str(value.get("sourceRoot") or "").strip()
+    audience_workspace_path = str(value.get("audienceWorkspacePath") or "").strip()
     if kind != "pixel-forge" or runtime_kind not in {"mirror", "dev"}:
         return None
     if not project_path or not source_root:
@@ -452,6 +463,7 @@ def _normalize_local_target(value: object) -> dict[str, Any] | None:
         "instanceSlug": str(value.get("instanceSlug") or "").strip(),
         "projectPath": project_path,
         "sourceRoot": source_root,
+        "audienceWorkspacePath": audience_workspace_path or None,
         "buildLabel": str(value.get("buildLabel") or "").strip(),
         "createdAt": created_at if isinstance(created_at, str) and created_at.strip() else None,
     }
@@ -525,6 +537,7 @@ def normalize_session_editor_state(editor_state: object | None) -> dict[str, Any
         url_history_cursor = max(-1, min(url_history_cursor, len(url_history) - 1))
 
     return {
+        "draftAgentType": _normalize_agent_type(editor_state.get("draftAgentType")),
         "activePreviewTool": _normalize_active_preview_tool(
             editor_state.get("activePreviewTool")
         ),
@@ -590,6 +603,7 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
             if isinstance(active_thread_id, str) and active_thread_id.strip()
             else None
         ),
+        default_agent_type=_normalize_agent_type(row["default_agent_type"]),
         updated_at=row["updated_at"],
     )
 
@@ -797,15 +811,17 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
             """
             INSERT OR IGNORE INTO profile_state (
                 profile_id,
-                active_mode
-            ) VALUES (?, 'screenshot')
+                active_mode,
+                default_agent_type
+            ) VALUES (?, 'screenshot', 'claude')
             """,
             (normalized_profile_id,),
         )
         conn.commit()
         row = conn.execute(
             """
-            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id, updated_at
+            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   default_agent_type, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,
@@ -824,6 +840,7 @@ def upsert_profile_state(
     active_project_path: str | None = None,
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
+    default_agent_type: str = "claude",
 ) -> ProfileStateRecord:
     normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_project_path = (
@@ -836,6 +853,7 @@ def upsert_profile_state(
         if isinstance(active_live_editor_thread_id, str) and active_live_editor_thread_id.strip()
         else None
     )
+    normalized_default_agent_type = _normalize_agent_type(default_agent_type)
 
     with _connect() as conn:
         conn.execute(
@@ -844,8 +862,9 @@ def upsert_profile_state(
                 profile_id,
                 active_project_path,
                 active_mode,
-                active_live_editor_thread_id
-            ) VALUES (?, ?, ?, ?)
+                active_live_editor_thread_id,
+                default_agent_type
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 active_mode = excluded.active_mode,
@@ -853,6 +872,7 @@ def upsert_profile_state(
                     WHEN excluded.active_project_path IS NULL THEN NULL
                     ELSE excluded.active_live_editor_thread_id
                 END,
+                default_agent_type = excluded.default_agent_type,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -860,12 +880,14 @@ def upsert_profile_state(
                 normalized_project_path,
                 _normalize_active_mode(active_mode),
                 normalized_thread_id,
+                normalized_default_agent_type,
             ),
         )
         conn.commit()
         row = conn.execute(
             """
-            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id, updated_at
+            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   default_agent_type, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,

@@ -17,11 +17,11 @@ export function summarizeBackendStatus(message: string): string {
   }
 
   if (trimmed.startsWith('Resolving Agent Deck session')) {
-    return 'Resolving agent session...'
+    return 'Resolving Agent Deck session...'
   }
 
   if (trimmed.startsWith('Dispatching request pack ')) {
-    return 'Dispatching request to agent...'
+    return 'Dispatching request to Agent Deck...'
   }
 
   if (trimmed.length <= 120) {

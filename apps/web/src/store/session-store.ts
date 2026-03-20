@@ -18,6 +18,7 @@ export interface PersistedLocalTargetMeta {
   instanceSlug: string;
   projectPath: string;
   sourceRoot: string;
+  audienceWorkspacePath?: string | null;
   buildLabel: string;
   createdAt: string | null;
 }
@@ -31,6 +32,7 @@ export interface PersistedPreviewTab {
 }
 
 export interface PersistedThreadEditorState {
+  draftAgentType?: string;
   activePreviewTool: "select" | null;
   targetUrl: string;
   activeTab: PersistedLiveEditorPanelTab;
@@ -122,6 +124,7 @@ export interface ProfileStateRecord {
   activeProjectPath: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentType: string;
   updatedAt: string;
 }
 
@@ -188,7 +191,10 @@ interface SessionStore {
   persistProfileState: (
     nextState?: Partial<Pick<
       ProfileStateRecord,
-      "activeProjectPath" | "activeMode" | "activeLiveEditorThreadId"
+      | "activeProjectPath"
+      | "activeMode"
+      | "activeLiveEditorThreadId"
+      | "defaultAgentType"
     >>
   ) => Promise<ProfileStateRecord | null>;
   setProject: (options: {
@@ -220,6 +226,7 @@ interface SessionStore {
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
     title?: string | null;
+    refreshProjectChats?: boolean;
   }) => Promise<AgentDeckSessionTarget>;
   selectedAgentDeckTargetId: string | null;
   setSelectedAgentDeckTargetId: (sessionId: string | null) => void;
@@ -236,8 +243,8 @@ interface SessionStore {
   ) => void;
 
   // Agent selection
-  agentType: string;
-  setAgentType: (agentType: string) => void;
+  defaultAgentType: string;
+  setDefaultAgentType: (agentType: string) => void;
 
   // Settings sidebar
   settingsSidebarOpen: boolean;
@@ -293,6 +300,7 @@ interface ApiProfileState {
   active_project_path: string | null;
   active_mode: ActiveMode;
   active_live_editor_thread_id: string | null;
+  default_agent_type: string;
   updated_at: string;
 }
 
@@ -384,6 +392,7 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
     activeMode:
       profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
+    defaultAgentType: normalizeAgentType(profileState.default_agent_type),
     updatedAt: profileState.updated_at,
   };
 }
@@ -607,6 +616,30 @@ function agentDeckTargetFromProjectChat(
   };
 }
 
+function projectSessionFromProjectChat(
+  chat: ProjectChatRecord
+): ProjectSessionRecord | null {
+  if (!chat.threadId) {
+    return null;
+  }
+
+  const fallbackTimestamp = new Date().toISOString();
+  return {
+    id: -1,
+    projectPath: chat.projectPath,
+    workspacePath: chat.workspacePath,
+    threadId: chat.threadId,
+    backend: chat.backend,
+    agentDeckSessionId: chat.agentDeckSessionId,
+    agentDeckSessionTitle: chat.agentDeckSessionTitle ?? chat.title,
+    agentDeckTool: chat.agentDeckTool,
+    editorState: null,
+    createdAt: chat.createdAt ?? fallbackTimestamp,
+    lastActive: chat.lastActive ?? fallbackTimestamp,
+    requestId: null,
+  };
+}
+
 function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | null>(
   session: T,
   targets: AgentDeckSessionTarget[]
@@ -625,17 +658,8 @@ function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | nul
   } as T;
 }
 
-function resolveSessionAgentType(
-  session: LiveEditorSessionMeta | null,
-  fallback: string | null | undefined
-): string {
-  if (session?.agentDeckTool) {
-    return session.agentDeckTool;
-  }
-  if (typeof fallback === "string" && fallback.trim()) {
-    return fallback;
-  }
-  return "claude";
+function normalizeAgentType(agentType: string | null | undefined): string {
+  return agentType === "codex" ? "codex" : "claude";
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -751,6 +775,7 @@ async function upsertProfileStateToApi(options: {
   activeProjectPath: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentType: string;
 }): Promise<ProfileStateRecord> {
   const payload = await requestJson<ApiProfileState>("/api/profile-state", {
     method: "POST",
@@ -759,6 +784,7 @@ async function upsertProfileStateToApi(options: {
       active_project_path: options.activeProjectPath,
       active_mode: options.activeMode,
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
+      default_agent_type: normalizeAgentType(options.defaultAgentType),
     }),
   });
   return normalizeProfileState(payload);
@@ -838,12 +864,19 @@ async function fetchSkills(): Promise<{
 function buildNextProfileState(
   currentState: Pick<
     SessionStore,
-    "profileState" | "projectPath" | "activeMode" | "liveEditorSession"
+    | "profileState"
+    | "projectPath"
+    | "activeMode"
+    | "liveEditorSession"
+    | "defaultAgentType"
   >,
   overrides?: Partial<
     Pick<
       ProfileStateRecord,
-      "activeProjectPath" | "activeMode" | "activeLiveEditorThreadId"
+      | "activeProjectPath"
+      | "activeMode"
+      | "activeLiveEditorThreadId"
+      | "defaultAgentType"
     >
   >
 ): {
@@ -851,6 +884,7 @@ function buildNextProfileState(
   activeProjectPath: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentType: string;
 } {
   return {
     profileId: currentState.profileState?.profileId ?? "default",
@@ -866,6 +900,12 @@ function buildNextProfileState(
       overrides?.activeLiveEditorThreadId !== undefined
         ? overrides.activeLiveEditorThreadId
         : currentState.liveEditorSession?.threadId ?? null,
+    defaultAgentType:
+      overrides?.defaultAgentType !== undefined
+        ? normalizeAgentType(overrides.defaultAgentType)
+        : normalizeAgentType(
+            currentState.profileState?.defaultAgentType ?? currentState.defaultAgentType
+          ),
   };
 }
 
@@ -920,9 +960,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   // Agent selection
-  agentType: "claude",
-  setAgentType: (agentType: string) => {
-    set({ agentType });
+  defaultAgentType: "claude",
+  setDefaultAgentType: (agentType: string) => {
+    const normalizedAgentType = normalizeAgentType(agentType);
+    set({ defaultAgentType: normalizedAgentType });
+    void get()
+      .persistProfileState({ defaultAgentType: normalizedAgentType })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist default agent type:", error);
+      });
   },
 
   // Settings sidebar
@@ -950,6 +996,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           recentProjects,
           profileState,
           profileLoaded: true,
+          defaultAgentType: normalizeAgentType(
+            profileState?.defaultAgentType ?? state.defaultAgentType
+          ),
           projectName: currentProject?.name ?? state.projectName,
           outputMode: currentProject?.outputMode ?? state.outputMode,
           customOutputPath:
@@ -1043,10 +1092,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: savedProject.customOutputPath ?? null,
       sessionId: null,
       liveEditorSession: currentSession,
-      agentType: resolveSessionAgentType(
-        currentSession,
-        currentSession?.agentDeckSessionId ? currentState.agentType : null
-      ),
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
       projectSessions: hydratedSessions,
@@ -1139,10 +1184,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
-      agentType: resolveSessionAgentType(
-        session,
-        session?.agentDeckSessionId ? state.agentType : null
-      ),
       selectedAgentDeckTargetId:
         session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
@@ -1195,7 +1236,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       return;
     }
 
-    set((state) => ({
+    set(() => ({
       liveEditorSession: {
         threadId: session.threadId,
         backend: session.backend,
@@ -1207,10 +1248,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         editorState: session.editorState ?? null,
       },
       selectedAgentDeckTargetId: session.agentDeckSessionId,
-      agentType: resolveSessionAgentType(
-        session,
-        session.agentDeckSessionId ? state.agentType : null
-      ),
     }));
     void get()
       .persistProfileState({ activeLiveEditorThreadId: session.threadId })
@@ -1392,7 +1429,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createProjectChatSession: async (options) => {
-    const { projectPath, agentType, liveEditorSession } = get();
+    const { projectPath, defaultAgentType, liveEditorSession } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
@@ -1400,10 +1437,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ agentDeckTargetsLoading: true });
     try {
       const created = await createProjectChat(projectPath, {
-        agentType: options?.agentType ?? agentType,
+        agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
       });
       const createdTarget = agentDeckTargetFromProjectChat(created);
+      const createdSession = projectSessionFromProjectChat(created);
       set((state) => {
         const nextProjectChats = mergeProjectChat(
           state.projectChatsByProject[projectPath] ?? [],
@@ -1411,7 +1449,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         );
         return {
           agentDeckTargetsLoading: false,
-          agentType: created.agentDeckTool ?? state.agentType,
           selectedAgentDeckTargetId:
             created.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
           agentDeckTargets: createdTarget
@@ -1425,6 +1462,16 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
                 liveEditorSession
               )
             : state.agentDeckTargets,
+          projectSessions: createdSession
+            ? mergeSession(state.projectSessions, projectPath, createdSession)
+            : state.projectSessions,
+          projectSessionsByProject: createdSession
+            ? mergeSessionIntoProjectMap(
+                state.projectSessionsByProject,
+                projectPath,
+                createdSession
+              )
+            : state.projectSessionsByProject,
           projectChats: mergeProjectChat(state.projectChats, created),
           projectChatsByProject: setProjectChatsForPath(
             state.projectChatsByProject,
@@ -1441,7 +1488,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createAgentDeckTargetSession: async (options) => {
-    const { projectPath, agentType, liveEditorSession } = get();
+    const { projectPath, defaultAgentType, liveEditorSession } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
@@ -1449,16 +1496,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ agentDeckTargetsLoading: true });
     try {
       const created = await createAgentDeckTarget(projectPath, {
-        agentType: options?.agentType ?? agentType,
+        agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
       });
-      const nextProjectChats = await fetchProjectChats(projectPath).catch((error) => {
-        console.error("[session-store] Failed to load project chats:", error);
-        return get().projectChats;
-      });
+      const shouldRefreshProjectChats = options?.refreshProjectChats !== false;
+      const nextProjectChats = shouldRefreshProjectChats
+        ? await fetchProjectChats(projectPath).catch((error) => {
+            console.error("[session-store] Failed to load project chats:", error);
+            return get().projectChats;
+          })
+        : null;
       set((state) => ({
         agentDeckTargetsLoading: false,
-        agentType: created.tool ?? state.agentType,
         selectedAgentDeckTargetId: created.id,
         agentDeckTargets: ensureAgentDeckTargetPresent(
           [
@@ -1467,12 +1516,16 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           ],
           liveEditorSession
         ),
-        projectChats: nextProjectChats,
-        projectChatsByProject: setProjectChatsForPath(
-          state.projectChatsByProject,
-          projectPath,
-          nextProjectChats
-        ),
+        ...(nextProjectChats
+          ? {
+              projectChats: nextProjectChats,
+              projectChatsByProject: setProjectChatsForPath(
+                state.projectChatsByProject,
+                projectPath,
+                nextProjectChats
+              ),
+            }
+          : {}),
       }));
       return created;
     } catch (error) {
@@ -1483,14 +1536,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   selectedAgentDeckTargetId: null,
   setSelectedAgentDeckTargetId: (sessionId) => {
-    set((state) => {
-      const selectedTarget = sessionId
-        ? state.agentDeckTargets.find((target) => target.id === sessionId) ?? null
-        : null;
-      return {
-        selectedAgentDeckTargetId: sessionId,
-        agentType: selectedTarget?.tool ?? state.agentType,
-      };
+    set({
+      selectedAgentDeckTargetId: sessionId,
     });
   },
 

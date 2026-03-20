@@ -34,6 +34,7 @@ from agent_deck_bridge import (
     send_agent_deck_prompt_reliably,
     rename_agent_deck_session_target,
     stream_claude_jsonl,
+    stream_codex_session_output,
     submit_agent_deck_prompt,
     type_agent_deck_prompt,
     wait_for_agent_deck_turn_completion,
@@ -71,6 +72,7 @@ from project_store import (
 )
 from project_chats import (
     find_project_chat_by_agent_deck_session_id,
+    find_project_chat_by_thread_id,
     reconcile_project_chats,
 )
 from pydantic import BaseModel
@@ -399,6 +401,7 @@ class ProfileStateRequest(BaseModel):
     active_project_path: str | None = None
     active_mode: Literal["screenshot", "live-editor"] = "screenshot"
     active_live_editor_thread_id: str | None = None
+    default_agent_type: Literal["claude", "codex"] = "claude"
 
 
 class AgentDeckSessionRequest(BaseModel):
@@ -611,6 +614,7 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "active_project_path": profile_state.active_project_path,
         "active_mode": profile_state.active_mode,
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
+        "default_agent_type": profile_state.default_agent_type,
         "updated_at": profile_state.updated_at,
     }
 
@@ -757,6 +761,7 @@ async def save_default_profile_state(request: ProfileStateRequest):
             active_project_path=request.active_project_path,
             active_mode=request.active_mode,
             active_live_editor_thread_id=request.active_live_editor_thread_id,
+            default_agent_type=request.default_agent_type,
         )
     )
 
@@ -928,23 +933,29 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
-    try:
-        created_session = await create_agent_deck_session_target(
-            normalized_project_path,
-            agent_type=request.agent_type,
-            title=request.title,
-            workspace_mode=request.workspace_mode,
-        )
-    except AgentDeckBridgeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    thread_id = generate_session_id()
+    draft_title = request.title.strip() if request.title and request.title.strip() else f"Chat {thread_id[:8]}"
 
-    _, chats = await _load_reconciled_project_chats(
-        normalized_project_path,
-        extra_visible_targets=[created_session],
-    )
-    created_chat = find_project_chat_by_agent_deck_session_id(
+    try:
+        upsert_session(
+            normalized_project_path,
+            thread_id=thread_id,
+            backend="agent-deck",
+            workspace_path=normalized_project_path,
+            agent_deck_session_id=None,
+            agent_deck_session_title=draft_title,
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": request.agent_type,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _, chats = await _load_reconciled_project_chats(normalized_project_path)
+    created_chat = find_project_chat_by_thread_id(
         chats,
-        created_session.id,
+        thread_id,
     )
     if created_chat is None:
         raise HTTPException(
@@ -2932,6 +2943,7 @@ async def live_editor_chat(websocket: WebSocket):
                         if jsonl_path and jsonl_path.exists()
                         else 0
                     )
+                    baseline_output = ""
 
                     if session_info.tool == "claude":
                         await type_agent_deck_prompt(
@@ -2947,6 +2959,10 @@ async def live_editor_chat(websocket: WebSocket):
                         )
                         send_task: asyncio.Task[None] = turn_wait_task
                     else:
+                        if session_info.tool == "codex":
+                            baseline_output = await get_last_output(
+                                session_info.agent_deck_session_id
+                            )
                         await send_agent_deck_prompt_reliably(
                             session_info,
                             project_path=session_info.workspace_path,
@@ -2982,13 +2998,23 @@ async def live_editor_chat(websocket: WebSocket):
                             start_offset,
                             send_task,
                         )
+                    elif session_info.tool == "codex":
+                        stream_stats = await stream_codex_session_output(
+                            websocket,
+                            agent_deck_session_id=session_info.agent_deck_session_id,
+                            baseline_output=baseline_output,
+                            prompt=dispatch_prompt,
+                            wait_task=send_task,
+                        )
 
                     await turn_wait_task
 
                     if not stream_stats or not stream_stats.streamed_text:
-                        fallback_output = await get_last_output(
-                            session_info.agent_deck_session_id
-                        )
+                        fallback_output = getattr(stream_stats, "last_output", "")
+                        if not fallback_output:
+                            fallback_output = await get_last_output(
+                                session_info.agent_deck_session_id
+                            )
                         if fallback_output:
                             await websocket.send_json(
                                 {

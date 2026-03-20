@@ -9,13 +9,13 @@ import {
 describe('chat-status helpers', () => {
   it('compresses backend status noise', () => {
     expect(summarizeBackendStatus('Resolving Agent Deck session...')).toBe(
-      'Resolving agent session...'
+      'Resolving Agent Deck session...'
     )
     expect(
       summarizeBackendStatus(
         'Dispatching request pack .pixel-forge/requests/abcd-1234 to Agent Deck...'
       )
-    ).toBe('Dispatching request to agent...')
+    ).toBe('Dispatching request to Agent Deck...')
   })
 
   it('formats concise tool status', () => {

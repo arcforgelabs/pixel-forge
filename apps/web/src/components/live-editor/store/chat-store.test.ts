@@ -84,6 +84,8 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       ws: nextThreadState.ws,
       connected: nextThreadState.connected,
       queuedMessages: nextThreadState.queuedMessages,
+      targetAgentDeckSessionId: nextThreadState.targetAgentDeckSessionId,
+      draftAgentType: nextThreadState.draftAgentType,
       selectedElements: nextThreadState.selectedElements,
       selectionUndoStack: nextThreadState.selectionUndoStack,
       selectionRedoStack: nextThreadState.selectionRedoStack,
@@ -114,6 +116,7 @@ describe('live editor selection history', () => {
             active_project_path: '/tmp/example-project',
             active_mode: 'live-editor',
             active_live_editor_thread_id: 'thread-a',
+            default_agent_type: 'claude',
             updated_at: '2026-03-20T00:00:00Z',
           })
         }
@@ -150,7 +153,7 @@ describe('live editor selection history', () => {
         error: null,
       },
       selectedAgentDeckTargetId: null,
-      agentType: 'claude',
+      defaultAgentType: 'claude',
       settingsSidebarOpen: false,
     })
     useLiveEditorStore.getState().resetForProject()
@@ -553,7 +556,7 @@ describe('live editor selection history', () => {
           createdAt: null,
         },
       ],
-      agentType: 'claude',
+      defaultAgentType: 'claude',
     })
     useLiveEditorStore.getState().activateThread('thread-1')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
@@ -571,6 +574,30 @@ describe('live editor selection history', () => {
       agent_type: 'codex',
       target_agent_deck_session_id: 'deck-session-456',
     })
+  })
+
+  it('uses the draft agent choice for the first outbound live-edit payload before bind', () => {
+    useSessionStore.setState({
+      defaultAgentType: 'claude',
+    })
+    useLiveEditorStore.getState().setDraftAgentType('codex')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Use the draft agent')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Use the draft agent',
+      agent_type: 'codex',
+    })
+    expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty(
+      'target_agent_deck_session_id'
+    )
   })
 
   it('matches tool results to the correct running tool by tool call id', () => {

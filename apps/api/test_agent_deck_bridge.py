@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,56 @@ def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionI
 
 
 class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_detached_lane_launches_with_persisted_pixel_forge_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+
+            thread = LiveEditorThreadRecord(
+                thread_id="thread-a",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id=None,
+                agent_deck_session_title="Test Rename",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id=None,
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+            )
+
+            launch_mock = AsyncMock(
+                return_value={
+                    "id": "deck-a",
+                    "title": "Test Rename",
+                    "path": str((project_path / ".agents" / "thread-a").resolve()),
+                    "tool": "claude",
+                }
+            )
+            build_mock = AsyncMock(return_value=_session_info(tool="claude"))
+
+            with (
+                patch.object(agent_deck_bridge, "_launch_new_session", launch_mock),
+                patch.object(agent_deck_bridge, "_build_session_info", build_mock),
+            ):
+                await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="claude",
+                )
+
+            launch_mock.assert_awaited_once_with(
+                str(project_path.resolve()),
+                session_title="Test Rename",
+                agent_type="claude",
+                workspace_mode="clone",
+                workspace_path=None,
+            )
+
     async def test_detached_clone_lane_reuses_existing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             project_path = Path(tempdir) / "project"
@@ -164,6 +215,65 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_path=None,
             )
 
+    async def test_bound_lane_reconciles_existing_agent_deck_title_to_pixel_forge_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+
+            thread = LiveEditorThreadRecord(
+                thread_id="thread-a",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id="deck-a",
+                agent_deck_session_title="Test Rename",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id="request-a",
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+            )
+
+            load_mock = AsyncMock(
+                return_value={
+                    "id": "deck-a",
+                    "title": "pixel-forge-project-thread-a",
+                    "path": str(project_path.resolve()),
+                    "tool": "claude",
+                }
+            )
+            migrate_mock = AsyncMock(
+                side_effect=lambda _project_path, _thread, payload, requested_agent_type: payload
+            )
+            rename_mock = AsyncMock(return_value=None)
+            build_mock = AsyncMock(return_value=_session_info(tool="claude"))
+
+            with (
+                patch.object(agent_deck_bridge, "_load_existing_session", load_mock),
+                patch.object(agent_deck_bridge, "_migrate_legacy_session_payload", migrate_mock),
+                patch.object(agent_deck_bridge, "_rename_session", rename_mock),
+                patch.object(agent_deck_bridge, "_build_session_info", build_mock),
+            ):
+                await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="claude",
+                )
+
+            rename_mock.assert_awaited_once_with("deck-a", "Test Rename")
+            build_mock.assert_awaited_once()
+            self.assertEqual(
+                build_mock.await_args.kwargs["fallback_title"],
+                "Test Rename",
+            )
+            self.assertEqual(
+                build_mock.await_args.args[1]["title"],
+                "Test Rename",
+            )
+
 
 class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
     async def test_send_agent_deck_prompt_reliably_waits_for_ready_without_cli_wait_flag(self) -> None:
@@ -201,6 +311,66 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
                     project_path="/tmp/project",
                     prompt="Fix the bug",
                 )
+
+
+class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_codex_session_output_emits_incremental_text_chunks(self) -> None:
+        websocket = AsyncMock()
+        wait_task = asyncio.get_running_loop().create_future()
+        wait_task.set_result(None)
+        baseline_output = "model: gpt-5\n› "
+
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "get_last_output",
+                AsyncMock(side_effect=[f"{baseline_output}\nHello from Codex"]),
+            ),
+            patch.object(agent_deck_bridge, "CODEX_POLL_INTERVAL_SECONDS", 0.0),
+            patch.object(agent_deck_bridge, "STREAM_IDLE_AFTER_COMPLETION_SECONDS", 0.0),
+        ):
+            stats = await agent_deck_bridge.stream_codex_session_output(
+                websocket,
+                agent_deck_session_id="deck-a",
+                baseline_output=baseline_output,
+                prompt="Fix the bug",
+                wait_task=wait_task,
+            )
+
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "chunk", "content": "Hello from Codex"}
+        )
+        self.assertTrue(stats.streamed_text)
+        self.assertEqual(stats.last_output, "Hello from Codex")
+
+    async def test_stream_codex_session_output_routes_progress_only_updates_to_status(self) -> None:
+        websocket = AsyncMock()
+        wait_task = asyncio.get_running_loop().create_future()
+        wait_task.set_result(None)
+        baseline_output = "model: gpt-5\n› "
+
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "get_last_output",
+                AsyncMock(side_effect=[f"{baseline_output}\n• Working · esc to interrupt"]),
+            ),
+            patch.object(agent_deck_bridge, "CODEX_POLL_INTERVAL_SECONDS", 0.0),
+            patch.object(agent_deck_bridge, "STREAM_IDLE_AFTER_COMPLETION_SECONDS", 0.0),
+        ):
+            stats = await agent_deck_bridge.stream_codex_session_output(
+                websocket,
+                agent_deck_session_id="deck-a",
+                baseline_output=baseline_output,
+                prompt="Fix the bug",
+                wait_task=wait_task,
+            )
+
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "status", "message": "Codex: • Working"}
+        )
+        self.assertFalse(stats.streamed_text)
+        self.assertEqual(stats.last_output, "")
 
 
 if __name__ == "__main__":

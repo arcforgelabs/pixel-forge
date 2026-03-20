@@ -64,12 +64,13 @@ export function ChatInput() {
     sendMessage,
     isStreaming,
     selectedElements,
+    targetAgentDeckSessionId,
+    draftAgentType,
+    setDraftAgentType,
   } = useLiveEditorStore()
   const {
-    agentType,
-    setAgentType,
+    defaultAgentType,
     liveEditorSession,
-    selectedAgentDeckTargetId,
     agentDeckTargets,
     installedSkills,
     skillsLoaded,
@@ -80,12 +81,15 @@ export function ChatInput() {
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
   ).size
   const selectedAgentDeckTarget = agentDeckTargets.find(
-    (target) => target.id === selectedAgentDeckTargetId
+    (target) => target.id === targetAgentDeckSessionId
   )
   const effectiveAgentType =
-    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool || agentType
+    liveEditorSession?.agentDeckTool
+    || selectedAgentDeckTarget?.tool
+    || draftAgentType
+    || defaultAgentType
   const agentSelectionLocked = Boolean(
-    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool
+    liveEditorSession?.agentDeckSessionId || targetAgentDeckSessionId
   )
   const activeSkillMatch = findSkillAutocompleteMatch(input, caretIndex)
   const activeSkillTokenKey = activeSkillMatch
@@ -532,10 +536,13 @@ export function ChatInput() {
                 disabled={agentSelectionLocked}
                 title={
                   agentSelectionLocked
-                    ? `Agent follows ${formatAgentLabel(effectiveAgentType)} for the selected session`
+                    ? `Agent is locked to ${formatAgentLabel(effectiveAgentType)} for this live lane`
                     : `Agent: ${formatAgentLabel(effectiveAgentType)}`
                 }
               >
+                <span className="px-1 text-[11px] font-medium">
+                  {formatAgentLabel(effectiveAgentType)}
+                </span>
                 <ChevronUp className={`h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
               </Button>
               {showAgentPicker && (
@@ -548,7 +555,7 @@ export function ChatInput() {
                       key={agent.value}
                       type="button"
                       onClick={() => {
-                        setAgentType(agent.value)
+                        setDraftAgentType(agent.value)
                         setShowAgentPicker(false)
                       }}
                       className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${

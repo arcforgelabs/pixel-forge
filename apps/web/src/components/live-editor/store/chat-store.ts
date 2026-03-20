@@ -86,6 +86,7 @@ export interface LocalTargetMeta {
   instanceSlug: string
   projectPath: string
   sourceRoot: string
+  audienceWorkspacePath: string | null
   buildLabel: string
   createdAt: string | null
 }
@@ -108,6 +109,7 @@ export interface PreviewAuthIssue {
 }
 
 export interface ThreadEditorState {
+  draftAgentType: string
   activePreviewTool: PixelForgeDesktopPreviewTool
   targetUrl: string
   activeTab: LiveEditorPanelTab
@@ -135,6 +137,7 @@ export interface ThreadChatState {
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
   targetAgentDeckSessionId: string | null
+  draftAgentType: string
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
@@ -162,6 +165,8 @@ interface ActiveThreadViewState {
   ws: WebSocket | null
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
+  targetAgentDeckSessionId: string | null
+  draftAgentType: string
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
@@ -206,6 +211,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   newSession: (targetAgentDeckSessionId?: string | null) => void
   removeThread: (threadKey: string | null | undefined, fallbackThreadKey?: string | null) => void
   setTargetAgentDeckSessionId: (sessionId: string | null) => void
+  setDraftAgentType: (agentType: string) => void
   getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
   findThreadKeyByTargetAgentDeckSessionId: (
     sessionId: string | null | undefined
@@ -250,6 +256,14 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 15)
 }
 
+function normalizeDraftAgentType(agentType: string | null | undefined): string {
+  return agentType === 'codex' ? 'codex' : 'claude'
+}
+
+function getDefaultDraftAgentType(): string {
+  return normalizeDraftAgentType(useSessionStore.getState().defaultAgentType)
+}
+
 function createDraftThreadKey(): string {
   return `draft-${generateId()}`
 }
@@ -282,9 +296,12 @@ function createEmptyPreviewTab(index = 1): PreviewTab {
   }
 }
 
-function createEmptyThreadEditorState(): ThreadEditorState {
+function createEmptyThreadEditorState(
+  draftAgentType: string = getDefaultDraftAgentType()
+): ThreadEditorState {
   const initialPreviewTab = createEmptyPreviewTab()
   return {
+    draftAgentType: normalizeDraftAgentType(draftAgentType),
     activePreviewTool: null,
     targetUrl: '',
     activeTab: 'chat',
@@ -352,6 +369,7 @@ function restorePreviewTab(
     localTarget: tab.localTarget
       ? {
           ...tab.localTarget,
+          audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
         }
       : null,
   }
@@ -366,6 +384,7 @@ function persistPreviewTab(tab: PreviewTab): PersistedPreviewTab {
     localTarget: tab.localTarget
       ? {
           ...tab.localTarget,
+          audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
         }
       : null,
   }
@@ -411,6 +430,9 @@ function createThreadEditorStateFromPersisted(
     : -1
 
   return {
+    draftAgentType: normalizeDraftAgentType(
+      editorState.draftAgentType || getDefaultDraftAgentType()
+    ),
     activePreviewTool: editorState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl,
     activeTab: editorState.activeTab === 'elements' ? 'elements' : 'chat',
@@ -431,6 +453,7 @@ function buildPersistedEditorState(
   threadState: ThreadChatState
 ): PersistedThreadEditorState {
   return {
+    draftAgentType: normalizeDraftAgentType(threadState.draftAgentType),
     activePreviewTool: threadState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl: threadState.targetUrl.trim(),
     activeTab: threadState.activeTab,
@@ -474,6 +497,10 @@ function shouldPersistThreadState(
     return true
   }
 
+  if (threadState.draftAgentType !== getDefaultDraftAgentType()) {
+    return true
+  }
+
   return threadState.previewTabs.some((tab) =>
     Boolean(tab.url.trim() || tab.localTarget)
   )
@@ -504,6 +531,8 @@ function buildActiveThreadViewState(
     ws: threadState.ws,
     connected: threadState.connected,
     queuedMessages: threadState.queuedMessages,
+    targetAgentDeckSessionId: threadState.targetAgentDeckSessionId,
+    draftAgentType: threadState.draftAgentType,
     selectedElements: threadState.selectedElements,
     selectionUndoStack: threadState.selectionUndoStack,
     selectionRedoStack: threadState.selectionRedoStack,
@@ -1632,7 +1661,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const agentType =
         boundSession?.agentDeckTool
         || selectedTarget?.tool
-        || sessionState.agentType
+        || activeThreadState.draftAgentType
+        || sessionState.defaultAgentType
         || 'claude'
       const payload: Record<string, unknown> = {
         message: trimmedContent,
@@ -1761,6 +1791,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         targetAgentDeckSessionId: normalizedSessionId,
       }))
       useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
+      scheduleThreadPersistence(activeThreadKey)
+    },
+
+    setDraftAgentType: (agentType) => {
+      const activeThreadKey = get().activeThreadKey
+      const normalizedAgentType = normalizeDraftAgentType(agentType)
+      const boundSession = resolveThreadSession(activeThreadKey)
+      const targetedSessionId = get().getTargetAgentDeckSessionId(activeThreadKey)
+      if (boundSession?.agentDeckSessionId || targetedSessionId) {
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        draftAgentType: normalizedAgentType,
+      }))
       scheduleThreadPersistence(activeThreadKey)
     },
 

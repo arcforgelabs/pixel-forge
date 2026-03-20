@@ -55,6 +55,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
                             "instanceSlug": "mirror-a",
                             "projectPath": str(project_path),
                             "sourceRoot": str(workspace_path),
+                            "audienceWorkspacePath": str(workspace_path),
                             "buildLabel": "thread-a",
                             "createdAt": "2026-03-20T00:00:00Z",
                         },
@@ -77,6 +78,10 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertNotIn("browserTabId", saved.editor_state["previewTabs"][0])
         self.assertEqual(
             saved.editor_state["previewTabs"][0]["localTarget"]["sourceRoot"],
+            str(workspace_path),
+        )
+        self.assertEqual(
+            saved.editor_state["previewTabs"][0]["localTarget"]["audienceWorkspacePath"],
             str(workspace_path),
         )
 
@@ -177,6 +182,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(initial.active_mode, "screenshot")
         self.assertIsNone(initial.active_project_path)
         self.assertIsNone(initial.active_live_editor_thread_id)
+        self.assertEqual(initial.default_agent_type, "claude")
 
         project_path = Path(self.tempdir.name) / "project"
         project_store.upsert_project(str(project_path))
@@ -184,11 +190,13 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             active_project_path=str(project_path),
             active_mode="live-editor",
             active_live_editor_thread_id="thread-a",
+            default_agent_type="codex",
         )
 
         self.assertEqual(saved.active_project_path, str(project_path))
         self.assertEqual(saved.active_mode, "live-editor")
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
+        self.assertEqual(saved.default_agent_type, "codex")
 
     def test_deleting_active_project_clears_profile_pointer(self) -> None:
         project_path = Path(self.tempdir.name) / "project"

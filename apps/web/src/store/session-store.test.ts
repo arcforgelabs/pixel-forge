@@ -37,6 +37,7 @@ describe("session-store thread switching", () => {
               active_mode: body.active_mode ?? "screenshot",
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
+              default_agent_type: body.default_agent_type ?? "claude",
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -156,6 +157,7 @@ describe("session-store thread switching", () => {
               active_project_path: "/tmp/example-project",
               active_mode: "live-editor",
               active_live_editor_thread_id: "thread-a",
+              default_agent_type: "claude",
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -176,7 +178,7 @@ describe("session-store thread switching", () => {
       profileLoaded: false,
       agentDeckTargets: [],
       selectedAgentDeckTargetId: null,
-      agentType: "claude",
+      defaultAgentType: "claude",
       activeMode: "live-editor",
     });
   });
@@ -228,7 +230,7 @@ describe("session-store thread switching", () => {
     expect(useSessionStore.getState().selectedAgentDeckTargetId).toBe(
       "deck-session-b"
     );
-    expect(useSessionStore.getState().agentType).toBe("codex");
+    expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 
   it("restores the preferred project thread from the persisted default profile", async () => {
@@ -357,7 +359,7 @@ describe("session-store thread switching", () => {
       bindingState: "detached",
       agentDeckSessionId: "dead-session-a",
     });
-    expect(useSessionStore.getState().agentType).toBe("claude");
+    expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 
   it("caches chats for inactive projects without replacing the active project session list", async () => {
@@ -500,6 +502,7 @@ describe("session-store thread switching", () => {
               active_mode: body.active_mode ?? "screenshot",
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
+              default_agent_type: body.default_agent_type ?? "claude",
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -546,19 +549,19 @@ describe("session-store chat creation", () => {
         ) {
           return new Response(
             JSON.stringify({
-              id: "agent-deck:deck-session-b",
+              id: "thread-b",
               project_path: "/tmp/example-project",
               title: "pixel-forge-thread-b",
-              thread_id: null,
-              workspace_path: "/tmp/example-project/.agents/thread-b",
+              thread_id: "thread-b",
+              workspace_path: "/tmp/example-project",
               backend: "agent-deck",
-              agent_deck_session_id: "deck-session-b",
+              agent_deck_session_id: null,
               agent_deck_session_title: "pixel-forge-thread-b",
-              agent_deck_tool: "codex",
-              agent_deck_session_status: "running",
-              binding_state: "attached",
-              workspace_kind: "clone",
-              origin_kind: "adopted",
+              agent_deck_tool: null,
+              agent_deck_session_status: null,
+              binding_state: "detached",
+              workspace_kind: "root",
+              origin_kind: "managed",
               created_at: "2026-03-21T00:00:00Z",
               last_active: "2026-03-21T00:00:00Z",
             }),
@@ -575,8 +578,10 @@ describe("session-store chat creation", () => {
       projectChatsByProject: {},
       agentDeckTargets: [],
       selectedAgentDeckTargetId: null,
-      agentType: "claude",
+      defaultAgentType: "claude",
       liveEditorSession: null,
+      projectSessions: [],
+      projectSessionsByProject: {},
     });
   });
 
@@ -585,35 +590,38 @@ describe("session-store chat creation", () => {
     vi.restoreAllMocks();
   });
 
-  it("creates a fresh chat and hydrates the backing lane metadata", async () => {
+  it("creates a fresh draft chat without prebinding an Agent Deck lane", async () => {
     const created = await useSessionStore.getState().createProjectChatSession({
       agentType: "codex",
     });
 
     const state = useSessionStore.getState();
     expect(created).toMatchObject({
-      id: "agent-deck:deck-session-b",
-      agentDeckSessionId: "deck-session-b",
-      workspacePath: "/tmp/example-project/.agents/thread-b",
-      agentDeckTool: "codex",
+      id: "thread-b",
+      threadId: "thread-b",
+      agentDeckSessionId: null,
+      workspacePath: "/tmp/example-project",
+      bindingState: "detached",
     });
     expect(state.projectChats[0]).toMatchObject({
-      id: "agent-deck:deck-session-b",
+      id: "thread-b",
       title: "pixel-forge-thread-b",
-      agentDeckSessionId: "deck-session-b",
+      threadId: "thread-b",
+      agentDeckSessionId: null,
     });
     expect(state.projectChatsByProject["/tmp/example-project"][0]).toMatchObject({
-      id: "agent-deck:deck-session-b",
+      id: "thread-b",
       title: "pixel-forge-thread-b",
     });
-    expect(state.agentDeckTargets[0]).toMatchObject({
-      id: "deck-session-b",
-      title: "pixel-forge-thread-b",
-      path: "/tmp/example-project/.agents/thread-b",
-      tool: "codex",
-      status: "running",
+    expect(state.projectSessions[0]).toMatchObject({
+      threadId: "thread-b",
+      workspacePath: "/tmp/example-project",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: "pixel-forge-thread-b",
+      agentDeckTool: null,
     });
-    expect(state.selectedAgentDeckTargetId).toBe("deck-session-b");
-    expect(state.agentType).toBe("codex");
+    expect(state.agentDeckTargets).toHaveLength(0);
+    expect(state.selectedAgentDeckTargetId).toBeNull();
+    expect(state.defaultAgentType).toBe("claude");
   });
 });

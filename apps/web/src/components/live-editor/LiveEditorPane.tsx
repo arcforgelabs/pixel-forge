@@ -381,7 +381,6 @@ export function LiveEditorPane() {
   const externalPreviewUrlRef = useRef<string | null>(previewUrl?.trim() || null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
-  const autoProvisionedProjectRef = useRef<string | null>(null)
   const previewHostRef = useRef<HTMLDivElement | null>(null)
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
@@ -604,36 +603,6 @@ export function LiveEditorPane() {
       activateThread(liveEditorSession.threadId)
     }
   }, [activateThread, liveEditorSession?.threadId])
-
-  useEffect(() => {
-    if (activeMode !== 'live-editor' || !projectPath) {
-      return
-    }
-    if (liveEditorSession || activeThreadTargetAgentDeckSessionId || projectSessions.length > 0) {
-      autoProvisionedProjectRef.current = null
-      return
-    }
-    if (autoProvisionedProjectRef.current === projectPath) {
-      return
-    }
-
-    autoProvisionedProjectRef.current = projectPath
-    void createAgentDeckTargetSession()
-      .then((created) => {
-        useLiveEditorStore.getState().newSession(created.id)
-      })
-      .catch((error) => {
-        autoProvisionedProjectRef.current = null
-        console.error('[live-editor] Failed to auto-provision isolated session:', error)
-      })
-  }, [
-    activeMode,
-    activeThreadTargetAgentDeckSessionId,
-    createAgentDeckTargetSession,
-    liveEditorSession,
-    projectPath,
-    projectSessions.length,
-  ])
 
   useEffect(() => {
     targetUrlRef.current = targetUrl

@@ -81,6 +81,12 @@ class ClaudeStreamStats:
     streamed_text: bool = False
 
 
+@dataclass(slots=True)
+class SessionOutputStreamStats:
+    streamed_text: bool = False
+    last_output: str = ""
+
+
 class AgentDeckBridgeError(RuntimeError):
     pass
 
@@ -102,6 +108,16 @@ def _project_slug(project_path: str) -> str:
 
 def _session_title(project_path: str, thread_id: str) -> str:
     return f"pixel-forge-{_project_slug(project_path)}-{thread_id[:8]}"
+
+
+def _preferred_thread_session_title(
+    project_path: str,
+    thread: LiveEditorThreadRecord,
+) -> str:
+    return _normalized_text(thread.agent_deck_session_title) or _session_title(
+        project_path,
+        thread.thread_id,
+    )
 
 
 def _group_path(project_path: str) -> str:
@@ -995,6 +1011,8 @@ async def ensure_agent_deck_session(
     payload: dict[str, object]
     rebind_workspace_path = _thread_rebind_workspace_path(project_path, thread)
     launch_workspace_mode = "existing" if rebind_workspace_path else "clone"
+    preferred_session_title = _preferred_thread_session_title(project_path, thread)
+    persisted_thread_title = _normalized_text(thread.agent_deck_session_title)
     bound_session_id = (
         thread.agent_deck_session_id.strip()
         if isinstance(thread.agent_deck_session_id, str) and thread.agent_deck_session_id.strip()
@@ -1027,7 +1045,7 @@ async def ensure_agent_deck_session(
             ):
                 payload = await _launch_new_session(
                     project_path,
-                    session_title=_session_title(project_path, thread.thread_id),
+                    session_title=preferred_session_title,
                     agent_type=agent_type,
                     workspace_mode=launch_workspace_mode,
                     workspace_path=rebind_workspace_path,
@@ -1046,7 +1064,7 @@ async def ensure_agent_deck_session(
         except AgentDeckBridgeError:
             payload = await _launch_new_session(
                 project_path,
-                session_title=_session_title(project_path, thread.thread_id),
+                session_title=preferred_session_title,
                 agent_type=agent_type,
                 workspace_mode=launch_workspace_mode,
                 workspace_path=rebind_workspace_path,
@@ -1054,16 +1072,26 @@ async def ensure_agent_deck_session(
     else:
         payload = await _launch_new_session(
             project_path,
-            session_title=_session_title(project_path, thread.thread_id),
+            session_title=preferred_session_title,
             agent_type=agent_type,
             workspace_mode=launch_workspace_mode,
             workspace_path=rebind_workspace_path,
         )
 
+    if persisted_thread_title:
+        current_title = _normalized_text(payload.get("title"))
+        session_id = _normalized_text(payload.get("id"))
+        if session_id and current_title != persisted_thread_title:
+            await _rename_session(session_id, persisted_thread_title)
+            payload = {
+                **payload,
+                "title": persisted_thread_title,
+            }
+
     return await _build_session_info(
         project_path,
         payload,
-        fallback_title=_session_title(project_path, thread.thread_id),
+        fallback_title=preferred_session_title,
     )
 
 
@@ -1388,6 +1416,18 @@ def _codex_output_is_still_running(output: str) -> bool:
     return "esc to interrupt" in normalized or normalized.startswith("• Working")
 
 
+def _strip_codex_progress_lines(output: str) -> str:
+    lines: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if "esc to interrupt" in line:
+            continue
+        if line.startswith("• Working"):
+            continue
+        lines.append(raw_line)
+    return "\n".join(lines).strip()
+
+
 def _trim_codex_turn_artifacts(output: str, prompt: str) -> str:
     trimmed_output = output.strip()
     trimmed_prompt = prompt.strip()
@@ -1402,6 +1442,77 @@ def _trim_codex_turn_artifacts(output: str, prompt: str) -> str:
         lines.pop()
 
     return "\n".join(lines).strip()
+
+
+def _codex_progress_status(output: str) -> str | None:
+    for raw_line in reversed(output.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("╭", "╰", "│", CODEX_READY_PROMPT_PREFIX, "gpt-", "model:", "directory:", "Tip:")):
+            continue
+        if "esc to interrupt" in line:
+            line = line.replace(" · esc to interrupt", "").strip()
+            return f"Codex: {line}"
+        if line.startswith("• "):
+            return f"Codex: {line}"
+    return None
+
+
+async def stream_codex_session_output(
+    websocket,
+    *,
+    agent_deck_session_id: str,
+    baseline_output: str,
+    prompt: str,
+    wait_task: asyncio.Task[object],
+) -> SessionOutputStreamStats:
+    stats = SessionOutputStreamStats()
+    last_output = baseline_output
+    last_status_message: str | None = None
+    last_activity = asyncio.get_running_loop().time()
+
+    while True:
+        current_output = await get_last_output(agent_deck_session_id)
+        if current_output != last_output:
+            delta = _extract_session_output_delta(last_output, current_output)
+            sanitized_delta = _strip_codex_prompt_echo(delta)
+            streamable_delta = _strip_codex_progress_lines(sanitized_delta)
+            if streamable_delta:
+                stats.streamed_text = True
+                stats.last_output = _trim_codex_turn_artifacts(
+                    _strip_codex_progress_lines(
+                        _strip_codex_prompt_echo(
+                            _extract_session_output_delta(baseline_output, current_output)
+                        )
+                    ),
+                    prompt,
+                )
+                last_activity = asyncio.get_running_loop().time()
+                await websocket.send_json({"type": "chunk", "content": streamable_delta})
+            else:
+                status_message = _codex_progress_status(current_output)
+                if status_message and status_message != last_status_message:
+                    last_status_message = status_message
+                    await websocket.send_json({"type": "status", "message": status_message})
+            last_output = current_output
+
+        if wait_task.done():
+            idle_for = asyncio.get_running_loop().time() - last_activity
+            if idle_for >= STREAM_IDLE_AFTER_COMPLETION_SECONDS:
+                break
+
+        await asyncio.sleep(CODEX_POLL_INTERVAL_SECONDS)
+
+    stats.last_output = _trim_codex_turn_artifacts(
+        _strip_codex_progress_lines(
+            _strip_codex_prompt_echo(
+                _extract_session_output_delta(baseline_output, last_output)
+            )
+        ),
+        prompt,
+    )
+    return stats
 
 
 async def wait_for_codex_turn_output(

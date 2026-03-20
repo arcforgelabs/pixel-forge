@@ -202,8 +202,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     selectedAgentDeckTargetId,
     lastSavedFile,
     sessionId,
-    agentType,
-    setAgentType,
+    defaultAgentType,
+    setDefaultAgentType,
     previewUrl,
     controllerVersion,
     controllerRuntimeRoot,
@@ -286,11 +286,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const selectedProjectChatDraftStatus = selectedProjectChatDraftThreadKey
     ? getThreadStatus(selectedProjectChatDraftThreadKey)
     : null;
-  const effectiveAgentType =
-    liveEditorSession?.agentDeckTool || selectedProjectChat?.agentDeckTool || agentType;
-  const agentSelectionLocked = Boolean(
-    liveEditorSession?.agentDeckTool || selectedProjectChat?.agentDeckTool
-  );
   const isUpdatingChatTargets = isRefreshingChatTargets || agentDeckTargetsLoading;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareSemver(stagedVersion, controllerVersion);
@@ -628,16 +623,23 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       }
     }
     try {
-      const created = await createProjectChatSession({ agentType });
+      const created = await createProjectChatSession({ agentType: defaultAgentType });
       if (startFreshThread) {
-        if (!created.agentDeckSessionId) {
-          throw new Error("Created chat is missing its session lane.");
+        if (!created.threadId) {
+          throw new Error("Created chat is missing its draft thread.");
         }
-        resetLiveEditorThread(created.agentDeckSessionId);
+        const createdThread = useSessionStore
+          .getState()
+          .projectSessions.find((session) => session.threadId === created.threadId);
+        if (!createdThread) {
+          throw new Error("Created chat is missing its saved draft state.");
+        }
+        switchToThread(createdThread);
+        activateThread(created.threadId);
         toast.success(`Started fresh chat · ${created.title}`);
         return;
       }
-      toast.success(`Created isolated chat ${created.title}`);
+      toast.success(`Created chat ${created.title}`);
     } catch (error) {
       const message =
         error instanceof Error
@@ -1030,7 +1032,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 }}
                                 disabled={isUpdatingChatTargets || (!isActive && isStreaming)}
                                 className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-                                title="Start a fresh chat with its own isolated session"
+                                title="Start a fresh chat. The real Agent Deck lane is created on first send."
                               >
                                 + New chat
                               </button>
@@ -1438,10 +1440,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     disabled={!projectPath || isUpdatingChatTargets}
                   >
                     <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder="Fresh isolated chat" />
+                      <SelectValue placeholder="Fresh chat" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__fresh__">Fresh isolated chat</SelectItem>
+                      <SelectItem value="__fresh__">Fresh chat</SelectItem>
                       {activeProjectChats.map((chat) => (
                         <SelectItem key={chat.id} value={chat.id}>
                           {chat.title}
@@ -1466,14 +1468,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         <p>This chat is active.</p>
                       ) : selectedProjectChatThread ? (
                         <p>
-                          This chat already owns a live lane. Selecting it switches back to that lane.
+                          {selectedProjectChat.agentDeckSessionId
+                            ? "This chat already owns a live lane. Selecting it switches back to that lane."
+                            : "This draft chat is still unbound. Selecting it reopens the same pre-send lane."}
                         </p>
                       ) : selectedProjectChatDraftThreadKey ? (
                         <p>
                           This chat already has a draft lane. Selecting it reopens that draft instead of creating a second lane.
                         </p>
                       ) : selectedProjectChat.threadId ? (
-                        <p>Selecting this chat switches to its saved lane.</p>
+                        <p>
+                          {selectedProjectChat.agentDeckSessionId
+                            ? "Selecting this chat switches to its saved lane."
+                            : "Selecting this chat switches to its saved draft."}
+                        </p>
                       ) : (
                         <p>Selecting this chat starts a fresh live thread on its existing lane.</p>
                       )}
@@ -1485,7 +1493,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Fresh isolated chat creates a new isolated Pixel Forge chat with its own Agent Deck lane.
+                      Fresh chat starts a new Pixel Forge draft. The real Agent Deck lane is created on first send.
                     </p>
                   )}
                 </div>
@@ -1498,7 +1506,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       </label>
                       <p className="mt-0.5 break-all font-mono text-xs">{liveEditorSession.threadId}</p>
                     </div>
-                    {liveEditorSession.agentDeckSessionTitle && (
+                    {liveEditorSession.agentDeckSessionId && liveEditorSession.agentDeckSessionTitle && (
                       <div>
                         <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           Agent Deck Session
@@ -1700,18 +1708,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               </div>
 
               <div className="flex items-center justify-between">
-                <Label className="text-xs">Agent</Label>
+                <Label className="text-xs">Default Agent</Label>
                 <Select
-                  value={effectiveAgentType}
-                  onValueChange={(value) => setAgentType(value)}
-                  disabled={agentSelectionLocked}
+                  value={defaultAgentType}
+                  onValueChange={(value) => setDefaultAgentType(value)}
                 >
                   <SelectTrigger className="h-8 w-[140px] text-xs">
-                    {effectiveAgentType === "claude"
+                    {defaultAgentType === "claude"
                       ? "Claude Code"
-                      : effectiveAgentType === "codex"
+                      : defaultAgentType === "codex"
                         ? "Codex"
-                        : capitalize(effectiveAgentType)}
+                        : capitalize(defaultAgentType)}
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="claude">Claude Code</SelectItem>
@@ -1719,11 +1726,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   </SelectContent>
                 </Select>
               </div>
-              {agentSelectionLocked && (
-                <p className="text-xs text-muted-foreground">
-                  Agent follows the selected Agent Deck session until you clear or replace that binding.
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                New chats start on this agent until the first send binds a real backend lane.
+              </p>
 
               <div className="flex items-center justify-between">
                 <Label htmlFor="dialog-image-gen" className="text-sm">

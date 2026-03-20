@@ -217,3 +217,25 @@ def find_project_chat_by_agent_deck_session_id(
             return chat
 
     return None
+
+
+def find_project_chat_by_thread_id(
+    chats: list[ProjectChatRecord],
+    thread_id: str | None,
+) -> ProjectChatRecord | None:
+    normalized_thread_id = (
+        thread_id.strip()
+        if isinstance(thread_id, str) and thread_id.strip()
+        else None
+    )
+    if normalized_thread_id is None:
+        return None
+
+    for chat in chats:
+        if (
+            isinstance(chat.thread_id, str)
+            and chat.thread_id.strip() == normalized_thread_id
+        ):
+            return chat
+
+    return None
