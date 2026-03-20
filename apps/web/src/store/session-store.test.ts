@@ -299,4 +299,130 @@ describe("session-store thread switching", () => {
     });
     expect(useSessionStore.getState().agentType).toBe("claude");
   });
+
+  it("caches chats for inactive projects without replacing the active project session list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/api/projects") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body || "{}"));
+          const path = body.path as string;
+          const name = path.split("/").pop();
+          return new Response(
+            JSON.stringify({
+              path,
+              name,
+              output_mode: "scratch",
+              custom_output_path: null,
+              created_at: "2026-03-20T00:00:00Z",
+              last_opened: "2026-03-20T00:00:00Z",
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/sessions")) {
+          const projectPath = decodeURIComponent(
+            url.split("/api/projects/")[1].split("/sessions")[0]
+          );
+          const session =
+            projectPath === "/tmp/other-project"
+              ? {
+                  id: 2,
+                  project_path: "/tmp/other-project",
+                  workspace_path: "/tmp/other-project/.agents/thread-b",
+                  thread_id: "thread-b",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "deck-session-b",
+                  agent_deck_session_title: "pixel-forge-thread-b",
+                  agent_deck_tool: "claude",
+                  editor_state: null,
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:05:00Z",
+                }
+              : {
+                  id: 1,
+                  project_path: "/tmp/example-project",
+                  workspace_path: "/tmp/example-project/.agents/thread-a",
+                  thread_id: "thread-a",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "deck-session-a",
+                  agent_deck_session_title: "pixel-forge-thread-a",
+                  agent_deck_tool: "codex",
+                  editor_state: null,
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:00:00Z",
+                };
+
+          return new Response(
+            JSON.stringify({ sessions: [session] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
+          return new Response(
+            JSON.stringify({
+              sessions: [
+                {
+                  id: "deck-session-a",
+                  title: "pixel-forge-thread-a",
+                  path: "/tmp/example-project/.agents/thread-a",
+                  group: null,
+                  tool: "codex",
+                  command: null,
+                  status: "running",
+                  created_at: "2026-03-20T00:00:00Z",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/urls")) {
+          return new Response(
+            JSON.stringify({ urls: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/profile-state") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body || "{}"));
+          return new Response(
+            JSON.stringify({
+              profile_id: body.profile_id ?? "default",
+              active_project_path: body.active_project_path ?? null,
+              active_mode: body.active_mode ?? "screenshot",
+              active_live_editor_thread_id:
+                body.active_live_editor_thread_id ?? null,
+              updated_at: "2026-03-20T00:00:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      persistProfile: false,
+    });
+    await useSessionStore.getState().refreshProjectSessions("/tmp/other-project");
+
+    const state = useSessionStore.getState();
+    expect(state.projectPath).toBe("/tmp/example-project");
+    expect(state.projectSessions[0]).toMatchObject({
+      projectPath: "/tmp/example-project",
+      threadId: "thread-a",
+    });
+    expect(state.projectSessionsByProject["/tmp/example-project"][0]).toMatchObject({
+      projectPath: "/tmp/example-project",
+      threadId: "thread-a",
+    });
+    expect(state.projectSessionsByProject["/tmp/other-project"][0]).toMatchObject({
+      projectPath: "/tmp/other-project",
+      threadId: "thread-b",
+      agentDeckSessionId: "deck-session-b",
+    });
+  });
 });

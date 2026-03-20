@@ -136,6 +136,7 @@ interface SessionStore {
   // Server-backed project/session state
   recentProjects: SavedProject[];
   projectSessions: ProjectSessionRecord[];
+  projectSessionsByProject: Record<string, ProjectSessionRecord[]>;
   profileState: ProfileStateRecord | null;
   profileLoaded: boolean;
   agentDeckTargets: AgentDeckSessionTarget[];
@@ -188,7 +189,7 @@ interface SessionStore {
   newSession: () => void;
   clearLiveEditorSession: () => void;
   switchToThread: (session: ProjectSessionRecord | null) => void;
-  refreshProjectSessions: () => Promise<void>;
+  refreshProjectSessions: (projectPath?: string | null) => Promise<ProjectSessionRecord[]>;
   refreshAgentDeckTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
   createAgentDeckTargetSession: (options?: {
@@ -425,6 +426,36 @@ function mergeSession(
       };
 
   return [merged, ...sessions.filter((entry) => entry.threadId !== merged.threadId)];
+}
+
+function setProjectSessionsForPath(
+  sessionsByProject: Record<string, ProjectSessionRecord[]>,
+  projectPath: string | null,
+  sessions: ProjectSessionRecord[]
+): Record<string, ProjectSessionRecord[]> {
+  if (!projectPath) {
+    return sessionsByProject;
+  }
+
+  return {
+    ...sessionsByProject,
+    [projectPath]: sessions,
+  };
+}
+
+function mergeSessionIntoProjectMap(
+  sessionsByProject: Record<string, ProjectSessionRecord[]>,
+  projectPath: string | null,
+  session: LiveEditorSessionMeta | null
+): Record<string, ProjectSessionRecord[]> {
+  if (!projectPath || !session) {
+    return sessionsByProject;
+  }
+
+  return {
+    ...sessionsByProject,
+    [projectPath]: mergeSession(sessionsByProject[projectPath] ?? [], projectPath, session),
+  };
 }
 
 function ensureAgentDeckTargetPresent(
@@ -718,6 +749,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Server-backed project/session state
   recentProjects: [],
   projectSessions: [],
+  projectSessionsByProject: {},
   profileState: null,
   profileLoaded: false,
   agentDeckTargets: [],
@@ -881,6 +913,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
       projectSessions: hydratedSessions,
+      projectSessionsByProject: setProjectSessionsForPath(
+        currentState.projectSessionsByProject,
+        savedProject.path,
+        hydratedSessions
+      ),
       agentDeckTargets: hydratedTargets,
       pendingPreviewUpdate: null,
     }));
@@ -909,6 +946,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
     set((state) => ({
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+      projectSessionsByProject: mergeSessionIntoProjectMap(
+        state.projectSessionsByProject,
+        state.projectPath,
+        session
+      ),
       agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
     }));
   },
@@ -940,6 +982,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         state.projectPath,
         savedSession
       ),
+      projectSessionsByProject: mergeSessionIntoProjectMap(
+        state.projectSessionsByProject,
+        state.projectPath,
+        savedSession
+      ),
       agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
     }));
 
@@ -956,6 +1003,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       selectedAgentDeckTargetId:
         session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+      projectSessionsByProject: mergeSessionIntoProjectMap(
+        state.projectSessionsByProject,
+        state.projectPath,
+        session
+      ),
       agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
     }));
     void get()
@@ -1024,17 +1076,35 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
   },
 
-  refreshProjectSessions: async () => {
+  refreshProjectSessions: async (requestedProjectPath) => {
+    const normalizedRequestedProjectPath = requestedProjectPath?.trim() || null;
     const { projectPath, liveEditorSession, agentDeckTargets } = get();
-    if (!projectPath) {
+    const targetProjectPath = normalizedRequestedProjectPath ?? projectPath;
+
+    if (!targetProjectPath) {
       set({ projectSessions: [], liveEditorSession: null });
-      return;
+      return [];
     }
 
-    const rawSessions = await fetchProjectSessions(projectPath);
-    const sessions = rawSessions.map((session) =>
-      detachUnavailableAgentDeckSession(session, agentDeckTargets)
-    );
+    const rawSessions = await fetchProjectSessions(targetProjectPath);
+    const sessions =
+      targetProjectPath === projectPath
+        ? rawSessions.map((session) =>
+            detachUnavailableAgentDeckSession(session, agentDeckTargets)
+          )
+        : rawSessions;
+
+    if (targetProjectPath !== projectPath) {
+      set((state) => ({
+        projectSessionsByProject: setProjectSessionsForPath(
+          state.projectSessionsByProject,
+          targetProjectPath,
+          sessions
+        ),
+      }));
+      return sessions;
+    }
+
     const matchingLiveEditorSession = liveEditorSession
       ? sessions.find((session) => session.threadId === liveEditorSession.threadId) ?? null
       : null;
@@ -1053,12 +1123,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
     set((state) => ({
       projectSessions: sessions,
+      projectSessionsByProject: setProjectSessionsForPath(
+        state.projectSessionsByProject,
+        targetProjectPath,
+        sessions
+      ),
       liveEditorSession: nextLiveEditorSession,
       agentDeckTargets: ensureAgentDeckTargetPresent(
         state.agentDeckTargets,
         nextLiveEditorSession
       ),
     }));
+    return sessions;
   },
 
   refreshAgentDeckTargets: async () => {
@@ -1083,14 +1159,23 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         ?? (selectedAgentDeckTargetId && targets.some((target) => target.id === selectedAgentDeckTargetId)
           ? selectedAgentDeckTargetId
           : null);
+      const nextProjectSessions = get().projectSessions.map((session) =>
+        detachUnavailableAgentDeckSession(session, targets)
+      );
 
-      set({
+      set((state) => ({
         agentDeckTargets: targets,
         liveEditorSession: nextLiveEditorSession,
         selectedAgentDeckTargetId:
           nextLiveEditorSession?.agentDeckSessionId ?? nextSelectedTargetId,
         agentDeckTargetsLoading: false,
-      });
+        projectSessions: nextProjectSessions,
+        projectSessionsByProject: setProjectSessionsForPath(
+          state.projectSessionsByProject,
+          projectPath,
+          nextProjectSessions
+        ),
+      }));
     } catch (error) {
       set({ agentDeckTargetsLoading: false });
       throw error;

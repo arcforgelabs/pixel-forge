@@ -146,6 +146,7 @@ async function requestSidebarJson<T>(path: string, init?: RequestInit): Promise<
 interface ChatSidebarActionItem {
   key: string;
   label: string;
+  projectPath: string;
   threadId: string | null;
   agentDeckSessionId: string | null;
 }
@@ -199,6 +200,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     projectPath,
     liveEditorSession,
     projectSessions,
+    projectSessionsByProject,
     agentDeckTargets,
     agentDeckTargetsLoading,
     refreshProjectSessions,
@@ -231,7 +233,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   } = useSessionStore();
 
   const [projectsExpanded, setProjectsExpanded] = useState(false);
-  const [expandedProjectPath, setExpandedProjectPath] = useState<string | null>(null);
+  const [expandedProjectPaths, setExpandedProjectPaths] = useState<string[]>([]);
+  const [loadingProjectPaths, setLoadingProjectPaths] = useState<string[]>([]);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
   const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
@@ -341,6 +344,16 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     });
   }, [refreshSkills, settingsDialogOpen, skillsLoaded, skillsLoading]);
 
+  useEffect(() => {
+    if (!projectPath) {
+      return;
+    }
+
+    setExpandedProjectPaths((current) =>
+      current.includes(projectPath) ? current : [...current, projectPath]
+    );
+  }, [projectPath]);
+
   function setStack(stack: Stack) {
     setSettings((prev: Settings) => ({
       ...prev,
@@ -404,9 +417,47 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     setDeleteAssessment(null);
   }
 
-  async function reloadProjectChatState() {
-    await refreshAgentDeckTargets();
-    await refreshProjectSessions();
+  async function reloadProjectChatState(targetProjectPath: string) {
+    await refreshProjectSessions(targetProjectPath);
+    if (targetProjectPath === projectPath) {
+      await refreshAgentDeckTargets();
+    }
+  }
+
+  async function toggleProjectExpansion(targetProjectPath: string) {
+    const isExpanded = expandedProjectPaths.includes(targetProjectPath);
+    if (isExpanded) {
+      setExpandedProjectPaths((current) =>
+        current.filter((entry) => entry !== targetProjectPath)
+      );
+      return;
+    }
+
+    setLoadingProjectPaths((current) =>
+      current.includes(targetProjectPath)
+        ? current
+        : [...current, targetProjectPath]
+    );
+
+    try {
+      await refreshProjectSessions(targetProjectPath);
+      if (targetProjectPath === projectPath) {
+        await handleRefreshAgentDeckTargets();
+      }
+      setExpandedProjectPaths((current) =>
+        current.includes(targetProjectPath)
+          ? current
+          : [...current, targetProjectPath]
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to load project chats"
+      );
+    } finally {
+      setLoadingProjectPaths((current) =>
+        current.filter((entry) => entry !== targetProjectPath)
+      );
+    }
   }
 
   function applyDeletedChatState(item: ChatSidebarActionItem, wasActiveChat: boolean) {
@@ -432,7 +483,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleRenameChatItem() {
-    if (!projectPath || !renameDialogItem) {
+    if (!renameDialogItem) {
       return;
     }
 
@@ -445,7 +496,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     try {
       setIsRenamingChat(true);
       await requestSidebarJson(
-        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/rename`,
+        `/api/projects/${encodeURIComponent(renameDialogItem.projectPath)}/chat-items/rename`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -455,7 +506,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           }),
         }
       );
-      await reloadProjectChatState();
+      await reloadProjectChatState(renameDialogItem.projectPath);
       closeRenameDialog();
       toast.success(`Renamed chat to ${normalizedTitle}`);
     } catch (error) {
@@ -468,21 +519,23 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleDeleteChatItem(forceCloneRemove = false) {
-    if (!projectPath || !deleteDialogItem) {
+    if (!deleteDialogItem) {
       return;
     }
 
     const wasActiveChat =
-      liveEditorSession?.threadId === deleteDialogItem.threadId
+      deleteDialogItem.projectPath === projectPath
+      && (
+        liveEditorSession?.threadId === deleteDialogItem.threadId
       || (
         deleteDialogItem.agentDeckSessionId !== null
         && selectedAgentDeckTargetId === deleteDialogItem.agentDeckSessionId
-      );
+      ));
 
     try {
       setIsDeletingChat(true);
       const payload = await requestSidebarJson<ChatDeleteResponse>(
-        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/delete`,
+        `/api/projects/${encodeURIComponent(deleteDialogItem.projectPath)}/chat-items/delete`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -498,7 +551,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         return;
       }
 
-      await reloadProjectChatState();
+      await reloadProjectChatState(deleteDialogItem.projectPath);
       applyDeletedChatState(deleteDialogItem, wasActiveChat);
       setDeleteDialogItem(null);
       setDeleteAssessment(null);
@@ -513,14 +566,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleStartCloseout() {
-    if (!projectPath || !deleteDialogItem) {
+    if (!deleteDialogItem) {
       return;
     }
 
     try {
       setIsStartingCloseout(true);
       const payload = await requestSidebarJson<ChatCloseoutResponse>(
-        `/api/projects/${encodeURIComponent(projectPath)}/chat-items/closeout`,
+        `/api/projects/${encodeURIComponent(deleteDialogItem.projectPath)}/chat-items/closeout`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -530,7 +583,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           }),
         }
       );
-      await reloadProjectChatState();
+      await reloadProjectChatState(deleteDialogItem.projectPath);
       setDeleteDialogItem(null);
       setDeleteAssessment(null);
       toast.success(`Started closeout session ${payload.session.title}`);
@@ -790,54 +843,62 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     )}
                     {recentProjects.map((project) => {
                       const isActive = project.path === projectPath;
-                      const isExpanded = isActive && expandedProjectPath === project.path;
-                      const threads = isActive ? projectSessions : [];
+                      const isExpanded = expandedProjectPaths.includes(project.path);
+                      const isLoadingProjectChats = loadingProjectPaths.includes(project.path);
+                      const threads =
+                        projectSessionsByProject[project.path]
+                        ?? (isActive ? projectSessions : []);
 
                       return (
                         <div key={project.path}>
-                          <button
-                            onClick={() => {
-                              if (!isActive) {
-                                if (isStreaming) {
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                if (isActive || isStreaming) {
                                   return;
                                 }
                                 void setProject({ path: project.path });
-                                setExpandedProjectPath(project.path);
-                                return;
+                              }}
+                              disabled={!isActive && isStreaming}
+                              className={`
+                                flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
+                                transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-60
+                                ${isActive
+                                  ? "bg-primary/10 text-primary"
+                                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                                }
+                              `}
+                              title={
+                                !isActive && isStreaming
+                                  ? "Finish the current Live Editor request before switching projects"
+                                  : project.path
                               }
-
-                              if (!isExpanded) {
-                                void handleRefreshAgentDeckTargets();
-                              }
-                              setExpandedProjectPath(isExpanded ? null : project.path);
-                            }}
-                            disabled={!isActive && isStreaming}
-                            className={`
-                              flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
-                              transition-colors duration-100 w-full disabled:cursor-not-allowed disabled:opacity-60
-                              ${isActive
-                                ? "bg-primary/10 text-primary"
-                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                              }
-                            `}
-                            title={
-                              !isActive && isStreaming
-                                ? "Finish the current Live Editor request before switching projects"
-                                : project.path
-                            }
-                          >
-                            <span className="truncate flex-1 text-left">{project.name}</span>
-                            {isActive && (
-                              <ChevronDown
-                                className={`h-3 w-3 flex-shrink-0 transition-transform duration-150 ${
-                                  isExpanded ? "rotate-180" : ""
-                                }`}
-                              />
-                            )}
-                            {isActive && !isExpanded && (
-                              <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                            )}
-                          </button>
+                            >
+                              <span className="truncate flex-1 text-left">{project.name}</span>
+                              {isActive && !isExpanded && (
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void toggleProjectExpansion(project.path);
+                              }}
+                              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-100 hover:bg-muted/40 hover:text-foreground"
+                              title={isExpanded ? "Collapse chats" : "Expand chats"}
+                              aria-label={isExpanded ? `Collapse ${project.name}` : `Expand ${project.name}`}
+                            >
+                              {isLoadingProjectChats ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <ChevronDown
+                                  className={`h-3 w-3 transition-transform duration-150 ${
+                                    isExpanded ? "rotate-180" : ""
+                                  }`}
+                                />
+                              )}
+                            </button>
+                          </div>
 
                           {isExpanded && (
                             <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
@@ -856,6 +917,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 return renderChatRow({
                                   key: target.id,
                                   label,
+                                  projectPath: project.path,
                                   threadId: claimedThread?.threadId ?? null,
                                   agentDeckSessionId: target.id,
                                   isActive: isActiveChat,
@@ -891,6 +953,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                   return renderChatRow({
                                     key: session.threadId,
                                     label,
+                                    projectPath: project.path,
                                     threadId: session.threadId,
                                     agentDeckSessionId: session.agentDeckSessionId,
                                     isActive: isActiveThread,
@@ -900,13 +963,26 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                       if (isActiveThread) {
                                         return;
                                       }
+                                      if (!isActive) {
+                                        if (isStreaming) {
+                                          return;
+                                        }
+                                        void setProject({
+                                          path: project.path,
+                                          preferredThreadId: session.threadId,
+                                        });
+                                        return;
+                                      }
                                       switchToThread(session);
                                       activateThread(session.threadId);
                                     },
                                   });
                                 })}
 
-                              {(isActive ? agentDeckTargets.length === 0 : true) && threads.length === 0 && !liveEditorSession && (
+                              {!isLoadingProjectChats
+                                && (isActive ? agentDeckTargets.length === 0 : true)
+                                && threads.length === 0
+                                && (
                                 <span className="px-2 py-1 text-[10px] text-muted-foreground">
                                   No chats yet
                                 </span>
@@ -914,9 +990,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
                               <button
                                 onClick={() => {
-                                  void handleCreateAgentDeckTarget(true);
+                                  void (async () => {
+                                    if (!isActive) {
+                                      if (isStreaming) {
+                                        return;
+                                      }
+                                      await setProject({ path: project.path });
+                                    }
+                                    await handleCreateAgentDeckTarget(true);
+                                  })();
                                 }}
-                                disabled={agentDeckTargetsLoading}
+                                disabled={agentDeckTargetsLoading || (!isActive && isStreaming)}
                                 className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                                 title="Start a fresh chat with its own isolated session"
                               >
