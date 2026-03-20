@@ -99,6 +99,24 @@ export interface ProjectSessionRecord extends LiveEditorSessionMeta {
   lastActive: string;
 }
 
+export interface ProjectChatRecord {
+  id: string;
+  projectPath: string;
+  title: string;
+  threadId: string | null;
+  workspacePath: string;
+  backend: string;
+  agentDeckSessionId: string | null;
+  agentDeckSessionTitle: string | null;
+  agentDeckTool: string | null;
+  agentDeckSessionStatus: string | null;
+  bindingState: "attached" | "detached";
+  workspaceKind: "root" | "clone";
+  originKind: "managed" | "adopted";
+  createdAt: string | null;
+  lastActive: string | null;
+}
+
 export interface ProfileStateRecord {
   profileId: string;
   activeProjectPath: string | null;
@@ -137,6 +155,8 @@ interface SessionStore {
   recentProjects: SavedProject[];
   projectSessions: ProjectSessionRecord[];
   projectSessionsByProject: Record<string, ProjectSessionRecord[]>;
+  projectChats: ProjectChatRecord[];
+  projectChatsByProject: Record<string, ProjectChatRecord[]>;
   profileState: ProfileStateRecord | null;
   profileLoaded: boolean;
   agentDeckTargets: AgentDeckSessionTarget[];
@@ -190,6 +210,7 @@ interface SessionStore {
   clearLiveEditorSession: () => void;
   switchToThread: (session: ProjectSessionRecord | null) => void;
   refreshProjectSessions: (projectPath?: string | null) => Promise<ProjectSessionRecord[]>;
+  refreshProjectChats: (projectPath?: string | null) => Promise<ProjectChatRecord[]>;
   refreshAgentDeckTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
   createAgentDeckTargetSession: (options?: {
@@ -271,6 +292,24 @@ interface ApiProfileState {
   updated_at: string;
 }
 
+interface ApiProjectChat {
+  id: string;
+  project_path: string;
+  title: string;
+  thread_id: string | null;
+  workspace_path: string;
+  backend: string;
+  agent_deck_session_id: string | null;
+  agent_deck_session_title: string | null;
+  agent_deck_tool: string | null;
+  agent_deck_session_status: string | null;
+  binding_state: "attached" | "detached";
+  workspace_kind: "root" | "clone";
+  origin_kind: "managed" | "adopted";
+  created_at: string | null;
+  last_active: string | null;
+}
+
 interface ApiAgentDeckSessionTarget {
   id: string;
   title: string;
@@ -342,6 +381,26 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
       profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
     updatedAt: profileState.updated_at,
+  };
+}
+
+function normalizeProjectChat(chat: ApiProjectChat): ProjectChatRecord {
+  return {
+    id: chat.id,
+    projectPath: chat.project_path,
+    title: chat.title,
+    threadId: chat.thread_id,
+    workspacePath: chat.workspace_path,
+    backend: chat.backend,
+    agentDeckSessionId: chat.agent_deck_session_id,
+    agentDeckSessionTitle: chat.agent_deck_session_title,
+    agentDeckTool: chat.agent_deck_tool,
+    agentDeckSessionStatus: chat.agent_deck_session_status,
+    bindingState: chat.binding_state,
+    workspaceKind: chat.workspace_kind,
+    originKind: chat.origin_kind,
+    createdAt: chat.created_at,
+    lastActive: chat.last_active,
   };
 }
 
@@ -440,6 +499,21 @@ function setProjectSessionsForPath(
   return {
     ...sessionsByProject,
     [projectPath]: sessions,
+  };
+}
+
+function setProjectChatsForPath(
+  chatsByProject: Record<string, ProjectChatRecord[]>,
+  projectPath: string | null,
+  chats: ProjectChatRecord[]
+): Record<string, ProjectChatRecord[]> {
+  if (!projectPath) {
+    return chatsByProject;
+  }
+
+  return {
+    ...chatsByProject,
+    [projectPath]: chats,
   };
 }
 
@@ -607,6 +681,13 @@ async function fetchProjectSessions(projectPath: string): Promise<ProjectSession
   return payload.sessions.map(normalizeSession);
 }
 
+async function fetchProjectChats(projectPath: string): Promise<ProjectChatRecord[]> {
+  const payload = await requestJson<{ chats: ApiProjectChat[] }>(
+    `/api/projects/${encodeURIComponent(projectPath)}/chats`
+  );
+  return payload.chats.map(normalizeProjectChat);
+}
+
 async function fetchProfileState(): Promise<ProfileStateRecord> {
   const payload = await requestJson<ApiProfileState>("/api/profile-state");
   return normalizeProfileState(payload);
@@ -750,6 +831,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   recentProjects: [],
   projectSessions: [],
   projectSessionsByProject: {},
+  projectChats: [],
+  projectChatsByProject: {},
   profileState: null,
   profileLoaded: false,
   agentDeckTargets: [],
@@ -866,11 +949,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: nextCustomOutputPath,
     });
 
-    const [previewUrls, projectSessions, agentDeckTargets] = await Promise.all([
+    const [previewUrls, projectSessions, projectChats, agentDeckTargets] = await Promise.all([
       previewUrl?.trim()
         ? touchProjectUrl(savedProject.path, previewUrl.trim())
         : fetchProjectUrls(savedProject.path),
       fetchProjectSessions(savedProject.path),
+      fetchProjectChats(savedProject.path),
       fetchAgentDeckTargets(savedProject.path).catch((error) => {
         console.error("[session-store] Failed to load Agent Deck sessions:", error);
         return [];
@@ -917,6 +1001,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         currentState.projectSessionsByProject,
         savedProject.path,
         hydratedSessions
+      ),
+      projectChats,
+      projectChatsByProject: setProjectChatsForPath(
+        currentState.projectChatsByProject,
+        savedProject.path,
+        projectChats
       ),
       agentDeckTargets: hydratedTargets,
       pendingPreviewUpdate: null,
@@ -1137,6 +1227,39 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     return sessions;
   },
 
+  refreshProjectChats: async (requestedProjectPath) => {
+    const normalizedRequestedProjectPath = requestedProjectPath?.trim() || null;
+    const { projectPath } = get();
+    const targetProjectPath = normalizedRequestedProjectPath ?? projectPath;
+
+    if (!targetProjectPath) {
+      set({ projectChats: [] });
+      return [];
+    }
+
+    const chats = await fetchProjectChats(targetProjectPath);
+    if (targetProjectPath !== projectPath) {
+      set((state) => ({
+        projectChatsByProject: setProjectChatsForPath(
+          state.projectChatsByProject,
+          targetProjectPath,
+          chats
+        ),
+      }));
+      return chats;
+    }
+
+    set((state) => ({
+      projectChats: chats,
+      projectChatsByProject: setProjectChatsForPath(
+        state.projectChatsByProject,
+        targetProjectPath,
+        chats
+      ),
+    }));
+    return chats;
+  },
+
   refreshAgentDeckTargets: async () => {
     const { projectPath, liveEditorSession, selectedAgentDeckTargetId } = get();
     if (!projectPath) {
@@ -1146,7 +1269,13 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
     set({ agentDeckTargetsLoading: true });
     try {
-      const rawTargets = await fetchAgentDeckTargets(projectPath);
+      const [rawTargets, nextProjectChats] = await Promise.all([
+        fetchAgentDeckTargets(projectPath),
+        fetchProjectChats(projectPath).catch((error) => {
+          console.error("[session-store] Failed to load project chats:", error);
+          return get().projectChats;
+        }),
+      ]);
       const nextLiveEditorSession = detachUnavailableAgentDeckSession(
         liveEditorSession,
         rawTargets
@@ -1174,6 +1303,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           state.projectSessionsByProject,
           projectPath,
           nextProjectSessions
+        ),
+        projectChats: nextProjectChats,
+        projectChatsByProject: setProjectChatsForPath(
+          state.projectChatsByProject,
+          projectPath,
+          nextProjectChats
         ),
       }));
     } catch (error) {
@@ -1215,6 +1350,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         agentType: options?.agentType ?? agentType,
         title: options?.title ?? null,
       });
+      const nextProjectChats = await fetchProjectChats(projectPath).catch((error) => {
+        console.error("[session-store] Failed to load project chats:", error);
+        return get().projectChats;
+      });
       set((state) => ({
         agentDeckTargetsLoading: false,
         agentType: created.tool ?? state.agentType,
@@ -1225,6 +1364,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
             ...state.agentDeckTargets.filter((target) => target.id !== created.id),
           ],
           liveEditorSession
+        ),
+        projectChats: nextProjectChats,
+        projectChatsByProject: setProjectChatsForPath(
+          state.projectChatsByProject,
+          projectPath,
+          nextProjectChats
         ),
       }));
       return created;
@@ -1258,6 +1403,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: null,
       lastSavedFile: null,
       projectSessions: [],
+      projectChats: [],
       agentDeckTargets: [],
       agentDeckTargetsLoading: false,
       selectedAgentDeckTargetId: null,

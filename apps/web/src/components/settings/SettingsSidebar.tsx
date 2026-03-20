@@ -200,10 +200,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     projectPath,
     liveEditorSession,
     projectSessions,
-    projectSessionsByProject,
+    projectChats,
+    projectChatsByProject,
     agentDeckTargets,
     agentDeckTargetsLoading,
     refreshProjectSessions,
+    refreshProjectChats,
     refreshAgentDeckTargets,
     refreshSkills,
     createAgentDeckTargetSession,
@@ -418,7 +420,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function reloadProjectChatState(targetProjectPath: string) {
-    await refreshProjectSessions(targetProjectPath);
+    await Promise.all([
+      refreshProjectSessions(targetProjectPath),
+      refreshProjectChats(targetProjectPath),
+    ]);
     if (targetProjectPath === projectPath) {
       await refreshAgentDeckTargets();
     }
@@ -440,10 +445,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     );
 
     try {
-      await refreshProjectSessions(targetProjectPath);
-      if (targetProjectPath === projectPath) {
-        await handleRefreshAgentDeckTargets();
-      }
+      await refreshProjectChats(targetProjectPath);
       setExpandedProjectPaths((current) =>
         current.includes(targetProjectPath)
           ? current
@@ -845,9 +847,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       const isActive = project.path === projectPath;
                       const isExpanded = expandedProjectPaths.includes(project.path);
                       const isLoadingProjectChats = loadingProjectPaths.includes(project.path);
-                      const threads =
-                        projectSessionsByProject[project.path]
-                        ?? (isActive ? projectSessions : []);
+                      const chats =
+                        projectChatsByProject[project.path]
+                        ?? (isActive ? projectChats : []);
 
                       return (
                         <div key={project.path}>
@@ -902,86 +904,79 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
                           {isExpanded && (
                             <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
-                              {isActive && agentDeckTargets.map((target) => {
-                                const claimedThread = threads.find(
-                                  (session) => session.agentDeckSessionId === target.id
-                                );
-                                const isActiveChat =
-                                  liveEditorSession?.agentDeckSessionId === target.id
-                                  || selectedAgentDeckTargetId === target.id;
+                              {chats.map((chat) => {
+                                const claimedThread = chat.threadId
+                                  ? projectSessions.find(
+                                      (session) => session.threadId === chat.threadId
+                                    ) ?? null
+                                  : null;
+                                const draftThreadKey = chat.agentDeckSessionId
+                                  ? findThreadKeyByTargetAgentDeckSessionId(chat.agentDeckSessionId)
+                                  : null;
                                 const threadStatus = claimedThread
                                   ? getThreadStatus(claimedThread.threadId)
-                                  : null;
-                                const label = target.title || target.id;
+                                  : draftThreadKey
+                                    ? getThreadStatus(draftThreadKey)
+                                    : { isStreaming: false };
+                                const isActiveChat = chat.threadId
+                                  ? liveEditorSession?.threadId === chat.threadId
+                                  : (
+                                      liveEditorSession?.agentDeckSessionId === chat.agentDeckSessionId
+                                      || selectedAgentDeckTargetId === chat.agentDeckSessionId
+                                    );
 
                                 return renderChatRow({
-                                  key: target.id,
-                                  label,
+                                  key: chat.id,
+                                  label: chat.title,
                                   projectPath: project.path,
-                                  threadId: claimedThread?.threadId ?? null,
-                                  agentDeckSessionId: target.id,
+                                  threadId: chat.threadId,
+                                  agentDeckSessionId: chat.agentDeckSessionId,
                                   isActive: isActiveChat,
                                   isStreaming: Boolean(threadStatus?.isStreaming),
-                                  lastActiveLabel: claimedThread
-                                    ? formatRelativeTime(claimedThread.lastActive)
+                                  lastActiveLabel: chat.lastActive
+                                    ? formatRelativeTime(chat.lastActive)
                                     : null,
                                   onSelect: () => {
-                                    if (isActiveChat) return;
+                                    if (isActiveChat) {
+                                      return;
+                                    }
+
+                                    if (!isActive) {
+                                      if (isStreaming) {
+                                        return;
+                                      }
+                                      void (async () => {
+                                        await setProject({
+                                          path: project.path,
+                                          preferredThreadId: chat.threadId ?? null,
+                                        });
+                                        if (!chat.threadId && chat.agentDeckSessionId) {
+                                          resetLiveEditorThread(chat.agentDeckSessionId);
+                                        }
+                                      })();
+                                      return;
+                                    }
+
                                     if (claimedThread) {
                                       switchToThread(claimedThread);
                                       activateThread(claimedThread.threadId);
-                                    } else if (reopenExistingDraftTargetThread(target.id)) {
                                       return;
-                                    } else {
-                                      resetLiveEditorThread(target.id);
                                     }
+
+                                    if (
+                                      chat.agentDeckSessionId
+                                      && reopenExistingDraftTargetThread(chat.agentDeckSessionId)
+                                    ) {
+                                      return;
+                                    }
+
+                                    resetLiveEditorThread(chat.agentDeckSessionId);
                                   },
                                 });
                               })}
 
-                              {threads
-                                .filter((session) =>
-                                  !isActive || !agentDeckTargets.some((target) => target.id === session.agentDeckSessionId)
-                                )
-                                .map((session) => {
-                                  const isActiveThread = liveEditorSession?.threadId === session.threadId;
-                                  const threadStatus = getThreadStatus(session.threadId);
-                                  const label =
-                                    session.agentDeckSessionTitle
-                                    || `Chat ${session.threadId.slice(0, 8)}`;
-
-                                  return renderChatRow({
-                                    key: session.threadId,
-                                    label,
-                                    projectPath: project.path,
-                                    threadId: session.threadId,
-                                    agentDeckSessionId: session.agentDeckSessionId,
-                                    isActive: isActiveThread,
-                                    isStreaming: threadStatus.isStreaming,
-                                    lastActiveLabel: formatRelativeTime(session.lastActive),
-                                    onSelect: () => {
-                                      if (isActiveThread) {
-                                        return;
-                                      }
-                                      if (!isActive) {
-                                        if (isStreaming) {
-                                          return;
-                                        }
-                                        void setProject({
-                                          path: project.path,
-                                          preferredThreadId: session.threadId,
-                                        });
-                                        return;
-                                      }
-                                      switchToThread(session);
-                                      activateThread(session.threadId);
-                                    },
-                                  });
-                                })}
-
                               {!isLoadingProjectChats
-                                && (isActive ? agentDeckTargets.length === 0 : true)
-                                && threads.length === 0
+                                && chats.length === 0
                                 && (
                                 <span className="px-2 py-1 text-[10px] text-muted-foreground">
                                   No chats yet

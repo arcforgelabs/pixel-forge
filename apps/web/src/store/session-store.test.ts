@@ -96,6 +96,32 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
+        if (url.includes("/api/projects/") && url.includes("/chats")) {
+          return new Response(
+            JSON.stringify({
+              chats: [
+                {
+                  id: "thread-a",
+                  project_path: "/tmp/example-project",
+                  title: "pixel-forge-thread-a",
+                  thread_id: "thread-a",
+                  workspace_path: "/tmp/example-project/.agents/thread-a",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "deck-session-a",
+                  agent_deck_session_title: "pixel-forge-thread-a",
+                  agent_deck_tool: "codex",
+                  agent_deck_session_status: "running",
+                  binding_state: "attached",
+                  workspace_kind: "clone",
+                  origin_kind: "managed",
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:00:00Z",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
         if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
           return new Response(
             JSON.stringify({
@@ -143,6 +169,9 @@ describe("session-store thread switching", () => {
       projectPath: "/tmp/example-project",
       liveEditorSession: null,
       projectSessions: [],
+      projectSessionsByProject: {},
+      projectChats: [],
+      projectChatsByProject: {},
       profileState: null,
       profileLoaded: false,
       agentDeckTargets: [],
@@ -261,6 +290,32 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
+        if (url.includes("/api/projects/") && url.includes("/chats")) {
+          return new Response(
+            JSON.stringify({
+              chats: [
+                {
+                  id: "thread-a",
+                  project_path: "/tmp/example-project",
+                  title: "pixel-forge-thread-a",
+                  thread_id: "thread-a",
+                  workspace_path: "/tmp/example-project/.agents/thread-a",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "dead-session-a",
+                  agent_deck_session_title: "pixel-forge-thread-a",
+                  agent_deck_tool: "codex",
+                  agent_deck_session_status: null,
+                  binding_state: "detached",
+                  workspace_kind: "clone",
+                  origin_kind: "managed",
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:00:00Z",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
         if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
           return new Response(
             JSON.stringify({
@@ -296,6 +351,11 @@ describe("session-store thread switching", () => {
       threadId: "thread-a",
       agentDeckSessionId: null,
       agentDeckTool: null,
+    });
+    expect(useSessionStore.getState().projectChats[0]).toMatchObject({
+      threadId: "thread-a",
+      bindingState: "detached",
+      agentDeckSessionId: "dead-session-a",
     });
     expect(useSessionStore.getState().agentType).toBe("claude");
   });
@@ -360,6 +420,52 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
+        if (url.includes("/api/projects/") && url.includes("/chats")) {
+          const projectPath = decodeURIComponent(
+            url.split("/api/projects/")[1].split("/chats")[0]
+          );
+          const chat =
+            projectPath === "/tmp/other-project"
+              ? {
+                  id: "thread-b",
+                  project_path: "/tmp/other-project",
+                  title: "pixel-forge-thread-b",
+                  thread_id: "thread-b",
+                  workspace_path: "/tmp/other-project/.agents/thread-b",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "deck-session-b",
+                  agent_deck_session_title: "pixel-forge-thread-b",
+                  agent_deck_tool: "claude",
+                  agent_deck_session_status: "idle",
+                  binding_state: "attached",
+                  workspace_kind: "clone",
+                  origin_kind: "managed",
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:05:00Z",
+                }
+              : {
+                  id: "thread-a",
+                  project_path: "/tmp/example-project",
+                  title: "pixel-forge-thread-a",
+                  thread_id: "thread-a",
+                  workspace_path: "/tmp/example-project/.agents/thread-a",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "deck-session-a",
+                  agent_deck_session_title: "pixel-forge-thread-a",
+                  agent_deck_tool: "codex",
+                  agent_deck_session_status: "running",
+                  binding_state: "attached",
+                  workspace_kind: "clone",
+                  origin_kind: "managed",
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:00:00Z",
+                };
+
+          return new Response(
+            JSON.stringify({ chats: [chat] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
         if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
           return new Response(
             JSON.stringify({
@@ -407,7 +513,7 @@ describe("session-store thread switching", () => {
       path: "/tmp/example-project",
       persistProfile: false,
     });
-    await useSessionStore.getState().refreshProjectSessions("/tmp/other-project");
+    await useSessionStore.getState().refreshProjectChats("/tmp/other-project");
 
     const state = useSessionStore.getState();
     expect(state.projectPath).toBe("/tmp/example-project");
@@ -419,7 +525,7 @@ describe("session-store thread switching", () => {
       projectPath: "/tmp/example-project",
       threadId: "thread-a",
     });
-    expect(state.projectSessionsByProject["/tmp/other-project"][0]).toMatchObject({
+    expect(state.projectChatsByProject["/tmp/other-project"][0]).toMatchObject({
       projectPath: "/tmp/other-project",
       threadId: "thread-b",
       agentDeckSessionId: "deck-session-b",
