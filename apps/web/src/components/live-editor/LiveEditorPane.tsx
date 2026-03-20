@@ -1197,7 +1197,6 @@ export function LiveEditorPane() {
     toast.success(`Created isolated session · ${created.title || created.id}`)
     return createdPath
   }, [
-    agentDeckTargets,
     createAgentDeckTargetSession,
     projectPath,
     resolvedMirrorTarget?.workspacePath,
@@ -2265,13 +2264,15 @@ export function LiveEditorPane() {
           <div className="mt-2 flex flex-1 min-h-0 flex-col overflow-hidden">
             <TabsContent
               value="chat"
-              className="m-0 flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden"
+              className="m-0 min-h-0 flex-1 min-w-0 overflow-hidden"
             >
-              <ChatMessages
-                onRefreshPreview={() => void refreshApp()}
-                onLoadPreviewUpdate={() => void loadUpdatedPixelForgePreview()}
-                onApplyControllerUpdate={() => void applyControllerUpdate()}
-              />
+              <div className="flex h-full flex-col overflow-hidden">
+                <ChatMessages
+                  onRefreshPreview={() => void refreshApp()}
+                  onLoadPreviewUpdate={() => void loadUpdatedPixelForgePreview()}
+                  onApplyControllerUpdate={() => void applyControllerUpdate()}
+                />
+              </div>
             </TabsContent>
 
             <TabsContent
