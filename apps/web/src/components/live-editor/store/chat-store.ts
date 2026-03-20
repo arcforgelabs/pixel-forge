@@ -13,6 +13,7 @@ import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { hasDesktopAppMethod } from '@/lib/desktop-app'
 import type {
   PixelForgeDesktopPendingControllerUpdate,
+  PixelForgeDesktopPreviewTool,
   PixelForgePendingPreviewUpdate,
 } from '@/types/pixel-forge-desktop'
 import { useSessionStore } from '../../../store/session-store'
@@ -70,6 +71,52 @@ interface PendingOutboundMessage {
   payload: Record<string, unknown>
 }
 
+export type LiveEditorPanelTab = 'chat' | 'elements'
+export type ViewportMode = 'fluid' | 'desktop' | 'phone'
+export type PreviewMode = 'proxy' | 'browser' | null
+
+export interface LocalTargetMeta {
+  kind: 'pixel-forge'
+  runtimeKind: 'mirror' | 'dev'
+  instanceSlug: string
+  projectPath: string
+  sourceRoot: string
+  buildLabel: string
+  createdAt: string | null
+}
+
+export interface PreviewTab {
+  id: string
+  url: string
+  title: string
+  mode: PreviewMode
+  proxySessionId: string | null
+  browserTabId: string | null
+  frameSrc: string
+  snapshotDataUrl: string | null
+  localTarget: LocalTargetMeta | null
+}
+
+export interface PreviewAuthIssue {
+  status: number
+  url: string
+}
+
+export interface ThreadEditorState {
+  activePreviewTool: PixelForgeDesktopPreviewTool
+  targetUrl: string
+  activeTab: LiveEditorPanelTab
+  viewportMode: ViewportMode
+  authIssue: PreviewAuthIssue | null
+  showUrlHistory: boolean
+  previewTabs: PreviewTab[]
+  activePreviewTabId: string | null
+  urlHistory: string[]
+  urlHistoryCursor: number
+}
+
+type StateSetterValue<T> = T | ((current: T) => T)
+
 export interface ThreadChatState {
   messages: ChatMessage[]
   isStreaming: boolean
@@ -86,6 +133,16 @@ export interface ThreadChatState {
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
+  activePreviewTool: PixelForgeDesktopPreviewTool
+  targetUrl: string
+  activeTab: LiveEditorPanelTab
+  viewportMode: ViewportMode
+  authIssue: PreviewAuthIssue | null
+  showUrlHistory: boolean
+  previewTabs: PreviewTab[]
+  activePreviewTabId: string | null
+  urlHistory: string[]
+  urlHistoryCursor: number
 }
 
 interface ActiveThreadViewState {
@@ -103,6 +160,16 @@ interface ActiveThreadViewState {
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
+  activePreviewTool: PixelForgeDesktopPreviewTool
+  targetUrl: string
+  activeTab: LiveEditorPanelTab
+  viewportMode: ViewportMode
+  authIssue: PreviewAuthIssue | null
+  showUrlHistory: boolean
+  previewTabs: PreviewTab[]
+  activePreviewTabId: string | null
+  urlHistory: string[]
+  urlHistoryCursor: number
 }
 
 interface SelectionPayload {
@@ -128,6 +195,16 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   newSession: (targetAgentDeckSessionId?: string | null) => void
   setTargetAgentDeckSessionId: (sessionId: string | null) => void
   getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
+  setActivePreviewTool: (tool: PixelForgeDesktopPreviewTool) => void
+  setTargetUrl: (url: string) => void
+  setActiveTab: (tab: LiveEditorPanelTab) => void
+  setViewportMode: (mode: ViewportMode) => void
+  setAuthIssue: (issue: PreviewAuthIssue | null) => void
+  setShowUrlHistory: (next: StateSetterValue<boolean>) => void
+  setPreviewTabs: (next: StateSetterValue<PreviewTab[]>) => void
+  setActivePreviewTabId: (tabId: string | null) => void
+  setUrlHistory: (next: StateSetterValue<string[]>) => void
+  setUrlHistoryCursor: (next: StateSetterValue<number>) => void
 
   addElement: (element: Omit<SelectedElement, 'timestamp'>) => void
   removeElement: (id: string) => void
@@ -176,6 +253,45 @@ function cloneSelectionState(elements: SelectedElement[]): SelectedElement[] {
   return elements.map(cloneSelectedElement)
 }
 
+function createEmptyPreviewTab(index = 1): PreviewTab {
+  return {
+    id: `preview-${generateId()}`,
+    url: '',
+    title: `Tab ${index}`,
+    mode: null,
+    proxySessionId: null,
+    browserTabId: null,
+    frameSrc: 'about:blank',
+    snapshotDataUrl: null,
+    localTarget: null,
+  }
+}
+
+function createEmptyThreadEditorState(): ThreadEditorState {
+  const initialPreviewTab = createEmptyPreviewTab()
+  return {
+    activePreviewTool: null,
+    targetUrl: '',
+    activeTab: 'chat',
+    viewportMode: 'fluid',
+    authIssue: null,
+    showUrlHistory: false,
+    previewTabs: [initialPreviewTab],
+    activePreviewTabId: initialPreviewTab.id,
+    urlHistory: [],
+    urlHistoryCursor: -1,
+  }
+}
+
+function resolveStateSetterValue<T>(
+  next: StateSetterValue<T>,
+  current: T
+): T {
+  return typeof next === 'function'
+    ? (next as (value: T) => T)(current)
+    : next
+}
+
 function pushUndoSnapshot(
   history: SelectedElement[][],
   snapshot: SelectedElement[]
@@ -201,6 +317,7 @@ function createEmptyThreadState(): ThreadChatState {
     selectedElements: [],
     selectionUndoStack: [],
     selectionRedoStack: [],
+    ...createEmptyThreadEditorState(),
   }
 }
 
@@ -232,6 +349,16 @@ function buildActiveThreadViewState(
     selectedElements: threadState.selectedElements,
     selectionUndoStack: threadState.selectionUndoStack,
     selectionRedoStack: threadState.selectionRedoStack,
+    activePreviewTool: threadState.activePreviewTool,
+    targetUrl: threadState.targetUrl,
+    activeTab: threadState.activeTab,
+    viewportMode: threadState.viewportMode,
+    authIssue: threadState.authIssue,
+    showUrlHistory: threadState.showUrlHistory,
+    previewTabs: threadState.previewTabs,
+    activePreviewTabId: threadState.activePreviewTabId,
+    urlHistory: threadState.urlHistory,
+    urlHistoryCursor: threadState.urlHistoryCursor,
   }
 }
 
@@ -474,6 +601,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     useSessionStore.getState().setSelectedAgentDeckTargetId(
       boundSession?.agentDeckSessionId ?? threadState.targetAgentDeckSessionId ?? null
     )
+  }
+
+  const getThreadPreviewUrl = (threadKey: string | null | undefined): string | null => {
+    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const activePreviewTab = threadState.previewTabs.find(
+      (tab) => tab.id === threadState.activePreviewTabId
+    ) ?? threadState.previewTabs[0] ?? null
+    const normalizedTargetUrl = threadState.targetUrl.trim()
+    if (normalizedTargetUrl) {
+      return normalizedTargetUrl
+    }
+    const normalizedTabUrl = activePreviewTab?.url?.trim() || ''
+    return normalizedTabUrl || null
   }
 
   const updateThreadState = (
@@ -933,7 +1073,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               void stagePreviewUpdateNotice({
                 projectPath: sessionState.projectPath,
                 workspacePath: resolvedWorkspacePath,
-                previewUrl: sessionState.previewUrl,
+                previewUrl: getThreadPreviewUrl(threadKeyRef),
                 activeMode: sessionState.activeMode,
                 requestId,
                 agentDeckSessionId: resolvedAgentDeckSessionId,
@@ -945,7 +1085,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             if (sessionState.projectPath) {
               void stageControllerUpdateNotice({
                 projectPath: sessionState.projectPath,
-                previewUrl: sessionState.previewUrl,
+                previewUrl: getThreadPreviewUrl(threadKeyRef),
                 activeMode: sessionState.activeMode,
                 requestId,
               }).catch((error) => {
@@ -1192,7 +1332,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         currentRequestId: null,
       }))
 
-      const previewUrl = sessionState.previewUrl
+      const previewUrl = getThreadPreviewUrl(activeThreadKey)
       const selectedTarget =
         sessionState.agentDeckTargets.find(
           (target) => target.id === targetAgentDeckSessionId
@@ -1290,6 +1430,76 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         targetAgentDeckSessionId: normalizedSessionId,
       }))
       useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
+    },
+
+    setActivePreviewTool: (tool) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        activePreviewTool: tool === 'select' ? 'select' : null,
+      }))
+    },
+
+    setTargetUrl: (url) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        targetUrl: url,
+      }))
+    },
+
+    setActiveTab: (tab) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        activeTab: tab,
+      }))
+    },
+
+    setViewportMode: (mode) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        viewportMode: mode,
+      }))
+    },
+
+    setAuthIssue: (issue) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        authIssue: issue,
+      }))
+    },
+
+    setShowUrlHistory: (next) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        showUrlHistory: resolveStateSetterValue(next, threadState.showUrlHistory),
+      }))
+    },
+
+    setPreviewTabs: (next) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        previewTabs: resolveStateSetterValue(next, threadState.previewTabs),
+      }))
+    },
+
+    setActivePreviewTabId: (tabId) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        activePreviewTabId: tabId,
+      }))
+    },
+
+    setUrlHistory: (next) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        urlHistory: resolveStateSetterValue(next, threadState.urlHistory),
+      }))
+    },
+
+    setUrlHistoryCursor: (next) => {
+      updateThreadState(get().activeThreadKey, (threadState) => ({
+        ...threadState,
+        urlHistoryCursor: resolveStateSetterValue(next, threadState.urlHistoryCursor),
+      }))
     },
 
     addElement: (element) => {

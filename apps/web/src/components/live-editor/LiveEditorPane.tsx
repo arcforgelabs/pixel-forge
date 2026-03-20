@@ -47,36 +47,16 @@ import {
   resolveIsolatedMirrorSourceRoot,
 } from './mirror-targets'
 import { SelectedElementsList } from './SelectedElementsList'
-import { useLiveEditorStore } from './store/chat-store'
+import {
+  useLiveEditorStore,
+  type LocalTargetMeta,
+  type PreviewTab,
+  type ViewportMode,
+} from './store/chat-store'
 import {
   type SelectionRecord,
   type SelectionRegion,
 } from './selection-engine'
-
-type ViewportMode = 'fluid' | 'desktop' | 'phone'
-type PreviewMode = 'proxy' | 'browser' | null
-
-interface LocalTargetMeta {
-  kind: 'pixel-forge'
-  runtimeKind: 'mirror' | 'dev'
-  instanceSlug: string
-  projectPath: string
-  sourceRoot: string
-  buildLabel: string
-  createdAt: string | null
-}
-
-interface PreviewTab {
-  id: string
-  url: string
-  title: string
-  mode: PreviewMode
-  proxySessionId: string | null
-  browserTabId: string | null
-  frameSrc: string
-  snapshotDataUrl: string | null
-  localTarget: LocalTargetMeta | null
-}
 
 interface BrowserPreviewLoadResponse {
   mode: 'browser'
@@ -402,27 +382,9 @@ export function LiveEditorPane() {
   const desktopOverlayRef = useRef(window.pixelForgeDesktop?.overlay ?? null)
   const desktopAppRef = useRef(window.pixelForgeDesktop?.app ?? null)
 
-  const [activePreviewTool, setActivePreviewTool] = useState<PixelForgeDesktopPreviewTool>(null)
-  const [targetUrl, setTargetUrl] = useState(previewUrl || '')
-  const [activeTab, setActiveTab] = useState('chat')
-  const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
-  const [authIssue, setAuthIssue] = useState<{ status: number; url: string } | null>(null)
-  const [showUrlHistory, setShowUrlHistory] = useState(false)
-  const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>(() => [
-    createPreviewTab('', null, 1),
-  ])
-  const [activePreviewTabId, setActivePreviewTabId] = useState<string | null>(null)
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
-  const isSelectionToolActive = activePreviewTool === 'select'
-
-  // URL navigation history (back/forward)
-  const [urlHistory, setUrlHistory] = useState<string[]>([])
-  const [urlHistoryCursor, setUrlHistoryCursor] = useState(-1)
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
-
-  const canGoBack = urlHistoryCursor > 0
-  const canGoForward = urlHistoryCursor < urlHistory.length - 1
 
   useEffect(() => {
     const desktopApp = desktopAppRef.current
@@ -435,7 +397,9 @@ export function LiveEditorPane() {
       if (cancelled) {
         return
       }
-      setActivePreviewTool(inputState?.armedTool === 'select' ? 'select' : null)
+      useLiveEditorStore
+        .getState()
+        .setActivePreviewTool(inputState?.armedTool === 'select' ? 'select' : null)
     }
 
     void desktopApp.getPreviewInputState()
@@ -464,38 +428,6 @@ export function LiveEditorPane() {
       window.removeEventListener('pixel-forge-app', handleAppEvent as EventListener)
     }
   }, [])
-
-  const pushUrlHistory = useCallback((url: string) => {
-    if (urlNavRef.current) {
-      urlNavRef.current = false
-      return
-    }
-    if (!url) return
-    setUrlHistory((prev) => {
-      const truncated = prev.slice(0, urlHistoryCursor + 1)
-      if (truncated[truncated.length - 1] === url) return truncated
-      return [...truncated, url]
-    })
-    setUrlHistoryCursor((prev) => prev + 1)
-  }, [urlHistoryCursor])
-
-  const goBack = useCallback(() => {
-    if (!canGoBack) return
-    const prevUrl = urlHistory[urlHistoryCursor - 1]
-    setUrlHistoryCursor((c) => c - 1)
-    setTargetUrl(prevUrl)
-    urlNavRef.current = true
-    void loadAppRef.current?.(prevUrl)
-  }, [canGoBack, urlHistory, urlHistoryCursor])
-
-  const goForward = useCallback(() => {
-    if (!canGoForward) return
-    const nextUrl = urlHistory[urlHistoryCursor + 1]
-    setUrlHistoryCursor((c) => c + 1)
-    setTargetUrl(nextUrl)
-    urlNavRef.current = true
-    void loadAppRef.current?.(nextUrl)
-  }, [canGoForward, urlHistory, urlHistoryCursor])
 
   // We need a ref to loadApp so goBack/goForward can call it without circular deps
   const loadAppRef = useRef<((url?: string) => Promise<void>) | null>(null)
@@ -531,7 +463,26 @@ export function LiveEditorPane() {
     disconnectAll,
     activateThread,
     resetForProject,
-    connected,
+    activePreviewTool,
+    targetUrl,
+    activeTab,
+    viewportMode,
+    authIssue,
+    showUrlHistory,
+    previewTabs,
+    activePreviewTabId,
+    urlHistory,
+    urlHistoryCursor,
+    setActivePreviewTool,
+    setTargetUrl,
+    setActiveTab,
+    setViewportMode,
+    setAuthIssue,
+    setShowUrlHistory,
+    setPreviewTabs,
+    setActivePreviewTabId,
+    setUrlHistory,
+    setUrlHistoryCursor,
     addElement,
     removeElement,
     removeElements,
@@ -545,8 +496,43 @@ export function LiveEditorPane() {
   } = useLiveEditorStore()
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
+  const isSelectionToolActive = activePreviewTool === 'select'
+  const canGoBack = urlHistoryCursor > 0
+  const canGoForward = urlHistoryCursor < urlHistory.length - 1
   const canUndoSelections = selectionUndoStack.length > 0
   const canRedoSelections = selectionRedoStack.length > 0
+
+  const pushUrlHistory = useCallback((url: string) => {
+    if (urlNavRef.current) {
+      urlNavRef.current = false
+      return
+    }
+    if (!url) return
+    setUrlHistory((prev) => {
+      const truncated = prev.slice(0, urlHistoryCursor + 1)
+      if (truncated[truncated.length - 1] === url) return truncated
+      return [...truncated, url]
+    })
+    setUrlHistoryCursor((prev) => prev + 1)
+  }, [setUrlHistory, setUrlHistoryCursor, urlHistoryCursor])
+
+  const goBack = useCallback(() => {
+    if (!canGoBack) return
+    const prevUrl = urlHistory[urlHistoryCursor - 1]
+    setUrlHistoryCursor((c) => c - 1)
+    setTargetUrl(prevUrl)
+    urlNavRef.current = true
+    void loadAppRef.current?.(prevUrl)
+  }, [canGoBack, setTargetUrl, setUrlHistoryCursor, urlHistory, urlHistoryCursor])
+
+  const goForward = useCallback(() => {
+    if (!canGoForward) return
+    const nextUrl = urlHistory[urlHistoryCursor + 1]
+    setUrlHistoryCursor((c) => c + 1)
+    setTargetUrl(nextUrl)
+    urlNavRef.current = true
+    void loadAppRef.current?.(nextUrl)
+  }, [canGoForward, setTargetUrl, setUrlHistoryCursor, urlHistory, urlHistoryCursor])
 
   useEffect(() => {
     selectedElementsRef.current = selectedElements
@@ -564,7 +550,7 @@ export function LiveEditorPane() {
     if (!activePreviewTabId && previewTabs[0]) {
       setActivePreviewTabId(previewTabs[0].id)
     }
-  }, [activePreviewTabId, previewTabs])
+  }, [activePreviewTabId, previewTabs, setActivePreviewTabId])
 
   useEffect(() => {
     connect()
@@ -617,15 +603,6 @@ export function LiveEditorPane() {
     projectSessions.length,
     selectedAgentDeckTargetId,
   ])
-
-  useEffect(() => {
-    const timer1 = setTimeout(() => setActiveTab('elements'), 500)
-    const timer2 = setTimeout(() => setActiveTab('chat'), 600)
-    return () => {
-      clearTimeout(timer1)
-      clearTimeout(timer2)
-    }
-  }, [])
 
   useEffect(() => {
     targetUrlRef.current = targetUrl
@@ -738,7 +715,7 @@ export function LiveEditorPane() {
           : entry
       )
     )
-  }, [])
+  }, [setPreviewTabs])
 
   const getTabForMessageSource = useCallback((source: MessageEventSource | null) => {
     if (!source) return null
@@ -1069,7 +1046,18 @@ export function LiveEditorPane() {
         )
       }
     }
-  }, [pushUrlHistory, sendBrowserCommand, syncAllPreviewSelectionModes, syncStorePreviewUrl, syncTabSelections, updateEmbeddedPreviewBounds])
+  }, [
+    pushUrlHistory,
+    sendBrowserCommand,
+    setActivePreviewTabId,
+    setAuthIssue,
+    setPreviewTabs,
+    setTargetUrl,
+    syncAllPreviewSelectionModes,
+    syncStorePreviewUrl,
+    syncTabSelections,
+    updateEmbeddedPreviewBounds,
+  ])
 
   // Keep loadAppRef in sync for back/forward navigation
   loadAppRef.current = loadApp
@@ -1106,7 +1094,7 @@ export function LiveEditorPane() {
     }
 
     setShowUrlHistory((current) => !current)
-  }, [currentProjectUrls, loadApp, targetUrl])
+  }, [currentProjectUrls, loadApp, setShowUrlHistory, setTargetUrl, targetUrl])
 
   const applyControllerUpdate = useCallback(async () => {
     const desktopApp = desktopAppRef.current
@@ -1114,19 +1102,20 @@ export function LiveEditorPane() {
       toast.error('Applying controller updates requires the Pixel Forge desktop shell.')
       return
     }
+    const activePreviewUrl = getActivePreviewTab()?.url || targetUrl || previewUrl
 
     const toastId = toast.loading('Loading updated Pixel Forge build...')
     try {
       if (desktopApp.startPendingControllerUpdate) {
         desktopApp.startPendingControllerUpdate({
           projectPath: projectPath ?? '',
-          previewUrl,
+          previewUrl: activePreviewUrl,
           activeMode,
         })
       } else if (desktopApp.applyPendingControllerUpdate) {
         await desktopApp.applyPendingControllerUpdate({
           projectPath: projectPath ?? '',
-          previewUrl,
+          previewUrl: activePreviewUrl,
           activeMode,
         })
       } else if (desktopApp.applyControllerUpdate) {
@@ -1135,7 +1124,7 @@ export function LiveEditorPane() {
         }
         await desktopApp.applyControllerUpdate({
           projectPath,
-          previewUrl,
+          previewUrl: activePreviewUrl,
           activeMode,
         })
       } else {
@@ -1150,7 +1139,7 @@ export function LiveEditorPane() {
           : 'Failed to load updated Pixel Forge build'
       )
     }
-  }, [activeMode, previewUrl, projectPath])
+  }, [activeMode, getActivePreviewTab, previewUrl, projectPath, targetUrl])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -1173,7 +1162,15 @@ export function LiveEditorPane() {
         await sendBrowserCommand(tab.browserTabId, 'focus')
       }
     }
-  }, [sendBrowserCommand, syncStorePreviewUrl, updateEmbeddedPreviewBounds])
+  }, [
+    sendBrowserCommand,
+    setActivePreviewTabId,
+    setAuthIssue,
+    setShowUrlHistory,
+    setTargetUrl,
+    syncStorePreviewUrl,
+    updateEmbeddedPreviewBounds,
+  ])
 
   const openUrlInPreviewTab = useCallback(async (
     url: string,
@@ -1230,7 +1227,16 @@ export function LiveEditorPane() {
     })
 
     return nextTab.id
-  }, [activatePreviewTab, getActivePreviewTab, loadApp])
+  }, [
+    activatePreviewTab,
+    getActivePreviewTab,
+    loadApp,
+    setActivePreviewTabId,
+    setAuthIssue,
+    setPreviewTabs,
+    setShowUrlHistory,
+    setTargetUrl,
+  ])
 
   const openLocalTargetInPreviewTab = useCallback(async (
     record: LocalPixelForgeTargetResponse,
@@ -1390,7 +1396,14 @@ export function LiveEditorPane() {
     setAuthIssue(null)
     setShowUrlHistory(false)
     void syncStorePreviewUrl(null)
-  }, [syncStorePreviewUrl])
+  }, [
+    setActivePreviewTabId,
+    setAuthIssue,
+    setPreviewTabs,
+    setShowUrlHistory,
+    setTargetUrl,
+    syncStorePreviewUrl,
+  ])
 
   const launchPixelForgeTarget = useCallback(async () => {
     if (!projectPath) {
@@ -1504,7 +1517,16 @@ export function LiveEditorPane() {
         await sendBrowserCommand(nextTab.browserTabId, 'focus')
       }
     }
-  }, [sendBrowserCommand, syncStorePreviewUrl, updateEmbeddedPreviewBounds])
+  }, [
+    sendBrowserCommand,
+    setActivePreviewTabId,
+    setAuthIssue,
+    setPreviewTabs,
+    setShowUrlHistory,
+    setTargetUrl,
+    syncStorePreviewUrl,
+    updateEmbeddedPreviewBounds,
+  ])
 
   const refreshApp = useCallback(async () => {
     const activePreviewTab = getActivePreviewTab()
@@ -1544,7 +1566,13 @@ export function LiveEditorPane() {
     } catch (error) {
       console.error('[live-editor] Failed to refresh active preview tab:', error)
     }
-  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, sendBrowserCommand, updateEmbeddedPreviewBounds])
+  }, [
+    getActivePreviewTab,
+    hasEmbeddedBrowserPreview,
+    sendBrowserCommand,
+    setPreviewTabs,
+    updateEmbeddedPreviewBounds,
+  ])
 
   useEffect(() => {
     if (lastProjectPathRef.current === projectPath) {
@@ -1570,7 +1598,16 @@ export function LiveEditorPane() {
         announceSuccess: false,
       })
     }
-  }, [projectPath, previewUrl, loadApp])
+  }, [
+    loadApp,
+    previewUrl,
+    projectPath,
+    setActivePreviewTabId,
+    setAuthIssue,
+    setPreviewTabs,
+    setShowUrlHistory,
+    setTargetUrl,
+  ])
 
   useEffect(() => {
     const normalizedPreviewUrl = previewUrl?.trim() || null
@@ -1619,7 +1656,7 @@ export function LiveEditorPane() {
       persist: false,
       announceSuccess: false,
     })
-  }, [previewUrl, getActivePreviewTab, loadApp])
+  }, [previewUrl, getActivePreviewTab, loadApp, setAuthIssue, setPreviewTabs, setTargetUrl])
 
   useEffect(() => {
     const desktopPreview = desktopPreviewRef.current
@@ -1684,7 +1721,7 @@ export function LiveEditorPane() {
         })
       }
     }
-  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, isSelectionToolActive])
+  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, isSelectionToolActive, setActivePreviewTool])
 
   const handleIframeLoad = useCallback((tabId: string) => {
     setTimeout(() => {
@@ -1799,7 +1836,18 @@ export function LiveEditorPane() {
 
     window.addEventListener('message', handleProxyMessage)
     return () => window.removeEventListener('message', handleProxyMessage)
-  }, [addElement, getActivePreviewTab, getTabForMessageSource, removeElement, replaceElement, syncStorePreviewUrl])
+  }, [
+    addElement,
+    getActivePreviewTab,
+    getTabForMessageSource,
+    removeElement,
+    replaceElement,
+    setActivePreviewTool,
+    setAuthIssue,
+    setPreviewTabs,
+    setTargetUrl,
+    syncStorePreviewUrl,
+  ])
 
   const handleBrowserPreviewEvent = useCallback((payload: BrowserPreviewEvent) => {
     const sourceTab = getPreviewTabByBrowserId(payload.browser_tab_id)
@@ -1931,7 +1979,22 @@ export function LiveEditorPane() {
           : 'Managed browser tab was closed. Reload the URL to reopen it.'
       )
     }
-  }, [addElement, getActivePreviewTab, getPreviewTabByBrowserId, hasEmbeddedBrowserPreview, pushUrlHistory, removeElement, removeElements, replaceElement, syncStorePreviewUrl, syncTabSelections])
+  }, [
+    addElement,
+    getActivePreviewTab,
+    getPreviewTabByBrowserId,
+    hasEmbeddedBrowserPreview,
+    pushUrlHistory,
+    removeElement,
+    removeElements,
+    replaceElement,
+    setActivePreviewTool,
+    setAuthIssue,
+    setPreviewTabs,
+    setTargetUrl,
+    syncStorePreviewUrl,
+    syncTabSelections,
+  ])
 
   useEffect(() => {
     if (desktopPreviewRef.current) {
@@ -2248,10 +2311,10 @@ export function LiveEditorPane() {
               {isSelectionToolActive ? 'Selecting' : 'Select'}
             </Button>
 
-            <div className="ml-auto flex items-center gap-1.5">
-              <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
-                {viewportModes.map(({ mode, label, title, icon: Icon }) => (
-                  <Button
+              <div className="ml-auto flex items-center gap-1.5">
+                <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
+                  {viewportModes.map(({ mode, label, title, icon: Icon }) => (
+                    <Button
                     key={mode}
                     variant={viewportMode === mode ? 'default' : 'ghost'}
                     size="sm"
@@ -2263,18 +2326,11 @@ export function LiveEditorPane() {
                   >
                     <Icon className="h-3 w-3" />
                     <span className="hidden sm:inline">{label}</span>
-                  </Button>
-                ))}
+                    </Button>
+                  ))}
+                </div>
               </div>
-
-              <div
-                className={`h-1.5 w-1.5 rounded-full transition-colors ${
-                  connected ? 'bg-primary shadow-[0_0_6px_1px_hsl(var(--primary)/0.3)]' : 'bg-destructive'
-                }`}
-                title={connected ? 'Connected' : 'Disconnected'}
-              />
             </div>
-          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto bg-background/50 p-3">
@@ -2348,7 +2404,11 @@ export function LiveEditorPane() {
       </div>
 
       <div className="flex w-[clamp(320px,26vw,420px)] min-w-[300px] max-w-[42vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-card/50">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col overflow-hidden">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value === 'elements' ? 'elements' : 'chat')}
+          className="flex h-full flex-col overflow-hidden"
+        >
           <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
             <TabsTrigger value="chat" className="gap-1.5 text-xs">
               <MessageSquare className="h-3.5 w-3.5" />

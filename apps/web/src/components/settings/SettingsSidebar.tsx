@@ -162,6 +162,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     newSession: resetLiveEditorThread,
     setTargetAgentDeckSessionId,
     getThreadStatus,
+    threadStates,
   } = useLiveEditorStore();
   const { appState } = useAppStore();
   const shouldDisableStackUpdates =
@@ -302,6 +303,16 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleCreateAgentDeckTarget(startFreshThread = false) {
+    if (startFreshThread) {
+      const emptyThreadKey = Object.entries(threadStates).find(
+        ([, ts]) => ts.messages.length === 0
+      )?.[0];
+      if (emptyThreadKey) {
+        activateThread(emptyThreadKey);
+        toast('An empty chat already exists — use it or send a message first.');
+        return;
+      }
+    }
     try {
       const created = await createAgentDeckTargetSession({ agentType });
       if (startFreshThread) {
@@ -443,6 +454,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 return;
                               }
 
+                              if (!isExpanded) {
+                                void handleRefreshAgentDeckTargets();
+                              }
                               setExpandedProjectPath(isExpanded ? null : project.path);
                             }}
                             disabled={!isActive && isStreaming}
@@ -475,27 +489,34 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
                           {isExpanded && (
                             <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
-                              {threads.map((session) => {
-                                const isActiveThread = liveEditorSession?.threadId === session.threadId;
-                                const threadStatus = getThreadStatus(session.threadId);
-                                const label =
-                                  session.agentDeckSessionTitle
-                                  || `Chat ${session.threadId.slice(0, 8)}`;
+                              {isActive && agentDeckTargets.map((target) => {
+                                const claimedThread = threads.find(
+                                  (session) => session.agentDeckSessionId === target.id
+                                );
+                                const isActiveChat =
+                                  liveEditorSession?.agentDeckSessionId === target.id
+                                  || selectedAgentDeckTargetId === target.id;
+                                const threadStatus = claimedThread
+                                  ? getThreadStatus(claimedThread.threadId)
+                                  : null;
+                                const label = target.title || target.id;
 
                                 return (
                                   <button
-                                    key={session.threadId}
+                                    key={target.id}
                                     onClick={() => {
-                                      if (isActiveThread) {
-                                        return;
+                                      if (isActiveChat) return;
+                                      if (claimedThread) {
+                                        switchToThread(claimedThread);
+                                        activateThread(claimedThread.threadId);
+                                      } else {
+                                        resetLiveEditorThread(target.id);
                                       }
-                                      switchToThread(session);
-                                      activateThread(session.threadId);
                                     }}
                                     className={`
                                       flex items-center gap-1.5 rounded-md px-2 py-1 text-xs w-full
                                       transition-colors duration-100
-                                      ${isActiveThread
+                                      ${isActiveChat
                                         ? "text-primary"
                                         : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                                       }
@@ -504,22 +525,72 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                   >
                                     <MessageSquare className="h-3 w-3 flex-shrink-0" />
                                     <span className="truncate flex-1 text-left">{label}</span>
-                                    {threadStatus.isStreaming && (
+                                    {threadStatus?.isStreaming && (
                                       <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
                                         Live
                                       </span>
                                     )}
-                                    <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
-                                      {formatRelativeTime(session.lastActive)}
-                                    </span>
-                                    {isActiveThread && (
+                                    {claimedThread && (
+                                      <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
+                                        {formatRelativeTime(claimedThread.lastActive)}
+                                      </span>
+                                    )}
+                                    {isActiveChat && (
                                       <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
                                     )}
                                   </button>
                                 );
                               })}
 
-                              {threads.length === 0 && !liveEditorSession && (
+                              {threads
+                                .filter((session) =>
+                                  !isActive || !agentDeckTargets.some((target) => target.id === session.agentDeckSessionId)
+                                )
+                                .map((session) => {
+                                  const isActiveThread = liveEditorSession?.threadId === session.threadId;
+                                  const threadStatus = getThreadStatus(session.threadId);
+                                  const label =
+                                    session.agentDeckSessionTitle
+                                    || `Chat ${session.threadId.slice(0, 8)}`;
+
+                                  return (
+                                    <button
+                                      key={session.threadId}
+                                      onClick={() => {
+                                        if (isActiveThread) {
+                                          return;
+                                        }
+                                        switchToThread(session);
+                                        activateThread(session.threadId);
+                                      }}
+                                      className={`
+                                        flex items-center gap-1.5 rounded-md px-2 py-1 text-xs w-full
+                                        transition-colors duration-100
+                                        ${isActiveThread
+                                          ? "text-primary"
+                                          : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                                        }
+                                      `}
+                                      title={label}
+                                    >
+                                      <MessageSquare className="h-3 w-3 flex-shrink-0" />
+                                      <span className="truncate flex-1 text-left">{label}</span>
+                                      {threadStatus.isStreaming && (
+                                        <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
+                                          Live
+                                        </span>
+                                      )}
+                                      <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
+                                        {formatRelativeTime(session.lastActive)}
+                                      </span>
+                                      {isActiveThread && (
+                                        <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+                                      )}
+                                    </button>
+                                  );
+                                })}
+
+                              {(isActive ? agentDeckTargets.length === 0 : true) && threads.length === 0 && !liveEditorSession && (
                                 <span className="px-2 py-1 text-[10px] text-muted-foreground">
                                   No chats yet
                                 </span>

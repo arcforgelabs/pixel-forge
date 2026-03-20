@@ -3,7 +3,20 @@ import { IS_TARGET_MODE } from "@/config";
 import { PanelLeft } from "lucide-react";
 
 export function ModeTabBar() {
-  const { activeMode, projectName, settingsSidebarOpen, toggleSettingsSidebar } = useSessionStore();
+  const {
+    activeMode,
+    projectName,
+    settingsSidebarOpen,
+    toggleSettingsSidebar,
+    liveEditorSession,
+    agentDeckTargets,
+    selectedAgentDeckTargetId,
+  } = useSessionStore();
+
+  const activeChatTitle =
+    liveEditorSession?.agentDeckSessionTitle
+    || agentDeckTargets.find((target) => target.id === selectedAgentDeckTargetId)?.title
+    || null;
 
   return (
     <div className="flex items-center border-b border-border/50 bg-card/40 backdrop-blur-sm px-2 py-3">
@@ -22,6 +35,12 @@ export function ModeTabBar() {
           <>
             <span className="text-border">·</span>
             <span className="truncate max-w-[200px]">{projectName}</span>
+          </>
+        )}
+        {activeMode === "live-editor" && activeChatTitle && (
+          <>
+            <span className="text-border">·</span>
+            <span className="truncate max-w-[200px]">{activeChatTitle}</span>
           </>
         )}
         {IS_TARGET_MODE && (

@@ -80,6 +80,16 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       selectedElements: nextThreadState.selectedElements,
       selectionUndoStack: nextThreadState.selectionUndoStack,
       selectionRedoStack: nextThreadState.selectionRedoStack,
+      activePreviewTool: nextThreadState.activePreviewTool,
+      targetUrl: nextThreadState.targetUrl,
+      activeTab: nextThreadState.activeTab,
+      viewportMode: nextThreadState.viewportMode,
+      authIssue: nextThreadState.authIssue,
+      showUrlHistory: nextThreadState.showUrlHistory,
+      previewTabs: nextThreadState.previewTabs,
+      activePreviewTabId: nextThreadState.activePreviewTabId,
+      urlHistory: nextThreadState.urlHistory,
+      urlHistoryCursor: nextThreadState.urlHistoryCursor,
     }
   })
 }
@@ -212,6 +222,67 @@ describe('live editor selection history', () => {
     ])
   })
 
+  it('keeps live editor preview state isolated per thread', () => {
+    const store = useLiveEditorStore.getState()
+    const firstThreadKey = store.activeThreadKey
+
+    store.setTargetUrl('http://thread-one.localhost:3000')
+    store.setViewportMode('desktop')
+    store.setActiveTab('elements')
+    store.setPreviewTabs([
+      {
+        id: 'tab-one',
+        url: 'http://thread-one.localhost:3000',
+        title: 'Thread One',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: 'browser-tab-one',
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    store.setActivePreviewTabId('tab-one')
+    store.setUrlHistory(['http://thread-one.localhost:3000'])
+    store.setUrlHistoryCursor(0)
+
+    store.newSession('deck-session-b')
+    const secondThreadKey = useLiveEditorStore.getState().activeThreadKey
+    useLiveEditorStore.getState().setTargetUrl('http://thread-two.localhost:3001')
+    useLiveEditorStore.getState().setViewportMode('phone')
+    useLiveEditorStore.getState().setActiveTab('chat')
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-two',
+        url: 'http://thread-two.localhost:3001',
+        title: 'Thread Two',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: 'browser-tab-two',
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-two')
+    useLiveEditorStore.getState().setUrlHistory(['http://thread-two.localhost:3001'])
+    useLiveEditorStore.getState().setUrlHistoryCursor(0)
+
+    useLiveEditorStore.getState().activateThread(firstThreadKey)
+    expect(useLiveEditorStore.getState().targetUrl).toBe('http://thread-one.localhost:3000')
+    expect(useLiveEditorStore.getState().viewportMode).toBe('desktop')
+    expect(useLiveEditorStore.getState().activeTab).toBe('elements')
+    expect(useLiveEditorStore.getState().activePreviewTabId).toBe('tab-one')
+    expect(useLiveEditorStore.getState().previewTabs[0]?.browserTabId).toBe('browser-tab-one')
+
+    useLiveEditorStore.getState().activateThread(secondThreadKey)
+    expect(useLiveEditorStore.getState().targetUrl).toBe('http://thread-two.localhost:3001')
+    expect(useLiveEditorStore.getState().viewportMode).toBe('phone')
+    expect(useLiveEditorStore.getState().activeTab).toBe('chat')
+    expect(useLiveEditorStore.getState().activePreviewTabId).toBe('tab-two')
+    expect(useLiveEditorStore.getState().previewTabs[0]?.browserTabId).toBe('browser-tab-two')
+  })
+
   it('includes the selected Agent Deck target in outbound live-edit payloads', () => {
     useSessionStore.setState({
       selectedAgentDeckTargetId: 'deck-session-123',
@@ -229,6 +300,7 @@ describe('live editor selection history', () => {
       ],
     })
     useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
     expect(ws).not.toBeNull()
@@ -274,6 +346,7 @@ describe('live editor selection history', () => {
       agentType: 'claude',
     })
     useLiveEditorStore.getState().activateThread('thread-1')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
     expect(ws).not.toBeNull()
