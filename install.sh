@@ -211,6 +211,16 @@ UNIT
 
     systemctl --user daemon-reload
     systemctl --user enable "${SERVICE_NAME}.service" 2>/dev/null || true
+    if systemctl --user is-active --quiet "${SERVICE_NAME}.service"; then
+        systemctl --user restart "${SERVICE_NAME}.service"
+        echo "Systemd service restarted."
+    else
+        if systemctl --user start "${SERVICE_NAME}.service" 2>/dev/null; then
+            echo "Systemd service started."
+        else
+            echo "Systemd service was not running; start attempt failed." >&2
+        fi
+    fi
     echo "Systemd service installed and enabled."
 else
     echo "systemctl not found; the launcher will use the non-systemd background fallback."

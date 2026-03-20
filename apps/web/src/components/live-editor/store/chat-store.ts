@@ -12,6 +12,11 @@ import { create } from 'zustand'
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { hasDesktopAppMethod } from '@/lib/desktop-app'
 import type {
+  PersistedPreviewTab,
+  PersistedThreadEditorState,
+  ProjectSessionRecord,
+} from '@/store/session-store'
+import type {
   PixelForgeDesktopPendingControllerUpdate,
   PixelForgeDesktopPreviewTool,
   PixelForgePendingPreviewUpdate,
@@ -187,6 +192,12 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   // NOTE: projectPath and persisted bound session metadata live in session-store.
   activateThread: (threadKey: string | null) => void
   resetForProject: () => void
+  hydrateProjectThreads: (options: {
+    projectSessions: ProjectSessionRecord[]
+    activeThreadKey?: string | null
+    previewUrl?: string | null
+  }) => void
+  persistThreadState: (threadKey?: string | null) => Promise<void>
   connect: (endpoint?: string) => void
   disconnect: (threadKey?: string | null) => void
   disconnectAll: () => void
@@ -195,6 +206,9 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   newSession: (targetAgentDeckSessionId?: string | null) => void
   setTargetAgentDeckSessionId: (sessionId: string | null) => void
   getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
+  findThreadKeyByTargetAgentDeckSessionId: (
+    sessionId: string | null | undefined
+  ) => string | null
   setActivePreviewTool: (tool: PixelForgeDesktopPreviewTool) => void
   setTargetUrl: (url: string) => void
   setActiveTab: (tab: LiveEditorPanelTab) => void
@@ -319,6 +333,149 @@ function createEmptyThreadState(): ThreadChatState {
     selectionRedoStack: [],
     ...createEmptyThreadEditorState(),
   }
+}
+
+function restorePreviewTab(
+  tab: PersistedPreviewTab,
+  index: number
+): PreviewTab {
+  return {
+    id: tab.id,
+    url: tab.url,
+    title: tab.title || `Tab ${index}`,
+    mode: tab.mode,
+    proxySessionId: null,
+    browserTabId: null,
+    frameSrc: 'about:blank',
+    snapshotDataUrl: null,
+    localTarget: tab.localTarget
+      ? {
+          ...tab.localTarget,
+        }
+      : null,
+  }
+}
+
+function persistPreviewTab(tab: PreviewTab): PersistedPreviewTab {
+  return {
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    mode: tab.mode,
+    localTarget: tab.localTarget
+      ? {
+          ...tab.localTarget,
+        }
+      : null,
+  }
+}
+
+function createThreadEditorStateFromPersisted(
+  editorState: PersistedThreadEditorState | null | undefined,
+  fallbackUrl?: string | null
+): ThreadEditorState {
+  const normalizedFallbackUrl = fallbackUrl?.trim() || ''
+  if (!editorState) {
+    const emptyState = createEmptyThreadEditorState()
+    if (normalizedFallbackUrl) {
+      emptyState.targetUrl = normalizedFallbackUrl
+      emptyState.previewTabs = [
+        {
+          ...emptyState.previewTabs[0],
+          url: normalizedFallbackUrl,
+          title: normalizedFallbackUrl,
+        },
+      ]
+      emptyState.activePreviewTabId = emptyState.previewTabs[0]?.id ?? null
+      emptyState.urlHistory = [normalizedFallbackUrl]
+      emptyState.urlHistoryCursor = 0
+    }
+    return emptyState
+  }
+
+  const restoredTabs = editorState.previewTabs.length > 0
+    ? editorState.previewTabs.map((tab, index) => restorePreviewTab(tab, index + 1))
+    : createEmptyThreadEditorState().previewTabs
+
+  const activePreviewTabId = restoredTabs.some((tab) => tab.id === editorState.activePreviewTabId)
+    ? editorState.activePreviewTabId
+    : restoredTabs[0]?.id ?? null
+  const targetUrl =
+    editorState.targetUrl.trim()
+    || restoredTabs.find((tab) => tab.id === activePreviewTabId)?.url?.trim()
+    || normalizedFallbackUrl
+  const urlHistory = editorState.urlHistory.filter((entry) => entry.trim())
+  const urlHistoryCursor = urlHistory.length > 0
+    ? Math.max(-1, Math.min(editorState.urlHistoryCursor, urlHistory.length - 1))
+    : -1
+
+  return {
+    activePreviewTool: editorState.activePreviewTool === 'select' ? 'select' : null,
+    targetUrl,
+    activeTab: editorState.activeTab === 'elements' ? 'elements' : 'chat',
+    viewportMode:
+      editorState.viewportMode === 'desktop' || editorState.viewportMode === 'phone'
+        ? editorState.viewportMode
+        : 'fluid',
+    authIssue: null,
+    showUrlHistory: !!editorState.showUrlHistory,
+    previewTabs: restoredTabs,
+    activePreviewTabId,
+    urlHistory,
+    urlHistoryCursor,
+  }
+}
+
+function buildPersistedEditorState(
+  threadState: ThreadChatState
+): PersistedThreadEditorState {
+  return {
+    activePreviewTool: threadState.activePreviewTool === 'select' ? 'select' : null,
+    targetUrl: threadState.targetUrl.trim(),
+    activeTab: threadState.activeTab,
+    viewportMode: threadState.viewportMode,
+    showUrlHistory: threadState.showUrlHistory,
+    previewTabs: threadState.previewTabs.map(persistPreviewTab),
+    activePreviewTabId: threadState.activePreviewTabId,
+    urlHistory: threadState.urlHistory.map((entry) => entry.trim()).filter(Boolean),
+    urlHistoryCursor: threadState.urlHistoryCursor,
+  }
+}
+
+function createThreadStateFromSession(
+  session: ProjectSessionRecord,
+  fallbackUrl?: string | null
+): ThreadChatState {
+  return {
+    ...createEmptyThreadState(),
+    targetAgentDeckSessionId: session.agentDeckSessionId ?? null,
+    ...createThreadEditorStateFromPersisted(session.editorState, fallbackUrl),
+  }
+}
+
+function shouldPersistThreadState(
+  threadState: ThreadChatState,
+  session: ProjectSessionRecord | ReturnType<typeof useSessionStore.getState>['liveEditorSession']
+): boolean {
+  if (session) {
+    return true
+  }
+
+  if (threadState.targetAgentDeckSessionId) {
+    return true
+  }
+
+  if (threadState.targetUrl.trim()) {
+    return true
+  }
+
+  if (threadState.previewTabs.length > 1) {
+    return true
+  }
+
+  return threadState.previewTabs.some((tab) =>
+    Boolean(tab.url.trim() || tab.localTarget)
+  )
 }
 
 function getThreadStateSnapshot(
@@ -583,6 +740,8 @@ async function stagePreviewUpdateNotice(options: {
 // ============================================================================
 
 export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
+  const threadPersistenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
   const resolveThreadSession = (threadKey: string | null | undefined) => {
     if (!threadKey) {
       return null
@@ -715,6 +874,77 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     ) {
       sessionStore.setLiveEditorSession(session)
     }
+  }
+
+  const persistThreadSessionNow = async (threadKey: string) => {
+    const sessionStore = useSessionStore.getState()
+    const projectPath = sessionStore.projectPath
+    if (!projectPath) {
+      return
+    }
+
+    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const boundSession = resolveThreadSession(threadKey)
+    if (!shouldPersistThreadState(threadState, boundSession)) {
+      return
+    }
+
+    const targetAgentDeckSessionId =
+      boundSession?.agentDeckSessionId
+      ?? threadState.targetAgentDeckSessionId
+      ?? null
+    const selectedTarget = targetAgentDeckSessionId
+      ? sessionStore.agentDeckTargets.find((target) => target.id === targetAgentDeckSessionId) ?? null
+      : null
+    const savedSession = await sessionStore.persistProjectSession({
+      threadId: threadKey,
+      backend: boundSession?.backend ?? 'agent-deck',
+      workspacePath:
+        boundSession?.workspacePath
+        ?? selectedTarget?.path
+        ?? projectPath,
+      agentDeckSessionId: targetAgentDeckSessionId,
+      agentDeckSessionTitle:
+        boundSession?.agentDeckSessionTitle
+        ?? selectedTarget?.title
+        ?? null,
+      agentDeckTool:
+        boundSession?.agentDeckTool
+        ?? selectedTarget?.tool
+        ?? null,
+      requestId: boundSession?.requestId ?? null,
+      editorState: buildPersistedEditorState(threadState),
+    })
+
+    if (savedSession && get().activeThreadKey === threadKey) {
+      useSessionStore.getState().setLiveEditorSession({
+        threadId: savedSession.threadId,
+        backend: savedSession.backend,
+        workspacePath: savedSession.workspacePath,
+        agentDeckSessionId: savedSession.agentDeckSessionId,
+        agentDeckSessionTitle: savedSession.agentDeckSessionTitle,
+        agentDeckTool: savedSession.agentDeckTool,
+        requestId: savedSession.requestId ?? null,
+        editorState: savedSession.editorState ?? null,
+      })
+    }
+  }
+
+  const scheduleThreadPersistence = (threadKey: string, delay = 150) => {
+    const existingTimer = threadPersistenceTimers.get(threadKey)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+
+    threadPersistenceTimers.set(
+      threadKey,
+      setTimeout(() => {
+        threadPersistenceTimers.delete(threadKey)
+        void persistThreadSessionNow(threadKey).catch((error) => {
+          console.error('[live-editor] Failed to persist thread state:', error)
+        })
+      }, delay)
+    )
   }
 
   const appendSystemError = (threadKey: string, message: string) => {
@@ -1198,6 +1428,20 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }
       return getThreadStateSnapshot(get().threadStates, resolvedThreadKey).targetAgentDeckSessionId
     },
+    findThreadKeyByTargetAgentDeckSessionId: (sessionId) => {
+      const normalizedSessionId = sessionId?.trim() || null
+      if (!normalizedSessionId) {
+        return null
+      }
+
+      for (const [threadKey, threadState] of Object.entries(get().threadStates)) {
+        if (threadState.targetAgentDeckSessionId === normalizedSessionId) {
+          return threadKey
+        }
+      }
+
+      return null
+    },
 
     activateThread: (threadKey) => {
       const nextThreadKey = threadKey?.trim() || createDraftThreadKey()
@@ -1214,11 +1458,58 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     },
 
     resetForProject: () => {
+      for (const timer of threadPersistenceTimers.values()) {
+        clearTimeout(timer)
+      }
+      threadPersistenceTimers.clear()
       const currentThreadStates = get().threadStates
       for (const threadKey of Object.keys(currentThreadStates)) {
         closeThreadSocket(threadKey, true)
       }
       set(createInitialStoreState())
+    },
+
+    hydrateProjectThreads: ({ projectSessions, activeThreadKey, previewUrl }) => {
+      for (const timer of threadPersistenceTimers.values()) {
+        clearTimeout(timer)
+      }
+      threadPersistenceTimers.clear()
+
+      const nextThreadStates: Record<string, ThreadChatState> = {}
+      const preferredThreadKey = activeThreadKey?.trim() || projectSessions[0]?.threadId || null
+
+      for (const session of projectSessions) {
+        nextThreadStates[session.threadId] = createThreadStateFromSession(
+          session,
+          preferredThreadKey === session.threadId ? previewUrl : null
+        )
+      }
+
+      if (Object.keys(nextThreadStates).length === 0) {
+        const draftThreadKey = preferredThreadKey || createDraftThreadKey()
+        nextThreadStates[draftThreadKey] = {
+          ...createEmptyThreadState(),
+          ...createThreadEditorStateFromPersisted(null, previewUrl),
+        }
+      }
+
+      const nextActiveThreadKey =
+        (preferredThreadKey && nextThreadStates[preferredThreadKey] && preferredThreadKey)
+        || Object.keys(nextThreadStates)[0]
+        || createDraftThreadKey()
+
+      set(createStoreState(nextActiveThreadKey, nextThreadStates))
+      syncActiveThreadTargetSelection(nextActiveThreadKey)
+    },
+
+    persistThreadState: async (threadKey) => {
+      const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
+      const existingTimer = threadPersistenceTimers.get(resolvedThreadKey)
+      if (existingTimer) {
+        clearTimeout(existingTimer)
+        threadPersistenceTimers.delete(resolvedThreadKey)
+      }
+      await persistThreadSessionNow(resolvedThreadKey)
     },
 
     connect: (endpoint = '/ws/live-editor') => {
@@ -1408,6 +1699,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           [nextDraftKey]: nextThreadState,
         })
       )
+      scheduleThreadPersistence(nextDraftKey, 0)
     },
 
     setTargetAgentDeckSessionId: (sessionId) => {
@@ -1430,34 +1722,43 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         targetAgentDeckSessionId: normalizedSessionId,
       }))
       useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setActivePreviewTool: (tool) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         activePreviewTool: tool === 'select' ? 'select' : null,
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setTargetUrl: (url) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         targetUrl: url,
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setActiveTab: (tab) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         activeTab: tab,
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setViewportMode: (mode) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         viewportMode: mode,
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setAuthIssue: (issue) => {
@@ -1468,38 +1769,48 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     },
 
     setShowUrlHistory: (next) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         showUrlHistory: resolveStateSetterValue(next, threadState.showUrlHistory),
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setPreviewTabs: (next) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         previewTabs: resolveStateSetterValue(next, threadState.previewTabs),
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setActivePreviewTabId: (tabId) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         activePreviewTabId: tabId,
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setUrlHistory: (next) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         urlHistory: resolveStateSetterValue(next, threadState.urlHistory),
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     setUrlHistoryCursor: (next) => {
-      updateThreadState(get().activeThreadKey, (threadState) => ({
+      const activeThreadKey = get().activeThreadKey
+      updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         urlHistoryCursor: resolveStateSetterValue(next, threadState.urlHistoryCursor),
       }))
+      scheduleThreadPersistence(activeThreadKey)
     },
 
     addElement: (element) => {

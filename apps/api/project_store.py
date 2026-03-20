@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
 from dataclasses import dataclass
+from typing import Any
 
 from state_db import connect as connect_state_db
 from state_db import legacy_instance_db_paths
@@ -12,6 +14,7 @@ from state_db import legacy_live_editor_db_path
 
 _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
+DEFAULT_PROFILE_ID = "default"
 
 
 @dataclass(slots=True)
@@ -42,8 +45,18 @@ class SessionRecord:
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     agent_deck_tool: str | None
+    editor_state: dict[str, Any] | None
     created_at: str
     last_active: str
+
+
+@dataclass(slots=True)
+class ProfileStateRecord:
+    profile_id: str
+    active_project_path: str | None
+    active_mode: str
+    active_live_editor_thread_id: str | None
+    updated_at: str
 
 
 def normalize_project_path(project_path: str) -> str:
@@ -298,9 +311,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
+                editor_state_json TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS profile_state (
+                profile_id TEXT PRIMARY KEY,
+                active_project_path TEXT,
+                active_mode TEXT NOT NULL DEFAULT 'screenshot',
+                active_live_editor_thread_id TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE INDEX IF NOT EXISTS idx_projects_last_opened
@@ -323,6 +345,31 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN agent_deck_tool TEXT"
             )
+        if "editor_state_json" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN editor_state_json TEXT"
+            )
+        existing_profile_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(profile_state)").fetchall()
+        }
+        if existing_profile_columns:
+            if "active_project_path" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN active_project_path TEXT"
+                )
+            if "active_mode" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN active_mode TEXT NOT NULL DEFAULT 'screenshot'"
+                )
+            if "active_live_editor_thread_id" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN active_live_editor_thread_id TEXT"
+                )
+            if "updated_at" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                )
         conn.execute(
             """
             UPDATE sessions
@@ -332,8 +379,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO profile_state (
+                profile_id,
+                active_mode
+            ) VALUES (?, 'screenshot')
+            """,
+            (DEFAULT_PROFILE_ID,),
+        )
         conn.commit()
         _DB_INITIALIZED = True
+
+
+def ensure_state_store_initialized() -> None:
+    with _connect():
+        return
 
 
 def _row_to_url_record(row: sqlite3.Row) -> ProjectUrlRecord:
@@ -344,7 +405,159 @@ def _row_to_url_record(row: sqlite3.Row) -> ProjectUrlRecord:
     )
 
 
+def _normalize_active_mode(value: object | None) -> str:
+    return "live-editor" if value == "live-editor" else "screenshot"
+
+
+def _normalize_profile_id(profile_id: str | None = None) -> str:
+    normalized = str(profile_id or "").strip()
+    return normalized or DEFAULT_PROFILE_ID
+
+
+def _normalize_active_preview_tool(value: object) -> str | None:
+    return "select" if value == "select" else None
+
+
+def _normalize_active_panel_tab(value: object) -> str:
+    return "elements" if value == "elements" else "chat"
+
+
+def _normalize_viewport_mode(value: object) -> str:
+    return str(value) if value in {"fluid", "desktop", "phone"} else "fluid"
+
+
+def _normalize_preview_mode(value: object) -> str | None:
+    if value in {"proxy", "browser"}:
+        return str(value)
+    return None
+
+
+def _normalize_local_target(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    kind = str(value.get("kind") or "").strip()
+    runtime_kind = str(value.get("runtimeKind") or "").strip()
+    project_path = str(value.get("projectPath") or "").strip()
+    source_root = str(value.get("sourceRoot") or "").strip()
+    if kind != "pixel-forge" or runtime_kind not in {"mirror", "dev"}:
+        return None
+    if not project_path or not source_root:
+        return None
+
+    created_at = value.get("createdAt")
+    return {
+        "kind": kind,
+        "runtimeKind": runtime_kind,
+        "instanceSlug": str(value.get("instanceSlug") or "").strip(),
+        "projectPath": project_path,
+        "sourceRoot": source_root,
+        "buildLabel": str(value.get("buildLabel") or "").strip(),
+        "createdAt": created_at if isinstance(created_at, str) and created_at.strip() else None,
+    }
+
+
+def _normalize_preview_tab(value: object, index: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    tab_id = str(value.get("id") or "").strip()
+    if not tab_id:
+        return None
+
+    url = str(value.get("url") or "").strip()
+    title = str(value.get("title") or "").strip() or f"Tab {index}"
+
+    return {
+        "id": tab_id,
+        "url": url,
+        "title": title,
+        "mode": _normalize_preview_mode(value.get("mode")),
+        "localTarget": _normalize_local_target(value.get("localTarget")),
+    }
+
+
+def normalize_session_editor_state(editor_state: object | None) -> dict[str, Any] | None:
+    if not isinstance(editor_state, dict):
+        return None
+
+    normalized_tabs = [
+        normalized_tab
+        for index, raw_tab in enumerate(editor_state.get("previewTabs") or [], start=1)
+        for normalized_tab in [_normalize_preview_tab(raw_tab, index)]
+        if normalized_tab is not None
+    ]
+    if not normalized_tabs:
+        normalized_tabs = [
+            {
+                "id": "preview-restored",
+                "url": "",
+                "title": "Tab 1",
+                "mode": None,
+                "localTarget": None,
+            }
+        ]
+
+    active_preview_tab_id = str(editor_state.get("activePreviewTabId") or "").strip() or None
+    if active_preview_tab_id and not any(
+        tab["id"] == active_preview_tab_id for tab in normalized_tabs
+    ):
+        active_preview_tab_id = normalized_tabs[0]["id"]
+    if active_preview_tab_id is None:
+        active_preview_tab_id = normalized_tabs[0]["id"]
+
+    url_history = [
+        entry.strip()
+        for entry in editor_state.get("urlHistory") or []
+        if isinstance(entry, str) and entry.strip()
+    ][:50]
+
+    raw_url_history_cursor = editor_state.get("urlHistoryCursor")
+    if isinstance(raw_url_history_cursor, bool):
+        url_history_cursor = -1
+    elif isinstance(raw_url_history_cursor, (int, float)):
+        url_history_cursor = int(raw_url_history_cursor)
+    else:
+        url_history_cursor = -1
+    if not url_history:
+        url_history_cursor = -1
+    else:
+        url_history_cursor = max(-1, min(url_history_cursor, len(url_history) - 1))
+
+    return {
+        "activePreviewTool": _normalize_active_preview_tool(
+            editor_state.get("activePreviewTool")
+        ),
+        "targetUrl": str(editor_state.get("targetUrl") or "").strip(),
+        "activeTab": _normalize_active_panel_tab(editor_state.get("activeTab")),
+        "viewportMode": _normalize_viewport_mode(editor_state.get("viewportMode")),
+        "showUrlHistory": bool(editor_state.get("showUrlHistory")),
+        "previewTabs": normalized_tabs[:20],
+        "activePreviewTabId": active_preview_tab_id,
+        "urlHistory": url_history,
+        "urlHistoryCursor": url_history_cursor,
+    }
+
+
+def _serialize_session_editor_state(editor_state: object | None) -> str | None:
+    normalized_state = normalize_session_editor_state(editor_state)
+    if normalized_state is None:
+        return None
+    return json.dumps(normalized_state, separators=(",", ":"), sort_keys=True)
+
+
 def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
+    editor_state: dict[str, Any] | None = None
+    if "editor_state_json" in row.keys():
+        raw_editor_state = row["editor_state_json"]
+        if isinstance(raw_editor_state, str) and raw_editor_state.strip():
+            try:
+                parsed_editor_state = json.loads(raw_editor_state)
+            except json.JSONDecodeError:
+                parsed_editor_state = None
+            if isinstance(parsed_editor_state, dict):
+                editor_state = parsed_editor_state
+
     return SessionRecord(
         id=row["id"],
         project_path=row["project_path"],
@@ -354,8 +567,30 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
         agent_deck_tool=row["agent_deck_tool"],
+        editor_state=editor_state,
         created_at=row["created_at"],
         last_active=row["last_active"],
+    )
+
+
+def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
+    active_project_path = row["active_project_path"]
+    normalized_project_path = (
+        normalize_project_path(active_project_path)
+        if isinstance(active_project_path, str) and active_project_path.strip()
+        else None
+    )
+    active_thread_id = row["active_live_editor_thread_id"]
+    return ProfileStateRecord(
+        profile_id=row["profile_id"],
+        active_project_path=normalized_project_path,
+        active_mode=_normalize_active_mode(row["active_mode"]),
+        active_live_editor_thread_id=(
+            active_thread_id.strip()
+            if isinstance(active_thread_id, str) and active_thread_id.strip()
+            else None
+        ),
+        updated_at=row["updated_at"],
     )
 
 
@@ -391,7 +626,7 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
         rows = conn.execute(
             """
             SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, created_at, last_active
+                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
             FROM sessions
             WHERE project_path = ?
             ORDER BY last_active DESC, id DESC
@@ -461,6 +696,95 @@ def list_projects() -> list[ProjectRecord]:
     ]
 
 
+def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecord:
+    normalized_profile_id = _normalize_profile_id(profile_id)
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO profile_state (
+                profile_id,
+                active_mode
+            ) VALUES (?, 'screenshot')
+            """,
+            (normalized_profile_id,),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id, updated_at
+            FROM profile_state
+            WHERE profile_id = ?
+            """,
+            (normalized_profile_id,),
+        ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Profile state record disappeared during fetch")
+
+    return _row_to_profile_state_record(row)
+
+
+def upsert_profile_state(
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+    active_project_path: str | None = None,
+    active_mode: str = "screenshot",
+    active_live_editor_thread_id: str | None = None,
+) -> ProfileStateRecord:
+    normalized_profile_id = _normalize_profile_id(profile_id)
+    normalized_project_path = (
+        normalize_project_path(active_project_path)
+        if isinstance(active_project_path, str) and active_project_path.strip()
+        else None
+    )
+    normalized_thread_id = (
+        active_live_editor_thread_id.strip()
+        if isinstance(active_live_editor_thread_id, str) and active_live_editor_thread_id.strip()
+        else None
+    )
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO profile_state (
+                profile_id,
+                active_project_path,
+                active_mode,
+                active_live_editor_thread_id
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                active_project_path = excluded.active_project_path,
+                active_mode = excluded.active_mode,
+                active_live_editor_thread_id = CASE
+                    WHEN excluded.active_project_path IS NULL THEN NULL
+                    ELSE excluded.active_live_editor_thread_id
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                normalized_profile_id,
+                normalized_project_path,
+                _normalize_active_mode(active_mode),
+                normalized_thread_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id, updated_at
+            FROM profile_state
+            WHERE profile_id = ?
+            """,
+            (normalized_profile_id,),
+        ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Profile state record disappeared during upsert")
+
+    return _row_to_profile_state_record(row)
+
+
 def upsert_project(
     project_path: str,
     *,
@@ -509,6 +833,16 @@ def delete_project(project_path: str) -> bool:
     normalized_path = normalize_project_path(project_path)
 
     with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE profile_state
+            SET active_project_path = NULL,
+                active_live_editor_thread_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE active_project_path = ?
+            """,
+            (normalized_path,),
+        )
         result = conn.execute(
             """
             DELETE FROM projects
@@ -573,6 +907,7 @@ def upsert_session(
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     agent_deck_tool: str | None = None,
+    editor_state: dict[str, Any] | None = None,
 ) -> SessionRecord:
     normalized_path = normalize_project_path(project_path)
     if not thread_id.strip():
@@ -582,6 +917,7 @@ def upsert_session(
         if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
         else None
     )
+    serialized_editor_state = _serialize_session_editor_state(editor_state)
 
     with _connect() as conn:
         project_exists = conn.execute(
@@ -601,7 +937,7 @@ def upsert_session(
             rows = conn.execute(
                 """
                 SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                       agent_deck_session_title, agent_deck_tool, created_at, last_active
+                       agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
                 FROM sessions
                 WHERE project_path = ?
                   AND agent_deck_session_id = ?
@@ -643,8 +979,9 @@ def upsert_session(
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title,
-                agent_deck_tool
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                agent_deck_tool,
+                editor_state_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
@@ -652,6 +989,7 @@ def upsert_session(
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
+                editor_state_json = COALESCE(excluded.editor_state_json, sessions.editor_state_json),
                 last_active = CURRENT_TIMESTAMP
             """,
             (
@@ -662,6 +1000,7 @@ def upsert_session(
                 normalized_agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
+                serialized_editor_state,
             ),
         )
         conn.execute(
@@ -677,7 +1016,7 @@ def upsert_session(
         row = conn.execute(
             """
             SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, created_at, last_active
+                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
             FROM sessions
             WHERE thread_id = ?
             """,

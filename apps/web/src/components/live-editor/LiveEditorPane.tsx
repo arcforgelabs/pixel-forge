@@ -447,8 +447,10 @@ export function LiveEditorPane() {
   const {
     connect,
     disconnectAll,
+    activeThreadKey,
     activateThread,
-    resetForProject,
+    hydrateProjectThreads,
+    persistThreadState,
     getTargetAgentDeckSessionId,
     activePreviewTool,
     targetUrl,
@@ -567,15 +569,35 @@ export function LiveEditorPane() {
   }, [connect, disconnectAll])
 
   useEffect(() => {
+    const flushActiveThreadState = () => {
+      void persistThreadState()
+    }
+
+    window.addEventListener('pagehide', flushActiveThreadState)
+    window.addEventListener('beforeunload', flushActiveThreadState)
+    return () => {
+      window.removeEventListener('pagehide', flushActiveThreadState)
+      window.removeEventListener('beforeunload', flushActiveThreadState)
+    }
+  }, [persistThreadState])
+
+  useEffect(() => {
     if (lastLiveEditorProjectPathRef.current === projectPath) {
       return
     }
     lastLiveEditorProjectPathRef.current = projectPath
-    resetForProject()
-    if (liveEditorSession?.threadId) {
-      activateThread(liveEditorSession.threadId)
-    }
-  }, [projectPath, liveEditorSession?.threadId, activateThread, resetForProject])
+    hydrateProjectThreads({
+      projectSessions,
+      activeThreadKey: liveEditorSession?.threadId ?? null,
+      previewUrl,
+    })
+  }, [
+    hydrateProjectThreads,
+    liveEditorSession?.threadId,
+    previewUrl,
+    projectPath,
+    projectSessions,
+  ])
 
   useEffect(() => {
     if (liveEditorSession?.threadId) {
@@ -1066,6 +1088,75 @@ export function LiveEditorPane() {
 
   // Keep loadAppRef in sync for back/forward navigation
   loadAppRef.current = loadApp
+
+  const restoreLocalTargetInTab = useCallback(async (tab: PreviewTab) => {
+    if (!projectPath || !tab.localTarget) {
+      return false
+    }
+
+    const record = await requestPreviewJson<LocalPixelForgeTargetResponse>(
+      '/api/local-targets/pixel-forge/start',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          project_path: projectPath,
+          runtime_kind: tab.localTarget.runtimeKind,
+          force_restart: false,
+          source_root: tab.localTarget.sourceRoot,
+        }),
+      }
+    )
+
+    attachLocalTargetToTab(tab.id, record)
+    await loadApp(record.web_url, {
+      tabId: tab.id,
+      persist: false,
+      announceSuccess: false,
+    })
+    return true
+  }, [attachLocalTargetToTab, loadApp, projectPath])
+
+  const restoreActivePreviewTab = useCallback(async () => {
+    if (activeMode !== 'live-editor' || !projectPath) {
+      return
+    }
+
+    const activePreviewTab = getActivePreviewTab() ?? previewTabsRef.current[0] ?? null
+    if (!activePreviewTab?.url.trim()) {
+      return
+    }
+
+    if (activePreviewTab.browserTabId || activePreviewTab.proxySessionId) {
+      return
+    }
+
+    if (activePreviewTab.localTarget?.kind === 'pixel-forge') {
+      try {
+        const restored = await restoreLocalTargetInTab(activePreviewTab)
+        if (restored) {
+          return
+        }
+      } catch (error) {
+        console.error('[live-editor] Failed to restore local target tab:', error)
+      }
+    }
+
+    await loadApp(activePreviewTab.url, {
+      tabId: activePreviewTab.id,
+      persist: false,
+      announceSuccess: false,
+    })
+  }, [
+    activeMode,
+    getActivePreviewTab,
+    loadApp,
+    projectPath,
+    restoreLocalTargetInTab,
+  ])
+
+  useEffect(() => {
+    void restoreActivePreviewTab()
+  }, [activeMode, activePreviewTabId, activeThreadKey, projectPath, restoreActivePreviewTab])
 
   const openUrlHistory = useCallback(async () => {
     if (currentProjectUrls.length === 0) {
@@ -1587,32 +1678,13 @@ export function LiveEditorPane() {
     lastProjectPathRef.current = projectPath
     externalPreviewUrlRef.current = previewUrl?.trim() || null
     iframeRefs.current = {}
-
-    const initialTab = createPreviewTab(previewUrl || '', null, 1)
-    previewTabsRef.current = [initialTab]
-    activeTabIdRef.current = initialTab.id
-    setPreviewTabs([initialTab])
-    setActivePreviewTabId(initialTab.id)
     setShowUrlHistory(false)
     setAuthIssue(null)
-    setTargetUrl(initialTab.url)
-
-    if (initialTab.url) {
-      void loadApp(initialTab.url, {
-        tabId: initialTab.id,
-        persist: false,
-        announceSuccess: false,
-      })
-    }
   }, [
-    loadApp,
     previewUrl,
     projectPath,
-    setActivePreviewTabId,
     setAuthIssue,
-    setPreviewTabs,
     setShowUrlHistory,
-    setTargetUrl,
   ])
 
   useEffect(() => {

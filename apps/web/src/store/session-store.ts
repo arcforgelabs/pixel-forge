@@ -8,6 +8,39 @@ import type {
 
 export type ActiveMode = "screenshot" | "live-editor";
 export type OutputMode = "scratch" | "custom";
+export type PersistedLiveEditorPreviewMode = "proxy" | "browser" | null;
+export type PersistedLiveEditorPanelTab = "chat" | "elements";
+export type PersistedLiveEditorViewportMode = "fluid" | "desktop" | "phone";
+
+export interface PersistedLocalTargetMeta {
+  kind: "pixel-forge";
+  runtimeKind: "mirror" | "dev";
+  instanceSlug: string;
+  projectPath: string;
+  sourceRoot: string;
+  buildLabel: string;
+  createdAt: string | null;
+}
+
+export interface PersistedPreviewTab {
+  id: string;
+  url: string;
+  title: string;
+  mode: PersistedLiveEditorPreviewMode;
+  localTarget: PersistedLocalTargetMeta | null;
+}
+
+export interface PersistedThreadEditorState {
+  activePreviewTool: "select" | null;
+  targetUrl: string;
+  activeTab: PersistedLiveEditorPanelTab;
+  viewportMode: PersistedLiveEditorViewportMode;
+  showUrlHistory: boolean;
+  previewTabs: PersistedPreviewTab[];
+  activePreviewTabId: string | null;
+  urlHistory: string[];
+  urlHistoryCursor: number;
+}
 
 export interface LiveEditorSessionMeta {
   threadId: string;
@@ -17,6 +50,7 @@ export interface LiveEditorSessionMeta {
   agentDeckSessionTitle: string | null;
   agentDeckTool: string | null;
   requestId?: string | null;
+  editorState?: PersistedThreadEditorState | null;
 }
 
 export interface AgentDeckSessionTarget {
@@ -65,6 +99,14 @@ export interface ProjectSessionRecord extends LiveEditorSessionMeta {
   lastActive: string;
 }
 
+export interface ProfileStateRecord {
+  profileId: string;
+  activeProjectPath: string | null;
+  activeMode: ActiveMode;
+  activeLiveEditorThreadId: string | null;
+  updatedAt: string;
+}
+
 export interface LastSavedFile {
   filePath: string;
   relPath: string;
@@ -94,6 +136,8 @@ interface SessionStore {
   // Server-backed project/session state
   recentProjects: SavedProject[];
   projectSessions: ProjectSessionRecord[];
+  profileState: ProfileStateRecord | null;
+  profileLoaded: boolean;
   agentDeckTargets: AgentDeckSessionTarget[];
   agentDeckTargetsLoading: boolean;
   installedSkills: RegisteredSkill[];
@@ -120,14 +164,25 @@ interface SessionStore {
 
   // Actions
   hydrateProjects: () => Promise<void>;
+  persistProfileState: (
+    nextState?: Partial<Pick<
+      ProfileStateRecord,
+      "activeProjectPath" | "activeMode" | "activeLiveEditorThreadId"
+    >>
+  ) => Promise<ProfileStateRecord | null>;
   setProject: (options: {
     path: string;
     previewUrl?: string;
     outputMode?: OutputMode;
     customOutputPath?: string | null;
+    preferredThreadId?: string | null;
+    persistProfile?: boolean;
   }) => Promise<void>;
   setSessionId: (sessionId: string | null) => void;
   upsertProjectSession: (session: LiveEditorSessionMeta | null) => void;
+  persistProjectSession: (
+    session: LiveEditorSessionMeta | null
+  ) => Promise<ProjectSessionRecord | null>;
   setLiveEditorSession: (session: LiveEditorSessionMeta | null) => void;
   switchMode: (mode: ActiveMode) => void;
   newSession: () => void;
@@ -201,8 +256,17 @@ interface ApiSession {
   agent_deck_session_id: string | null;
   agent_deck_session_title: string | null;
   agent_deck_tool: string | null;
+  editor_state: PersistedThreadEditorState | null;
   created_at: string;
   last_active: string;
+}
+
+interface ApiProfileState {
+  profile_id: string;
+  active_project_path: string | null;
+  active_mode: ActiveMode;
+  active_live_editor_thread_id: string | null;
+  updated_at: string;
 }
 
 interface ApiAgentDeckSessionTarget {
@@ -261,9 +325,21 @@ function normalizeSession(session: ApiSession): ProjectSessionRecord {
     agentDeckSessionId: session.agent_deck_session_id,
     agentDeckSessionTitle: session.agent_deck_session_title,
     agentDeckTool: session.agent_deck_tool,
+    editorState: session.editor_state,
     createdAt: session.created_at,
     lastActive: session.last_active,
     requestId: null,
+  };
+}
+
+function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecord {
+  return {
+    profileId: profileState.profile_id,
+    activeProjectPath: profileState.active_project_path,
+    activeMode:
+      profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
+    activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
+    updatedAt: profileState.updated_at,
   };
 }
 
@@ -322,17 +398,28 @@ function mergeSession(
 
   const now = new Date().toISOString();
   const existing = sessions.find((entry) => entry.threadId === session.threadId);
+  const recordLikeSession = session as Partial<ProjectSessionRecord>;
+  const nextId =
+    typeof recordLikeSession.id === "number" ? recordLikeSession.id : -1;
+  const nextCreatedAt =
+    typeof recordLikeSession.createdAt === "string"
+      ? recordLikeSession.createdAt
+      : existing?.createdAt ?? now;
+  const nextLastActive =
+    typeof recordLikeSession.lastActive === "string"
+      ? recordLikeSession.lastActive
+      : now;
   const merged: ProjectSessionRecord = existing
     ? {
         ...existing,
         ...session,
-        lastActive: now,
+        lastActive: nextLastActive,
       }
     : {
-        id: -1,
+        id: nextId,
         projectPath,
-        createdAt: now,
-        lastActive: now,
+        createdAt: nextCreatedAt,
+        lastActive: nextLastActive,
         ...session,
       };
 
@@ -468,6 +555,51 @@ async function fetchProjectSessions(projectPath: string): Promise<ProjectSession
   return payload.sessions.map(normalizeSession);
 }
 
+async function fetchProfileState(): Promise<ProfileStateRecord> {
+  const payload = await requestJson<ApiProfileState>("/api/profile-state");
+  return normalizeProfileState(payload);
+}
+
+async function upsertProfileStateToApi(options: {
+  profileId?: string;
+  activeProjectPath: string | null;
+  activeMode: ActiveMode;
+  activeLiveEditorThreadId: string | null;
+}): Promise<ProfileStateRecord> {
+  const payload = await requestJson<ApiProfileState>("/api/profile-state", {
+    method: "POST",
+    body: JSON.stringify({
+      profile_id: options.profileId ?? "default",
+      active_project_path: options.activeProjectPath,
+      active_mode: options.activeMode,
+      active_live_editor_thread_id: options.activeLiveEditorThreadId,
+    }),
+  });
+  return normalizeProfileState(payload);
+}
+
+async function upsertProjectSessionToApi(
+  projectPath: string,
+  session: LiveEditorSessionMeta
+): Promise<ProjectSessionRecord> {
+  const payload = await requestJson<ApiSession>(
+    `/api/projects/${encodeURIComponent(projectPath)}/sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        thread_id: session.threadId,
+        backend: session.backend,
+        workspace_path: session.workspacePath,
+        agent_deck_session_id: session.agentDeckSessionId,
+        agent_deck_session_title: session.agentDeckSessionTitle,
+        agent_deck_tool: session.agentDeckTool,
+        editor_state: session.editorState ?? null,
+      }),
+    }
+  );
+  return normalizeSession(payload);
+}
+
 async function fetchAgentDeckTargets(
   projectPath: string
 ): Promise<AgentDeckSessionTarget[]> {
@@ -517,6 +649,40 @@ async function fetchSkills(): Promise<{
   };
 }
 
+function buildNextProfileState(
+  currentState: Pick<
+    SessionStore,
+    "profileState" | "projectPath" | "activeMode" | "liveEditorSession"
+  >,
+  overrides?: Partial<
+    Pick<
+      ProfileStateRecord,
+      "activeProjectPath" | "activeMode" | "activeLiveEditorThreadId"
+    >
+  >
+): {
+  profileId: string;
+  activeProjectPath: string | null;
+  activeMode: ActiveMode;
+  activeLiveEditorThreadId: string | null;
+} {
+  return {
+    profileId: currentState.profileState?.profileId ?? "default",
+    activeProjectPath:
+      overrides?.activeProjectPath !== undefined
+        ? overrides.activeProjectPath
+        : currentState.projectPath,
+    activeMode:
+      overrides?.activeMode !== undefined
+        ? overrides.activeMode
+        : currentState.activeMode,
+    activeLiveEditorThreadId:
+      overrides?.activeLiveEditorThreadId !== undefined
+        ? overrides.activeLiveEditorThreadId
+        : currentState.liveEditorSession?.threadId ?? null,
+  };
+}
+
 export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Current project
   projectPath: null,
@@ -531,6 +697,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Server-backed project/session state
   recentProjects: [],
   projectSessions: [],
+  profileState: null,
+  profileLoaded: false,
   agentDeckTargets: [],
   agentDeckTargetsLoading: false,
   installedSkills: [],
@@ -577,7 +745,13 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   hydrateProjects: async () => {
     set({ projectsLoading: true });
     try {
-      const recentProjects = await fetchProjects();
+      const [recentProjects, profileState] = await Promise.all([
+        fetchProjects(),
+        fetchProfileState().catch((error) => {
+          console.error("[session-store] Failed to load profile state:", error);
+          return null;
+        }),
+      ]);
       set((state) => {
         const currentProject = state.projectPath
           ? recentProjects.find((project) => project.path === state.projectPath)
@@ -585,6 +759,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
         return {
           recentProjects,
+          profileState,
+          profileLoaded: true,
           projectName: currentProject?.name ?? state.projectName,
           outputMode: currentProject?.outputMode ?? state.outputMode,
           customOutputPath:
@@ -595,12 +771,26 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
     } catch (error) {
       console.error("[session-store] Failed to load projects:", error);
-      set({ projectsLoaded: true, projectsLoading: false });
+      set({ projectsLoaded: true, projectsLoading: false, profileLoaded: true });
       throw error;
     }
   },
 
-  setProject: async ({ path, previewUrl, outputMode, customOutputPath }) => {
+  persistProfileState: async (nextState) => {
+    const payload = buildNextProfileState(get(), nextState);
+    const savedProfileState = await upsertProfileStateToApi(payload);
+    set({ profileState: savedProfileState, profileLoaded: true });
+    return savedProfileState;
+  },
+
+  setProject: async ({
+    path,
+    previewUrl,
+    outputMode,
+    customOutputPath,
+    preferredThreadId,
+    persistProfile = true,
+  }) => {
     const trimmedPath = path.trim();
     if (!trimmedPath) {
       throw new Error("Project path is required");
@@ -638,7 +828,13 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     const hydratedSessions = projectSessions.filter(
       (session) => !isUnavailableAgentDeckSession(savedProject.path, session, agentDeckTargets)
     );
-    const currentSession = hydratedSessions[0] ?? null;
+    const normalizedPreferredThreadId = preferredThreadId?.trim() || null;
+    const currentSession =
+      (normalizedPreferredThreadId
+        ? hydratedSessions.find((session) => session.threadId === normalizedPreferredThreadId)
+        : null)
+      ?? hydratedSessions[0]
+      ?? null;
     const hydratedTargets = ensureAgentDeckTargetPresent(
       agentDeckTargets,
       currentSession
@@ -664,6 +860,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       agentDeckTargets: hydratedTargets,
       pendingPreviewUpdate: null,
     }));
+
+    if (persistProfile) {
+      void get()
+        .persistProfileState({
+          activeProjectPath: savedProject.path,
+          activeMode: get().activeMode,
+          activeLiveEditorThreadId: currentSession?.threadId ?? null,
+        })
+        .catch((error) => {
+          console.error("[session-store] Failed to persist profile state:", error);
+        });
+    }
   },
 
   setSessionId: (sessionId) => {
@@ -681,6 +889,39 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     }));
   },
 
+  persistProjectSession: async (session) => {
+    if (!session) {
+      return null;
+    }
+
+    const { projectPath, liveEditorSession } = get();
+    if (!projectPath) {
+      return null;
+    }
+
+    const savedSession = await upsertProjectSessionToApi(projectPath, session);
+    const nextLiveEditorSession =
+      liveEditorSession?.threadId === savedSession.threadId
+        ? {
+            ...liveEditorSession,
+            ...savedSession,
+            requestId: session.requestId ?? liveEditorSession.requestId ?? null,
+          }
+        : liveEditorSession;
+
+    set((state) => ({
+      liveEditorSession: nextLiveEditorSession,
+      projectSessions: mergeSession(
+        state.projectSessions,
+        state.projectPath,
+        savedSession
+      ),
+      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
+    }));
+
+    return savedSession;
+  },
+
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
@@ -690,10 +931,22 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
       agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
     }));
+    void get()
+      .persistProfileState({
+        activeLiveEditorThreadId: session?.threadId ?? null,
+      })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist profile state:", error);
+      });
   },
 
   switchMode: (mode) => {
     set({ activeMode: mode });
+    void get()
+      .persistProfileState({ activeMode: mode })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist profile state:", error);
+      });
   },
 
   newSession: () => {
@@ -702,11 +955,21 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   clearLiveEditorSession: () => {
     set({ liveEditorSession: null, selectedAgentDeckTargetId: null });
+    void get()
+      .persistProfileState({ activeLiveEditorThreadId: null })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist profile state:", error);
+      });
   },
 
   switchToThread: (session) => {
     if (!session) {
       set({ liveEditorSession: null, selectedAgentDeckTargetId: null });
+      void get()
+        .persistProfileState({ activeLiveEditorThreadId: null })
+        .catch((error) => {
+          console.error("[session-store] Failed to persist profile state:", error);
+        });
       return;
     }
 
@@ -719,10 +982,16 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         agentDeckSessionTitle: session.agentDeckSessionTitle,
         agentDeckTool: session.agentDeckTool,
         requestId: session.requestId,
+        editorState: session.editorState ?? null,
       },
       selectedAgentDeckTargetId: session.agentDeckSessionId,
       agentType: session.agentDeckTool ?? state.agentType,
     }));
+    void get()
+      .persistProfileState({ activeLiveEditorThreadId: session.threadId })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist profile state:", error);
+      });
   },
 
   refreshAgentDeckTargets: async () => {
@@ -845,6 +1114,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       selectedAgentDeckTargetId: null,
       pendingPreviewUpdate: null,
     });
+    void get()
+      .persistProfileState({
+        activeProjectPath: null,
+        activeMode: "screenshot",
+        activeLiveEditorThreadId: null,
+      })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist profile state:", error);
+      });
   },
 
   setPreviewUrl: async (url) => {

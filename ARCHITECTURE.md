@@ -71,6 +71,8 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
 - Fresh Live Editor chats provision isolated Agent Deck clone workspaces under the project `.agents/` tree up front while the canonical repo root remains the project identity.
 - One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped editor surface: preview tabs, active target URL, viewport/tool state, selection/history state, and chat state all move together. The default self-edit mirror source follows that same bound workspace.
+- The shared session store persists the durable subset of that thread editor surface, including tab descriptors and restore metadata, and the UI reacquires runtime-only browser handles when a lane is reopened instead of pretending old handles survived a restart.
+- The shared control-plane store also keeps one default operator profile pointer for ordinary app reopen: last active project, active mode, and active Live Editor thread. Controller-update bootstrap relaunch is an override path, not the only restore path.
 - Agent Deck session ownership is exclusive at the Live Editor thread level. If one thread already owns a session, another thread must switch to that thread or create a different session instead of sharing the lane.
 - Live Editor handoff has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
 - Stable Live Editor workflow rules live in a thread-level `session-brief.md`, while each per-turn `request.md` carries the new delta context for that turn.

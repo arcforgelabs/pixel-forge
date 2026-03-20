@@ -78,6 +78,8 @@ function App() {
     projectPath,
     activeMode,
     projectsLoaded,
+    profileState,
+    profileLoaded,
     hydrateProjects,
     setRuntimeInfo,
     setDismissedControllerUpdateId,
@@ -93,6 +95,7 @@ function App() {
   const [desktopBootstrapState, setDesktopBootstrapState] =
     useState<PixelForgeDesktopBootstrapState | null>(null);
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
+  const profileRestoreAttemptedRef = useRef(false);
 
   useEffect(() => {
     const desktopApp = getDesktopApp();
@@ -341,6 +344,45 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!desktopBootstrapLoaded || !projectsLoaded || !profileLoaded) {
+      return;
+    }
+    if (desktopBootstrapState || projectPath || profileRestoreAttemptedRef.current) {
+      return;
+    }
+
+    const activeProjectPath = profileState?.activeProjectPath?.trim() || "";
+    if (!activeProjectPath) {
+      profileRestoreAttemptedRef.current = true;
+      return;
+    }
+
+    profileRestoreAttemptedRef.current = true;
+    void setProject({
+      path: activeProjectPath,
+      preferredThreadId: profileState?.activeLiveEditorThreadId ?? null,
+      persistProfile: false,
+    })
+      .then(() => {
+        setShowProjectSelector(false);
+        switchMode(profileState?.activeMode === "live-editor" ? "live-editor" : "screenshot");
+      })
+      .catch((error) => {
+        console.error("[app] Failed to restore default profile state:", error);
+        setShowProjectSelector(true);
+      });
+  }, [
+    desktopBootstrapLoaded,
+    desktopBootstrapState,
+    profileLoaded,
+    profileState,
+    projectPath,
+    projectsLoaded,
+    setProject,
+    switchMode,
+  ]);
+
+  useEffect(() => {
     if (RUNTIME_KIND !== "dev" || !TARGET_PROJECT_PATH || !projectsLoaded || projectPath) {
       return;
     }
@@ -352,10 +394,18 @@ function App() {
 
   // Show project selector on first render if no project is configured
   useEffect(() => {
-    if (projectsLoaded && appState === AppState.INITIAL && !projectPath) {
+    const hasRestorableProfileProject =
+      !!profileState?.activeProjectPath?.trim() && !desktopBootstrapState;
+    if (
+      projectsLoaded &&
+      profileLoaded &&
+      appState === AppState.INITIAL &&
+      !projectPath &&
+      !hasRestorableProfileProject
+    ) {
       setShowProjectSelector(true);
     }
-  }, [appState, projectPath, projectsLoaded]);
+  }, [appState, desktopBootstrapState, profileLoaded, profileState, projectPath, projectsLoaded]);
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(

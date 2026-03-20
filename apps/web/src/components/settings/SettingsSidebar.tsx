@@ -138,6 +138,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     recentProjects,
     setProject,
     switchToThread,
+    clearLiveEditorSession,
     installedSkills,
     skillSourceRoots,
     skillInstallDestinations,
@@ -162,6 +163,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     newSession: resetLiveEditorThread,
     setTargetAgentDeckSessionId,
     getThreadStatus,
+    findThreadKeyByTargetAgentDeckSessionId,
     threadStates,
   } = useLiveEditorStore();
   const { appState } = useAppStore();
@@ -328,6 +330,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           : "Failed to create Agent Deck session";
       toast.error(message);
     }
+  }
+
+  function reopenExistingDraftTargetThread(targetId: string): boolean {
+    const existingThreadKey = findThreadKeyByTargetAgentDeckSessionId(targetId);
+    if (!existingThreadKey) {
+      return false;
+    }
+
+    if (liveEditorSession?.threadId === existingThreadKey) {
+      return true;
+    }
+
+    clearLiveEditorSession();
+    activateThread(existingThreadKey);
+    return true;
   }
 
   const navItems = [
@@ -509,6 +526,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                       if (claimedThread) {
                                         switchToThread(claimedThread);
                                         activateThread(claimedThread.threadId);
+                                      } else if (reopenExistingDraftTargetThread(target.id)) {
+                                        return;
                                       } else {
                                         resetLiveEditorThread(target.id);
                                       }
@@ -886,6 +905,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                         toast.success(
                           `Switched to Live Editor thread ${claimedThread.threadId.slice(0, 8)}`
                         );
+                        return;
+                      }
+
+                      if (nextTargetId && reopenExistingDraftTargetThread(nextTargetId)) {
+                        toast.success("Reopened the existing Live Editor draft thread");
                         return;
                       }
 

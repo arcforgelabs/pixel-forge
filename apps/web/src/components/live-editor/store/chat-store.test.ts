@@ -53,6 +53,13 @@ class MockWebSocket extends EventTarget {
   }
 }
 
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
 function setActiveThreadState(partial: Partial<ThreadChatState>) {
   useLiveEditorStore.setState((state) => {
     const activeThreadState = state.threadStates[state.activeThreadKey]
@@ -97,7 +104,22 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
 describe('live editor selection history', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
-    vi.stubGlobal('fetch', vi.fn())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/api/profile-state')) {
+          return jsonResponse({
+            profile_id: 'default',
+            active_project_path: '/tmp/example-project',
+            active_mode: 'live-editor',
+            active_live_editor_thread_id: 'thread-a',
+            updated_at: '2026-03-20T00:00:00Z',
+          })
+        }
+        return jsonResponse({})
+      })
+    )
     delete (globalThis as typeof globalThis & { pixelForgeDesktop?: unknown }).pixelForgeDesktop
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
@@ -281,6 +303,194 @@ describe('live editor selection history', () => {
     expect(useLiveEditorStore.getState().activeTab).toBe('chat')
     expect(useLiveEditorStore.getState().activePreviewTabId).toBe('tab-two')
     expect(useLiveEditorStore.getState().previewTabs[0]?.browserTabId).toBe('browser-tab-two')
+  })
+
+  it('hydrates persisted preview state from the shared session store', () => {
+    useSessionStore.setState({
+      projectSessions: [
+        {
+          id: 1,
+          projectPath: '/tmp/example-project',
+          workspacePath: '/tmp/example-project/.agents/thread-a',
+          threadId: 'thread-a',
+          backend: 'agent-deck',
+          agentDeckSessionId: 'deck-session-a',
+          agentDeckSessionTitle: 'pixel-forge-thread-a',
+          agentDeckTool: 'codex',
+          editorState: {
+            activePreviewTool: null,
+            targetUrl: 'https://claude.ai/new',
+            activeTab: 'elements',
+            viewportMode: 'desktop',
+            showUrlHistory: false,
+            previewTabs: [
+              {
+                id: 'tab-a',
+                url: 'https://claude.ai/new',
+                title: 'Claude',
+                mode: 'browser',
+                localTarget: null,
+              },
+            ],
+            activePreviewTabId: 'tab-a',
+            urlHistory: ['https://claude.ai/new'],
+            urlHistoryCursor: 0,
+          },
+          createdAt: '2026-03-20T00:00:00Z',
+          lastActive: '2026-03-20T00:00:00Z',
+          requestId: null,
+        },
+      ],
+      liveEditorSession: {
+        threadId: 'thread-a',
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project/.agents/thread-a',
+        agentDeckSessionId: 'deck-session-a',
+        agentDeckSessionTitle: 'pixel-forge-thread-a',
+        agentDeckTool: 'codex',
+        requestId: null,
+      },
+    })
+
+    useLiveEditorStore.getState().hydrateProjectThreads({
+      projectSessions: useSessionStore.getState().projectSessions,
+      activeThreadKey: 'thread-a',
+      previewUrl: null,
+    })
+
+    expect(useLiveEditorStore.getState().activeThreadKey).toBe('thread-a')
+    expect(useLiveEditorStore.getState().targetUrl).toBe('https://claude.ai/new')
+    expect(useLiveEditorStore.getState().activeTab).toBe('elements')
+    expect(useLiveEditorStore.getState().viewportMode).toBe('desktop')
+    expect(useLiveEditorStore.getState().activePreviewTabId).toBe('tab-a')
+    expect(useLiveEditorStore.getState().previewTabs[0]).toMatchObject({
+      id: 'tab-a',
+      url: 'https://claude.ai/new',
+      title: 'Claude',
+      mode: 'browser',
+      browserTabId: null,
+      proxySessionId: null,
+    })
+  })
+
+  it('can find an existing draft thread by target Agent Deck session id', () => {
+    const store = useLiveEditorStore.getState()
+    const firstThreadKey = store.activeThreadKey
+
+    store.setTargetAgentDeckSessionId('deck-session-a')
+    store.newSession('deck-session-b')
+    const secondThreadKey = useLiveEditorStore.getState().activeThreadKey
+
+    expect(
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-a')
+    ).toBe(firstThreadKey)
+    expect(
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-b')
+    ).toBe(secondThreadKey)
+    expect(
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-missing')
+    ).toBeNull()
+  })
+
+  it('persists sanitized editor state through the shared session API', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementationOnce(async () =>
+      jsonResponse({
+        id: 1,
+        project_path: '/tmp/example-project',
+        workspace_path: '/tmp/example-project/.agents/thread-a',
+        thread_id: useLiveEditorStore.getState().activeThreadKey,
+        backend: 'agent-deck',
+        agent_deck_session_id: 'deck-session-a',
+        agent_deck_session_title: 'pixel-forge-thread-a',
+        agent_deck_tool: 'codex',
+        editor_state: {
+          activePreviewTool: null,
+          targetUrl: 'https://claude.ai/new',
+          activeTab: 'chat',
+          viewportMode: 'desktop',
+          showUrlHistory: false,
+          previewTabs: [
+            {
+              id: 'tab-a',
+              url: 'https://claude.ai/new',
+              title: 'Claude',
+              mode: 'browser',
+              localTarget: null,
+            },
+          ],
+          activePreviewTabId: 'tab-a',
+          urlHistory: ['https://claude.ai/new'],
+          urlHistoryCursor: 0,
+        },
+        created_at: '2026-03-20T00:00:00Z',
+        last_active: '2026-03-20T00:00:00Z',
+      })
+    )
+
+    useSessionStore.setState({
+      agentDeckTargets: [
+        {
+          id: 'deck-session-a',
+          title: 'pixel-forge-thread-a',
+          path: '/tmp/example-project/.agents/thread-a',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-a')
+    useLiveEditorStore.getState().setTargetUrl('https://claude.ai/new')
+    useLiveEditorStore.getState().setViewportMode('desktop')
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-a',
+        url: 'https://claude.ai/new',
+        title: 'Claude',
+        mode: 'browser',
+        proxySessionId: 'proxy-runtime-only',
+        browserTabId: 'browser-runtime-only',
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
+    useLiveEditorStore.getState().setUrlHistory(['https://claude.ai/new'])
+    useLiveEditorStore.getState().setUrlHistoryCursor(0)
+
+    await useLiveEditorStore.getState().persistThreadState()
+
+    const sessionRequest = fetchMock.mock.calls.find(([requestUrl]) =>
+      String(requestUrl).includes('/api/projects/%2Ftmp%2Fexample-project/sessions')
+    )
+    expect(sessionRequest).toBeDefined()
+    const [requestUrl, requestInit] = sessionRequest ?? []
+    expect(String(requestUrl)).toContain('/api/projects/%2Ftmp%2Fexample-project/sessions')
+    expect(requestInit?.method).toBe('POST')
+    expect(JSON.parse(String(requestInit?.body))).toMatchObject({
+      thread_id: useLiveEditorStore.getState().activeThreadKey,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_tool: 'codex',
+      editor_state: {
+        targetUrl: 'https://claude.ai/new',
+        viewportMode: 'desktop',
+        activePreviewTabId: 'tab-a',
+        previewTabs: [
+          {
+            id: 'tab-a',
+            url: 'https://claude.ai/new',
+            title: 'Claude',
+            mode: 'browser',
+            localTarget: null,
+          },
+        ],
+      },
+    })
+    expect(JSON.parse(String(requestInit?.body)).editor_state.previewTabs[0]).not.toHaveProperty('browserTabId')
   })
 
   it('includes the selected Agent Deck target in outbound live-edit payloads', () => {
@@ -490,9 +700,10 @@ describe('live editor selection history', () => {
 
   it('stages clone-backed self-edit completions as preview-only updates', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/preview-updates')) {
+        return jsonResponse({
           update: {
             id: 'preview-update-1',
             projectPath: '/tmp/example-project',
@@ -506,13 +717,17 @@ describe('live editor selection history', () => {
             agentDeckSessionId: 'deck-session-1',
             createdAt: '2026-03-20T00:00:00Z',
           },
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    )
+        })
+      }
+
+      return jsonResponse({
+        profile_id: 'default',
+        active_project_path: '/tmp/example-project',
+        active_mode: 'live-editor',
+        active_live_editor_thread_id: 'thread-1',
+        updated_at: '2026-03-20T00:00:00Z',
+      })
+    })
 
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
@@ -541,13 +756,13 @@ describe('live editor selection history', () => {
     )
 
     await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-    })
-    await vi.waitFor(() => {
       expect(useSessionStore.getState().pendingPreviewUpdate).not.toBeNull()
     })
 
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/preview-updates')
+    const previewUpdateCall = fetchMock.mock.calls.find(([requestUrl]) =>
+      String(requestUrl).includes('/api/preview-updates')
+    )
+    expect(String(previewUpdateCall?.[0] || '')).toContain('/api/preview-updates')
     expect(useSessionStore.getState().pendingPreviewUpdate).toMatchObject({
       id: 'preview-update-1',
       workspacePath: '/tmp/example-project/.agents/clone-a',
@@ -568,9 +783,10 @@ describe('live editor selection history', () => {
 
   it('stages canonical self-edit completions as controller updates', async () => {
     const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/api/controller-update')) {
+        return jsonResponse({
           update: {
             id: 'controller-update-1',
             projectPath: '/tmp/example-project',
@@ -585,13 +801,17 @@ describe('live editor selection history', () => {
             createdAt: '2026-03-20T00:00:00Z',
             canRollback: true,
           },
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    )
+        })
+      }
+
+      return jsonResponse({
+        profile_id: 'default',
+        active_project_path: '/tmp/example-project',
+        active_mode: 'live-editor',
+        active_live_editor_thread_id: 'thread-1',
+        updated_at: '2026-03-20T00:00:00Z',
+      })
+    })
 
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
@@ -619,13 +839,13 @@ describe('live editor selection history', () => {
     )
 
     await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-    })
-    await vi.waitFor(() => {
       expect(useSessionStore.getState().pendingControllerUpdate).not.toBeNull()
     })
 
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/controller-update')
+    const controllerUpdateCall = fetchMock.mock.calls.find(([requestUrl]) =>
+      String(requestUrl).includes('/api/controller-update')
+    )
+    expect(String(controllerUpdateCall?.[0] || '')).toContain('/api/controller-update')
     expect(useSessionStore.getState().pendingControllerUpdate).toMatchObject({
       id: 'controller-update-1',
       projectPath: '/tmp/example-project',

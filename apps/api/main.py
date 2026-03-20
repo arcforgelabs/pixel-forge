@@ -45,12 +45,15 @@ from live_editor_threads import (
 )
 from project_store import (
     delete_project,
+    ensure_state_store_initialized,
+    get_profile_state,
     list_project_sessions,
     list_project_urls,
     list_projects,
     project_name_for_path,
     touch_project_url,
     upsert_project,
+    upsert_profile_state,
     upsert_session,
 )
 from pydantic import BaseModel
@@ -321,6 +324,23 @@ class ProjectUrlRequest(BaseModel):
     url: str
 
 
+class ProjectSessionUpsertRequest(BaseModel):
+    thread_id: str
+    backend: str = "agent-deck"
+    workspace_path: str | None = None
+    agent_deck_session_id: str | None = None
+    agent_deck_session_title: str | None = None
+    agent_deck_tool: str | None = None
+    editor_state: dict[str, object] | None = None
+
+
+class ProfileStateRequest(BaseModel):
+    profile_id: str | None = None
+    active_project_path: str | None = None
+    active_mode: Literal["screenshot", "live-editor"] = "screenshot"
+    active_live_editor_thread_id: str | None = None
+
+
 class AgentDeckSessionRequest(BaseModel):
     agent_type: str = "claude"
     title: str | None = None
@@ -465,6 +485,7 @@ def serialize_session(session_record) -> dict[str, object]:
         "agent_deck_session_id": session_record.agent_deck_session_id,
         "agent_deck_session_title": session_record.agent_deck_session_title,
         "agent_deck_tool": session_record.agent_deck_tool,
+        "editor_state": session_record.editor_state,
         "created_at": session_record.created_at,
         "last_active": session_record.last_active,
     }
@@ -482,6 +503,16 @@ def serialize_agent_deck_session_target(
         "command": session_target.command,
         "status": session_target.status,
         "created_at": session_target.created_at,
+    }
+
+
+def serialize_profile_state(profile_state) -> dict[str, object]:
+    return {
+        "profile_id": profile_state.profile_id,
+        "active_project_path": profile_state.active_project_path,
+        "active_mode": profile_state.active_mode,
+        "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
+        "updated_at": profile_state.updated_at,
     }
 
 
@@ -511,6 +542,23 @@ def serialize_registered_skill(skill: object) -> dict[str, object]:
 @app.get("/api/projects")
 async def get_projects():
     return {"projects": [serialize_project(project) for project in list_projects()]}
+
+
+@app.get("/api/profile-state")
+async def get_default_profile_state():
+    return serialize_profile_state(get_profile_state())
+
+
+@app.post("/api/profile-state")
+async def save_default_profile_state(request: ProfileStateRequest):
+    return serialize_profile_state(
+        upsert_profile_state(
+            profile_id=request.profile_id or "default",
+            active_project_path=request.active_project_path,
+            active_mode=request.active_mode,
+            active_live_editor_thread_id=request.active_live_editor_thread_id,
+        )
+    )
 
 
 @app.post("/api/projects")
@@ -554,6 +602,50 @@ async def get_project_sessions(project_path: str):
             for session in list_project_sessions(project_path)
         ]
     }
+
+
+@app.post("/api/projects/{project_path:path}/sessions")
+async def upsert_project_session(project_path: str, request: ProjectSessionUpsertRequest):
+    normalized_project_path = normalize_project_path(project_path)
+    if not normalized_project_path.strip():
+        raise HTTPException(status_code=400, detail="Project path is required")
+
+    upsert_project(
+        normalized_project_path,
+        name=project_name_for_path(normalized_project_path),
+    )
+
+    try:
+        thread = get_or_create_live_editor_thread(
+            normalized_project_path,
+            thread_id=request.thread_id,
+        )
+        if (
+            request.workspace_path
+            or request.agent_deck_session_id
+            or request.agent_deck_session_title
+        ):
+            update_live_editor_thread(
+                thread.thread_id,
+                workspace_path=request.workspace_path,
+                agent_deck_session_id=request.agent_deck_session_id,
+                agent_deck_session_title=request.agent_deck_session_title,
+            )
+
+        session = upsert_session(
+            normalized_project_path,
+            thread_id=request.thread_id,
+            backend=request.backend,
+            workspace_path=request.workspace_path,
+            agent_deck_session_id=request.agent_deck_session_id,
+            agent_deck_session_title=request.agent_deck_session_title,
+            agent_deck_tool=request.agent_deck_tool,
+            editor_state=request.editor_state,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return serialize_session(session)
 
 
 @app.get("/api/projects/{project_path:path}/agent-deck-sessions")
@@ -1034,6 +1126,11 @@ async def live_preview_websocket(websocket: WebSocket):
         pass
     finally:
         MANAGED_BROWSER_PREVIEW.unsubscribe(queue)
+
+
+@app.on_event("startup")
+async def initialize_shared_state_store():
+    ensure_state_store_initialized()
 
 
 @app.on_event("shutdown")
