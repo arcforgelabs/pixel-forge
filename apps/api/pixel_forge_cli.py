@@ -20,7 +20,7 @@ from controller_update_state import (
     write_pending_controller_update,
 )
 from runtime_config import shared_state_dir
-from runtime_version import read_version_for_project
+from runtime_version import read_runtime_info_for_root
 from selection_tunnel_cli import selection_tunnel_path
 
 
@@ -521,25 +521,7 @@ def _running_runtime_info() -> dict[str, Any] | None:
 
 
 def _installed_runtime_info() -> dict[str, Any]:
-    root = install_dir()
-    acpx_bridge_available = any(
-        candidate.is_file()
-        for candidate in (
-            root / "acpx_bridge.py",
-            root / "apps" / "api" / "acpx_bridge.py",
-        )
-    )
-    layout = (
-        "installed"
-        if (root / "main.py").is_file() and (root / "requirements.txt").is_file() and (root / "frontend" / "index.html").is_file()
-        else "unknown"
-    )
-    return {
-        "controllerVersion": read_version_for_project(root) or "0.0.0-dev",
-        "runtimeRoot": str(root),
-        "runtimeLayout": layout,
-        "acpxBridgeAvailable": acpx_bridge_available,
-    }
+    return read_runtime_info_for_root(install_dir())
 
 
 def _command_controller_update_status(_args: argparse.Namespace) -> int:

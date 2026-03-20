@@ -131,6 +131,10 @@ function App() {
             ? runtimeInfo.runtimeLayout.trim() || null
             : null,
         acpxBridgeAvailable: runtimeInfo?.acpxBridgeAvailable === true,
+        installedAt:
+          typeof runtimeInfo?.installedAt === "string"
+            ? runtimeInfo.installedAt.trim() || null
+            : null,
       });
     };
 

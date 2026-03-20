@@ -57,6 +57,19 @@ function formatRuntimeLayout(layout: string | null | undefined): string {
   return "Unknown runtime";
 }
 
+function formatInstalledAt(value: string | null | undefined): string {
+  if (!value || !value.trim()) {
+    return "not recorded";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+}
+
 function formatAgentDeckTool(tool: string | null | undefined): string {
   if (!tool || !tool.trim()) {
     return "Agent";
@@ -108,6 +121,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     controllerRuntimeRoot,
     controllerRuntimeLayout,
     controllerAcpxBridgeAvailable,
+    controllerInstalledAt,
     recentProjects,
     setProject,
     pendingControllerUpdate,
@@ -146,6 +160,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareSemver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
+  const installedAtLabel = formatInstalledAt(controllerInstalledAt);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
   const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
   const updateStatus = !pendingControllerUpdate
@@ -451,6 +466,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     <span className="text-muted-foreground">Running</span>
                     <span className="font-mono text-xs text-foreground">
                       {runningVersionLabel}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Installed</span>
+                    <span className="text-xs text-foreground">
+                      {installedAtLabel}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">

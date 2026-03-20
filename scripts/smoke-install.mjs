@@ -40,6 +40,10 @@ try {
     runtimeInfo.controllerVersion === expectedVersion,
     `Expected controller version ${expectedVersion}, got ${runtimeInfo.controllerVersion}`,
   )
+  assert(
+    typeof runtimeInfo.installedAt === 'string' && runtimeInfo.installedAt.trim(),
+    `Expected runtime-info to include installedAt, got ${JSON.stringify(runtimeInfo)}`,
+  )
 
   console.log(`[smoke:install] installed runtime responded with ${runtimeInfo.controllerVersion}`)
 } catch (error) {

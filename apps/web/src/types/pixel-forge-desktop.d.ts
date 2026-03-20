@@ -118,6 +118,7 @@ export interface PixelForgeDesktopRuntimeInfo {
   runtimeRoot: string | null
   runtimeLayout: string | null
   acpxBridgeAvailable: boolean
+  installedAt: string | null
 }
 
 export interface PixelForgeDesktopAppAPI {

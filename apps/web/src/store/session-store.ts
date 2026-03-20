@@ -58,6 +58,7 @@ export interface ControllerRuntimeInfo {
   runtimeRoot: string | null;
   runtimeLayout: string | null;
   acpxBridgeAvailable: boolean;
+  installedAt: string | null;
 }
 
 interface SessionStore {
@@ -87,6 +88,7 @@ interface SessionStore {
   controllerRuntimeRoot: string | null;
   controllerRuntimeLayout: string | null;
   controllerAcpxBridgeAvailable: boolean;
+  controllerInstalledAt: string | null;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   pendingPreviewUpdate: PixelForgePendingPreviewUpdate | null;
   dismissedControllerUpdateId: string | null;
@@ -440,6 +442,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   controllerRuntimeRoot: null,
   controllerRuntimeLayout: null,
   controllerAcpxBridgeAvailable: false,
+  controllerInstalledAt: null,
   pendingControllerUpdate: null,
   pendingPreviewUpdate: null,
   dismissedControllerUpdateId: null,
@@ -747,6 +750,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       controllerRuntimeRoot: runtimeInfo.runtimeRoot,
       controllerRuntimeLayout: runtimeInfo.runtimeLayout,
       controllerAcpxBridgeAvailable: runtimeInfo.acpxBridgeAvailable,
+      controllerInstalledAt: runtimeInfo.installedAt,
     });
   },
 

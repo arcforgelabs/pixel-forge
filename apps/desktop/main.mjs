@@ -547,6 +547,8 @@ async function readRuntimeInfo() {
       runtimeLayout:
         typeof payload?.runtimeLayout === 'string' ? payload.runtimeLayout : null,
       acpxBridgeAvailable: payload?.acpxBridgeAvailable === true,
+      installedAt:
+        typeof payload?.installedAt === 'string' ? payload.installedAt : null,
     }
   } catch (error) {
     console.error('[desktop] Failed to load controller runtime info:', error)
@@ -555,6 +557,7 @@ async function readRuntimeInfo() {
       runtimeRoot: null,
       runtimeLayout: null,
       acpxBridgeAvailable: false,
+      installedAt: null,
     }
   }
 }

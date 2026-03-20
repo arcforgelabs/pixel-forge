@@ -239,6 +239,13 @@ DESKTOP
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi
 
+INSTALL_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$INSTALL_DIR/runtime-install-metadata.json" <<METADATA
+{
+  "installedAt": "$INSTALL_TIMESTAMP"
+}
+METADATA
+
 echo ""
 echo "Installation complete!"
 echo ""

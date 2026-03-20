@@ -51,6 +51,10 @@ try {
     initialRuntimeInfo.controllerVersion === baseVersion,
     `Expected initial controller version ${baseVersion}, got ${initialRuntimeInfo.controllerVersion}`,
   )
+  assert(
+    typeof initialRuntimeInfo.installedAt === 'string' && initialRuntimeInfo.installedAt.trim(),
+    `Expected initial runtime-info installedAt, got ${JSON.stringify(initialRuntimeInfo)}`,
+  )
 
   await copyRepoForSmoke(updateSourceRoot)
   await writeVersionSet(updateSourceRoot, stagedVersion)
@@ -97,6 +101,10 @@ try {
     updatedRuntimeInfo.controllerVersion === stagedVersion,
     `Expected updated controller version ${stagedVersion}, got ${updatedRuntimeInfo.controllerVersion}`,
   )
+  assert(
+    typeof updatedRuntimeInfo.installedAt === 'string' && updatedRuntimeInfo.installedAt.trim(),
+    `Expected updated runtime-info installedAt, got ${JSON.stringify(updatedRuntimeInfo)}`,
+  )
 
   await waitForCondition(
     async () => !(await pathExists(context.paths.pendingUpdatePath)),
@@ -137,6 +145,10 @@ try {
   assert(
     rolledBackRuntimeInfo.controllerVersion === baseVersion,
     `Expected rolled back controller version ${baseVersion}, got ${rolledBackRuntimeInfo.controllerVersion}`,
+  )
+  assert(
+    typeof rolledBackRuntimeInfo.installedAt === 'string' && rolledBackRuntimeInfo.installedAt.trim(),
+    `Expected rolled back runtime-info installedAt, got ${JSON.stringify(rolledBackRuntimeInfo)}`,
   )
   assert(
     (await fs.readFile(path.join(context.paths.installDir, 'VERSION'), 'utf-8')).trim() === baseVersion,
