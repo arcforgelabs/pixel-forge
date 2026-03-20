@@ -665,6 +665,15 @@ def _thread_has_activity(thread_record: object | None) -> bool:
     return isinstance(last_request_id, str) and bool(last_request_id.strip())
 
 
+def _is_missing_agent_deck_session_error(error: BaseException | str) -> bool:
+    message = str(error).lower()
+    return (
+        "not_found" in message
+        or "not found" in message
+        or "session missing" in message
+    )
+
+
 def _serialize_delete_assessment(
     assessment: AgentDeckDeleteAssessment,
 ) -> dict[str, object]:
@@ -1051,9 +1060,16 @@ async def delete_project_chat_item(
                 thread_has_activity=_thread_has_activity(thread_record),
             )
         except AgentDeckBridgeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if _is_missing_agent_deck_session_error(exc):
+                resolved_agent_deck_session_id = None
+            else:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        if assessment.requires_closeout and not request.force_clone_remove:
+        if resolved_agent_deck_session_id is None:
+            assessment = None
+
+    if resolved_agent_deck_session_id:
+        if assessment is not None and assessment.requires_closeout and not request.force_clone_remove:
             return {
                 "status": "requires_closeout",
                 "assessment": _serialize_delete_assessment(assessment),
@@ -1063,10 +1079,16 @@ async def delete_project_chat_item(
             await delete_agent_deck_session_target(
                 normalized_project_path,
                 resolved_agent_deck_session_id,
-                force_clone_remove=bool(request.force_clone_remove and assessment.can_force_delete),
+                force_clone_remove=bool(
+                    request.force_clone_remove
+                    and assessment is not None
+                    and assessment.can_force_delete
+                ),
             )
         except AgentDeckBridgeError as exc:
-            if assessment is not None and assessment.can_force_delete and not request.force_clone_remove:
+            if _is_missing_agent_deck_session_error(exc):
+                resolved_agent_deck_session_id = None
+            elif assessment is not None and assessment.can_force_delete and not request.force_clone_remove:
                 fallback_assessment = AgentDeckDeleteAssessment(
                     session_id=assessment.session_id,
                     session_title=assessment.session_title,
@@ -1084,7 +1106,8 @@ async def delete_project_chat_item(
                     "status": "requires_closeout",
                     "assessment": _serialize_delete_assessment(fallback_assessment),
                 }
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            else:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if normalized_thread_id:
         delete_session(normalized_project_path, normalized_thread_id)
