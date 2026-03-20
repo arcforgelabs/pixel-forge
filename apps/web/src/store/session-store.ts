@@ -310,6 +310,17 @@ function ensureAgentDeckTargetPresent(
   ];
 }
 
+function isUnavailableAgentDeckSession(
+  _projectPath: string | null | undefined,
+  session: LiveEditorSessionMeta | null,
+  targets: AgentDeckSessionTarget[]
+): boolean {
+  if (!session?.agentDeckSessionId) {
+    return false;
+  }
+  return !targets.some((target) => target.id === session.agentDeckSessionId);
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
     credentials: "include",
@@ -528,7 +539,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     ]);
 
     const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
-    const currentSession = projectSessions[0] ?? null;
+    const hydratedSessions = projectSessions.filter(
+      (session) => !isUnavailableAgentDeckSession(savedProject.path, session, agentDeckTargets)
+    );
+    const currentSession = hydratedSessions[0] ?? null;
     const hydratedTargets = ensureAgentDeckTargetPresent(
       agentDeckTargets,
       currentSession
@@ -550,7 +564,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       agentType: currentSession?.agentDeckTool ?? currentState.agentType,
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
-      projectSessions,
+      projectSessions: hydratedSessions,
       agentDeckTargets: hydratedTargets,
       pendingPreviewUpdate: null,
     }));
@@ -592,18 +606,28 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
     set({ agentDeckTargetsLoading: true });
     try {
+      const rawTargets = await fetchAgentDeckTargets(projectPath);
+      const nextLiveEditorSession = isUnavailableAgentDeckSession(
+        projectPath,
+        liveEditorSession,
+        rawTargets
+      )
+        ? null
+        : liveEditorSession;
       const targets = ensureAgentDeckTargetPresent(
-        await fetchAgentDeckTargets(projectPath),
-        liveEditorSession
+        rawTargets,
+        nextLiveEditorSession
       );
-      const nextSelectedTargetId = liveEditorSession?.agentDeckSessionId
+      const nextSelectedTargetId = nextLiveEditorSession?.agentDeckSessionId
         ?? (selectedAgentDeckTargetId && targets.some((target) => target.id === selectedAgentDeckTargetId)
           ? selectedAgentDeckTargetId
           : null);
 
       set({
         agentDeckTargets: targets,
-        selectedAgentDeckTargetId: nextSelectedTargetId,
+        liveEditorSession: nextLiveEditorSession,
+        selectedAgentDeckTargetId:
+          nextLiveEditorSession?.agentDeckSessionId ?? nextSelectedTargetId,
         agentDeckTargetsLoading: false,
       });
     } catch (error) {

@@ -14,6 +14,16 @@ export interface ActiveMirrorTargetRef {
   instanceSlug: string
 }
 
+export interface MirrorAgentDeckTargetRef {
+  id: string
+  path: string | null | undefined
+}
+
+export interface ResolvedIsolatedMirrorTarget {
+  workspacePath: string
+  agentDeckSessionId: string
+}
+
 export function isCloneWorkspaceBound(options: {
   projectPath: string | null | undefined
   workspacePath: string | null | undefined
@@ -25,6 +35,48 @@ export function isCloneWorkspaceBound(options: {
   }
 
   return workspacePath !== projectPath
+}
+
+export function resolveUsableIsolatedMirrorTarget(options: {
+  projectPath: string | null | undefined
+  liveWorkspacePath: string | null | undefined
+  liveAgentDeckSessionId: string | null | undefined
+  selectedTargetId: string | null | undefined
+  agentDeckTargets: MirrorAgentDeckTargetRef[]
+}): ResolvedIsolatedMirrorTarget | null {
+  const projectPath = options.projectPath?.trim() || null
+  if (!projectPath) {
+    return null
+  }
+
+  const cloneTargets = options.agentDeckTargets.filter((target) =>
+    isCloneWorkspaceBound({ projectPath, workspacePath: target.path })
+  )
+
+  const liveAgentDeckSessionId = options.liveAgentDeckSessionId?.trim() || null
+  const liveWorkspacePath = options.liveWorkspacePath?.trim() || null
+  if (liveAgentDeckSessionId) {
+    const liveTarget = cloneTargets.find((target) => target.id === liveAgentDeckSessionId) || null
+    if (liveTarget) {
+      return {
+        workspacePath: liveTarget.path?.trim() || liveWorkspacePath || '',
+        agentDeckSessionId: liveTarget.id,
+      }
+    }
+  }
+
+  const selectedTargetId = options.selectedTargetId?.trim() || null
+  if (selectedTargetId) {
+    const selectedTarget = cloneTargets.find((target) => target.id === selectedTargetId) || null
+    if (selectedTarget?.path?.trim()) {
+      return {
+        workspacePath: selectedTarget.path.trim(),
+        agentDeckSessionId: selectedTarget.id,
+      }
+    }
+  }
+
+  return null
 }
 
 export function resolveIsolatedMirrorSourceRoot(options: {

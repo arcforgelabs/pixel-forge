@@ -35,6 +35,7 @@ import { ChatInput } from './ChatInput'
 import { ChatMessages } from './ChatMessages'
 import {
   isCloneWorkspaceBound,
+  resolveUsableIsolatedMirrorTarget,
   resolveIsolatedMirrorSourceRoot,
 } from './mirror-targets'
 import { SelectedElementsList } from './SelectedElementsList'
@@ -454,26 +455,23 @@ export function LiveEditorPane() {
   const selectedAgentDeckTarget = agentDeckTargets.find(
     (target) => target.id === selectedAgentDeckTargetId
   ) ?? null
+  const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
+    projectPath,
+    liveWorkspacePath: liveEditorSession?.workspacePath || null,
+    liveAgentDeckSessionId: liveEditorSession?.agentDeckSessionId || null,
+    selectedTargetId: selectedAgentDeckTargetId,
+    agentDeckTargets,
+  })
   const liveSessionBoundToCanonicalRoot = Boolean(
     liveEditorSession?.workspacePath
     && !isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
   )
   const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
     ? null
-    : resolveIsolatedMirrorSourceRoot({
-        projectPath,
-        liveWorkspacePath: liveEditorSession?.workspacePath || null,
-        selectedTargetPath: selectedAgentDeckTarget?.path || null,
-      })
+    : resolvedMirrorTarget?.workspacePath || null
   const previewAudienceSessionId = liveSessionBoundToCanonicalRoot
     ? null
-    : liveEditorSession?.workspacePath
-    && isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
-      ? liveEditorSession.agentDeckSessionId ?? null
-      : selectedAgentDeckTarget
-      && isCloneWorkspaceBound({ projectPath, workspacePath: selectedAgentDeckTarget.path })
-        ? selectedAgentDeckTarget.id
-        : null
+    : resolvedMirrorTarget?.agentDeckSessionId || null
 
   const {
     connect,
@@ -1182,16 +1180,9 @@ export function LiveEditorPane() {
       throw new Error('Select a project before launching a Pixel Forge target')
     }
 
-    const liveWorkspacePath = liveEditorSession?.workspacePath?.trim() || null
-    if (liveWorkspacePath && !isCloneWorkspaceBound({ projectPath, workspacePath: liveWorkspacePath })) {
-      throw new Error(
-        'This live thread is bound to the canonical Pixel Forge root. Start a new isolated session or unbind this thread before running Pixel Forge preview.'
-      )
-    }
-
     const resolvedSourceRoot = resolveIsolatedMirrorSourceRoot({
       projectPath,
-      liveWorkspacePath,
+      liveWorkspacePath: resolvedMirrorTarget?.workspacePath || null,
       selectedTargetPath: selectedAgentDeckTarget?.path || null,
     })
     if (resolvedSourceRoot) {
@@ -1206,9 +1197,10 @@ export function LiveEditorPane() {
     toast.success(`Created isolated session · ${created.title || created.id}`)
     return createdPath
   }, [
+    agentDeckTargets,
     createAgentDeckTargetSession,
-    liveEditorSession?.workspacePath,
     projectPath,
+    resolvedMirrorTarget?.workspacePath,
     selectedAgentDeckTarget?.path,
   ])
 

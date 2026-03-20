@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   findMirrorTargetByPreviewUrl,
   isCloneWorkspaceBound,
+  resolveUsableIsolatedMirrorTarget,
   resolveIsolatedMirrorSourceRoot,
   resolveUpdatedMirrorTarget,
   shouldOfferMirrorSwitch,
@@ -138,5 +139,37 @@ describe('mirror target resolution', () => {
         selectedTargetPath: null,
       })
     ).toBeNull()
+  })
+
+  it('ignores a stale bound clone session when Agent Deck no longer lists it', () => {
+    expect(
+      resolveUsableIsolatedMirrorTarget({
+        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/missing-clone',
+        liveAgentDeckSessionId: 'missing-session',
+        selectedTargetId: null,
+        agentDeckTargets: [],
+      })
+    ).toBeNull()
+  })
+
+  it('falls back to the selected live clone target when the bound session is stale', () => {
+    expect(
+      resolveUsableIsolatedMirrorTarget({
+        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/missing-clone',
+        liveAgentDeckSessionId: 'missing-session',
+        selectedTargetId: 'clone-b',
+        agentDeckTargets: [
+          {
+            id: 'clone-b',
+            path: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+          },
+        ],
+      })
+    ).toEqual({
+      workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+      agentDeckSessionId: 'clone-b',
+    })
   })
 })

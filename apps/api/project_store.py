@@ -359,6 +359,14 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
     )
 
 
+def _is_stale_clone_session(record: SessionRecord) -> bool:
+    if record.workspace_path == record.project_path:
+        return False
+    if f"{os.sep}.agents{os.sep}" not in record.workspace_path:
+        return False
+    return not os.path.isdir(record.workspace_path)
+
+
 def list_project_urls(project_path: str) -> list[ProjectUrlRecord]:
     normalized_path = normalize_project_path(project_path)
 
@@ -390,8 +398,16 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
             """,
             (normalized_path,),
         ).fetchall()
-
-    return [_row_to_session_record(row) for row in rows]
+        records = [_row_to_session_record(row) for row in rows]
+        stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
+        if stale_ids:
+            placeholders = ",".join("?" for _ in stale_ids)
+            conn.execute(
+                f"DELETE FROM sessions WHERE id IN ({placeholders})",
+                stale_ids,
+            )
+            conn.commit()
+        return [record for record in records if record.id not in stale_ids]
 
 
 def get_project(project_path: str) -> ProjectRecord | None:
