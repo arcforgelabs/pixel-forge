@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useSessionStore } from "@/store/session-store";
 import { useLiveEditorStore } from "@/components/live-editor/store/chat-store";
 import { Settings } from "@/types";
@@ -39,6 +39,7 @@ import {
   MessageSquare,
   RefreshCw,
   Settings as SettingsIcon,
+  BookOpen,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -121,6 +122,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     agentDeckTargets,
     agentDeckTargetsLoading,
     refreshAgentDeckTargets,
+    refreshSkills,
     createAgentDeckTargetSession,
     selectedAgentDeckTargetId,
     lastSavedFile,
@@ -136,6 +138,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     recentProjects,
     setProject,
     switchToThread,
+    installedSkills,
+    skillSourceRoots,
+    skillInstallDestinations,
+    skillsLoaded,
+    skillsLoading,
     pendingControllerUpdate,
     dismissedControllerUpdateId,
     setDismissedControllerUpdateId,
@@ -225,8 +232,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               className:
                 "border-amber-500/30 bg-amber-500/10 text-amber-100",
               detail: `${stagedVersionLabel} is staged, but it is older than the running ${runningVersionLabel}.`,
-              buttonLabel: `Load ${stagedVersionLabel}`,
+          buttonLabel: `Load ${stagedVersionLabel}`,
             };
+
+  useEffect(() => {
+    if (!settingsDialogOpen || skillsLoaded || skillsLoading) {
+      return;
+    }
+
+    void refreshSkills().catch((error) => {
+      console.error("[settings] Failed to load runtime skills:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to load runtime skills"
+      );
+    });
+  }, [refreshSkills, settingsDialogOpen, skillsLoaded, skillsLoading]);
 
   function setStack(stack: Stack) {
     setSettings((prev: Settings) => ({
@@ -929,6 +949,138 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
             )}
 
             {/* General settings */}
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <BookOpen className="h-3.5 w-3.5" />
+                Installed Skills
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Runtime skill homes</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Chat autocomplete is driven by the real skill folders Pixel Forge finds on disk. Pixel Forge keeps its own managed skill home in shared state while still showing the external Claude, Codex, and OpenClaw homes truthfully.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void refreshSkills().catch((error) => {
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "Failed to refresh runtime skills"
+                        );
+                      });
+                    }}
+                    disabled={skillsLoading}
+                    className="h-8 px-2 text-xs"
+                  >
+                    <RefreshCw className={`mr-1 h-3.5 w-3.5 ${skillsLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Skills
+                    </p>
+                    <p className="mt-1 text-base font-semibold text-foreground">
+                      {installedSkills.length}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Libraries
+                    </p>
+                    <p className="mt-1 text-base font-semibold text-foreground">
+                      {skillSourceRoots.filter((root) => root.exists).length}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Destinations
+                    </p>
+                    <p className="mt-1 text-base font-semibold text-foreground">
+                      {skillInstallDestinations.filter((destination) => destination.exists).length}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Install Destinations
+                  </p>
+                  <div className="space-y-2">
+                    {skillInstallDestinations.map((destination) => (
+                      <div
+                        key={destination.id}
+                        className="rounded-lg border border-border/60 bg-background/70 p-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            {destination.label}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              destination.exists
+                                ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-100"
+                                : "border-border/60 bg-background/70 text-muted-foreground"
+                            }
+                          >
+                            {destination.exists ? "Available" : "Missing"}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                          {destination.path}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Known Skills
+                  </p>
+                  <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                    {installedSkills.length === 0 && !skillsLoading && (
+                      <p className="rounded-lg border border-border/60 bg-background/70 p-3 text-xs text-muted-foreground">
+                        No installed skills were discovered yet. Pixel Forge still keeps its managed skill home in shared state, but the autocomplete surface only reflects skill folders that actually exist on disk.
+                      </p>
+                    )}
+                    {installedSkills.map((skill) => (
+                      <div
+                        key={skill.name}
+                        className="rounded-lg border border-border/60 bg-background/70 p-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs text-foreground">/{skill.name}</p>
+                            {skill.description && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {skill.description}
+                              </p>
+                            )}
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/35 bg-emerald-500/10 text-emerald-100"
+                          >
+                            Installed
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <section className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <Palette className="h-3.5 w-3.5" />

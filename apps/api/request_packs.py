@@ -16,6 +16,10 @@ from uuid import uuid4
 REQUEST_RETENTION_COUNT = 80
 REQUEST_RETENTION_SECONDS = 7 * 24 * 60 * 60
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+SKILL_LINE_RE = re.compile(r"(?m)^[ \t]*/([A-Za-z0-9][A-Za-z0-9-]{0,63})[ \t]*$")
+SKILL_INLINE_RE = re.compile(r"(?<![\w/])/([A-Za-z0-9][A-Za-z0-9-]{0,63})(?![/.\w-])")
+SKILL_CONTEXT_RE = re.compile(r"(?i)\b(load|use|invoke|apply|run|with|using|bring in)\b[\s\w-]{0,32}$")
 
 
 @dataclass(slots=True)
@@ -35,11 +39,50 @@ class RequestPack:
     relative_selection_tunnel_file: str | None
     attachment_paths: list[Path]
     relative_attachment_paths: list[str]
+    requested_skills: list[str]
 
 
 def _safe_name(name: str, fallback: str) -> str:
     stripped = SAFE_NAME_RE.sub("-", name).strip(".-")
     return stripped or fallback
+
+
+def normalize_requested_skills(skills: list[str] | None) -> list[str]:
+    if not skills:
+        return []
+
+    normalized_skills: list[str] = []
+    seen: set[str] = set()
+    for skill in skills:
+        if not isinstance(skill, str):
+            continue
+        normalized = skill.strip().lower()
+        if not VALID_SKILL_NAME_RE.fullmatch(normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_skills.append(normalized)
+    return normalized_skills
+
+
+def extract_requested_skills(message: str) -> list[str]:
+    if not isinstance(message, str) or not message.strip():
+        return []
+
+    requested_skills: list[str] = []
+
+    for match in SKILL_LINE_RE.finditer(message):
+        requested_skills.append(match.group(1))
+
+    for match in SKILL_INLINE_RE.finditer(message):
+        before = message[max(0, match.start() - 40):match.start()].lower()
+        after = message[match.end():min(len(message), match.end() + 24)].lower()
+        if "skill" not in after and not SKILL_CONTEXT_RE.search(before):
+            continue
+        requested_skills.append(match.group(1))
+
+    return normalize_requested_skills(requested_skills)
 
 
 def _request_root(project_path: str) -> Path:
@@ -214,6 +257,7 @@ def create_request_pack(
     informational_only: bool = False,
     session_working_rules: list[str] | None = None,
     turn_working_rules: list[str] | None = None,
+    requested_skills: list[str] | None = None,
 ) -> RequestPack:
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
@@ -225,6 +269,9 @@ def create_request_pack(
         agent_deck_session_id=agent_deck_session_id,
         agent_deck_session_title=agent_deck_session_title,
         session_working_rules=session_working_rules,
+    )
+    normalized_requested_skills = normalize_requested_skills(
+        requested_skills if requested_skills is not None else extract_requested_skills(message)
     )
 
     selected_path: Path | None = None
@@ -334,6 +381,20 @@ def create_request_pack(
     request_sections.extend(
         [
             "",
+        ]
+    )
+    if normalized_requested_skills:
+        request_sections.extend(
+            [
+                "## Skills",
+                "",
+                "- Invoke each listed skill via the skill/tool mechanism before reading source code, using repo-specific tools, or making changes.",
+                *[f"- `{skill}`" for skill in normalized_requested_skills],
+                "",
+            ]
+        )
+    request_sections.extend(
+        [
             "## User Request",
             "",
             message.strip() or "Use the attached request context and make the requested live edit.",
@@ -427,6 +488,7 @@ def create_request_pack(
                 "preview_url": preview_url,
                 "bootstrap": bootstrap,
                 "informational_only": informational_only,
+                "requested_skills": normalized_requested_skills,
                 "session_brief_file": relative_session_brief_path,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
@@ -458,6 +520,7 @@ def create_request_pack(
         relative_selection_tunnel_file=relative_selection_tunnel_path,
         attachment_paths=attachment_paths,
         relative_attachment_paths=relative_attachment_paths,
+        requested_skills=normalized_requested_skills,
     )
 
 

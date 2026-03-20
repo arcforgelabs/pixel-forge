@@ -56,7 +56,8 @@ from project_store import (
 from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
-from request_packs import create_request_pack
+from request_packs import create_request_pack, extract_requested_skills, normalize_requested_skills
+from skill_registry import load_skill_registry_snapshot
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
 from controller_update_state import (
     clear_pending_controller_update,
@@ -484,6 +485,29 @@ def serialize_agent_deck_session_target(
     }
 
 
+def serialize_skill_registry_location(location: object) -> dict[str, object]:
+    return {
+        "id": getattr(location, "id"),
+        "label": getattr(location, "label"),
+        "path": getattr(location, "path"),
+        "role": getattr(location, "role"),
+        "target": getattr(location, "target"),
+        "managed": getattr(location, "managed"),
+        "exists": Path(getattr(location, "path")).expanduser().is_dir(),
+    }
+
+
+def serialize_registered_skill(skill: object) -> dict[str, object]:
+    return {
+        "name": getattr(skill, "name"),
+        "description": getattr(skill, "description"),
+        "source_paths": getattr(skill, "source_paths"),
+        "install_paths": getattr(skill, "install_paths"),
+        "installed_targets": getattr(skill, "installed_targets"),
+        "installed_in_pixel_forge": getattr(skill, "installed_in_pixel_forge"),
+    }
+
+
 @app.get("/api/projects")
 async def get_projects():
     return {"projects": [serialize_project(project) for project in list_projects()]}
@@ -576,6 +600,22 @@ async def create_project_agent_deck_session(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return serialize_agent_deck_session_target(session)
+
+
+@app.get("/api/skills")
+async def get_registered_skills():
+    snapshot = load_skill_registry_snapshot()
+    return {
+        "skills": [serialize_registered_skill(skill) for skill in snapshot.skills],
+        "source_roots": [
+            serialize_skill_registry_location(location)
+            for location in snapshot.source_roots
+        ],
+        "install_destinations": [
+            serialize_skill_registry_location(location)
+            for location in snapshot.install_destinations
+        ],
+    }
 
 
 @app.post("/api/local-targets/pixel-forge/start")
@@ -1345,11 +1385,14 @@ def build_live_editor_dispatch_prompt(
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
+    requested_skills: list[str] | None = None,
     self_edit_safe_mode: bool = False,
     self_edit_scope: Literal["controller", "preview"] | None = None,
     bootstrap: bool = True,
     informational_only: bool = False,
 ) -> str:
+    normalized_requested_skills = normalize_requested_skills(requested_skills)
+
     if informational_only:
         if bootstrap:
             base = f"""Read `{request_file_path}` and answer that Pixel Forge request.
@@ -1378,6 +1421,15 @@ Read `{request_file_path}` and any context files it references.
 Treat this request pack as the new delta for this turn, not as a full session reboot.
 Assume the earlier Pixel Forge session setup and workflow constraints for this same session still apply unless this request pack overrides them.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+
+    if normalized_requested_skills:
+        requested_skill_list = ", ".join(
+            f"`{skill}`" for skill in normalized_requested_skills
+        )
+        base += f"""
+
+This request explicitly asks for these skills: {requested_skill_list}.
+Immediately after reading `{request_file_path}`, invoke each listed skill via the Skill tool before reading source code, using repo-specific tools, or making changes. Do not treat these skill requests as optional flavor text."""
 
     if not informational_only:
         if bootstrap:
@@ -2162,6 +2214,7 @@ async def live_editor_chat(websocket: WebSocket):
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
+                requested_skills = extract_requested_skills(request_message)
                 informational_only = _is_informational_live_editor_request(request_message)
                 self_edit_safe_mode = _is_pixel_forge_workspace(normalized_project_path)
                 selection_count = 0
@@ -2254,6 +2307,7 @@ async def live_editor_chat(websocket: WebSocket):
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     bootstrap=bootstrap_dispatch,
                     informational_only=informational_only,
+                    requested_skills=requested_skills,
                     session_working_rules=(
                         [
                             "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
@@ -2318,6 +2372,7 @@ async def live_editor_chat(websocket: WebSocket):
                     self_edit_scope=self_edit_scope,
                     bootstrap=bootstrap_dispatch,
                     informational_only=informational_only,
+                    requested_skills=requested_skills,
                 )
                 if session_info.acpx_agent and session_info.acpx_session_name:
                     refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(

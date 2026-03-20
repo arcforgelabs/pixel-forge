@@ -10,9 +10,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
 import { useSessionStore } from '@/store/session-store'
 import toast from 'react-hot-toast'
+import {
+  applySkillAutocomplete,
+  findSkillAutocompleteMatch,
+  getSkillAutocompleteSuggestions,
+} from './skill-autocomplete'
 
 function formatAgentLabel(agentType: string | null | undefined): string {
   if (agentType === 'claude') {
@@ -22,6 +28,16 @@ function formatAgentLabel(agentType: string | null | undefined): string {
     return 'Codex'
   }
   return agentType || 'Agent'
+}
+
+function formatSkillTargetLabel(target: string | null | undefined): string {
+  if (!target) {
+    return 'Installed'
+  }
+  if (target === 'pixel-forge') {
+    return 'Pixel Forge'
+  }
+  return formatAgentLabel(target)
 }
 
 function fileToDataURL(file: File): Promise<string> {
@@ -40,6 +56,9 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
+  const [caretIndex, setCaretIndex] = useState(0)
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0)
+  const [dismissedSkillToken, setDismissedSkillToken] = useState<string | null>(null)
   const agentPickerRef = useRef<HTMLDivElement>(null)
   const {
     sendMessage,
@@ -61,6 +80,10 @@ export function ChatInput() {
     refreshAgentDeckTargets,
     createAgentDeckTargetSession,
     switchToThread,
+    installedSkills,
+    skillsLoaded,
+    skillsLoading,
+    refreshSkills,
   } = useSessionStore()
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
@@ -78,6 +101,49 @@ export function ChatInput() {
     : selectedAgentDeckTarget
       ? `Targeting ${selectedAgentDeckTarget.title || selectedAgentDeckTarget.id || 'session'}`
       : 'Start isolated session'
+  const activeSkillMatch = findSkillAutocompleteMatch(input, caretIndex)
+  const activeSkillTokenKey = activeSkillMatch
+    ? `${activeSkillMatch.start}:${activeSkillMatch.end}:${activeSkillMatch.query}`
+    : null
+  const skillSuggestions = activeSkillMatch
+    ? getSkillAutocompleteSuggestions(
+        installedSkills,
+        activeSkillMatch.query,
+        effectiveAgentType
+      ).slice(0, 6)
+    : []
+  const shouldRenderSkillAutocomplete = Boolean(
+    activeSkillMatch
+    && dismissedSkillToken !== activeSkillTokenKey
+    && (skillsLoading || skillsLoaded)
+  )
+  const showSkillAutocomplete = Boolean(
+    shouldRenderSkillAutocomplete && (skillsLoading || skillSuggestions.length > 0)
+  )
+
+  function focusTextareaAt(caret: number) {
+    window.requestAnimationFrame(() => {
+      syncShellFocus()
+      if (!textareaRef.current) {
+        return
+      }
+      textareaRef.current.focus()
+      textareaRef.current.setSelectionRange(caret, caret)
+    })
+  }
+
+  function commitSkillSuggestion(skillName: string) {
+    if (!activeSkillMatch) {
+      return
+    }
+
+    const next = applySkillAutocomplete(input, activeSkillMatch, skillName)
+    setInput(next.value)
+    setCaretIndex(next.caret)
+    setDismissedSkillToken(null)
+    setActiveSkillIndex(0)
+    focusTextareaAt(next.caret)
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -89,6 +155,31 @@ export function ChatInput() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showSkillAutocomplete && skillSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setActiveSkillIndex((current) => (current + 1) % skillSuggestions.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setActiveSkillIndex((current) => (
+          current - 1 + skillSuggestions.length
+        ) % skillSuggestions.length)
+        return
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault()
+        commitSkillSuggestion(skillSuggestions[activeSkillIndex]?.name || skillSuggestions[0].name)
+        return
+      }
+      if (e.key === 'Escape' && activeSkillTokenKey) {
+        e.preventDefault()
+        setDismissedSkillToken(activeSkillTokenKey)
+        return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit(e)
@@ -105,6 +196,23 @@ export function ChatInput() {
       textarea.style.overflowY = textarea.scrollHeight > 384 ? 'auto' : 'hidden'
     }
   }, [input])
+
+  useEffect(() => {
+    if (skillsLoaded || skillsLoading) {
+      return
+    }
+
+    void refreshSkills().catch((error) => {
+      console.error('[chat-input] Failed to load skills:', error)
+    })
+  }, [refreshSkills, skillsLoaded, skillsLoading])
+
+  useEffect(() => {
+    if (!activeSkillTokenKey || dismissedSkillToken !== activeSkillTokenKey) {
+      setDismissedSkillToken(null)
+    }
+    setActiveSkillIndex(0)
+  }, [activeSkillTokenKey, dismissedSkillToken])
 
   // Close agent picker on outside click
   useEffect(() => {
@@ -147,6 +255,7 @@ export function ChatInput() {
   const handleContainerClick = () => {
     syncShellFocus()
     textareaRef.current?.focus()
+    setCaretIndex(textareaRef.current?.selectionStart ?? input.length)
   }
 
   const loadFiles = async (files: File[]) => {
@@ -434,10 +543,20 @@ export function ChatInput() {
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              setCaretIndex(e.target.selectionStart ?? e.target.value.length)
+              setDismissedSkillToken(null)
+            }}
             onFocus={syncShellFocus}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onSelect={(e) => {
+              setCaretIndex(e.currentTarget.selectionStart ?? 0)
+            }}
+            onClick={(e) => {
+              setCaretIndex(e.currentTarget.selectionStart ?? 0)
+            }}
             placeholder="Type here..."
             disabled={isStreaming}
             rows={1}
@@ -445,6 +564,70 @@ export function ChatInput() {
             style={{ pointerEvents: 'auto' }}
           />
         </div>
+        {shouldRenderSkillAutocomplete && (
+          <div className="mx-3 mb-2 rounded-2xl border border-border/60 bg-popover/95 p-2 shadow-lg backdrop-blur-md">
+            <div className="mb-1 flex items-center justify-between px-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
+                Skills
+              </span>
+              <span className="text-[11px] text-muted-foreground/70">
+                {skillsLoading ? 'Loading…' : 'Tab to insert'}
+              </span>
+            </div>
+            {!skillsLoading && skillSuggestions.length === 0 && (
+              <div className="px-2 py-2 text-xs text-muted-foreground">
+                No installed skill matches <span className="font-mono">/{activeSkillMatch?.query}</span>.
+              </div>
+            )}
+            {skillSuggestions.map((skill, index) => {
+              const installedForActiveAgent = effectiveAgentType
+                ? skill.installedTargets.includes(effectiveAgentType)
+                : false
+              const availabilityLabel = installedForActiveAgent
+                ? formatSkillTargetLabel(effectiveAgentType)
+                : skill.installedTargets[0]
+                  ? formatSkillTargetLabel(skill.installedTargets[0])
+                  : 'Installed'
+
+              return (
+                <button
+                  key={skill.name}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    commitSkillSuggestion(skill.name)
+                  }}
+                  className={`flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left transition-colors ${
+                    index === activeSkillIndex
+                      ? 'bg-primary/10 text-foreground'
+                      : 'text-foreground hover:bg-muted/70'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">/{skill.name}</span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          installedForActiveAgent
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                            : 'border-border/60 bg-background/70 text-muted-foreground'
+                        }
+                      >
+                        {availabilityLabel}
+                      </Badge>
+                    </div>
+                    {skill.description && (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {skill.description}
+                      </p>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="flex justify-between items-center px-3 pb-3">
           <div className="flex items-center gap-2">
             <Button

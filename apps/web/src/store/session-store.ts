@@ -30,6 +30,25 @@ export interface AgentDeckSessionTarget {
   createdAt: string | null;
 }
 
+export interface SkillRegistryLocation {
+  id: string;
+  label: string;
+  path: string;
+  role: "source" | "destination";
+  target: string | null;
+  managed: boolean;
+  exists: boolean;
+}
+
+export interface RegisteredSkill {
+  name: string;
+  description: string | null;
+  sourcePaths: string[];
+  installPaths: string[];
+  installedTargets: string[];
+  installedInPixelForge: boolean;
+}
+
 export interface SavedProject {
   path: string;
   name: string;
@@ -77,6 +96,11 @@ interface SessionStore {
   projectSessions: ProjectSessionRecord[];
   agentDeckTargets: AgentDeckSessionTarget[];
   agentDeckTargetsLoading: boolean;
+  installedSkills: RegisteredSkill[];
+  skillSourceRoots: SkillRegistryLocation[];
+  skillInstallDestinations: SkillRegistryLocation[];
+  skillsLoading: boolean;
+  skillsLoaded: boolean;
   projectsLoaded: boolean;
   projectsLoading: boolean;
 
@@ -110,6 +134,7 @@ interface SessionStore {
   clearLiveEditorSession: () => void;
   switchToThread: (session: ProjectSessionRecord | null) => void;
   refreshAgentDeckTargets: () => Promise<void>;
+  refreshSkills: () => Promise<void>;
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
     title?: string | null;
@@ -191,6 +216,25 @@ interface ApiAgentDeckSessionTarget {
   created_at: string | null;
 }
 
+interface ApiSkillRegistryLocation {
+  id: string;
+  label: string;
+  path: string;
+  role: "source" | "destination";
+  target: string | null;
+  managed: boolean;
+  exists: boolean;
+}
+
+interface ApiRegisteredSkill {
+  name: string;
+  description: string | null;
+  source_paths: string[];
+  install_paths: string[];
+  installed_targets: string[];
+  installed_in_pixel_forge: boolean;
+}
+
 function getProjectName(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] || path;
@@ -235,6 +279,31 @@ function normalizeAgentDeckTarget(
     command: session.command,
     status: session.status,
     createdAt: session.created_at,
+  };
+}
+
+function normalizeSkillRegistryLocation(
+  location: ApiSkillRegistryLocation
+): SkillRegistryLocation {
+  return {
+    id: location.id,
+    label: location.label,
+    path: location.path,
+    role: location.role,
+    target: location.target,
+    managed: location.managed,
+    exists: location.exists,
+  };
+}
+
+function normalizeRegisteredSkill(skill: ApiRegisteredSkill): RegisteredSkill {
+  return {
+    name: skill.name,
+    description: skill.description,
+    sourcePaths: skill.source_paths,
+    installPaths: skill.install_paths,
+    installedTargets: skill.installed_targets,
+    installedInPixelForge: skill.installed_in_pixel_forge,
   };
 }
 
@@ -428,6 +497,26 @@ async function createAgentDeckTarget(
   return normalizeAgentDeckTarget(payload);
 }
 
+async function fetchSkills(): Promise<{
+  skills: RegisteredSkill[];
+  sourceRoots: SkillRegistryLocation[];
+  installDestinations: SkillRegistryLocation[];
+}> {
+  const payload = await requestJson<{
+    skills: ApiRegisteredSkill[];
+    source_roots: ApiSkillRegistryLocation[];
+    install_destinations: ApiSkillRegistryLocation[];
+  }>("/api/skills");
+
+  return {
+    skills: payload.skills.map(normalizeRegisteredSkill),
+    sourceRoots: payload.source_roots.map(normalizeSkillRegistryLocation),
+    installDestinations: payload.install_destinations.map(
+      normalizeSkillRegistryLocation
+    ),
+  };
+}
+
 export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Current project
   projectPath: null,
@@ -444,6 +533,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   projectSessions: [],
   agentDeckTargets: [],
   agentDeckTargetsLoading: false,
+  installedSkills: [],
+  skillSourceRoots: [],
+  skillInstallDestinations: [],
+  skillsLoading: false,
+  skillsLoaded: false,
   projectsLoaded: false,
   projectsLoading: false,
 
@@ -666,6 +760,27 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
     } catch (error) {
       set({ agentDeckTargetsLoading: false });
+      throw error;
+    }
+  },
+
+  refreshSkills: async () => {
+    if (get().skillsLoading) {
+      return;
+    }
+
+    set({ skillsLoading: true });
+    try {
+      const payload = await fetchSkills();
+      set({
+        installedSkills: payload.skills,
+        skillSourceRoots: payload.sourceRoots,
+        skillInstallDestinations: payload.installDestinations,
+        skillsLoading: false,
+        skillsLoaded: true,
+      });
+    } catch (error) {
+      set({ skillsLoading: false });
       throw error;
     }
   },

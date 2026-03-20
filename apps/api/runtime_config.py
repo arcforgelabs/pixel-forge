@@ -46,6 +46,13 @@ def shared_state_dir() -> Path:
     return base_dir
 
 
+def skills_install_dir() -> Path:
+    override = os.environ.get("PIXEL_FORGE_SKILLS_INSTALL_DIR")
+    path = Path(override).expanduser() if override else shared_state_dir() / "skills"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def state_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_STATE_DIR")
     base_dir = Path(override).expanduser() if override else shared_state_dir()

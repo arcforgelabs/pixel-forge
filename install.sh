@@ -19,6 +19,7 @@ URL_HOST="${PIXEL_FORGE_URL_HOST:-pixel-forge.localhost}"
 SERVICE_NAME="${PIXEL_FORGE_SERVICE_NAME:-${INSTALL_NAME}}"
 SYSTEMD_DIR="${PIXEL_FORGE_SYSTEMD_DIR:-$HOME/.config/systemd/user}"
 SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}"
+SKILLS_INSTALL_DIR="${PIXEL_FORGE_SKILLS_INSTALL_DIR:-${SHARED_STATE_DIR}/skills}"
 SKIP_SYSTEMD="${PIXEL_FORGE_INSTALL_SKIP_SYSTEMD:-0}"
 SKIP_DESKTOP_INTEGRATION="${PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION:-0}"
 
@@ -64,6 +65,7 @@ echo "Frontend built."
 # --- Install backend ---
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
+mkdir -p "$SKILLS_INSTALL_DIR"
 
 echo "Backing up current install to $BACKUP_DIR..."
 backup_install_dir
@@ -123,6 +125,7 @@ BACKUP_DIR="${PIXEL_FORGE_BACKUP_DIR:-$HOME/.local/lib/${INSTALL_NAME}.rollback}
 SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}"
 RUNTIME_DIR="${PIXEL_FORGE_RUNTIME_DIR:-${SHARED_STATE_DIR}/runtime}"
 export PIXEL_FORGE_BIN_DIR="${PIXEL_FORGE_BIN_DIR:-$LAUNCHER_DIR}"
+export PIXEL_FORGE_SKILLS_INSTALL_DIR="${PIXEL_FORGE_SKILLS_INSTALL_DIR:-${SHARED_STATE_DIR}/skills}"
 
 mkdir -p "$RUNTIME_DIR"
 
@@ -157,6 +160,7 @@ export PIXEL_FORGE_PORT="$PORT"
 export PIXEL_FORGE_URL_HOST="$URL_HOST"
 export PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR"
 export PIXEL_FORGE_RUNTIME_DIR="$RUNTIME_DIR"
+export PIXEL_FORGE_SKILLS_INSTALL_DIR="${PIXEL_FORGE_SKILLS_INSTALL_DIR:-${SHARED_STATE_DIR}/skills}"
 
 "$LAUNCHER_DIR/pixel-forge" start >/dev/null 2>&1 || true
 
@@ -199,6 +203,7 @@ TimeoutStopSec=8
 Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PIXEL_FORGE_PORT=$PORT
 Environment=PIXEL_FORGE_SHARED_STATE_DIR=$SHARED_STATE_DIR
+Environment=PIXEL_FORGE_SKILLS_INSTALL_DIR=$SKILLS_INSTALL_DIR
 
 [Install]
 WantedBy=default.target
@@ -242,7 +247,8 @@ fi
 INSTALL_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$INSTALL_DIR/runtime-install-metadata.json" <<METADATA
 {
-  "installedAt": "$INSTALL_TIMESTAMP"
+  "installedAt": "$INSTALL_TIMESTAMP",
+  "skillsInstallDir": "$SKILLS_INSTALL_DIR"
 }
 METADATA
 
