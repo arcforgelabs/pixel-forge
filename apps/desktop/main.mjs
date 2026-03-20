@@ -981,7 +981,7 @@ function runShellCommand(command, cwd) {
   })
 }
 
-async function applyControllerUpdate(projectPath, bootstrapState) {
+async function applyControllerUpdate(bootstrapState) {
   const sanitizedState = sanitizeBootstrapState(bootstrapState)
   const updateId = normalizeText(bootstrapState?.updateId)
   if (!sanitizedState.projectPath) {
@@ -1019,7 +1019,7 @@ async function startPendingControllerUpdate(payload) {
   if (!existingPendingUpdate) {
     throw new Error('No staged Pixel Forge update is ready to load.')
   }
-  return applyControllerUpdate(projectPath, {
+  return applyControllerUpdate({
     ...payload,
     updateId: existingPendingUpdate.id,
     projectPath:
@@ -1485,10 +1485,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pixel-forge-app:apply-controller-update', async (_event, payload) => {
-    return applyControllerUpdate(
-      typeof payload?.projectPath === 'string' ? payload.projectPath : '',
-      payload,
-    )
+    return applyControllerUpdate(payload)
   })
 
   ipcMain.handle('pixel-forge-app:apply-pending-controller-update', async (_event, payload) => {
@@ -1496,7 +1493,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('pixel-forge-app:start-controller-update', (_event, payload) => {
-    void applyControllerUpdate(typeof payload?.projectPath === 'string' ? payload.projectPath : '', payload)
+    void applyControllerUpdate(payload)
       .catch((error) => {
         reportControllerUpdateStartError(error, normalizeText(payload?.updateId))
       })
