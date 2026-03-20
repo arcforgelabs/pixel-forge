@@ -1879,14 +1879,6 @@ export function LiveEditorPane() {
     redoSelectionChange()
   }, [redoSelectionChange])
 
-  const focusManagedBrowser = useCallback(async () => {
-    const activePreviewTab = getActivePreviewTab()
-    if (!activePreviewTab?.browserTabId) {
-      return
-    }
-    await sendBrowserCommand(activePreviewTab.browserTabId, 'focus')
-  }, [getActivePreviewTab, sendBrowserCommand])
-
   const viewportShellStyle =
     viewportMode === 'phone'
       ? { width: 'min(100%, 430px)', maxWidth: '430px' }
@@ -2085,7 +2077,7 @@ export function LiveEditorPane() {
                 title="Launch or rebuild the isolated Pixel Forge mirror for this session"
               >
                 <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
-                {isLaunchingPixelForgeTarget ? 'Launching...' : 'Run Pixel Forge'}
+                {isLaunchingPixelForgeTarget ? 'Launching...' : 'Mirror'}
               </Button>
             )}
             {hasPendingPreviewUpdate && (
@@ -2112,18 +2104,6 @@ export function LiveEditorPane() {
             >
               <RefreshCw className="h-3 w-3" />
             </Button>
-            {activePreviewTab?.mode === 'browser' && activePreviewTab.browserTabId && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void focusManagedBrowser()}
-                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
-                title={hasEmbeddedBrowserPreview ? 'Focus the embedded preview' : 'Focus the managed browser window'}
-              >
-                <Globe2 className="h-3 w-3" />
-                {hasEmbeddedBrowserPreview ? 'Focus Preview' : 'Focus Browser'}
-              </Button>
-            )}
             <Button
               variant={selectMode ? 'default' : 'outline'}
               size="sm"
@@ -2140,11 +2120,6 @@ export function LiveEditorPane() {
             </Button>
 
             <div className="ml-auto flex items-center gap-1.5">
-              {hasEmbeddedBrowserPreview && (
-                <div className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                  Embedded Chromium
-                </div>
-              )}
               <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
                 {viewportModes.map(({ mode, label, title, icon: Icon }) => (
                   <Button
