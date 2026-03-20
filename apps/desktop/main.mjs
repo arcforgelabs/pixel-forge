@@ -32,6 +32,7 @@ let updaterWindow = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
+let pickerOverlayOwnerContextId = null
 let pendingUpdateSnapshot = null
 let controllerUpdateApplyState = {
   status: 'idle',
@@ -67,6 +68,8 @@ function ensurePreviewContext(ownerContextId) {
   const context = {
     activeTabId: null,
     visible: false,
+    focusedSurface: 'shell',
+    armedTool: null,
     bounds: { x: 0, y: 0, width: 0, height: 0 },
     attachedView: null,
   }
@@ -113,16 +116,81 @@ function normalizeText(value) {
   return trimmed || null
 }
 
-function sendPreviewEvent(ownerContextId, event) {
+function getContextWebContents(ownerContextId) {
   const mainContextId = getMainPreviewContextId()
   if (mainContextId === null) {
-    return
+    return null
   }
 
-  const targetContents =
+  return (
     ownerContextId === mainContextId
       ? mainWindow?.webContents ?? null
       : electronWebContents.fromId(ownerContextId)
+  )
+}
+
+function normalizeFocusedSurface(value) {
+  return value === 'preview' || value === 'overlay' ? value : 'shell'
+}
+
+function normalizePreviewTool(value) {
+  return value === 'select' ? 'select' : null
+}
+
+function readPreviewInputState(ownerContextId) {
+  const context = ensurePreviewContext(ownerContextId)
+  return {
+    activePreviewTabId: context.activeTabId,
+    previewVisible: Boolean(context.visible && context.activeTabId),
+    focusedSurface: normalizeFocusedSurface(context.focusedSurface),
+    armedTool: normalizePreviewTool(context.armedTool),
+  }
+}
+
+function sendAppEventToContext(ownerContextId, event) {
+  const targetContents = getContextWebContents(ownerContextId)
+  if (!targetContents || targetContents.isDestroyed()) {
+    return
+  }
+  targetContents.send('pixel-forge-app:event', event)
+}
+
+function emitPreviewInputState(ownerContextId) {
+  sendAppEventToContext(ownerContextId, {
+    type: 'preview-input-state-changed',
+    inputState: readPreviewInputState(ownerContextId),
+  })
+}
+
+function updatePreviewInputState(ownerContextId, updates = {}) {
+  const context = ensurePreviewContext(ownerContextId)
+  let changed = false
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'focusedSurface')) {
+    const nextFocusedSurface = normalizeFocusedSurface(updates.focusedSurface)
+    if (context.focusedSurface !== nextFocusedSurface) {
+      context.focusedSurface = nextFocusedSurface
+      changed = true
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'armedTool')) {
+    const nextArmedTool = normalizePreviewTool(updates.armedTool)
+    if (context.armedTool !== nextArmedTool) {
+      context.armedTool = nextArmedTool
+      changed = true
+    }
+  }
+
+  if (changed) {
+    emitPreviewInputState(ownerContextId)
+  }
+
+  return readPreviewInputState(ownerContextId)
+}
+
+function sendPreviewEvent(ownerContextId, event) {
+  const targetContents = getContextWebContents(ownerContextId)
   if (!targetContents || targetContents.isDestroyed()) {
     return
   }
@@ -766,6 +834,8 @@ function sanitizeBounds(bounds) {
 
 function closePickerOverlay(result = null) {
   pickerOverlaySettling = true
+  const ownerContextId = pickerOverlayOwnerContextId
+  pickerOverlayOwnerContextId = null
   if (pickerOverlayResolver) {
     pickerOverlayResolver(result)
     pickerOverlayResolver = null
@@ -777,6 +847,9 @@ function closePickerOverlay(result = null) {
     return
   }
   pickerOverlayWindow = null
+  if (ownerContextId !== null) {
+    updatePreviewInputState(ownerContextId, { focusedSurface: 'shell' })
+  }
   queueMicrotask(() => {
     pickerOverlaySettling = false
   })
@@ -840,6 +913,7 @@ function removePreviewRecord(previewRecord) {
     return
   }
   const context = previewContexts.get(previewRecord.ownerContextId)
+  let inputStateChanged = false
   if (context?.attachedView === previewRecord.view) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.contentView.removeChildView(previewRecord.view)
@@ -849,11 +923,16 @@ function removePreviewRecord(previewRecord) {
   if (context?.activeTabId === previewRecord.tabId) {
     context.activeTabId = null
     context.visible = false
+    context.focusedSurface = 'shell'
+    inputStateChanged = true
   }
   if (typeof previewRecord.webContentsId === 'number') {
     previewKeyByWebContentsId.delete(previewRecord.webContentsId)
   }
   previewViews.delete(previewRecord.key)
+  if (inputStateChanged) {
+    emitPreviewInputState(previewRecord.ownerContextId)
+  }
 }
 
 function destroyOwnedPreviewContexts(ownerContextId) {
@@ -897,6 +976,19 @@ function registerViewEvents(ownerContextId, tabId, view) {
       url: view.webContents.getURL(),
       title: view.webContents.getTitle() || view.webContents.getURL(),
     })
+  })
+
+  view.webContents.on('focus', () => {
+    updatePreviewInputState(ownerContextId, { focusedSurface: 'preview' })
+  })
+
+  view.webContents.on('blur', () => {
+    const context = previewContexts.get(ownerContextId)
+    if (context?.focusedSurface === 'preview') {
+      updatePreviewInputState(ownerContextId, {
+        focusedSurface: pickerOverlayOwnerContextId === ownerContextId ? 'overlay' : 'shell',
+      })
+    }
   })
 
   view.webContents.on('destroyed', () => {
@@ -1206,10 +1298,12 @@ async function showPickListOverlay(ownerContextId, payload) {
   }
 
   closePickerOverlay(null)
+  pickerOverlayOwnerContextId = ownerContextId
 
   const anchorRect = sanitizeBounds(payload?.anchorRect || {})
   const baseBounds = getOwnerBaseBounds(ownerContextId)
   if (!baseBounds) {
+    pickerOverlayOwnerContextId = null
     return null
   }
   const contentBounds = mainWindow.getContentBounds()
@@ -1278,6 +1372,7 @@ async function showPickListOverlay(ownerContextId, payload) {
   })
   pickerOverlayWindow.show()
   pickerOverlayWindow.focus()
+  updatePreviewInputState(ownerContextId, { focusedSurface: 'overlay' })
 
   return await new Promise((resolve) => {
     pickerOverlayResolver = resolve
@@ -1303,6 +1398,9 @@ async function createMainWindow() {
   mainWindow.maximize()
   await mainWindow.webContents.session.clearCache()
   mainWindow.loadURL(SHELL_URL)
+  mainWindow.webContents.on('focus', () => {
+    updatePreviewInputState(mainWindow.webContents.id, { focusedSurface: 'shell' })
+  })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -1356,7 +1454,24 @@ app.whenReady().then(() => {
     if (!tabId || !url) {
       throw new Error('tabId and url are required')
     }
-    return loadPreviewUrl(ownerContextId, tabId, url)
+    const response = await loadPreviewUrl(ownerContextId, tabId, url)
+    emitPreviewInputState(ownerContextId)
+    return response
+  })
+
+  ipcMain.handle('pixel-forge-preview:show', async (event, payload) => {
+    const ownerContextId = event.sender.id
+    const tabId = String(payload?.tabId || '')
+    const previewRecord = getPreviewRecord(ownerContextId, tabId)
+    if (!previewRecord) {
+      throw new Error(`Unknown preview tab: ${tabId}`)
+    }
+    const context = ensurePreviewContext(ownerContextId)
+    context.activeTabId = tabId
+    context.visible = true
+    applyAllPreviewViews()
+    emitPreviewInputState(ownerContextId)
+    return { ok: true }
   })
 
   ipcMain.handle('pixel-forge-preview:activate', async (event, payload) => {
@@ -1370,9 +1485,8 @@ app.whenReady().then(() => {
     context.activeTabId = tabId
     context.visible = true
     applyAllPreviewViews()
-    return {
-      ok: true,
-    }
+    emitPreviewInputState(ownerContextId)
+    return { ok: true }
   })
 
   ipcMain.handle('pixel-forge-preview:focus', async (event, payload) => {
@@ -1387,6 +1501,7 @@ app.whenReady().then(() => {
     context.visible = true
     applyAllPreviewViews()
     previewRecord.view.webContents.focus()
+    updatePreviewInputState(ownerContextId, { focusedSurface: 'preview' })
     return { ok: true }
   })
 
@@ -1420,7 +1535,11 @@ app.whenReady().then(() => {
     const ownerContextId = event.sender.id
     const context = ensurePreviewContext(ownerContextId)
     context.visible = false
+    if (context.focusedSurface === 'preview') {
+      context.focusedSurface = 'shell'
+    }
     applyAllPreviewViews()
+    emitPreviewInputState(ownerContextId)
     return { ok: true }
   })
 
@@ -1441,9 +1560,21 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pixel-forge-preview:set-select-mode', async (event, payload) => {
+    updatePreviewInputState(event.sender.id, {
+      armedTool: Boolean(payload?.enabled) ? 'select' : null,
+    })
     return sendPreviewCommand(event.sender.id, String(payload?.tabId || ''), {
       type: 'set-select-mode',
       enabled: Boolean(payload?.enabled),
+    })
+  })
+
+  ipcMain.handle('pixel-forge-preview:set-tool', async (event, payload) => {
+    const tool = normalizePreviewTool(payload?.tool)
+    updatePreviewInputState(event.sender.id, { armedTool: tool })
+    return sendPreviewCommand(event.sender.id, String(payload?.tabId || ''), {
+      type: 'set-tool',
+      tool,
     })
   })
 
@@ -1502,12 +1633,21 @@ app.whenReady().then(() => {
       })
   })
 
-  ipcMain.handle('pixel-forge-app:focus-shell', async () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+  ipcMain.handle('pixel-forge-app:focus-shell', async (event) => {
+    const ownerContextId = event.sender.id
+    const targetContents = getContextWebContents(ownerContextId)
+    if (ownerContextId === getMainPreviewContextId() && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.focus()
-      mainWindow.webContents.focus()
     }
+    if (targetContents && !targetContents.isDestroyed()) {
+      targetContents.focus()
+    }
+    updatePreviewInputState(ownerContextId, { focusedSurface: 'shell' })
     return { ok: true }
+  })
+
+  ipcMain.handle('pixel-forge-app:get-preview-input-state', async (event) => {
+    return readPreviewInputState(event.sender.id)
   })
 
   ipcMain.handle('pixel-forge-app:consume-bootstrap-state', async () => {

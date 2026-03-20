@@ -6,6 +6,16 @@ export interface PixelForgeBrowserPreviewResponse {
   snapshot_data_url: string | null
 }
 
+export type PixelForgeDesktopFocusedSurface = 'shell' | 'preview' | 'overlay'
+export type PixelForgeDesktopPreviewTool = 'select' | null
+
+export interface PixelForgeDesktopPreviewInputState {
+  activePreviewTabId: string | null
+  previewVisible: boolean
+  focusedSurface: PixelForgeDesktopFocusedSurface
+  armedTool: PixelForgeDesktopPreviewTool
+}
+
 export interface PixelForgeAppliedSelection {
   id: string
   selectorKind: 'dom' | 'region'
@@ -37,10 +47,12 @@ export interface PixelForgeAppliedSelection {
 
 export interface PixelForgeDesktopPreviewAPI {
   load(payload: { tabId: string; url: string }): Promise<PixelForgeBrowserPreviewResponse>
+  show(tabId: string): Promise<{ ok: true }>
   activate(tabId: string): Promise<{ ok: true }>
   focus(tabId: string): Promise<{ ok: true }>
   refresh(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   close(tabId: string): Promise<{ ok: true }>
+  setTool(tabId: string, tool: PixelForgeDesktopPreviewTool): Promise<PixelForgeBrowserPreviewResponse>
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>
   clearSelections(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   deselect(tabId: string, selectionId: string): Promise<PixelForgeBrowserPreviewResponse>
@@ -123,6 +135,7 @@ export interface PixelForgeDesktopRuntimeInfo {
 
 export interface PixelForgeDesktopAppAPI {
   focusShell?(): Promise<{ ok: true }>
+  getPreviewInputState?(): Promise<PixelForgeDesktopPreviewInputState>
   applyControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   applyPendingControllerUpdate(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   startControllerUpdate?(payload: PixelForgeDesktopBootstrapState): void

@@ -15,7 +15,10 @@ import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { PixelForgePendingPreviewUpdate } from '@/types/pixel-forge-desktop'
+import type {
+  PixelForgePendingPreviewUpdate,
+  PixelForgeDesktopPreviewTool,
+} from '@/types/pixel-forge-desktop'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -395,7 +398,7 @@ export function LiveEditorPane() {
   const desktopOverlayRef = useRef(window.pixelForgeDesktop?.overlay ?? null)
   const desktopAppRef = useRef(window.pixelForgeDesktop?.app ?? null)
 
-  const [selectMode, setSelectMode] = useState(false)
+  const [activePreviewTool, setActivePreviewTool] = useState<PixelForgeDesktopPreviewTool>(null)
   const [targetUrl, setTargetUrl] = useState(previewUrl || '')
   const [activeTab, setActiveTab] = useState('chat')
   const [viewportMode, setViewportMode] = useState<ViewportMode>('fluid')
@@ -407,6 +410,7 @@ export function LiveEditorPane() {
   const [activePreviewTabId, setActivePreviewTabId] = useState<string | null>(null)
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
+  const isSelectionToolActive = activePreviewTool === 'select'
 
   // URL navigation history (back/forward)
   const [urlHistory, setUrlHistory] = useState<string[]>([])
@@ -415,6 +419,47 @@ export function LiveEditorPane() {
 
   const canGoBack = urlHistoryCursor > 0
   const canGoForward = urlHistoryCursor < urlHistory.length - 1
+
+  useEffect(() => {
+    const desktopApp = desktopAppRef.current
+    if (!desktopApp?.getPreviewInputState) {
+      return
+    }
+
+    let cancelled = false
+    const applyInputState = (inputState?: { armedTool?: PixelForgeDesktopPreviewTool | null } | null) => {
+      if (cancelled) {
+        return
+      }
+      setActivePreviewTool(inputState?.armedTool === 'select' ? 'select' : null)
+    }
+
+    void desktopApp.getPreviewInputState()
+      .then((inputState) => {
+        applyInputState(inputState)
+      })
+      .catch((error) => {
+        console.error('[live-editor] Failed to read desktop preview input state:', error)
+      })
+
+    const handleAppEvent = (rawEvent: Event) => {
+      const event = rawEvent as CustomEvent<{
+        type?: string
+        inputState?: {
+          armedTool?: PixelForgeDesktopPreviewTool | null
+        } | null
+      }>
+      if (event.detail?.type === 'preview-input-state-changed') {
+        applyInputState(event.detail.inputState)
+      }
+    }
+
+    window.addEventListener('pixel-forge-app', handleAppEvent as EventListener)
+    return () => {
+      cancelled = true
+      window.removeEventListener('pixel-forge-app', handleAppEvent as EventListener)
+    }
+  }, [])
 
   const pushUrlHistory = useCallback((url: string) => {
     if (urlNavRef.current) {
@@ -672,18 +717,25 @@ export function LiveEditorPane() {
 
   const sendBrowserCommand = useCallback(async (
     browserTabId: string,
-    action: 'focus' | 'set_select_mode' | 'clear' | 'deselect' | 'apply' | 'refresh',
+    action: 'show' | 'focus' | 'set_tool' | 'clear' | 'deselect' | 'apply' | 'refresh',
     payload?: Record<string, unknown>
   ) => {
     const desktopPreview = desktopPreviewRef.current
     if (desktopPreview) {
       try {
+        if (action === 'show') {
+          await desktopPreview.show(browserTabId)
+          return null
+        }
         if (action === 'focus') {
           await desktopPreview.focus(browserTabId)
           return null
         }
-        if (action === 'set_select_mode') {
-          return await desktopPreview.setSelectMode(browserTabId, Boolean(payload?.enabled))
+        if (action === 'set_tool') {
+          return await desktopPreview.setTool(
+            browserTabId,
+            payload?.tool === 'select' ? 'select' : null
+          )
         }
         if (action === 'clear') {
           return await desktopPreview.clearSelections(browserTabId)
@@ -728,12 +780,20 @@ export function LiveEditorPane() {
     }
 
     try {
+      const normalizedAction =
+        action === 'set_tool'
+          ? 'set_select_mode'
+          : action
       return await requestPreviewJson<BrowserPreviewLoadResponse>('/api/live-preview/browser/command', {
         method: 'POST',
         body: JSON.stringify({
           browser_tab_id: browserTabId,
-          action,
-          ...(payload || {}),
+          action: normalizedAction,
+          ...(
+            action === 'set_tool'
+              ? { enabled: payload?.tool === 'select' }
+              : (payload || {})
+          ),
         }),
       })
     } catch (error) {
@@ -789,7 +849,10 @@ export function LiveEditorPane() {
   const syncAllPreviewSelectionModes = useCallback(async () => {
     await Promise.all(
       previewTabsRef.current.map(async (tab) => {
-        const enabled = selectMode && tab.id === activeTabIdRef.current
+        const tool =
+          activePreviewTool && tab.id === activeTabIdRef.current
+            ? activePreviewTool
+            : null
 
         if (tab.mode === 'proxy') {
           const iframe = iframeRefs.current[tab.id]
@@ -800,7 +863,7 @@ export function LiveEditorPane() {
           iframe.contentWindow.postMessage(
             {
               type: 'pixel-forge-toggle-select',
-              enabled,
+              enabled: tool === 'select',
             },
             '*'
           )
@@ -808,11 +871,11 @@ export function LiveEditorPane() {
         }
 
         if (tab.mode === 'browser' && tab.browserTabId) {
-          await sendBrowserCommand(tab.browserTabId, 'set_select_mode', { enabled })
+          await sendBrowserCommand(tab.browserTabId, 'set_tool', { tool })
         }
       })
     )
-  }, [selectMode, sendBrowserCommand])
+  }, [activePreviewTool, sendBrowserCommand])
 
   const updateEmbeddedPreviewBounds = useCallback(async () => {
     const desktopPreview = desktopPreviewRef.current
@@ -839,7 +902,7 @@ export function LiveEditorPane() {
       return
     }
 
-    await desktopPreview.activate(activePreviewTab.browserTabId)
+    await desktopPreview.show(activePreviewTab.browserTabId)
     await desktopPreview.setBounds({
       x: rect.left,
       y: rect.top,
@@ -1047,7 +1110,7 @@ export function LiveEditorPane() {
     if (tab.mode === 'browser' && tab.browserTabId) {
       const desktopPreview = desktopPreviewRef.current
       if (desktopPreview) {
-        await desktopPreview.activate(tab.browserTabId)
+        await desktopPreview.show(tab.browserTabId)
         window.setTimeout(() => {
           void updateEmbeddedPreviewBounds()
         }, 60)
@@ -1378,7 +1441,7 @@ export function LiveEditorPane() {
     if (nextTab.mode === 'browser' && nextTab.browserTabId) {
       const desktopPreview = desktopPreviewRef.current
       if (desktopPreview) {
-        await desktopPreview.activate(nextTab.browserTabId)
+        await desktopPreview.show(nextTab.browserTabId)
         window.setTimeout(() => {
           void updateEmbeddedPreviewBounds()
         }, 60)
@@ -1543,13 +1606,13 @@ export function LiveEditorPane() {
 
   useEffect(() => {
     void syncAllPreviewSelectionModes()
-  }, [activePreviewTabId, selectMode, syncAllPreviewSelectionModes])
+  }, [activePreviewTabId, activePreviewTool, syncAllPreviewSelectionModes])
 
-  const toggleSelectMode = useCallback(() => {
-    const newMode = !selectMode
-    setSelectMode(newMode)
+  const toggleSelectionTool = useCallback(() => {
+    const nextTool = isSelectionToolActive ? null : 'select'
+    setActivePreviewTool(nextTool)
 
-    if (newMode) {
+    if (nextTool === 'select') {
       const activePreviewTab = getActivePreviewTab()
       if (activePreviewTab?.mode === 'browser') {
         toast.success(
@@ -1566,7 +1629,7 @@ export function LiveEditorPane() {
         })
       }
     }
-  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, selectMode])
+  }, [getActivePreviewTab, hasEmbeddedBrowserPreview, isSelectionToolActive])
 
   const handleIframeLoad = useCallback((tabId: string) => {
     setTimeout(() => {
@@ -1579,13 +1642,13 @@ export function LiveEditorPane() {
       iframe.contentWindow.postMessage(
         {
           type: 'pixel-forge-toggle-select',
-          enabled: selectMode && tabId === activeTabIdRef.current,
+          enabled: isSelectionToolActive && tabId === activeTabIdRef.current,
         },
         '*'
       )
       void syncTabSelections(tabId)
     }, 120)
-  }, [getPreviewTabById, selectMode, syncTabSelections])
+  }, [getPreviewTabById, isSelectionToolActive, syncTabSelections])
 
   useEffect(() => {
     const handleProxyMessage = (event: MessageEvent) => {
@@ -1631,7 +1694,7 @@ export function LiveEditorPane() {
           removeElement(element.id)
         }
       } else if (event.data.type === 'pixel-forge-cancel-select') {
-        setSelectMode(false)
+        setActivePreviewTool(null)
       } else if (event.data.type === 'pixel-forge-auth-required') {
         const status = Number(event.data.data?.status || 0)
         const failingUrl = String(event.data.data?.url || '')
@@ -1769,7 +1832,7 @@ export function LiveEditorPane() {
     }
 
     if (payload.type === 'browser-select-cancelled') {
-      setSelectMode(false)
+      setActivePreviewTool(null)
       return
     }
 
@@ -2116,18 +2179,18 @@ export function LiveEditorPane() {
               <RefreshCw className="h-3 w-3" />
             </Button>
             <Button
-              variant={selectMode ? 'default' : 'outline'}
+              variant={isSelectionToolActive ? 'default' : 'outline'}
               size="sm"
-              onClick={toggleSelectMode}
+              onClick={toggleSelectionTool}
               disabled={!hasEmbeddedBrowserPreview}
               className={`h-7 gap-1 px-2.5 text-xs transition-all ${
-                selectMode
+                isSelectionToolActive
                   ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
                   : 'border-border/60'
               }`}
             >
               <MousePointer2 className="h-3 w-3" />
-              {selectMode ? 'Selecting' : 'Select'}
+              {isSelectionToolActive ? 'Selecting' : 'Select'}
             </Button>
 
             <div className="ml-auto flex items-center gap-1.5">

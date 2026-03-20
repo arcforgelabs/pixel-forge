@@ -67,6 +67,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
+- Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
 - New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree while the canonical repo root remains the project identity.
 - One Live Editor thread has one default writable workspace root. The default self-edit mirror source follows that same bound workspace.

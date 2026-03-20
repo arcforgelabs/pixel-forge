@@ -11,10 +11,13 @@ ipcRenderer.on('pixel-forge-app:event', (_event, payload) => {
 contextBridge.exposeInMainWorld('pixelForgeDesktop', {
   preview: {
     load: (payload) => ipcRenderer.invoke('pixel-forge-preview:load', payload),
+    show: (tabId) => ipcRenderer.invoke('pixel-forge-preview:show', { tabId }),
     activate: (tabId) => ipcRenderer.invoke('pixel-forge-preview:activate', { tabId }),
     focus: (tabId) => ipcRenderer.invoke('pixel-forge-preview:focus', { tabId }),
     refresh: (tabId) => ipcRenderer.invoke('pixel-forge-preview:refresh', { tabId }),
     close: (tabId) => ipcRenderer.invoke('pixel-forge-preview:close', { tabId }),
+    setTool: (tabId, tool) =>
+      ipcRenderer.invoke('pixel-forge-preview:set-tool', { tabId, tool }),
     setSelectMode: (tabId, enabled) =>
       ipcRenderer.invoke('pixel-forge-preview:set-select-mode', { tabId, enabled }),
     clearSelections: (tabId) =>
@@ -32,6 +35,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
   app: {
     focusShell: () =>
       ipcRenderer.invoke('pixel-forge-app:focus-shell'),
+    getPreviewInputState: () =>
+      ipcRenderer.invoke('pixel-forge-app:get-preview-input-state'),
     applyControllerUpdate: (payload) =>
       ipcRenderer.invoke('pixel-forge-app:apply-controller-update', payload),
     applyPendingControllerUpdate: (payload) =>

@@ -31,10 +31,13 @@ if (shouldExposeDesktopBridge()) {
   contextBridge.exposeInMainWorld('pixelForgeDesktop', {
     preview: {
       load: (payload) => ipcRenderer.invoke('pixel-forge-preview:load', payload),
+      show: (tabId) => ipcRenderer.invoke('pixel-forge-preview:show', { tabId }),
       activate: (tabId) => ipcRenderer.invoke('pixel-forge-preview:activate', { tabId }),
       focus: (tabId) => ipcRenderer.invoke('pixel-forge-preview:focus', { tabId }),
       refresh: (tabId) => ipcRenderer.invoke('pixel-forge-preview:refresh', { tabId }),
       close: (tabId) => ipcRenderer.invoke('pixel-forge-preview:close', { tabId }),
+      setTool: (tabId, tool) =>
+        ipcRenderer.invoke('pixel-forge-preview:set-tool', { tabId, tool }),
       setSelectMode: (tabId, enabled) =>
         ipcRenderer.invoke('pixel-forge-preview:set-select-mode', { tabId, enabled }),
       clearSelections: (tabId) =>
@@ -46,6 +49,10 @@ if (shouldExposeDesktopBridge()) {
       setBounds: (bounds) => ipcRenderer.invoke('pixel-forge-preview:set-bounds', bounds),
       hide: () => ipcRenderer.invoke('pixel-forge-preview:hide'),
     },
+    app: {
+      focusShell: () => ipcRenderer.invoke('pixel-forge-app:focus-shell'),
+      getPreviewInputState: () => ipcRenderer.invoke('pixel-forge-app:get-preview-input-state'),
+    },
     overlay: {
       pickList: (payload) => ipcRenderer.invoke('pixel-forge-overlay:pick-list', payload),
     },
@@ -53,6 +60,11 @@ if (shouldExposeDesktopBridge()) {
 }
 
 ipcRenderer.on('pixel-forge-preview:command', async (_event, command) => {
+  if (command.type === 'set-tool') {
+    bridge.setTool(command.tool ?? null)
+    return
+  }
+
   if (command.type === 'set-select-mode') {
     bridge.setSelectMode(Boolean(command.enabled))
     return

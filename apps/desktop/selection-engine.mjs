@@ -1403,20 +1403,25 @@ export function installSelectionBridge({ emit, captureRegion }) {
     scheduleSelectionReconcile()
   })
 
-  return {
-    setSelectMode(enabled) {
-      selectMode = Boolean(enabled)
-      keyboardState = { ctrl: false, shift: false }
-      lastPointerElement = null
-      if (selectMode) {
-        createHoverOverlay()
-        if (document.body) {
-          document.body.style.cursor = 'crosshair'
-        }
-      } else if (document.body) {
-        document.body.style.cursor = ''
-        hideHoverOverlay()
+  function setTool(tool) {
+    selectMode = tool === 'select'
+    keyboardState = { ctrl: false, shift: false }
+    lastPointerElement = null
+    if (selectMode) {
+      createHoverOverlay()
+      if (document.body) {
+        document.body.style.cursor = 'crosshair'
       }
+    } else if (document.body) {
+      document.body.style.cursor = ''
+      hideHoverOverlay()
+    }
+  }
+
+  return {
+    setTool,
+    setSelectMode(enabled) {
+      setTool(Boolean(enabled) ? 'select' : null)
     },
     async clearSelections() {
       await clearSelections(false)

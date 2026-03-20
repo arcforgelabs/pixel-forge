@@ -18,13 +18,19 @@ export function useDesktopPreviewOverlayGuard(
 ): void {
   const restoreBoundsRef = useRef(restoreBounds)
   restoreBoundsRef.current = restoreBounds
+  const hadOverlayRef = useRef<boolean | null>(null)
 
   useEffect(() => {
     if (!previewRef.current) return
 
     const sync = () => {
       if (!previewRef.current) return
-      if (document.querySelector(OVERLAY_SELECTOR)) {
+      const hasOverlay = document.querySelector(OVERLAY_SELECTOR) !== null
+      if (hadOverlayRef.current === hasOverlay) {
+        return
+      }
+      hadOverlayRef.current = hasOverlay
+      if (hasOverlay) {
         void previewRef.current.hide()
       } else {
         void restoreBoundsRef.current()
