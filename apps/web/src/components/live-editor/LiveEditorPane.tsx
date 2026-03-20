@@ -66,6 +66,12 @@ interface BrowserPreviewLoadResponse {
   snapshot_data_url: string | null
 }
 
+interface LoadAppOptions {
+  persist?: boolean
+  tabId?: string
+  announceSuccess?: boolean
+}
+
 interface LocalPixelForgeTargetResponse {
   kind: 'pixel-forge'
   runtime_kind: 'mirror' | 'dev'
@@ -361,7 +367,6 @@ export function LiveEditorPane() {
     projectSessions,
     agentDeckTargets,
     createAgentDeckTargetSession,
-    selectedAgentDeckTargetId,
     pendingPreviewUpdate,
     setPendingPreviewUpdate,
     setPreviewUrl,
@@ -373,6 +378,7 @@ export function LiveEditorPane() {
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
   const lastLiveEditorProjectPathRef = useRef<string | null | undefined>(undefined)
   const internalPreviewUrlRef = useRef<string | null>(null)
+  const externalPreviewUrlRef = useRef<string | null>(previewUrl?.trim() || null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
   const autoProvisionedProjectRef = useRef<string | null>(null)
@@ -430,39 +436,20 @@ export function LiveEditorPane() {
   }, [])
 
   // We need a ref to loadApp so goBack/goForward can call it without circular deps
-  const loadAppRef = useRef<((url?: string) => Promise<void>) | null>(null)
+  const loadAppRef = useRef<((url?: string, options?: LoadAppOptions) => Promise<void>) | null>(null)
 
   const currentProjectUrls = useSessionStore((state) => {
     if (!state.projectPath) return []
     const project = state.recentProjects.find((entry) => entry.path === state.projectPath)
     return project?.previewUrls ?? []
   })
-  const selectedAgentDeckTarget = agentDeckTargets.find(
-    (target) => target.id === selectedAgentDeckTargetId
-  ) ?? null
-  const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
-    projectPath,
-    liveWorkspacePath: liveEditorSession?.workspacePath || null,
-    liveAgentDeckSessionId: liveEditorSession?.agentDeckSessionId || null,
-    selectedTargetId: selectedAgentDeckTargetId,
-    agentDeckTargets,
-  })
-  const liveSessionBoundToCanonicalRoot = Boolean(
-    liveEditorSession?.workspacePath
-    && !isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
-  )
-  const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
-    ? null
-    : resolvedMirrorTarget?.workspacePath || null
-  const previewAudienceSessionId = liveSessionBoundToCanonicalRoot
-    ? null
-    : resolvedMirrorTarget?.agentDeckSessionId || null
 
   const {
     connect,
     disconnectAll,
     activateThread,
     resetForProject,
+    getTargetAgentDeckSessionId,
     activePreviewTool,
     targetUrl,
     activeTab,
@@ -494,6 +481,28 @@ export function LiveEditorPane() {
     selectionUndoStack,
     selectionRedoStack,
   } = useLiveEditorStore()
+  const activeThreadTargetAgentDeckSessionId =
+    getTargetAgentDeckSessionId() || liveEditorSession?.agentDeckSessionId || null
+  const selectedAgentDeckTarget = agentDeckTargets.find(
+    (target) => target.id === activeThreadTargetAgentDeckSessionId
+  ) ?? null
+  const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
+    projectPath,
+    liveWorkspacePath: liveEditorSession?.workspacePath || null,
+    liveAgentDeckSessionId: activeThreadTargetAgentDeckSessionId,
+    selectedTargetId: activeThreadTargetAgentDeckSessionId,
+    agentDeckTargets,
+  })
+  const liveSessionBoundToCanonicalRoot = Boolean(
+    liveEditorSession?.workspacePath
+    && !isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
+  )
+  const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
+    ? null
+    : resolvedMirrorTarget?.workspacePath || null
+  const previewAudienceSessionId = liveSessionBoundToCanonicalRoot
+    ? null
+    : resolvedMirrorTarget?.agentDeckSessionId || null
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
   const isSelectionToolActive = activePreviewTool === 'select'
@@ -578,7 +587,7 @@ export function LiveEditorPane() {
     if (activeMode !== 'live-editor' || !projectPath) {
       return
     }
-    if (liveEditorSession || selectedAgentDeckTargetId || projectSessions.length > 0) {
+    if (liveEditorSession || activeThreadTargetAgentDeckSessionId || projectSessions.length > 0) {
       autoProvisionedProjectRef.current = null
       return
     }
@@ -597,11 +606,11 @@ export function LiveEditorPane() {
       })
   }, [
     activeMode,
+    activeThreadTargetAgentDeckSessionId,
     createAgentDeckTargetSession,
     liveEditorSession,
     projectPath,
     projectSessions.length,
-    selectedAgentDeckTargetId,
   ])
 
   useEffect(() => {
@@ -945,11 +954,7 @@ export function LiveEditorPane() {
 
   const loadApp = useCallback(async (
     urlOverride?: string,
-    options?: {
-      persist?: boolean
-      tabId?: string
-      announceSuccess?: boolean
-    }
+    options?: LoadAppOptions
   ) => {
     const resolvedTabId = options?.tabId ?? activeTabIdRef.current
     if (!resolvedTabId) return
@@ -1580,6 +1585,7 @@ export function LiveEditorPane() {
     }
 
     lastProjectPathRef.current = projectPath
+    externalPreviewUrlRef.current = previewUrl?.trim() || null
     iframeRefs.current = {}
 
     const initialTab = createPreviewTab(previewUrl || '', null, 1)
@@ -1613,10 +1619,18 @@ export function LiveEditorPane() {
     const normalizedPreviewUrl = previewUrl?.trim() || null
     if (internalPreviewUrlRef.current === normalizedPreviewUrl) {
       internalPreviewUrlRef.current = null
+      externalPreviewUrlRef.current = normalizedPreviewUrl
       return
     }
 
-    const activePreviewTab = getActivePreviewTab()
+    if (externalPreviewUrlRef.current === normalizedPreviewUrl) {
+      return
+    }
+    externalPreviewUrlRef.current = normalizedPreviewUrl
+
+    const activePreviewTab = activeTabIdRef.current
+      ? previewTabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null
+      : previewTabsRef.current[0] ?? null
     if (!activePreviewTab) {
       return
     }
@@ -1651,12 +1665,12 @@ export function LiveEditorPane() {
     }
 
     setTargetUrl(normalizedPreviewUrl)
-    void loadApp(normalizedPreviewUrl, {
+    void loadAppRef.current?.(normalizedPreviewUrl, {
       tabId: activePreviewTab.id,
       persist: false,
       announceSuccess: false,
     })
-  }, [previewUrl, getActivePreviewTab, loadApp, setAuthIssue, setPreviewTabs, setTargetUrl])
+  }, [previewUrl, setAuthIssue, setPreviewTabs, setTargetUrl])
 
   useEffect(() => {
     const desktopPreview = desktopPreviewRef.current
