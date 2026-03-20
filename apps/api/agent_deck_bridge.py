@@ -637,7 +637,12 @@ async def delete_agent_deck_session_target(
     *,
     force_clone_remove: bool = False,
 ) -> None:
-    context = await _load_session_action_context(project_path, agent_deck_session_id)
+    try:
+        context = await _load_session_action_context(project_path, agent_deck_session_id)
+    except AgentDeckBridgeError as exc:
+        if force_clone_remove and _is_missing_session_error(exc):
+            return
+        raise
 
     if force_clone_remove and context.is_clone:
         args = [
@@ -649,10 +654,15 @@ async def delete_agent_deck_session_target(
             "--force",
             "-json",
         ]
-        payload = await _run_json_object_command(args)
-        if not payload:
+        code, stdout, stderr = await _run_command(args)
+        if code == 0:
             return
-        return
+        error_output = stderr.strip() or stdout.strip() or ""
+        if _is_missing_session_error(error_output):
+            return
+        raise AgentDeckBridgeError(
+            error_output or f"agent-deck clone finish failed (exit {code})"
+        )
 
     code, stdout, stderr = await _run_command(
         ["agent-deck", "rm", agent_deck_session_id, "-q"],
