@@ -501,20 +501,23 @@ export function LiveEditorPane() {
         : null
     )
   const activeThreadTargetAgentDeckSessionId =
-    getTargetAgentDeckSessionId() || liveEditorSession?.agentDeckSessionId || null
+    currentThreadSession?.agentDeckSessionId
+    || getTargetAgentDeckSessionId()
+    || liveEditorSession?.agentDeckSessionId
+    || null
   const selectedAgentDeckTarget = agentDeckTargets.find(
     (target) => target.id === activeThreadTargetAgentDeckSessionId
   ) ?? null
   const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
     projectPath,
-    liveWorkspacePath: liveEditorSession?.workspacePath || null,
+    liveWorkspacePath: currentThreadSession?.workspacePath || liveEditorSession?.workspacePath || null,
     liveAgentDeckSessionId: activeThreadTargetAgentDeckSessionId,
     selectedTargetId: activeThreadTargetAgentDeckSessionId,
     agentDeckTargets,
   })
   const liveSessionBoundToCanonicalRoot = Boolean(
-    liveEditorSession?.workspacePath
-    && !isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
+    currentThreadSession?.workspacePath
+    && !isCloneWorkspaceBound({ projectPath, workspacePath: currentThreadSession.workspacePath })
   )
   const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
     ? null
@@ -1509,9 +1512,17 @@ export function LiveEditorPane() {
       throw new Error('Select a project before launching a Pixel Forge target')
     }
 
+    const boundWorkspacePath = currentThreadSession?.workspacePath?.trim() || null
+    if (isCloneWorkspaceBound({ projectPath, workspacePath: boundWorkspacePath })) {
+      return {
+        sourceRoot: boundWorkspacePath,
+        audienceWorkspacePath: boundWorkspacePath,
+      }
+    }
+
     const resolvedSourceRoot = resolveIsolatedMirrorSourceRoot({
       projectPath,
-      liveWorkspacePath: resolvedMirrorTarget?.workspacePath || null,
+      liveWorkspacePath: boundWorkspacePath || resolvedMirrorTarget?.workspacePath || null,
       selectedTargetPath: selectedAgentDeckTarget?.path || null,
     })
     if (resolvedSourceRoot) {
@@ -1545,6 +1556,7 @@ export function LiveEditorPane() {
     agentDeckTargets,
     bindMirrorTargetToActiveThread,
     createAgentDeckTargetSession,
+    currentThreadSession?.workspacePath,
     draftAgentType,
     projectPath,
     resolvedMirrorTarget?.workspacePath,
