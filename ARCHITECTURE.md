@@ -4,6 +4,7 @@ This is the only active repo-level architecture and operating doc.
 
 - `SPECS.md` owns intent, goals, requirements, limiting factor, and proof status.
 - `ARCHITECTURE.md` owns current system shape, next target release shape, final ideal shape, and the operating lanes that still deserve to exist.
+- `docs/adr/` owns durable design rationale that should survive implementation churn.
 - `AGENTS.md` and `CLAUDE.md` should only contain non-inferable agent guardrails.
 - Historical and displaced root docs live under `docs/archives/root-docs/`.
 
@@ -61,20 +62,18 @@ pixel-forge clone promote <session> --into master --commit --push --stage
 The installed `pixel-forge` launcher and the Pixel Forge repo-local `./pixel-forge` wrapper both dispatch to the same canonical command definition. Use `--git-ref` when the source should be an exact local commit instead of the mutable filesystem working tree. By default controller updates stage only from the canonical project root; clone workspaces under `.agents/` remain preview/edit sandboxes unless the operator explicitly overrides that policy. If the install/update lane changed after a controller update was staged, clear and restage it from current repo truth instead of applying the stale snapshot. Legacy aliases `stage-update`, `show-update`, `clear-update`, `apply-update`, and `promote-clone` still exist as compatibility shims, but the nested commands above are the canonical surface.
 When developing Pixel Forge itself from the repo checkout, the repo-local `./pixel-forge` wrapper is the source-of-truth dev lane for stage/apply until the installed launcher has itself been refreshed to the latest CLI surface.
 
-## Current State
-
-Current architectural facts:
+## Current System Shape
 
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
-- Live Editor writes request packs into the target workspace and dispatches into a persistent native Agent Deck endpoint session.
-- New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree, while still tracking the canonical repo root as the project identity.
-- One Live Editor thread now has one default writable workspace. By default that writable workspace is the bound clone, and the default self-edit mirror source follows that same isolated workspace deterministically.
-- Live Editor handoff now has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
-- Stable Live Editor workflow rules now live in a thread-level `session-brief.md`, while each per-turn `request.md` focuses on the new delta context for that turn.
-- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` now binds to the isolated Live Editor workspace source, creating an isolated clone when needed instead of browsing project-wide mirror history.
-- Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface. The desktop shell now calls that same CLI apply path instead of spawning a private updater flow.
+- Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
+- New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree while the canonical repo root remains the project identity.
+- One Live Editor thread has one default writable workspace root. The default self-edit mirror source follows that same bound workspace.
+- Live Editor handoff has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
+- Stable Live Editor workflow rules live in a thread-level `session-brief.md`, while each per-turn `request.md` carries the new delta context for that turn.
+- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
+- Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface.
 - Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
 - Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update launches a distinct mirror candidate in a new tab instead of rebuilding over the current preview tab.
 
@@ -88,7 +87,7 @@ Use these identities consistently:
 - `staged update`: the frozen controller-install candidate
 - `controller`: the installed runtime under `~/.local/lib/pixel-forge`
 
-The intended loop is now:
+The intended loop is:
 
 ```mermaid
 flowchart LR
@@ -111,8 +110,6 @@ The important boundary is:
 
 #### Native Endpoint Lane
 
-This is the default production lane now.
-
 - Agent Deck owns the visible native `claude` or `codex` session.
 - Pixel Forge owns visual context capture, request-pack writing, selection tunnel generation, and routing to the chosen Agent Deck session.
 - The first dispatch into a new or rebound session includes the stable Pixel Forge bootstrap framing and points at the thread's stable `session-brief.md`.
@@ -121,16 +118,13 @@ This is the default production lane now.
 
 #### ACPX Sidecar Lane
 
-This is useful but not the default visible-session lane.
-
 - ACPX is available as a version-pinned structured runtime/control layer for experiments, legacy wrapper sessions, and future richer transport work.
-- ACPX currently owns and resumes ACP-created sessions well.
-- ACPX does not yet prove shared continuity with the already-running native Agent Deck endpoint session the operator sees.
-- Because of that, ACPX is currently best treated as a sidecar/control-plane candidate, not the continuity owner for the visible session.
+- ACPX resumes ACP-created sessions well.
+- ACPX is not the default continuity owner for the already-running native Agent Deck endpoint session the operator sees.
 
 ### Tooling Map
 
-| Layer | Useful Now | Not Enough Yet | What Unlocks Deeper Integration |
+| Layer | Useful | Not Enough Yet | What Unlocks Deeper Integration |
 |---|---|---|---|
 | Pixel Forge request packs + selection tunnel | Truthful frozen context, inspectable disk artifacts, good delta payload carrier, stable session brief plus per-turn request delta | Still file-first and indirect once a native session is already warm | Richer artifact references, structured context updates, eventual live attach |
 | Agent Deck native sessions | Real operator control, real takeover of Claude/Codex, session visibility | Mostly terminal/transcript surface, limited structured context injection | Better session metadata hooks, stronger transcript/event surfaces |
@@ -189,9 +183,9 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the current limiting factor from `SPECS.md`: continuity is materially better now, but the context transport is still more file-oriented and indirect than the eventual sidecar path should be.
+The next target release should attack the current limiting factor from `SPECS.md`: the context transport is still more file-oriented and indirect than the eventual sidecar path should be.
 
-The smallest complete unit that matters now:
+The smallest complete unit that matters:
 
 - keep the frozen request-pack and selection-tunnel lane as the minimum truthful handoff
 - trust visible-session continuity and stop repeating stable setup framing on every turn
