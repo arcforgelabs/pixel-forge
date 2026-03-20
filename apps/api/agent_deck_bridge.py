@@ -110,6 +110,21 @@ def _clone_name(session_title: str) -> str:
     return normalized or uuid4().hex[:8]
 
 
+def _thread_rebind_workspace_path(
+    project_path: str,
+    thread: LiveEditorThreadRecord,
+) -> str | None:
+    normalized_project_path = _normalize_path(project_path)
+    normalized_workspace_path = _normalize_path(thread.workspace_path)
+    if normalized_workspace_path == normalized_project_path:
+        return None
+    if not os.path.isdir(normalized_workspace_path):
+        return None
+    if not _session_belongs_to_project(normalized_project_path, normalized_workspace_path):
+        return None
+    return normalized_workspace_path
+
+
 async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -216,9 +231,15 @@ async def _launch_new_session(
     session_title: str,
     agent_type: str = "claude",
     workspace_mode: str = "clone",
+    workspace_path: str | None = None,
 ) -> dict[str, object]:
     normalized_agent_type = agent_type.strip().lower() or "claude"
     tool_arg = f"-c={normalized_agent_type}"
+    launch_path = (
+        _normalize_path(workspace_path)
+        if isinstance(workspace_path, str) and workspace_path.strip()
+        else _normalize_path(project_path)
+    )
     args = [
         "agent-deck",
         "launch",
@@ -230,7 +251,7 @@ async def _launch_new_session(
     ]
     if workspace_mode == "clone":
         args.append(f"-clone={_clone_name(session_title)}")
-    args.append(project_path)
+    args.append(launch_path)
     return await _run_json_object_command(args)
 
 
@@ -357,6 +378,13 @@ async def list_project_agent_deck_sessions(project_path: str) -> list[AgentDeckS
     return await _list_project_session_targets(
         project_path,
         include_acpx_backed=False,
+    )
+
+
+async def list_live_editor_agent_deck_sessions(project_path: str) -> list[AgentDeckSessionTarget]:
+    return await _list_project_session_targets(
+        project_path,
+        include_acpx_backed=True,
     )
 
 
@@ -616,6 +644,8 @@ async def ensure_agent_deck_session(
     target_agent_deck_session_id: str | None = None,
 ) -> AgentDeckSessionInfo:
     payload: dict[str, object]
+    rebind_workspace_path = _thread_rebind_workspace_path(project_path, thread)
+    launch_workspace_mode = "existing" if rebind_workspace_path else "clone"
     bound_session_id = (
         thread.agent_deck_session_id.strip()
         if isinstance(thread.agent_deck_session_id, str) and thread.agent_deck_session_id.strip()
@@ -650,7 +680,8 @@ async def ensure_agent_deck_session(
                     project_path,
                     session_title=_session_title(project_path, thread.thread_id),
                     agent_type=agent_type,
-                    workspace_mode="clone",
+                    workspace_mode=launch_workspace_mode,
+                    workspace_path=rebind_workspace_path,
                 )
             else:
                 raise
@@ -668,14 +699,16 @@ async def ensure_agent_deck_session(
                 project_path,
                 session_title=_session_title(project_path, thread.thread_id),
                 agent_type=agent_type,
-                workspace_mode="clone",
+                workspace_mode=launch_workspace_mode,
+                workspace_path=rebind_workspace_path,
             )
     else:
         payload = await _launch_new_session(
             project_path,
             session_title=_session_title(project_path, thread.thread_id),
             agent_type=agent_type,
-            workspace_mode="clone",
+            workspace_mode=launch_workspace_mode,
+            workspace_path=rebind_workspace_path,
         )
 
     return await _build_session_info(

@@ -372,3 +372,71 @@ def update_live_editor_thread(
     if updated is None:
         raise RuntimeError("Live Editor thread record disappeared during update")
     return updated
+
+
+def detach_missing_agent_deck_thread_bindings(
+    project_path: str,
+    available_session_ids: set[str] | list[str] | tuple[str, ...],
+) -> list[LiveEditorThreadRecord]:
+    normalized_project_path = str(Path(project_path).resolve())
+    available_ids = {
+        session_id.strip()
+        for session_id in available_session_ids
+        if isinstance(session_id, str) and session_id.strip()
+    }
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
+                   agent_deck_session_title, acpx_agent, acpx_session_name,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
+                   created_at, updated_at
+            FROM live_editor_threads
+            WHERE project_path = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (normalized_project_path,),
+        ).fetchall()
+        detached_thread_ids = [
+            str(row["thread_id"])
+            for row in rows
+            if isinstance(row["agent_deck_session_id"], str)
+            and str(row["agent_deck_session_id"]).strip()
+            and str(row["agent_deck_session_id"]).strip() not in available_ids
+        ]
+        if detached_thread_ids:
+            placeholders = ",".join("?" for _ in detached_thread_ids)
+            conn.execute(
+                f"""
+                UPDATE live_editor_threads
+                SET agent_deck_session_id = NULL,
+                    agent_deck_session_title = NULL,
+                    acpx_agent = NULL,
+                    acpx_session_name = NULL,
+                    acpx_record_id = NULL,
+                    acp_session_id = NULL,
+                    claude_session_id = NULL,
+                    last_request_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE project_path = ?
+                  AND thread_id IN ({placeholders})
+                """,
+                (normalized_project_path, *detached_thread_ids),
+            )
+            conn.commit()
+
+        refreshed_rows = conn.execute(
+            """
+            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
+                   agent_deck_session_title, acpx_agent, acpx_session_name,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
+                   created_at, updated_at
+            FROM live_editor_threads
+            WHERE project_path = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (normalized_project_path,),
+        ).fetchall()
+
+    return [_row_to_record(row) for row in refreshed_rows]

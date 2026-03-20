@@ -468,15 +468,35 @@ function ensureAgentDeckTargetPresent(
   ];
 }
 
-function isUnavailableAgentDeckSession(
-  _projectPath: string | null | undefined,
-  session: LiveEditorSessionMeta | null,
+function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | null>(
+  session: T,
   targets: AgentDeckSessionTarget[]
-): boolean {
+): T {
   if (!session?.agentDeckSessionId) {
-    return false;
+    return session;
   }
-  return !targets.some((target) => target.id === session.agentDeckSessionId);
+  if (targets.some((target) => target.id === session.agentDeckSessionId)) {
+    return session;
+  }
+  return {
+    ...session,
+    agentDeckSessionId: null,
+    agentDeckSessionTitle: null,
+    agentDeckTool: null,
+  } as T;
+}
+
+function resolveSessionAgentType(
+  session: LiveEditorSessionMeta | null,
+  fallback: string | null | undefined
+): string {
+  if (session?.agentDeckTool) {
+    return session.agentDeckTool;
+  }
+  if (typeof fallback === "string" && fallback.trim()) {
+    return fallback;
+  }
+  return "claude";
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -825,8 +845,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     ]);
 
     const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
-    const hydratedSessions = projectSessions.filter(
-      (session) => !isUnavailableAgentDeckSession(savedProject.path, session, agentDeckTargets)
+    const hydratedSessions = projectSessions.map((session) =>
+      detachUnavailableAgentDeckSession(session, agentDeckTargets)
     );
     const normalizedPreferredThreadId = preferredThreadId?.trim() || null;
     const currentSession =
@@ -853,7 +873,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: savedProject.customOutputPath ?? null,
       sessionId: null,
       liveEditorSession: currentSession,
-      agentType: currentSession?.agentDeckTool ?? currentState.agentType,
+      agentType: resolveSessionAgentType(
+        currentSession,
+        currentSession?.agentDeckSessionId ? currentState.agentType : null
+      ),
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
       projectSessions: hydratedSessions,
@@ -925,7 +948,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
-      agentType: session?.agentDeckTool ?? state.agentType,
+      agentType: resolveSessionAgentType(
+        session,
+        session?.agentDeckSessionId ? state.agentType : null
+      ),
       selectedAgentDeckTargetId:
         session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
@@ -985,7 +1011,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         editorState: session.editorState ?? null,
       },
       selectedAgentDeckTargetId: session.agentDeckSessionId,
-      agentType: session.agentDeckTool ?? state.agentType,
+      agentType: resolveSessionAgentType(
+        session,
+        session.agentDeckSessionId ? state.agentType : null
+      ),
     }));
     void get()
       .persistProfileState({ activeLiveEditorThreadId: session.threadId })
@@ -1004,13 +1033,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ agentDeckTargetsLoading: true });
     try {
       const rawTargets = await fetchAgentDeckTargets(projectPath);
-      const nextLiveEditorSession = isUnavailableAgentDeckSession(
-        projectPath,
+      const nextLiveEditorSession = detachUnavailableAgentDeckSession(
         liveEditorSession,
         rawTargets
-      )
-        ? null
-        : liveEditorSession;
+      );
       const targets = ensureAgentDeckTargetPresent(
         rawTargets,
         nextLiveEditorSession

@@ -219,4 +219,84 @@ describe("session-store thread switching", () => {
       threadId: "thread-a",
     });
   });
+
+  it("keeps the saved lane and detaches its dead Agent Deck binding", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/api/projects") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              path: "/tmp/example-project",
+              name: "example-project",
+              output_mode: "scratch",
+              custom_output_path: null,
+              created_at: "2026-03-20T00:00:00Z",
+              last_opened: "2026-03-20T00:00:00Z",
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/sessions")) {
+          return new Response(
+            JSON.stringify({
+              sessions: [
+                {
+                  id: 1,
+                  project_path: "/tmp/example-project",
+                  workspace_path: "/tmp/example-project/.agents/thread-a",
+                  thread_id: "thread-a",
+                  backend: "agent-deck",
+                  agent_deck_session_id: "dead-session-a",
+                  agent_deck_session_title: "pixel-forge-thread-a",
+                  agent_deck_tool: "codex",
+                  editor_state: null,
+                  created_at: "2026-03-20T00:00:00Z",
+                  last_active: "2026-03-20T00:00:00Z",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
+          return new Response(
+            JSON.stringify({
+              sessions: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/urls")) {
+          return new Response(
+            JSON.stringify({
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      persistProfile: false,
+    });
+
+    expect(useSessionStore.getState().liveEditorSession).toMatchObject({
+      threadId: "thread-a",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+    });
+    expect(useSessionStore.getState().projectSessions[0]).toMatchObject({
+      threadId: "thread-a",
+      agentDeckSessionId: null,
+      agentDeckTool: null,
+    });
+    expect(useSessionStore.getState().agentType).toBe("claude");
+  });
 });

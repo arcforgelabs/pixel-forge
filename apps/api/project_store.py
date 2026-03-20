@@ -602,6 +602,73 @@ def _is_stale_clone_session(record: SessionRecord) -> bool:
     return not os.path.isdir(record.workspace_path)
 
 
+def detach_missing_agent_deck_session_bindings(
+    project_path: str,
+    available_session_ids: set[str] | list[str] | tuple[str, ...],
+) -> list[SessionRecord]:
+    normalized_path = normalize_project_path(project_path)
+    available_ids = {
+        session_id.strip()
+        for session_id in available_session_ids
+        if isinstance(session_id, str) and session_id.strip()
+    }
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
+                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
+            FROM sessions
+            WHERE project_path = ?
+            ORDER BY last_active DESC, id DESC
+            """,
+            (normalized_path,),
+        ).fetchall()
+        records = [_row_to_session_record(row) for row in rows]
+        stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
+        detached_thread_ids = [
+            record.thread_id
+            for record in records
+            if record.id not in stale_ids
+            and record.agent_deck_session_id
+            and record.agent_deck_session_id not in available_ids
+        ]
+        if stale_ids:
+            placeholders = ",".join("?" for _ in stale_ids)
+            conn.execute(
+                f"DELETE FROM sessions WHERE id IN ({placeholders})",
+                stale_ids,
+            )
+        if detached_thread_ids:
+            placeholders = ",".join("?" for _ in detached_thread_ids)
+            conn.execute(
+                f"""
+                UPDATE sessions
+                SET agent_deck_session_id = NULL,
+                    agent_deck_session_title = NULL,
+                    agent_deck_tool = NULL
+                WHERE project_path = ?
+                  AND thread_id IN ({placeholders})
+                """,
+                (normalized_path, *detached_thread_ids),
+            )
+        if stale_ids or detached_thread_ids:
+            conn.commit()
+
+        refreshed_rows = conn.execute(
+            """
+            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
+                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
+            FROM sessions
+            WHERE project_path = ?
+            ORDER BY last_active DESC, id DESC
+            """,
+            (normalized_path,),
+        ).fetchall()
+
+    return [_row_to_session_record(row) for row in refreshed_rows]
+
+
 def list_project_urls(project_path: str) -> list[ProjectUrlRecord]:
     normalized_path = normalize_project_path(project_path)
 

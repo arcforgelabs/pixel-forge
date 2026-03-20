@@ -25,7 +25,7 @@ from agent_deck_bridge import (
     get_last_output,
     ensure_agent_deck_session,
     list_project_agent_deck_sessions,
-    send_codex_prompt_and_capture_output,
+    list_live_editor_agent_deck_sessions,
     start_agent_deck_send,
     stream_claude_jsonl,
     submit_agent_deck_prompt,
@@ -40,10 +40,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from live_editor_threads import (
+    detach_missing_agent_deck_thread_bindings,
     get_or_create_live_editor_thread,
     update_live_editor_thread,
 )
 from project_store import (
+    detach_missing_agent_deck_session_bindings,
     delete_project,
     ensure_state_store_initialized,
     get_profile_state,
@@ -655,9 +657,20 @@ async def get_project_agent_deck_sessions(project_path: str):
         raise HTTPException(status_code=404, detail="Project path does not exist")
 
     try:
+        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
         sessions = await list_project_agent_deck_sessions(normalized_project_path)
     except AgentDeckBridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    live_session_ids = {session.id for session in live_sessions}
+    detach_missing_agent_deck_session_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
+    detach_missing_agent_deck_thread_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
 
     return {
         "sessions": [
@@ -2487,19 +2500,6 @@ async def live_editor_chat(websocket: WebSocket):
                         acp_session_id=refreshed_acpx_session.acp_session_id or "",
                     )
                     if fallback_output and not streamed_text:
-                        await websocket.send_json(
-                            {
-                                "type": "chunk",
-                                "content": fallback_output,
-                            }
-                        )
-                elif session_info.tool == "codex":
-                    fallback_output = await send_codex_prompt_and_capture_output(
-                        session_info,
-                        project_path=session_info.workspace_path,
-                        prompt=dispatch_prompt,
-                    )
-                    if fallback_output:
                         await websocket.send_json(
                             {
                                 "type": "chunk",

@@ -126,6 +126,50 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.editor_state["targetUrl"], "https://www.google.com/")
         self.assertEqual(saved.editor_state["previewTabs"][0]["title"], "Google")
 
+    def test_detach_missing_agent_deck_session_binding_preserves_lane_state(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        workspace_path = project_path / ".agents" / "thread-a"
+        workspace_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        project_store.upsert_session(
+            str(project_path),
+            thread_id="thread-a",
+            backend="agent-deck",
+            workspace_path=str(workspace_path),
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="pixel-forge-thread-a",
+            agent_deck_tool="codex",
+            editor_state={
+                "targetUrl": "https://claude.ai/new",
+                "previewTabs": [
+                    {
+                        "id": "tab-a",
+                        "url": "https://claude.ai/new",
+                        "title": "Claude",
+                        "mode": "browser",
+                    }
+                ],
+                "activePreviewTabId": "tab-a",
+                "urlHistory": ["https://claude.ai/new"],
+                "urlHistoryCursor": 0,
+            },
+        )
+
+        sessions = project_store.detach_missing_agent_deck_session_bindings(
+            str(project_path),
+            set(),
+        )
+
+        self.assertEqual(len(sessions), 1)
+        self.assertIsNone(sessions[0].agent_deck_session_id)
+        self.assertIsNone(sessions[0].agent_deck_session_title)
+        self.assertIsNone(sessions[0].agent_deck_tool)
+        self.assertIsNotNone(sessions[0].editor_state)
+        assert sessions[0].editor_state is not None
+        self.assertEqual(sessions[0].editor_state["targetUrl"], "https://claude.ai/new")
+        self.assertEqual(sessions[0].workspace_path, str(workspace_path))
+
     def test_default_profile_state_is_initialized_and_round_trips(self) -> None:
         initial = project_store.get_profile_state()
 

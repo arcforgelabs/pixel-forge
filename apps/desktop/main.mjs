@@ -189,6 +189,14 @@ function updatePreviewInputState(ownerContextId, updates = {}) {
   return readPreviewInputState(ownerContextId)
 }
 
+function reflectPreviewToolForActiveTab(ownerContextId, tabId, tool) {
+  const context = ensurePreviewContext(ownerContextId)
+  if (tabId && context.activeTabId && context.activeTabId !== tabId) {
+    return readPreviewInputState(ownerContextId)
+  }
+  return updatePreviewInputState(ownerContextId, { armedTool: tool })
+}
+
 function sendPreviewEvent(ownerContextId, event) {
   const targetContents = getContextWebContents(ownerContextId)
   if (!targetContents || targetContents.isDestroyed()) {
@@ -1560,9 +1568,11 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pixel-forge-preview:set-select-mode', async (event, payload) => {
-    updatePreviewInputState(event.sender.id, {
-      armedTool: Boolean(payload?.enabled) ? 'select' : null,
-    })
+    reflectPreviewToolForActiveTab(
+      event.sender.id,
+      String(payload?.tabId || ''),
+      Boolean(payload?.enabled) ? 'select' : null,
+    )
     return sendPreviewCommand(event.sender.id, String(payload?.tabId || ''), {
       type: 'set-select-mode',
       enabled: Boolean(payload?.enabled),
@@ -1571,7 +1581,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('pixel-forge-preview:set-tool', async (event, payload) => {
     const tool = normalizePreviewTool(payload?.tool)
-    updatePreviewInputState(event.sender.id, { armedTool: tool })
+    reflectPreviewToolForActiveTab(
+      event.sender.id,
+      String(payload?.tabId || ''),
+      tool,
+    )
     return sendPreviewCommand(event.sender.id, String(payload?.tabId || ''), {
       type: 'set-tool',
       tool,

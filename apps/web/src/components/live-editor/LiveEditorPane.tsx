@@ -907,35 +907,38 @@ export function LiveEditorPane() {
     )
   }, [selectedElements, syncTabSelections])
 
-  const syncAllPreviewSelectionModes = useCallback(async () => {
-    await Promise.all(
-      previewTabsRef.current.map(async (tab) => {
-        const tool =
-          activePreviewTool && tab.id === activeTabIdRef.current
-            ? activePreviewTool
-            : null
+  const syncActivePreviewSelectionMode = useCallback(async (tabId?: string | null) => {
+    const resolvedTabId = tabId ?? activeTabIdRef.current
+    if (!resolvedTabId) {
+      return
+    }
 
-        if (tab.mode === 'proxy') {
-          const iframe = iframeRefs.current[tab.id]
-          if (!iframe?.contentWindow) {
-            return
-          }
+    const tab = previewTabsRef.current.find((entry) => entry.id === resolvedTabId)
+    if (!tab) {
+      return
+    }
 
-          iframe.contentWindow.postMessage(
-            {
-              type: 'pixel-forge-toggle-select',
-              enabled: tool === 'select',
-            },
-            '*'
-          )
-          return
-        }
+    const tool = activePreviewTool
 
-        if (tab.mode === 'browser' && tab.browserTabId) {
-          await sendBrowserCommand(tab.browserTabId, 'set_tool', { tool })
-        }
-      })
-    )
+    if (tab.mode === 'proxy') {
+      const iframe = iframeRefs.current[tab.id]
+      if (!iframe?.contentWindow) {
+        return
+      }
+
+      iframe.contentWindow.postMessage(
+        {
+          type: 'pixel-forge-toggle-select',
+          enabled: tool === 'select',
+        },
+        '*'
+      )
+      return
+    }
+
+    if (tab.mode === 'browser' && tab.browserTabId) {
+      await sendBrowserCommand(tab.browserTabId, 'set_tool', { tool })
+    }
   }, [activePreviewTool, sendBrowserCommand])
 
   const updateEmbeddedPreviewBounds = useCallback(async () => {
@@ -1059,7 +1062,7 @@ export function LiveEditorPane() {
       window.setTimeout(() => {
         void updateEmbeddedPreviewBounds()
         void syncTabSelections(resolvedTabId)
-        void syncAllPreviewSelectionModes()
+        void syncActivePreviewSelectionMode(resolvedTabId)
       }, 150)
 
       if (options?.announceSuccess !== false) {
@@ -1080,7 +1083,7 @@ export function LiveEditorPane() {
     setAuthIssue,
     setPreviewTabs,
     setTargetUrl,
-    syncAllPreviewSelectionModes,
+    syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     syncTabSelections,
     updateEmbeddedPreviewBounds,
@@ -1251,19 +1254,25 @@ export function LiveEditorPane() {
       const desktopPreview = desktopPreviewRef.current
       if (desktopPreview) {
         await desktopPreview.show(tab.browserTabId)
+        await syncActivePreviewSelectionMode(tab.id)
         window.setTimeout(() => {
           void updateEmbeddedPreviewBounds()
         }, 60)
       } else {
         await sendBrowserCommand(tab.browserTabId, 'focus')
+        await syncActivePreviewSelectionMode(tab.id)
       }
+      return
     }
+
+    await syncActivePreviewSelectionMode(tab.id)
   }, [
     sendBrowserCommand,
     setActivePreviewTabId,
     setAuthIssue,
     setShowUrlHistory,
     setTargetUrl,
+    syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     updateEmbeddedPreviewBounds,
   ])
@@ -1606,13 +1615,18 @@ export function LiveEditorPane() {
       const desktopPreview = desktopPreviewRef.current
       if (desktopPreview) {
         await desktopPreview.show(nextTab.browserTabId)
+        await syncActivePreviewSelectionMode(nextTab.id)
         window.setTimeout(() => {
           void updateEmbeddedPreviewBounds()
         }, 60)
       } else {
         await sendBrowserCommand(nextTab.browserTabId, 'focus')
+        await syncActivePreviewSelectionMode(nextTab.id)
       }
+      return
     }
+
+    await syncActivePreviewSelectionMode(nextTab.id)
   }, [
     sendBrowserCommand,
     setActivePreviewTabId,
@@ -1620,6 +1634,7 @@ export function LiveEditorPane() {
     setPreviewTabs,
     setShowUrlHistory,
     setTargetUrl,
+    syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     updateEmbeddedPreviewBounds,
   ])
@@ -1783,8 +1798,8 @@ export function LiveEditorPane() {
   }, [activePreviewTabId, previewTabs, updateEmbeddedPreviewBounds])
 
   useEffect(() => {
-    void syncAllPreviewSelectionModes()
-  }, [activePreviewTabId, activePreviewTool, syncAllPreviewSelectionModes])
+    void syncActivePreviewSelectionMode(activePreviewTabId)
+  }, [activePreviewTabId, activePreviewTool, syncActivePreviewSelectionMode])
 
   const toggleSelectionTool = useCallback(() => {
     const nextTool = isSelectionToolActive ? null : 'select'
