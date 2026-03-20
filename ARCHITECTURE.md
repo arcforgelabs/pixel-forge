@@ -123,6 +123,7 @@ The important boundary is:
 - The first dispatch into a new or rebound session includes the stable Pixel Forge bootstrap framing and points at the thread's stable `session-brief.md`.
 - Later dispatches into that same session send only the new request-pack reference and turn-specific context while reusing that stable thread brief.
 - Streaming comes from the native agent transcript path (`claude_session_id` + JSONL today for Claude).
+- Codex/native non-JSONL sessions are still on the degraded transparency path: heartbeat plus real completion today, transcript adaptation later.
 - When a native session cannot provide a truthful stream surface, Pixel Forge still uses Agent Deck's ready-gated send path, then polls completion itself and emits periodic status heartbeats instead of treating the CLI's completion timeout as the UI truth.
 
 #### ACPX Sidecar Lane
