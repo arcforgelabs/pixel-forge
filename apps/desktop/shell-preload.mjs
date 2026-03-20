@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
     pickList: (payload) => ipcRenderer.invoke('pixel-forge-overlay:pick-list', payload),
   },
   app: {
+    focusShell: () =>
+      ipcRenderer.invoke('pixel-forge-app:focus-shell'),
     applyControllerUpdate: (payload) =>
       ipcRenderer.invoke('pixel-forge-app:apply-controller-update', payload),
     applyPendingControllerUpdate: (payload) =>

@@ -7,7 +7,7 @@
  * Pattern: Adapted from aim-up/dashboard/frontend/src/components/chat/ChatInput.tsx
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { ChevronDown, ChevronUp, FileText, Loader2, Paperclip, Plus, RefreshCw, Send, Unlink, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
@@ -127,13 +127,19 @@ export function ChatInput() {
   // Focus textarea on mount with delay to handle iframe focus conflicts
   useEffect(() => {
     const timer = setTimeout(() => {
+      void window.pixelForgeDesktop?.app?.focusShell?.()
       textareaRef.current?.focus()
     }, 100)
     return () => clearTimeout(timer)
   }, [])
 
+  const syncShellFocus = useCallback(() => {
+    void window.pixelForgeDesktop?.app?.focusShell?.()
+  }, [])
+
   // Handle click on container to ensure focus reaches textarea
   const handleContainerClick = () => {
+    syncShellFocus()
     textareaRef.current?.focus()
   }
 
@@ -411,6 +417,7 @@ export function ChatInput() {
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={syncShellFocus}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="Type here..."

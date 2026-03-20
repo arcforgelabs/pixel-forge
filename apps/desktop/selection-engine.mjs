@@ -79,6 +79,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
   let reconcileFrame = null
   let domObserver = null
 
+  function previewOwnsInput() {
+    return document.visibilityState === 'visible' && document.hasFocus()
+  }
+
   function getXPath(element) {
     if (!element) return ''
     if (element.id) return `//*[@id="${element.id}"]`
@@ -1224,6 +1228,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   function handleMouseMove(event) {
     if (!selectMode) return
+    if (!previewOwnsInput()) {
+      hideHoverOverlay()
+      return
+    }
     if (!(event.target instanceof Element)) return
     if (event.target.hasAttribute('data-pixel-forge-injected')) return
     lastPointerElement = event.target
@@ -1233,6 +1241,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function handleKeyDown(event) {
+    if (!previewOwnsInput()) {
+      return
+    }
+
     if (event.key === 'Shift') {
       keyboardState.shift = true
       if (selectMode && keyboardState.ctrl) {
@@ -1280,6 +1292,11 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function handleKeyUp(event) {
+    if (!previewOwnsInput()) {
+      keyboardState = { ctrl: false, shift: false }
+      return
+    }
+
     if (event.key === 'Shift') {
       keyboardState.shift = false
       if (promotionSourceSelectionKey) {
@@ -1321,6 +1338,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
   document.addEventListener('keydown', handleKeyDown, true)
   document.addEventListener('keyup', handleKeyUp, true)
   document.addEventListener('mouseleave', hideHoverOverlay)
+  window.addEventListener('blur', () => {
+    keyboardState = { ctrl: false, shift: false }
+    hideHoverOverlay()
+  })
   window.addEventListener('hashchange', () => {
     notifyLocationChange()
     scheduleSelectionReconcile()

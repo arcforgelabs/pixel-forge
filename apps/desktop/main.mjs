@@ -1137,7 +1137,6 @@ async function loadPreviewUrl(ownerContextId, tabId, url) {
     }
     await settleAbortedNavigation(view, url)
   }
-  view.webContents.focus()
   return {
     mode: 'browser',
     browser_tab_id: tabId,
@@ -1153,9 +1152,6 @@ function sendPreviewCommand(ownerContextId, tabId, command) {
     throw new Error(`Unknown preview tab: ${tabId}`)
   }
   const view = previewRecord.view
-  if (command?.type === 'set-select-mode' && command.enabled) {
-    view.webContents.focus()
-  }
   view.webContents.send('pixel-forge-preview:command', command)
   return {
     mode: 'browser',
@@ -1374,7 +1370,6 @@ app.whenReady().then(() => {
     context.activeTabId = tabId
     context.visible = true
     applyAllPreviewViews()
-    previewRecord.view.webContents.focus()
     return {
       ok: true,
     }
@@ -1505,6 +1500,14 @@ app.whenReady().then(() => {
         const pendingUpdate = await readPendingControllerUpdate()
         reportControllerUpdateStartError(error, pendingUpdate?.id || null)
       })
+  })
+
+  ipcMain.handle('pixel-forge-app:focus-shell', async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus()
+      mainWindow.webContents.focus()
+    }
+    return { ok: true }
   })
 
   ipcMain.handle('pixel-forge-app:consume-bootstrap-state', async () => {
