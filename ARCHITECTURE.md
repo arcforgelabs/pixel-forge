@@ -69,11 +69,11 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
-- The Projects sidebar and advanced Settings retarget control now render one reconciled Pixel Forge chat model per project. Persisted lanes remain authoritative, visible Agent Deck sessions are reconciliation inputs, unmatched live sessions are adopted into chat rows before they appear, and fresh isolated chats are created through that same chat-facing surface instead of a raw-session picker.
-- Fresh Live Editor chats provision isolated Agent Deck clone workspaces under the project `.agents/` tree up front while the canonical repo root remains the project identity.
+- The Projects sidebar and advanced Settings retarget control now render one reconciled Pixel Forge chat model per project. Persisted lanes remain authoritative, visible Agent Deck sessions are reconciliation inputs, unmatched live sessions are adopted into chat rows before they appear, and fresh chats are created through that same chat-facing surface as draft lanes instead of a raw-session picker.
+- Fresh Live Editor chats now start as unbound drafts. They carry only intended agent state until the first real bind, and that first bind creates the isolated Agent Deck clone workspace under the project `.agents/` tree while the canonical repo root remains the project identity.
 - One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped editor surface: preview tabs, active target URL, viewport/tool state, selection/history state, and chat state all move together. The default self-edit mirror source follows that same bound workspace.
 - The shared session store persists the durable subset of that thread editor surface, including tab descriptors and restore metadata, and the UI reacquires runtime-only browser handles when a lane is reopened instead of pretending old handles survived a restart.
-- The shared control-plane store also keeps one default operator profile pointer for ordinary app reopen: last active project, active mode, and active Live Editor thread. Controller-update bootstrap relaunch is an override path, not the only restore path.
+- The shared control-plane store also keeps one default operator profile pointer for ordinary app reopen: last active project, active mode, active Live Editor thread, and the persistent default-agent preference. Claude Code is the default until the operator changes it. Controller-update bootstrap relaunch is an override path, not the only restore path.
 - If an Agent Deck session disappears outside Pixel Forge, the control-plane store detaches that dead binding from the persisted lane instead of hiding or deleting the lane. Workspace pointers and durable editor state survive; when that saved workspace still exists, the next backend reattach should target that same lane workspace rather than silently minting a second clone.
 - Agent Deck session ownership is exclusive at the Live Editor thread level. If one thread already owns a session, another thread must switch to that thread or create a different session instead of sharing the lane.
 - Live Editor handoff has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
@@ -91,7 +91,7 @@ Use these identities consistently:
 
 - `project root`: the canonical repo identity the operator chose
 - `isolated session`: the clone-backed working copy under `.agents/<name>`
-- `lane`: the thread-owned binding of Agent Deck session, writable workspace, and thread-scoped editor/chat state
+- `lane`: the thread-owned editor/chat state plus its eventual Agent Deck session and writable-workspace binding; draft lanes keep intended agent state before the real bind exists
 - `mirror`: a runnable Pixel Forge preview built from one source root or frozen clone snapshot
 - `staged update`: the frozen controller-install candidate
 - `controller`: the installed runtime under `~/.local/lib/pixel-forge`
@@ -121,11 +121,12 @@ The important boundary is:
 
 - Agent Deck owns the visible native `claude` or `codex` session.
 - Pixel Forge owns visual context capture, request-pack writing, selection tunnel generation, and routing to the chosen Agent Deck session.
+- Fresh chats start as draft lanes with a chosen initial agent. The chat composer may change that choice only before first send; once the real lane exists, the agent choice is immutable until a fresh chat is created.
 - The first dispatch into a new or rebound session includes the stable Pixel Forge bootstrap framing and points at the thread's stable `session-brief.md`.
 - Later dispatches into that same session send only the new request-pack reference and turn-specific context while reusing that stable thread brief.
 - Streaming comes from the native agent transcript path (`claude_session_id` + JSONL today for Claude).
-- Codex/native non-JSONL sessions are still on the degraded transparency path: heartbeat plus real completion today, transcript adaptation later.
-- When a native session cannot provide a truthful stream surface, Pixel Forge still uses Agent Deck's ready-gated send path, then polls completion itself and emits periodic status heartbeats instead of treating the CLI's completion timeout as the UI truth.
+- Codex/native non-JSONL sessions now adapt the best truthful stream surface available from Agent Deck session output: real text deltas become assistant chunks, progress-only lines become status updates, and completion still follows the actual Agent Deck settle state.
+- When a native session still cannot provide a truthful token-like stream surface, Pixel Forge keeps using Agent Deck's ready-gated send path, polls completion itself, and emits status heartbeats instead of treating the CLI's completion timeout as the UI truth.
 
 #### ACPX Sidecar Lane
 
