@@ -41,6 +41,7 @@ class SessionRecord:
     backend: str
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
+    agent_deck_tool: str | None
     created_at: str
     last_active: str
 
@@ -80,7 +81,7 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
         rows = legacy_conn.execute(
             """
             SELECT thread_id, project_path, project_path AS workspace_path, backend, agent_deck_session_id,
-                   agent_deck_session_title, created_at, updated_at
+                   agent_deck_session_title, NULL AS agent_deck_tool, created_at, updated_at
             FROM live_editor_threads
             ORDER BY updated_at DESC
             """
@@ -117,9 +118,10 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
                 backend,
                 agent_deck_session_id,
                 agent_deck_session_title,
+                agent_deck_tool,
                 created_at,
                 last_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized_path,
@@ -128,6 +130,7 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
                 row["backend"],
                 row["agent_deck_session_id"],
                 row["agent_deck_session_title"],
+                row["agent_deck_tool"],
                 row["created_at"],
                 row["updated_at"],
             ),
@@ -222,7 +225,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                 rows = legacy_conn.execute(
                     """
                     SELECT project_path, project_path AS workspace_path, thread_id, backend, agent_deck_session_id,
-                           agent_deck_session_title, created_at, last_active
+                           agent_deck_session_title, NULL AS agent_deck_tool, created_at, last_active
                     FROM sessions
                     ORDER BY last_active DESC
                     """
@@ -238,9 +241,10 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                             backend,
                             agent_deck_session_id,
                             agent_deck_session_title,
+                            agent_deck_tool,
                             created_at,
                             last_active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             normalized_path,
@@ -249,6 +253,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                             row["backend"],
                             row["agent_deck_session_id"],
                             row["agent_deck_session_title"],
+                            row["agent_deck_tool"],
                             row["created_at"],
                             row["last_active"],
                         ),
@@ -292,6 +297,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 backend TEXT NOT NULL,
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
+                agent_deck_tool TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
@@ -312,6 +318,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         if "workspace_path" not in existing_session_columns:
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN workspace_path TEXT"
+            )
+        if "agent_deck_tool" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN agent_deck_tool TEXT"
             )
         conn.execute(
             """
@@ -343,6 +353,7 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
         backend=row["backend"],
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
+        agent_deck_tool=row["agent_deck_tool"],
         created_at=row["created_at"],
         last_active=row["last_active"],
     )
@@ -372,7 +383,7 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
         rows = conn.execute(
             """
             SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, created_at, last_active
+                   agent_deck_session_title, agent_deck_tool, created_at, last_active
             FROM sessions
             WHERE project_path = ?
             ORDER BY last_active DESC, id DESC
@@ -545,6 +556,7 @@ def upsert_session(
     workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
+    agent_deck_tool: str | None = None,
 ) -> SessionRecord:
     normalized_path = normalize_project_path(project_path)
     if not thread_id.strip():
@@ -570,14 +582,16 @@ def upsert_session(
                 thread_id,
                 backend,
                 agent_deck_session_id,
-                agent_deck_session_title
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                agent_deck_session_title,
+                agent_deck_tool
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
+                agent_deck_tool = excluded.agent_deck_tool,
                 last_active = CURRENT_TIMESTAMP
             """,
             (
@@ -587,6 +601,7 @@ def upsert_session(
                 backend.strip() or "agent-deck",
                 agent_deck_session_id,
                 agent_deck_session_title,
+                agent_deck_tool,
             ),
         )
         conn.execute(
@@ -602,7 +617,7 @@ def upsert_session(
         row = conn.execute(
             """
             SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, created_at, last_active
+                   agent_deck_session_title, agent_deck_tool, created_at, last_active
             FROM sessions
             WHERE thread_id = ?
             """,

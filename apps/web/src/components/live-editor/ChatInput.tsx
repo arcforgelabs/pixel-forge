@@ -14,6 +14,16 @@ import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
 import { useSessionStore } from '@/store/session-store'
 import toast from 'react-hot-toast'
 
+function formatAgentLabel(agentType: string | null | undefined): string {
+  if (agentType === 'claude') {
+    return 'Claude Code'
+  }
+  if (agentType === 'codex') {
+    return 'Codex'
+  }
+  return agentType || 'Agent'
+}
+
 function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -52,6 +62,16 @@ export function ChatInput() {
   const selectedAgentDeckTarget = agentDeckTargets.find(
     (target) => target.id === selectedAgentDeckTargetId
   )
+  const effectiveAgentType =
+    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool || agentType
+  const agentSelectionLocked = Boolean(
+    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool
+  )
+  const sessionStatusLabel = liveEditorSession
+    ? `Bound to ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || 'session'}`
+    : selectedAgentDeckTarget
+      ? `Targeting ${selectedAgentDeckTarget.title || selectedAgentDeckTarget.id || 'session'}`
+      : 'Create isolated session automatically'
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -199,107 +219,106 @@ export function ChatInput() {
         </div>
       )}
 
-      {(selectedAgentDeckTarget || liveEditorSession?.agentDeckSessionTitle) && (
-        <div className="relative mb-2" ref={sessionPickerRef}>
-          <button
-            type="button"
-            onClick={() => {
-              setShowSessionPicker((v) => !v)
-              if (!showSessionPicker) {
-                void refreshAgentDeckTargets()
-              }
-            }}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <span>
-              {liveEditorSession
-                ? `Bound to ${liveEditorSession.agentDeckSessionTitle || liveEditorSession.agentDeckSessionId || 'session'}`
-                : `Targeting ${selectedAgentDeckTarget?.title || selectedAgentDeckTarget?.id || 'session'}`}
-            </span>
-            <ChevronDown className={`h-3 w-3 transition-transform ${showSessionPicker ? 'rotate-180' : ''}`} />
-          </button>
-          {showSessionPicker && (
-            <div className="absolute bottom-full left-0 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
-              {/* Available sessions */}
-              {agentDeckTargets.length > 0 && (
-                <>
-                  <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                    Sessions
-                  </div>
-                  {agentDeckTargets.map((target) => {
-                    const isCurrent = liveEditorSession?.agentDeckSessionId === target.id
-                      || selectedAgentDeckTargetId === target.id
-                    return (
-                      <button
-                        key={target.id}
-                        type="button"
-                        onClick={() => {
-                          if (!isCurrent) {
-                            newSession()
-                            setSelectedAgentDeckTargetId(target.id)
-                          }
-                          setShowSessionPicker(false)
-                        }}
-                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                          isCurrent ? 'text-primary font-medium' : 'text-foreground'
-                        }`}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-left">{target.title || target.id}</span>
-                        {isCurrent && (
-                          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
-                        )}
-                      </button>
-                    )
-                  })}
-                </>
-              )}
-              {agentDeckTargetsLoading && (
-                <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Loading...
+      <div className="relative mb-2" ref={sessionPickerRef}>
+        <button
+          type="button"
+          onClick={() => {
+            setShowSessionPicker((v) => !v)
+            if (!showSessionPicker) {
+              void refreshAgentDeckTargets()
+            }
+          }}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <span>{sessionStatusLabel}</span>
+          <ChevronDown className={`h-3 w-3 transition-transform ${showSessionPicker ? 'rotate-180' : ''}`} />
+        </button>
+        {showSessionPicker && (
+          <div className="absolute bottom-full left-0 mb-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+            {/* Available sessions */}
+            {agentDeckTargets.length > 0 && (
+              <>
+                <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  Sessions
                 </div>
-              )}
-              {/* Actions */}
-              <div className="mt-0.5 border-t border-border/40 pt-0.5">
+                {agentDeckTargets.map((target) => {
+                  const isCurrent = liveEditorSession?.agentDeckSessionId === target.id
+                    || selectedAgentDeckTargetId === target.id
+                  return (
+                    <button
+                      key={target.id}
+                      type="button"
+                      onClick={() => {
+                        if (!isCurrent) {
+                          newSession()
+                          setSelectedAgentDeckTargetId(target.id)
+                        }
+                        setShowSessionPicker(false)
+                      }}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        isCurrent ? 'text-primary font-medium' : 'text-foreground'
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-left">{target.title || target.id}</span>
+                      {isCurrent && (
+                        <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  )
+                })}
+              </>
+            )}
+            {!agentDeckTargetsLoading && agentDeckTargets.length === 0 && (
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                No sessions yet. Create an isolated session now, or let Pixel Forge create one for preview/send automatically.
+              </div>
+            )}
+            {agentDeckTargetsLoading && (
+              <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading...
+              </div>
+            )}
+            {/* Actions */}
+            <div className="mt-0.5 border-t border-border/40 pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  void createAgentDeckTargetSession().then(() => {
+                    setShowSessionPicker(false)
+                  })
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/10"
+              >
+                <Plus className="h-3 w-3" />
+                New Isolated Session
+              </button>
+              {liveEditorSession && (
                 <button
                   type="button"
                   onClick={() => {
-                    void createAgentDeckTargetSession().then(() => {
-                      setShowSessionPicker(false)
-                    })
+                    newSession()
+                    setSelectedAgentDeckTargetId(null)
+                    setShowSessionPicker(false)
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/10"
-                >
-                  <Plus className="h-3 w-3" />
-                  New session
-                </button>
-                {liveEditorSession && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      newSession()
-                      setSelectedAgentDeckTargetId(null)
-                      setShowSessionPicker(false)
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
-                  >
-                    <Unlink className="h-3 w-3" />
-                    Unbind session
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void refreshAgentDeckTargets()}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
                 >
-                  <RefreshCw className={`h-3 w-3 ${agentDeckTargetsLoading ? 'animate-spin' : ''}`} />
-                  Refresh
+                  <Unlink className="h-3 w-3" />
+                  Unbind session
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void refreshAgentDeckTargets()}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+              >
+                <RefreshCw className={`h-3 w-3 ${agentDeckTargetsLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {attachments.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
@@ -434,9 +453,19 @@ export function ChatInput() {
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setShowAgentPicker((v) => !v)}
+                onClick={() => {
+                  if (agentSelectionLocked) {
+                    return
+                  }
+                  setShowAgentPicker((v) => !v)
+                }}
                 className="h-7 px-1 rounded-lg rounded-l-none border-l border-border/20"
-                title={`Agent: ${agentType === 'claude' ? 'Claude Code' : 'Codex'}`}
+                disabled={agentSelectionLocked}
+                title={
+                  agentSelectionLocked
+                    ? `Agent follows ${formatAgentLabel(effectiveAgentType)} for the selected session`
+                    : `Agent: ${formatAgentLabel(effectiveAgentType)}`
+                }
               >
                 <ChevronUp className={`h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
               </Button>
@@ -454,11 +483,11 @@ export function ChatInput() {
                         setShowAgentPicker(false)
                       }}
                       className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                        agentType === agent.value ? 'text-primary font-medium' : 'text-foreground'
+                        effectiveAgentType === agent.value ? 'text-primary font-medium' : 'text-foreground'
                       }`}
                     >
                       {agent.label}
-                      {agentType === agent.value && (
+                      {effectiveAgentType === agent.value && (
                         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
                       )}
                     </button>

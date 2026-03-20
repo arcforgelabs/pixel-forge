@@ -50,12 +50,16 @@ This is the canonical proof lane for version sync, shell syntax, API/desktop/web
 ### Controller Update Management
 
 ```bash
-pixel-forge stage-update --project /abs/path --summary "Update ready to load"
-pixel-forge show-update
-pixel-forge clear-update
+pixel-forge controller-update stage --project /abs/path --git-ref HEAD --summary "Update ready to load"
+pixel-forge controller-update status
+pixel-forge controller-update apply
+pixel-forge controller-update clear
+
+pixel-forge clone promote <session> --into master --commit --push --stage
 ```
 
-If the install/update lane changed after a controller update was staged, clear and restage it from current repo truth instead of applying the stale snapshot.
+The installed `pixel-forge` launcher and the Pixel Forge repo-local `./pixel-forge` wrapper both dispatch to the same canonical command definition. Use `--git-ref` when the source should be an exact local commit instead of the mutable filesystem working tree. By default controller updates stage only from the canonical project root; clone workspaces under `.agents/` remain preview/edit sandboxes unless the operator explicitly overrides that policy. If the install/update lane changed after a controller update was staged, clear and restage it from current repo truth instead of applying the stale snapshot. Legacy aliases `stage-update`, `show-update`, `clear-update`, `apply-update`, and `promote-clone` still exist as compatibility shims, but the nested commands above are the canonical surface.
+When developing Pixel Forge itself from the repo checkout, the repo-local `./pixel-forge` wrapper is the source-of-truth dev lane for stage/apply until the installed launcher has itself been refreshed to the latest CLI surface.
 
 ## Current State
 
@@ -63,13 +67,45 @@ Current architectural facts:
 
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
-- Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, and mirror instance metadata.
+- Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
 - Live Editor writes request packs into the target workspace and dispatches into a persistent native Agent Deck endpoint session.
 - New Pixel Forge-created Live Editor sessions default to isolated Agent Deck clone workspaces under the project `.agents/` tree, while still tracking the canonical repo root as the project identity.
+- One Live Editor thread now has one default writable workspace. By default that writable workspace is the bound clone, and the default self-edit mirror source follows that same isolated workspace deterministically.
 - Live Editor handoff now has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
 - Stable Live Editor workflow rules now live in a thread-level `session-brief.md`, while each per-turn `request.md` focuses on the new delta context for that turn.
-- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` now prefers the bound Live Editor workspace when one exists, otherwise the latest available mirror candidate for the workspace, with staged snapshots preferred when one exists.
-- Controller updates stage a frozen snapshot, hand off to a detached updater, reinstall from that frozen source, restart through the installed launcher, wait for the expected controller version, relaunch the shell, and keep a rollback build.
+- Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. `Run Pixel Forge` now binds to the isolated Live Editor workspace source, creating an isolated clone when needed instead of browsing project-wide mirror history.
+- Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface. The desktop shell now calls that same CLI apply path instead of spawning a private updater flow.
+- Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
+- Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update launches a distinct mirror candidate in a new tab instead of rebuilding over the current preview tab.
+
+### Simple Working Model
+
+Use these identities consistently:
+
+- `project root`: the canonical repo identity the operator chose
+- `isolated session`: the clone-backed working copy under `.agents/<name>`
+- `mirror`: a runnable Pixel Forge preview built from one source root or frozen clone snapshot
+- `staged update`: the frozen controller-install candidate
+- `controller`: the installed runtime under `~/.local/lib/pixel-forge`
+
+The intended loop is now:
+
+```mermaid
+flowchart LR
+  Root[Project Root<br/>repo identity] --> Clone[Isolated Session<br/>.agents/name]
+  Clone --> PreviewUpdate[Preview Update Publication]
+  PreviewUpdate --> Mirror[Mirror Preview]
+  Clone -->|pixel-forge clone promote| Root
+  Root -->|Stage from canonical root| Stage[Staged Controller Update]
+  Stage --> Controller[Installed Controller]
+```
+
+The important boundary is:
+
+- clone creation starts from local git state, not raw working-tree copying
+- request packs and direct edits happen in the bound clone workspace
+- clone preview publication freezes a clone snapshot per session and loads that snapshot into a new mirror tab
+- controller install reads from the staged frozen snapshot, not the live repo
 
 ### Current Handoff Lanes
 

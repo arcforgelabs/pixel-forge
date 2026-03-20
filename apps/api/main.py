@@ -25,6 +25,7 @@ from agent_deck_bridge import (
     get_last_output,
     ensure_agent_deck_session,
     list_project_agent_deck_sessions,
+    send_codex_prompt_and_capture_output,
     start_agent_deck_send,
     stream_claude_jsonl,
 )
@@ -58,6 +59,11 @@ from controller_update_state import (
     clear_pending_controller_update,
     read_pending_controller_update,
     write_pending_controller_update,
+)
+from published_update_state import (
+    clear_pending_preview_update,
+    read_latest_pending_preview_update,
+    write_pending_preview_update,
 )
 from runtime_version import read_runtime_info
 from local_targets import (
@@ -374,6 +380,19 @@ class PendingControllerUpdateRequest(BaseModel):
     source: str | None = None
     request_id: str | None = None
     commit_hash: str | None = None
+    git_ref: str | None = None
+    allow_noncanonical_project: bool = False
+
+
+class PendingPreviewUpdateRequest(BaseModel):
+    project_path: str
+    workspace_path: str
+    preview_url: str | None = None
+    active_mode: Literal["live-editor", "screenshot"] | None = None
+    summary: str | None = None
+    source: str | None = None
+    request_id: str | None = None
+    agent_deck_session_id: str | None = None
 
 
 # Stack to file extension mapping
@@ -441,6 +460,7 @@ def serialize_session(session_record) -> dict[str, object]:
         "backend": session_record.backend,
         "agent_deck_session_id": session_record.agent_deck_session_id,
         "agent_deck_session_title": session_record.agent_deck_session_title,
+        "agent_deck_tool": session_record.agent_deck_tool,
         "created_at": session_record.created_at,
         "last_active": session_record.last_active,
     }
@@ -612,6 +632,8 @@ async def stage_pending_controller_update(payload: PendingControllerUpdateReques
                 "source": payload.source,
                 "requestId": payload.request_id,
                 "commitHash": payload.commit_hash,
+                "gitRef": payload.git_ref,
+                "allowNoncanonicalProject": payload.allow_noncanonical_project,
             },
         )
     except ValueError as exc:
@@ -622,6 +644,48 @@ async def stage_pending_controller_update(payload: PendingControllerUpdateReques
 @app.delete("/api/controller-update")
 async def delete_pending_controller_update():
     cleared = await asyncio.to_thread(clear_pending_controller_update)
+    return {"ok": cleared}
+
+
+@app.get("/api/preview-updates/latest")
+async def get_latest_pending_preview_update(
+    project_path: str,
+    workspace_path: str | None = None,
+    agent_deck_session_id: str | None = None,
+):
+    update = await asyncio.to_thread(
+        read_latest_pending_preview_update,
+        project_path,
+        workspace_path=workspace_path,
+        agent_deck_session_id=agent_deck_session_id,
+    )
+    return {"update": update}
+
+
+@app.post("/api/preview-updates")
+async def stage_pending_preview_update(payload: PendingPreviewUpdateRequest):
+    try:
+        update = await asyncio.to_thread(
+            write_pending_preview_update,
+            {
+                "projectPath": payload.project_path,
+                "workspacePath": payload.workspace_path,
+                "previewUrl": payload.preview_url,
+                "activeMode": payload.active_mode,
+                "summary": payload.summary,
+                "source": payload.source,
+                "requestId": payload.request_id,
+                "agentDeckSessionId": payload.agent_deck_session_id,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"update": update}
+
+
+@app.delete("/api/preview-updates/latest")
+async def delete_pending_preview_update(update_id: str):
+    cleared = await asyncio.to_thread(clear_pending_preview_update, update_id)
     return {"ok": cleared}
 
 
@@ -1234,6 +1298,19 @@ def _is_informational_live_editor_request(message: str) -> bool:
     return any(hint in normalized for hint in INFORMATIONAL_REQUEST_HINTS)
 
 
+def _resolve_self_edit_scope(
+    project_path: str | None,
+    workspace_path: str | None,
+) -> Literal["controller", "preview"] | None:
+    normalized_project_path = normalize_project_path(project_path) if project_path else None
+    normalized_workspace_path = normalize_project_path(workspace_path) if workspace_path else None
+    if not normalized_project_path or not normalized_workspace_path:
+        return None
+    if normalized_workspace_path != normalized_project_path:
+        return "preview"
+    return "controller"
+
+
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
@@ -1241,6 +1318,7 @@ def build_live_editor_dispatch_prompt(
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
     self_edit_safe_mode: bool = False,
+    self_edit_scope: Literal["controller", "preview"] | None = None,
     bootstrap: bool = True,
     informational_only: bool = False,
 ) -> str:
@@ -1316,7 +1394,15 @@ Selections span multiple preview sources. Use the grouped sources in the request
         base += """
 
 This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
-Make repo changes and safe verification-only checks inside the workspace. Finish by stating whether the update is ready to apply after this request completes."""
+Make repo changes and safe verification-only checks inside the workspace."""
+        if self_edit_scope == "preview":
+            base += """
+
+This is an isolated clone-backed self-edit session. Finish by stating whether the clone preview update is ready to load inside Pixel Forge preview. Do not claim that a controller update is staged or ready from this clone workspace."""
+        elif self_edit_scope == "controller":
+            base += """
+
+This is the canonical Pixel Forge root. Finish by stating whether the controller update is ready to stage/load after this request completes."""
 
     if preview_url and bootstrap:
         if informational_only:
@@ -1328,9 +1414,14 @@ The active preview target for this request is {preview_url}. This request is inf
 
 The active preview target for this request is {preview_url}. If this workspace controls that target, do not stop at code changes: apply the update to that preview target and verify this exact URL/path reflects the change before you finish."""
             if self_edit_safe_mode:
-                base += """
+                if self_edit_scope == "preview":
+                    base += """
 
-For Pixel Forge self-edit requests, do not replace the active controller mid-stream. Use the staged preview/controller update flow instead, and finish by stating whether the updated preview/controller build is ready to load."""
+For Pixel Forge self-edit requests running in an isolated clone workspace, do not replace the active controller mid-stream. Keep the result in the preview-update lane only, and finish by stating whether the clone preview update is ready to load."""
+                else:
+                    base += """
+
+For Pixel Forge self-edit requests in the canonical root, do not replace the active controller mid-stream. Use the staged controller-update flow instead, and finish by stating whether the updated controller build is ready to load."""
             elif _is_remote_preview(preview_url):
                 base += """
 
@@ -2098,6 +2189,15 @@ async def live_editor_chat(websocket: WebSocket):
                     workspace_path=session_info.workspace_path,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
+                    agent_deck_tool=session_info.tool,
+                )
+                self_edit_scope = (
+                    _resolve_self_edit_scope(
+                        normalized_project_path,
+                        session_info.workspace_path,
+                    )
+                    if self_edit_safe_mode
+                    else None
                 )
                 bootstrap_dispatch = (
                     not previous_request_id
@@ -2120,10 +2220,19 @@ async def live_editor_chat(websocket: WebSocket):
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     bootstrap=bootstrap_dispatch,
                     informational_only=informational_only,
-                    session_working_rules=[
-                        "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
-                        "- Leave install/restart activation for after the request completes. Use verification commands that do not replace the running controller.",
-                    ] if self_edit_safe_mode else None,
+                    session_working_rules=(
+                        [
+                            "- This is a Pixel Forge self-edit request. Do not run `./install.sh`, `pixel-forge restart`, or otherwise restart/replace the active Pixel Forge controller during this request.",
+                            "- Leave install/restart activation for after the request completes. Use verification commands that do not replace the running controller.",
+                            (
+                                "- This session is an isolated clone-backed self-edit preview. Keep the result in the preview-update lane only and finish by stating whether the clone preview update is ready to load."
+                                if self_edit_scope == "preview"
+                                else "- This session is the canonical Pixel Forge root. If the change is good, finish by stating whether the controller update is ready to stage/load after the request completes."
+                            ),
+                        ]
+                        if self_edit_safe_mode
+                        else None
+                    ),
                 )
                 thread = update_live_editor_thread(
                     thread.thread_id,
@@ -2138,6 +2247,7 @@ async def live_editor_chat(websocket: WebSocket):
                         "workspace_path": session_info.workspace_path,
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
+                        "agent_deck_tool": session_info.tool,
                         "acpx_agent": session_info.acpx_agent,
                         "acpx_session_name": session_info.acpx_session_name,
                         "acpx_record_id": session_info.acpx_record_id,
@@ -2145,6 +2255,7 @@ async def live_editor_chat(websocket: WebSocket):
                         "request_id": request_pack.request_id,
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,
+                        "self_edit_scope": self_edit_scope,
                     }
                 )
                 await websocket.send_json(
@@ -2170,6 +2281,7 @@ async def live_editor_chat(websocket: WebSocket):
                         else None
                     ),
                     self_edit_safe_mode=self_edit_safe_mode,
+                    self_edit_scope=self_edit_scope,
                     bootstrap=bootstrap_dispatch,
                     informational_only=informational_only,
                 )
@@ -2189,6 +2301,19 @@ async def live_editor_chat(websocket: WebSocket):
                         acp_session_id=refreshed_acpx_session.acp_session_id or "",
                     )
                     if fallback_output and not streamed_text:
+                        await websocket.send_json(
+                            {
+                                "type": "chunk",
+                                "content": fallback_output,
+                            }
+                        )
+                elif session_info.tool == "codex":
+                    fallback_output = await send_codex_prompt_and_capture_output(
+                        session_info,
+                        project_path=session_info.workspace_path,
+                        prompt=dispatch_prompt,
+                    )
+                    if fallback_output:
                         await websocket.send_json(
                             {
                                 "type": "chunk",
@@ -2259,6 +2384,15 @@ async def live_editor_chat(websocket: WebSocket):
                     workspace_path=refreshed_session.workspace_path,
                     agent_deck_session_id=refreshed_session.agent_deck_session_id,
                     agent_deck_session_title=refreshed_session.agent_deck_session_title,
+                    agent_deck_tool=refreshed_session.tool,
+                )
+                refreshed_self_edit_scope = (
+                    _resolve_self_edit_scope(
+                        normalized_project_path,
+                        refreshed_session.workspace_path,
+                    )
+                    if self_edit_safe_mode
+                    else None
                 )
 
                 await websocket.send_json(
@@ -2269,6 +2403,7 @@ async def live_editor_chat(websocket: WebSocket):
                         "workspace_path": refreshed_session.workspace_path,
                         "agent_deck_session_id": refreshed_session.agent_deck_session_id,
                         "agent_deck_session_title": refreshed_session.agent_deck_session_title,
+                        "agent_deck_tool": refreshed_session.tool,
                         "acpx_agent": refreshed_session.acpx_agent,
                         "acpx_session_name": refreshed_session.acpx_session_name,
                         "acpx_record_id": refreshed_session.acpx_record_id,
@@ -2276,6 +2411,7 @@ async def live_editor_chat(websocket: WebSocket):
                         "request_id": request_pack.request_id,
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,
+                        "self_edit_scope": refreshed_self_edit_scope,
                         "is_remote_target": _is_remote_preview(preview_url or None),
                     }
                 )

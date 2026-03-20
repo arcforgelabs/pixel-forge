@@ -56,7 +56,8 @@ try {
   await writeVersionSet(updateSourceRoot, stagedVersion)
 
   const stageResult = await runPixelForge(context, [
-    'stage-update',
+    'controller-update',
+    'stage',
     '--project',
     updateSourceRoot,
     '--summary',
@@ -74,23 +75,15 @@ try {
 
   await writeVersionSet(updateSourceRoot, poisonVersion)
 
-  await runProcess(process.execPath, [
-    path.join(repoRoot, 'apps', 'desktop', 'controller-update-runner.mjs'),
-    '--state-dir',
-    context.paths.stateDir,
-    '--install-root',
-    stagedPayload.snapshotPath,
-    '--update-id',
-    stagedPayload.id,
-    '--shell-url',
-    context.baseUrl,
-  ], {
-    env: {
-      ...context.env,
-      PIXEL_FORGE_SKIP_SHELL_RELAUNCH: '1',
-    },
-    label: 'controller-update-runner',
-  })
+  await runPixelForge(context, [
+    'controller-update',
+    'apply',
+    '--project',
+    updateSourceRoot,
+    '--mode',
+    'live-editor',
+    '--no-shell-relaunch',
+  ])
 
   await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
     description: 'updated Pixel Forge runtime',

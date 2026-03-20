@@ -52,6 +52,8 @@ class MockWebSocket extends EventTarget {
 describe('live editor selection history', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+    vi.stubGlobal('fetch', vi.fn())
+    delete (globalThis as typeof globalThis & { pixelForgeDesktop?: unknown }).pixelForgeDesktop
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
       projectName: 'example-project',
@@ -70,6 +72,7 @@ describe('live editor selection history', () => {
       lastSavedFile: null,
       controllerVersion: null,
       pendingControllerUpdate: null,
+      pendingPreviewUpdate: null,
       dismissedControllerUpdateId: null,
       controllerUpdateApplyState: {
         status: 'idle',
@@ -163,6 +166,18 @@ describe('live editor selection history', () => {
     const send = vi.fn()
     useSessionStore.setState({
       selectedAgentDeckTargetId: 'deck-session-123',
+      agentDeckTargets: [
+        {
+          id: 'deck-session-123',
+          title: 'codex-target',
+          path: '/tmp/example-project/.agents/codex-target',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
     })
     useLiveEditorStore.setState({
       ws: {
@@ -178,8 +193,52 @@ describe('live editor selection history', () => {
       message: 'Retarget this change',
       project_path: '/tmp/example-project',
       preview_url: 'http://example.localhost:3000',
-      agent_type: 'claude',
+      agent_type: 'codex',
       target_agent_deck_session_id: 'deck-session-123',
+    })
+  })
+
+  it('uses the bound session tool for outbound live-edit payloads', () => {
+    const send = vi.fn()
+    useSessionStore.setState({
+      liveEditorSession: {
+        threadId: 'thread-1',
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project/.agents/bound-codex',
+        agentDeckSessionId: 'deck-session-456',
+        agentDeckSessionTitle: 'bound-codex',
+        agentDeckTool: 'codex',
+        requestId: null,
+      },
+      selectedAgentDeckTargetId: 'deck-session-456',
+      agentDeckTargets: [
+        {
+          id: 'deck-session-456',
+          title: 'bound-codex',
+          path: '/tmp/example-project/.agents/bound-codex',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+      agentType: 'claude',
+    })
+    useLiveEditorStore.setState({
+      ws: {
+        readyState: 1,
+        send,
+      } as unknown as WebSocket,
+    })
+
+    useLiveEditorStore.getState().sendMessage('Use the bound session tool')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Use the bound session tool',
+      agent_type: 'codex',
+      target_agent_deck_session_id: 'deck-session-456',
     })
   })
 
@@ -306,5 +365,159 @@ describe('live editor selection history', () => {
       name: 'selection-01-form-panel.jpg',
       dataUrl: 'data:image/jpeg;base64,AAA=',
     })
+  })
+
+  it('stages clone-backed self-edit completions as preview-only updates', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          update: {
+            id: 'preview-update-1',
+            projectPath: '/tmp/example-project',
+            workspacePath: '/tmp/example-project/.agents/clone-a',
+            snapshotPath: '/tmp/.pixel-forge/preview-updates/preview-update-1',
+            previewUrl: null,
+            activeMode: 'live-editor',
+            summary: 'Pixel Forge preview from request request-1 is ready to load.',
+            source: 'live-editor',
+            requestId: 'request-1',
+            agentDeckSessionId: 'deck-session-1',
+            createdAt: '2026-03-20T00:00:00Z',
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    )
+
+    useSessionStore.setState({
+      projectPath: '/tmp/example-project',
+      activeMode: 'live-editor',
+      previewUrl: 'http://example.localhost:3000',
+    })
+
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+
+    ws?.onmessage?.(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'complete',
+          request_id: 'request-1',
+          selection_count: 1,
+          backend: 'agent-deck',
+          session_id: 'thread-1',
+          workspace_path: '/tmp/example-project/.agents/clone-a',
+          agent_deck_session_id: 'deck-session-1',
+          self_edit_safe_mode: true,
+          self_edit_scope: 'preview',
+        }),
+      })
+    )
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().pendingPreviewUpdate).not.toBeNull()
+    })
+
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/preview-updates')
+    expect(useSessionStore.getState().pendingPreviewUpdate).toMatchObject({
+      id: 'preview-update-1',
+      workspacePath: '/tmp/example-project/.agents/clone-a',
+    })
+    expect(useSessionStore.getState().pendingControllerUpdate).toBeNull()
+
+    const systemMessages = useLiveEditorStore
+      .getState()
+      .messages
+      .filter((message) => message.role === 'system')
+    const systemMessage = systemMessages[systemMessages.length - 1]
+
+    expect(systemMessage).toMatchObject({
+      canLoadPreviewUpdate: true,
+    })
+    expect(systemMessage?.canApplyControllerUpdate).toBeUndefined()
+  })
+
+  it('stages canonical self-edit completions as controller updates', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          update: {
+            id: 'controller-update-1',
+            projectPath: '/tmp/example-project',
+            snapshotPath: '/tmp/.pixel-forge/controller-updates/controller-update-1',
+            version: '1.3.1',
+            previewUrl: 'http://example.localhost:3000',
+            activeMode: 'live-editor',
+            summary: 'Pixel Forge update from request request-2 is ready to load.',
+            source: 'live-editor',
+            requestId: 'request-2',
+            commitHash: null,
+            createdAt: '2026-03-20T00:00:00Z',
+            canRollback: true,
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    )
+
+    useSessionStore.setState({
+      projectPath: '/tmp/example-project',
+      activeMode: 'live-editor',
+      previewUrl: 'http://example.localhost:3000',
+    })
+
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+
+    ws?.onmessage?.(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'complete',
+          request_id: 'request-2',
+          selection_count: 1,
+          backend: 'agent-deck',
+          session_id: 'thread-1',
+          workspace_path: '/tmp/example-project',
+          self_edit_safe_mode: true,
+          self_edit_scope: 'controller',
+        }),
+      })
+    )
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().pendingControllerUpdate).not.toBeNull()
+    })
+
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/api/controller-update')
+    expect(useSessionStore.getState().pendingControllerUpdate).toMatchObject({
+      id: 'controller-update-1',
+      projectPath: '/tmp/example-project',
+    })
+    expect(useSessionStore.getState().pendingPreviewUpdate).toBeNull()
+
+    const systemMessages = useLiveEditorStore
+      .getState()
+      .messages
+      .filter((message) => message.role === 'system')
+    const systemMessage = systemMessages[systemMessages.length - 1]
+
+    expect(systemMessage?.content).toContain('controller update staged')
+    expect(systemMessage?.canLoadPreviewUpdate).toBeUndefined()
   })
 })

@@ -2,6 +2,7 @@ import { HTTP_BACKEND_URL } from "@/config";
 import { create } from "zustand";
 import type {
   PixelForgeDesktopControllerUpdateApplyState,
+  PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPendingControllerUpdate,
 } from "@/types/pixel-forge-desktop";
 
@@ -14,6 +15,7 @@ export interface LiveEditorSessionMeta {
   workspacePath: string | null;
   agentDeckSessionId: string | null;
   agentDeckSessionTitle: string | null;
+  agentDeckTool: string | null;
   requestId?: string | null;
 }
 
@@ -86,6 +88,7 @@ interface SessionStore {
   controllerRuntimeLayout: string | null;
   controllerAcpxBridgeAvailable: boolean;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
+  pendingPreviewUpdate: PixelForgePendingPreviewUpdate | null;
   dismissedControllerUpdateId: string | null;
   controllerUpdateApplyState: PixelForgeDesktopControllerUpdateApplyState;
 
@@ -135,6 +138,9 @@ interface SessionStore {
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
   ) => void;
+  setPendingPreviewUpdate: (
+    update: PixelForgePendingPreviewUpdate | null
+  ) => void;
   setDismissedControllerUpdateId: (updateId: string | null) => void;
   setControllerUpdateApplyState: (
     state: PixelForgeDesktopControllerUpdateApplyState
@@ -165,6 +171,7 @@ interface ApiSession {
   backend: string;
   agent_deck_session_id: string | null;
   agent_deck_session_title: string | null;
+  agent_deck_tool: string | null;
   created_at: string;
   last_active: string;
 }
@@ -205,6 +212,7 @@ function normalizeSession(session: ApiSession): ProjectSessionRecord {
     backend: session.backend,
     agentDeckSessionId: session.agent_deck_session_id,
     agentDeckSessionTitle: session.agent_deck_session_title,
+    agentDeckTool: session.agent_deck_tool,
     createdAt: session.created_at,
     lastActive: session.last_active,
     requestId: null,
@@ -263,8 +271,26 @@ function ensureAgentDeckTargetPresent(
   session: LiveEditorSessionMeta | null
 ): AgentDeckSessionTarget[] {
   const sessionId = session?.agentDeckSessionId ?? null;
-  if (!sessionId || targets.some((target) => target.id === sessionId)) {
+  if (!sessionId) {
     return targets;
+  }
+
+  const existingTarget = targets.find((target) => target.id === sessionId);
+  if (existingTarget) {
+    const nextTool = existingTarget.tool ?? session?.agentDeckTool ?? null;
+    const nextTitle = existingTarget.title || session?.agentDeckSessionTitle || sessionId;
+    if (nextTool === existingTarget.tool && nextTitle === existingTarget.title) {
+      return targets;
+    }
+    return targets.map((target) =>
+      target.id === sessionId
+        ? {
+            ...target,
+            title: nextTitle,
+            tool: nextTool,
+          }
+        : target
+    );
   }
 
   return [
@@ -273,7 +299,7 @@ function ensureAgentDeckTargetPresent(
       title: session?.agentDeckSessionTitle || sessionId,
       path: "",
       group: null,
-      tool: null,
+      tool: session?.agentDeckTool ?? null,
       command: null,
       status: "unknown",
       createdAt: null,
@@ -415,6 +441,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   controllerRuntimeLayout: null,
   controllerAcpxBridgeAvailable: false,
   pendingControllerUpdate: null,
+  pendingPreviewUpdate: null,
   dismissedControllerUpdateId: null,
   controllerUpdateApplyState: {
     status: "idle",
@@ -517,10 +544,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: savedProject.customOutputPath ?? null,
       sessionId: null,
       liveEditorSession: currentSession,
+      agentType: currentSession?.agentDeckTool ?? currentState.agentType,
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
       projectSessions,
       agentDeckTargets: hydratedTargets,
+      pendingPreviewUpdate: null,
     }));
   },
 
@@ -531,6 +560,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   setLiveEditorSession: (session) => {
     set((state) => ({
       liveEditorSession: session,
+      agentType: session?.agentDeckTool ?? state.agentType,
       selectedAgentDeckTargetId:
         session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
       projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
@@ -593,6 +623,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
       set((state) => ({
         agentDeckTargetsLoading: false,
+        agentType: created.tool ?? state.agentType,
         selectedAgentDeckTargetId: created.id,
         agentDeckTargets: ensureAgentDeckTargetPresent(
           [
@@ -611,7 +642,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   selectedAgentDeckTargetId: null,
   setSelectedAgentDeckTargetId: (sessionId) => {
-    set({ selectedAgentDeckTargetId: sessionId });
+    set((state) => {
+      const selectedTarget = sessionId
+        ? state.agentDeckTargets.find((target) => target.id === sessionId) ?? null
+        : null;
+      return {
+        selectedAgentDeckTargetId: sessionId,
+        agentType: selectedTarget?.tool ?? state.agentType,
+      };
+    });
   },
 
   clearProject: () => {
@@ -628,6 +667,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       agentDeckTargets: [],
       agentDeckTargetsLoading: false,
       selectedAgentDeckTargetId: null,
+      pendingPreviewUpdate: null,
     });
   },
 
@@ -718,6 +758,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           ? null
           : state.dismissedControllerUpdateId,
     }));
+  },
+
+  setPendingPreviewUpdate: (update) => {
+    set({ pendingPreviewUpdate: update });
   },
 
   setDismissedControllerUpdateId: (updateId) => {

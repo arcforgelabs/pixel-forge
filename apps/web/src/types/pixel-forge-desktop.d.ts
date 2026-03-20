@@ -76,8 +76,23 @@ export interface PixelForgeDesktopPendingControllerUpdate {
   source: string
   requestId: string | null
   commitHash: string | null
+  gitRef?: string | null
   createdAt: string
   canRollback: boolean
+}
+
+export interface PixelForgePendingPreviewUpdate {
+  id: string
+  projectPath: string
+  workspacePath: string
+  snapshotPath: string | null
+  previewUrl: string | null
+  activeMode: 'screenshot' | 'live-editor' | null
+  summary: string
+  source: string
+  requestId: string | null
+  agentDeckSessionId: string | null
+  createdAt: string
 }
 
 export interface PixelForgeDesktopControllerUpdateApplyState {
@@ -124,6 +139,8 @@ export interface PixelForgeDesktopAppAPI {
     source?: string | null
     requestId?: string | null
     commitHash?: string | null
+    gitRef?: string | null
+    allowNoncanonicalProject?: boolean
   }): Promise<PixelForgeDesktopPendingControllerUpdate>
   dismissPendingControllerUpdate(): Promise<{ ok: true }>
 }

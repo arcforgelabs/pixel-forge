@@ -11,6 +11,7 @@ import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { PixelForgePendingPreviewUpdate } from '@/types/pixel-forge-desktop'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -32,6 +33,10 @@ import toast from 'react-hot-toast'
 
 import { ChatInput } from './ChatInput'
 import { ChatMessages } from './ChatMessages'
+import {
+  isCloneWorkspaceBound,
+  resolveIsolatedMirrorSourceRoot,
+} from './mirror-targets'
 import { SelectedElementsList } from './SelectedElementsList'
 import { useLiveEditorStore } from './store/chat-store'
 import {
@@ -364,8 +369,12 @@ export function LiveEditorPane() {
     previewUrl,
     activeMode,
     liveEditorSession,
+    agentDeckTargets,
+    createAgentDeckTargetSession,
+    selectedAgentDeckTargetId,
+    pendingPreviewUpdate,
+    setPendingPreviewUpdate,
     setPreviewUrl,
-    pendingControllerUpdate,
   } = useSessionStore()
 
   const targetUrlRef = useRef(previewUrl || '')
@@ -377,7 +386,6 @@ export function LiveEditorPane() {
   const authToastIdsRef = useRef<Record<string, string>>({})
   const previewHostRef = useRef<HTMLDivElement | null>(null)
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
-  const mirrorBuildAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(window.pixelForgeDesktop?.preview ?? null)
   const desktopOverlayRef = useRef(window.pixelForgeDesktop?.overlay ?? null)
   const desktopAppRef = useRef(window.pixelForgeDesktop?.app ?? null)
@@ -393,7 +401,7 @@ export function LiveEditorPane() {
   ])
   const [activePreviewTabId, setActivePreviewTabId] = useState<string | null>(null)
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
-  const [mirrorBuilds, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
+  const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
 
   // URL navigation history (back/forward)
   const [urlHistory, setUrlHistory] = useState<string[]>([])
@@ -443,6 +451,29 @@ export function LiveEditorPane() {
     const project = state.recentProjects.find((entry) => entry.path === state.projectPath)
     return project?.previewUrls ?? []
   })
+  const selectedAgentDeckTarget = agentDeckTargets.find(
+    (target) => target.id === selectedAgentDeckTargetId
+  ) ?? null
+  const liveSessionBoundToCanonicalRoot = Boolean(
+    liveEditorSession?.workspacePath
+    && !isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
+  )
+  const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
+    ? null
+    : resolveIsolatedMirrorSourceRoot({
+        projectPath,
+        liveWorkspacePath: liveEditorSession?.workspacePath || null,
+        selectedTargetPath: selectedAgentDeckTarget?.path || null,
+      })
+  const previewAudienceSessionId = liveSessionBoundToCanonicalRoot
+    ? null
+    : liveEditorSession?.workspacePath
+    && isCloneWorkspaceBound({ projectPath, workspacePath: liveEditorSession.workspacePath })
+      ? liveEditorSession.agentDeckSessionId ?? null
+      : selectedAgentDeckTarget
+      && isCloneWorkspaceBound({ projectPath, workspacePath: selectedAgentDeckTarget.path })
+        ? selectedAgentDeckTarget.id
+        : null
 
   const {
     connect,
@@ -555,7 +586,41 @@ export function LiveEditorPane() {
 
   useEffect(() => {
     void refreshMirrorBuilds()
-  }, [refreshMirrorBuilds, pendingControllerUpdate?.snapshotPath])
+  }, [refreshMirrorBuilds])
+
+  useEffect(() => {
+    if (!projectPath || !previewAudienceWorkspacePath) {
+      setPendingPreviewUpdate(null)
+      return
+    }
+
+    let cancelled = false
+    void requestPreviewJson<{ update: PixelForgePendingPreviewUpdate | null }>(
+      `/api/preview-updates/latest?${new URLSearchParams({
+        project_path: projectPath,
+        workspace_path: previewAudienceWorkspacePath,
+        ...(previewAudienceSessionId ? { agent_deck_session_id: previewAudienceSessionId } : {}),
+      }).toString()}`
+    ).then((payload) => {
+      if (!cancelled) {
+        setPendingPreviewUpdate(payload.update)
+      }
+    }).catch((error) => {
+      console.error('[live-editor] Failed to load pending preview update:', error)
+      if (!cancelled) {
+        setPendingPreviewUpdate(null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    previewAudienceSessionId,
+    previewAudienceWorkspacePath,
+    projectPath,
+    setPendingPreviewUpdate,
+  ])
 
   const setIframeRef = useCallback((tabId: string, iframe: HTMLIFrameElement | null) => {
     iframeRefs.current[tabId] = iframe
@@ -1090,44 +1155,96 @@ export function LiveEditorPane() {
     return record
   }, [openLocalTargetInPreviewTab, projectPath])
 
+  const fetchLatestPendingPreviewUpdate = useCallback(async (
+    workspacePath: string,
+    agentDeckSessionId: string | null,
+  ) => {
+    if (!projectPath) {
+      return null
+    }
+
+    const query = new URLSearchParams({
+      project_path: projectPath,
+      workspace_path: workspacePath,
+    })
+    if (agentDeckSessionId) {
+      query.set('agent_deck_session_id', agentDeckSessionId)
+    }
+
+    const payload = await requestPreviewJson<{
+      update: PixelForgePendingPreviewUpdate | null
+    }>(`/api/preview-updates/latest?${query.toString()}`)
+    return payload.update
+  }, [projectPath])
+
+  const ensureIsolatedMirrorSourceRoot = useCallback(async () => {
+    if (!projectPath) {
+      throw new Error('Select a project before launching a Pixel Forge target')
+    }
+
+    const liveWorkspacePath = liveEditorSession?.workspacePath?.trim() || null
+    if (liveWorkspacePath && !isCloneWorkspaceBound({ projectPath, workspacePath: liveWorkspacePath })) {
+      throw new Error(
+        'This live thread is bound to the canonical Pixel Forge root. Start a new isolated session or unbind this thread before running Pixel Forge preview.'
+      )
+    }
+
+    const resolvedSourceRoot = resolveIsolatedMirrorSourceRoot({
+      projectPath,
+      liveWorkspacePath,
+      selectedTargetPath: selectedAgentDeckTarget?.path || null,
+    })
+    if (resolvedSourceRoot) {
+      return resolvedSourceRoot
+    }
+
+    const created = await createAgentDeckTargetSession()
+    const createdPath = created.path?.trim() || null
+    if (!isCloneWorkspaceBound({ projectPath, workspacePath: createdPath })) {
+      throw new Error('Failed to create an isolated Pixel Forge preview session.')
+    }
+    toast.success(`Created isolated session · ${created.title || created.id}`)
+    return createdPath
+  }, [
+    createAgentDeckTargetSession,
+    liveEditorSession?.workspacePath,
+    projectPath,
+    selectedAgentDeckTarget?.path,
+  ])
+
   const loadUpdatedPixelForgePreview = useCallback(async () => {
-    const pendingUpdate =
-      pendingControllerUpdate
-      || await desktopAppRef.current?.getPendingControllerUpdate?.()
-      || (await requestPreviewJson<{
-        update: {
-          id: string
-          projectPath: string
-          snapshotPath: string | null
-          previewUrl: string | null
-          activeMode: 'screenshot' | 'live-editor' | null
-          summary: string
-          source: string
-          requestId: string | null
-          commitHash: string | null
-          createdAt: string
-          canRollback: boolean
-        } | null
-      }>('/api/controller-update')).update
-      || null
-
-    const sourceRoot = pendingUpdate?.snapshotPath
-      || mirrorBuilds[0]?.source_root
-      || null
-
-    if (!sourceRoot) {
-      toast.error('No newer Pixel Forge mirror build is ready to preview.')
+    if (!previewAudienceWorkspacePath) {
+      toast.error('No isolated Pixel Forge preview session is selected.')
       return
     }
 
-    const toastId = toast.loading('Loading staged update into a new mirror tab...')
+    const update =
+      pendingPreviewUpdate
+      || await fetchLatestPendingPreviewUpdate(previewAudienceWorkspacePath, previewAudienceSessionId)
+
+    if (!update?.snapshotPath) {
+      toast.error('No updated clone preview is ready to load.')
+      return
+    }
+
+    const toastId = toast.loading('Loading updated Pixel Forge preview...')
     try {
       await startPixelForgeMirror({
-        sourceRoot,
+        sourceRoot: update.snapshotPath,
         forceRestart: false,
         announceSuccess: false,
       })
-      toast.success('Loaded staged update into a new mirror tab', { id: toastId })
+      setPendingPreviewUpdate(null)
+      void fetch(
+        `${HTTP_BACKEND_URL}/api/preview-updates/latest?update_id=${encodeURIComponent(update.id)}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+        }
+      ).catch((error) => {
+        console.error('[live-editor] Failed to clear consumed preview update:', error)
+      })
+      toast.success('Loaded updated Pixel Forge preview in a new tab', { id: toastId })
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -1136,84 +1253,14 @@ export function LiveEditorPane() {
         { id: toastId }
       )
     }
-  }, [mirrorBuilds, pendingControllerUpdate, startPixelForgeMirror])
-
-  const openMirrorBuildHistory = useCallback(async () => {
-    if (!projectPath) {
-      toast.error('Select a project before browsing mirror builds')
-      return
-    }
-
-    const desktopOverlay = desktopOverlayRef.current
-    const anchor = mirrorBuildAnchorRef.current
-    if (!desktopOverlay) {
-      return
-    }
-
-    const builds = mirrorBuilds.length > 0
-      ? mirrorBuilds
-      : (await requestPreviewJson<{ targets: LocalPixelForgeTargetResponse[] }>(
-          `/api/local-targets/pixel-forge?project_path=${encodeURIComponent(projectPath)}&runtime_kind=mirror`
-        )).targets
-
-    if (builds.length === 0) {
-      toast('No mirror builds exist yet. Run Pixel Forge to create the first one.')
-      return
-    }
-
-    const activeMirrorSlug = activePreviewTabId
-      ? previewTabsRef.current.find((tab) => tab.id === activePreviewTabId)?.localTarget?.instanceSlug ?? null
-      : null
-
-    const selectedInstanceSlug = await desktopOverlay.pickList({
-      anchorRect: anchor
-        ? (() => {
-            const rect = anchor.getBoundingClientRect()
-            return { x: rect.left, y: rect.bottom, width: rect.width, height: rect.height }
-          })()
-        : { x: 0, y: 0, width: 320, height: 32 },
-      items: builds.map((record) => ({
-        value: record.instance_slug,
-        label: `${record.build_label}${record.created_at ? ` · ${record.created_at}` : ''}`,
-      })),
-      selectedValue: activeMirrorSlug,
-      width: 420,
-      maxHeight: 320,
-    })
-
-    if (!selectedInstanceSlug) {
-      return
-    }
-
-    const selectedBuild = builds.find((record) => record.instance_slug === selectedInstanceSlug)
-    if (!selectedBuild) {
-      return
-    }
-
-    try {
-      const record = await requestPreviewJson<LocalPixelForgeTargetResponse>(
-        '/api/local-targets/pixel-forge/start',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            project_path: projectPath,
-            runtime_kind: 'mirror',
-            force_restart: false,
-            source_root: selectedBuild.source_root,
-          }),
-        }
-      )
-
-      await openLocalTargetInPreviewTab(record, { announceSuccess: false })
-      toast.success(`Loaded ${record.build_label}`)
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Failed to load the selected mirror build'
-      )
-    }
-  }, [activePreviewTabId, mirrorBuilds, openLocalTargetInPreviewTab, projectPath])
+  }, [
+    fetchLatestPendingPreviewUpdate,
+    pendingPreviewUpdate,
+    previewAudienceSessionId,
+    previewAudienceWorkspacePath,
+    setPendingPreviewUpdate,
+    startPixelForgeMirror,
+  ])
 
   const addPreviewTab = useCallback(() => {
     const nextTab = createPreviewTab('', null, previewTabsRef.current.length + 1)
@@ -1233,15 +1280,10 @@ export function LiveEditorPane() {
 
     setIsLaunchingPixelForgeTarget(true)
     try {
-      const preferredSourceRoot =
-        liveEditorSession?.workspacePath
-          || (pendingControllerUpdate?.projectPath === projectPath
-          ? pendingControllerUpdate.snapshotPath
-          : (mirrorBuilds[0]?.source_root || null))
-
+      const preferredSourceRoot = await ensureIsolatedMirrorSourceRoot()
       const record = await startPixelForgeMirror({
         sourceRoot: preferredSourceRoot,
-        forceRestart: false,
+        forceRestart: true,
         announceSuccess: false,
       })
 
@@ -1260,7 +1302,7 @@ export function LiveEditorPane() {
     } finally {
       setIsLaunchingPixelForgeTarget(false)
     }
-  }, [liveEditorSession?.workspacePath, mirrorBuilds, pendingControllerUpdate?.projectPath, pendingControllerUpdate?.snapshotPath, projectPath, startPixelForgeMirror])
+  }, [ensureIsolatedMirrorSourceRoot, projectPath, startPixelForgeMirror])
 
   const closePreviewTab = useCallback(async (tabId: string) => {
     const closingIndex = previewTabsRef.current.findIndex((entry) => entry.id === tabId)
@@ -1894,16 +1936,10 @@ export function LiveEditorPane() {
 
   const activePreviewTab = getActivePreviewTab()
   const activeMirrorTarget = activePreviewTab?.localTarget
-  const latestMirrorBuild = mirrorBuilds[0] ?? null
-  const nextMirrorSourceRoot =
-    liveEditorSession?.workspacePath
-      || (pendingControllerUpdate?.projectPath === projectPath
-        ? (pendingControllerUpdate.snapshotPath || null)
-        : (latestMirrorBuild?.source_root || null))
-  const hasNewerMirrorBuild =
-    !!activeMirrorTarget
-    && !!nextMirrorSourceRoot
-    && activeMirrorTarget.sourceRoot !== nextMirrorSourceRoot
+  const hasPendingPreviewUpdate = Boolean(
+    pendingPreviewUpdate?.snapshotPath
+    && activeMirrorTarget?.sourceRoot !== pendingPreviewUpdate.snapshotPath
+  )
   const previewUnavailableMessage =
     'Live Editor preview runs inside the Pixel Forge desktop shell. Use the dock icon or run `pixel-forge open`.'
 
@@ -2049,41 +2085,29 @@ export function LiveEditorPane() {
               Load
             </Button>
             {projectPath && (
-              <div ref={mirrorBuildAnchorRef} className="flex">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void launchPixelForgeTarget()}
-                  disabled={!hasEmbeddedBrowserPreview || isLaunchingPixelForgeTarget}
-                  className="h-7 gap-1 rounded-r-none border-border/60 px-2.5 text-xs"
-                  title="Launch the latest Pixel Forge mirror build for self-editing"
-                >
-                  <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
-                  {isLaunchingPixelForgeTarget ? 'Launching...' : 'Run Pixel Forge'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void openMirrorBuildHistory()}
-                  disabled={!hasEmbeddedBrowserPreview}
-                  className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
-                  title="Open a specific Pixel Forge mirror build"
-                >
-                  <ChevronDown className="h-3 w-3" />
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void launchPixelForgeTarget()}
+                disabled={!hasEmbeddedBrowserPreview || isLaunchingPixelForgeTarget}
+                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
+                title="Launch or rebuild the isolated Pixel Forge mirror for this session"
+              >
+                <RefreshCw className={`h-3 w-3 ${isLaunchingPixelForgeTarget ? 'animate-spin' : ''}`} />
+                {isLaunchingPixelForgeTarget ? 'Launching...' : 'Run Pixel Forge'}
+              </Button>
             )}
-            {hasNewerMirrorBuild && (
+            {hasPendingPreviewUpdate && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => void loadUpdatedPixelForgePreview()}
                 disabled={!hasEmbeddedBrowserPreview}
                 className="h-7 gap-1 border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs text-emerald-100 hover:bg-emerald-500/20"
-                title="Open the latest staged Pixel Forge mirror build in a new tab"
+                title="Open the updated clone preview in a new tab"
               >
                 <RefreshCw className="h-3 w-3" />
-                Load Latest Mirror
+                Load Updated Preview
               </Button>
             )}
             <div className="mx-0.5 h-4 w-px bg-border/40" />

@@ -14,7 +14,7 @@
     "open:shell": "PIXEL_FORGE_SHELL_URL=http://pixel-forge.localhost:5173 pnpm --dir apps/desktop start",
     "build:web": "pnpm --dir apps/web build",
     "check:version": "node scripts/check-version-sync.mjs",
-    "check:shell": "bash -n install.sh start-dev.sh",
+    "check:shell": "bash -n install.sh start-dev.sh pixel-forge",
     "check:api": "python3 -m py_compile $(rg --files apps/api -g '*.py' -g '!apps/api/.venv/**')",
     "check:desktop": "node --check apps/desktop/main.mjs && node --check apps/desktop/shell-preload.mjs && node --check apps/desktop/preview-preload.mjs && node --check apps/desktop/picker-overlay-preload.mjs && node --check apps/desktop/selection-engine.mjs && node --check apps/desktop/updater-preload.mjs && node --check apps/desktop/version.mjs && node --check apps/desktop/controller-update-runner.mjs",
     "check:web": "pnpm --dir apps/web build",

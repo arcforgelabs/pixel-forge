@@ -15,6 +15,8 @@ from live_editor_threads import LiveEditorThreadRecord
 CLAUDE_DIR_NAME_RE = re.compile(r"[^a-zA-Z0-9-]")
 STREAM_IDLE_AFTER_COMPLETION_SECONDS = 1.0
 STREAM_POLL_INTERVAL_SECONDS = 0.2
+CODEX_POLL_INTERVAL_SECONDS = 1.0
+CODEX_READY_PROMPT_PREFIX = "› "
 
 
 @dataclass(slots=True)
@@ -22,6 +24,8 @@ class AgentDeckSessionInfo:
     agent_deck_session_id: str
     agent_deck_session_title: str
     workspace_path: str
+    tool: str
+    status: str | None
     acpx_agent: str | None
     acpx_session_name: str | None
     acpx_record_id: str | None
@@ -493,6 +497,11 @@ async def _build_session_info(
     agent_deck_title = str(payload.get("title") or fallback_title)
     workspace_path = str(payload.get("path") or "").strip() or _normalize_path(project_path)
     session_tool = _session_tool(payload)
+    status = (
+        str(payload.get("status")).strip()
+        if isinstance(payload.get("status"), str) and str(payload.get("status")).strip()
+        else None
+    )
     acpx_agent: str | None = None
     acpx_session_name: str | None = None
     acpx_record_id: str | None = None
@@ -530,6 +539,8 @@ async def _build_session_info(
         agent_deck_session_id=agent_deck_session_id,
         agent_deck_session_title=agent_deck_title,
         workspace_path=workspace_path,
+        tool=session_tool,
+        status=status,
         acpx_agent=acpx_agent,
         acpx_session_name=acpx_session_name,
         acpx_record_id=acpx_record_id,
@@ -780,6 +791,208 @@ async def start_agent_deck_send(
         stderr=asyncio.subprocess.PIPE,
         cwd=project_path,
     )
+
+
+async def send_agent_deck_prompt_nowait(
+    session_info: AgentDeckSessionInfo,
+    *,
+    project_path: str,
+    prompt: str,
+) -> None:
+    code, stdout, stderr = await _run_command(
+        [
+            "agent-deck",
+            "session",
+            "send",
+            session_info.agent_deck_session_id,
+            prompt,
+            "-no-wait",
+            "-q",
+        ],
+        cwd=project_path,
+    )
+    if code != 0:
+        raise AgentDeckBridgeError(
+            stderr.strip() or stdout.strip() or "Agent Deck live-edit request failed"
+        )
+
+
+def _codex_output_looks_ready(output: str) -> bool:
+    nonempty_lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    if len(nonempty_lines) < 2:
+        return False
+
+    return (
+        nonempty_lines[-2].lstrip().startswith(CODEX_READY_PROMPT_PREFIX)
+        and nonempty_lines[-1].lstrip().startswith("gpt-")
+    )
+
+
+async def wait_for_codex_ready_output(
+    agent_deck_session_id: str,
+    *,
+    timeout_seconds: float,
+    changed_from: str | None = None,
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+
+    while asyncio.get_running_loop().time() < deadline:
+        output = await get_last_output(agent_deck_session_id)
+        if changed_from is not None and output == changed_from:
+            await asyncio.sleep(CODEX_POLL_INTERVAL_SECONDS)
+            continue
+        if _codex_output_looks_ready(output):
+            return output
+        await asyncio.sleep(CODEX_POLL_INTERVAL_SECONDS)
+
+    return None
+
+
+def _extract_session_output_delta(previous_output: str, next_output: str) -> str:
+    if not previous_output:
+        return next_output
+    prefix_length = len(os.path.commonprefix([previous_output, next_output]))
+    previous_remainder = previous_output[prefix_length:]
+    next_remainder = next_output[prefix_length:]
+
+    suffix_length = 0
+    max_suffix = min(len(previous_remainder), len(next_remainder))
+    while suffix_length < max_suffix:
+        if previous_remainder[-(suffix_length + 1)] != next_remainder[-(suffix_length + 1)]:
+            break
+        suffix_length += 1
+
+    if suffix_length == 0:
+        return next_remainder
+    return next_remainder[:-suffix_length]
+
+
+def _strip_codex_prompt_echo(output: str) -> str:
+    lines = output.splitlines()
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    if lines and lines[0].lstrip().startswith(CODEX_READY_PROMPT_PREFIX):
+        lines.pop(0)
+        while lines and lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if len(lines) >= 2:
+        last_line = lines[-1].lstrip()
+        previous_line = lines[-2].lstrip()
+        if last_line.startswith("gpt-") and previous_line.startswith(CODEX_READY_PROMPT_PREFIX):
+            lines.pop()
+            lines.pop()
+            while lines and not lines[-1].strip():
+                lines.pop()
+
+    return "\n".join(lines).strip()
+
+
+def _codex_output_is_still_running(output: str) -> bool:
+    normalized = output.strip()
+    if not normalized:
+        return False
+    return "esc to interrupt" in normalized or normalized.startswith("• Working")
+
+
+def _trim_codex_turn_artifacts(output: str, prompt: str) -> str:
+    trimmed_output = output.strip()
+    trimmed_prompt = prompt.strip()
+
+    if trimmed_prompt and trimmed_output.startswith(trimmed_prompt):
+        trimmed_output = trimmed_output[len(trimmed_prompt):].lstrip()
+
+    lines = trimmed_output.splitlines()
+    while lines and lines[-1].strip() in {CODEX_READY_PROMPT_PREFIX.strip(), CODEX_READY_PROMPT_PREFIX}:
+        lines.pop()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines).strip()
+
+
+async def wait_for_codex_turn_output(
+    agent_deck_session_id: str,
+    *,
+    baseline_output: str,
+    timeout_seconds: float,
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_delta = ""
+    stable_polls = 0
+
+    while asyncio.get_running_loop().time() < deadline:
+        current_output = await get_last_output(agent_deck_session_id)
+        delta = _extract_session_output_delta(baseline_output, current_output)
+        sanitized_delta = _strip_codex_prompt_echo(delta)
+
+        if sanitized_delta == last_delta:
+            stable_polls += 1
+        else:
+            last_delta = sanitized_delta
+            stable_polls = 0
+
+        if (
+            sanitized_delta
+            and not _codex_output_is_still_running(sanitized_delta)
+            and stable_polls >= 1
+        ):
+            return sanitized_delta
+
+        await asyncio.sleep(CODEX_POLL_INTERVAL_SECONDS)
+
+    return None
+
+
+async def send_codex_prompt_and_capture_output(
+    session_info: AgentDeckSessionInfo,
+    *,
+    project_path: str,
+    prompt: str,
+    preflight_timeout_seconds: float = 20.0,
+    completion_timeout_seconds: float = 600.0,
+) -> str:
+    status = (session_info.status or "").strip().lower()
+    if status not in {"", "waiting", "idle"}:
+        raise AgentDeckBridgeError(
+            f"Codex session `{session_info.agent_deck_session_title}` is busy ({status}). "
+            "Wait for it to finish in Agent Deck or start a fresh Live Editor thread."
+        )
+
+    ready_output = await wait_for_codex_ready_output(
+        session_info.agent_deck_session_id,
+        timeout_seconds=preflight_timeout_seconds,
+    )
+    if ready_output is None:
+        raise AgentDeckBridgeError(
+            f"Codex session `{session_info.agent_deck_session_title}` is not ready yet. "
+            "Open it in Agent Deck, clear any trust or startup prompt, then retry."
+        )
+
+    await send_agent_deck_prompt_nowait(
+        session_info,
+        project_path=project_path,
+        prompt=prompt,
+    )
+
+    completed_output = await wait_for_codex_turn_output(
+        session_info.agent_deck_session_id,
+        baseline_output=ready_output,
+        timeout_seconds=completion_timeout_seconds,
+    )
+    if completed_output is None:
+        raise AgentDeckBridgeError(
+            f"Timed out waiting for Codex session `{session_info.agent_deck_session_title}` to finish the live-edit request."
+        )
+
+    return _trim_codex_turn_artifacts(completed_output, prompt)
 
 
 async def get_last_output(agent_deck_session_id: str) -> str:

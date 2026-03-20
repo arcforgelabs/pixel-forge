@@ -6,18 +6,16 @@ export function ModeTabBar() {
   const { activeMode, projectName, settingsSidebarOpen, toggleSettingsSidebar } = useSessionStore();
 
   return (
-    <div className="flex items-center border-b border-border/50 bg-card/40 backdrop-blur-sm px-2 py-1.5">
-      {/* Sidebar toggle — always visible, like Claude's top-left toggle */}
-      {!settingsSidebarOpen && (
-        <button
-          onClick={toggleSettingsSidebar}
-          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-300 text-muted-foreground hover:text-foreground active:scale-95 mr-1"
-          aria-label="Open sidebar"
-          title="Open sidebar"
-        >
-          <PanelLeft className="h-5 w-5" />
-        </button>
-      )}
+    <div className="flex items-center border-b border-border/50 bg-card/40 backdrop-blur-sm px-2 py-3">
+      {/* Sidebar toggle — always in DOM to keep header height consistent */}
+      <button
+        onClick={toggleSettingsSidebar}
+        className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-300 text-muted-foreground hover:text-foreground active:scale-95 mr-1 ${settingsSidebarOpen ? "invisible" : ""}`}
+        aria-label="Open sidebar"
+        title="Open sidebar"
+      >
+        <PanelLeft className="h-5 w-5" />
+      </button>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground capitalize">{activeMode === "live-editor" ? "Live Editor" : "Screenshot"}</span>
         {projectName && (

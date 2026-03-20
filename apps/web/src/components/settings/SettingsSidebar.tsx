@@ -138,6 +138,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         (session) => session.agentDeckSessionId === selectedAgentDeckTarget.id
       ) ?? null
     : null;
+  const effectiveAgentType =
+    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool || agentType;
+  const agentSelectionLocked = Boolean(
+    liveEditorSession?.agentDeckTool || selectedAgentDeckTarget?.tool
+  );
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareSemver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
@@ -632,10 +637,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     disabled={!projectPath || agentDeckTargetsLoading || !canRetargetLiveEditor}
                   >
                     <SelectTrigger className="h-9 text-xs">
-                      <SelectValue placeholder="Create isolated session on first send" />
+                      <SelectValue placeholder="Create isolated session automatically" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__auto__">Create isolated session on first send</SelectItem>
+                      <SelectItem value="__auto__">Create isolated session automatically</SelectItem>
                       {agentDeckTargets.map((target) => (
                         <SelectItem key={target.id} value={target.id}>
                           {formatAgentDeckTargetLabel(target)}
@@ -668,7 +673,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      No target is preselected. Pixel Forge will create a new isolated Agent Deck clone on the first send.
+                      No target is preselected. Pixel Forge will create a new isolated Agent Deck clone when preview or chat first needs one.
                     </p>
                   )}
                 </div>
@@ -752,13 +757,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Agent</Label>
-                <Select value={agentType} onValueChange={(value) => setAgentType(value)}>
+                <Select
+                  value={effectiveAgentType}
+                  onValueChange={(value) => setAgentType(value)}
+                  disabled={agentSelectionLocked}
+                >
                   <SelectTrigger className="h-8 w-[140px] text-xs">
-                    {agentType === "claude"
+                    {effectiveAgentType === "claude"
                       ? "Claude Code"
-                      : agentType === "codex"
+                      : effectiveAgentType === "codex"
                         ? "Codex"
-                        : capitalize(agentType)}
+                        : capitalize(effectiveAgentType)}
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="claude">Claude Code</SelectItem>
@@ -766,6 +775,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   </SelectContent>
                 </Select>
               </div>
+              {agentSelectionLocked && (
+                <p className="text-xs text-muted-foreground">
+                  Agent follows the selected Agent Deck session until you clear or replace that binding.
+                </p>
+              )}
 
               <div className="flex items-center justify-between">
                 <Label htmlFor="dialog-image-gen" className="text-sm">

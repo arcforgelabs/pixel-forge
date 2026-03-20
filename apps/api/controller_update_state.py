@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import shutil
+import subprocess
+import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +38,87 @@ def _normalize_text(value: Any) -> str | None:
     return trimmed or None
 
 
+def normalize_project_root(project_path: str | Path) -> Path:
+    return Path(project_path).expanduser().resolve()
+
+
+def canonical_project_root(project_path: str | Path) -> Path:
+    root = normalize_project_root(project_path)
+    if ".agents" not in root.parts:
+        return root
+
+    current = root
+    while current.name != ".agents":
+        if current.parent == current:
+            return root
+        current = current.parent
+
+    return current.parent.resolve()
+
+
+def is_clone_workspace_path(project_path: str | Path) -> bool:
+    root = normalize_project_root(project_path)
+    return canonical_project_root(root) != root
+
+
+def has_installable_controller_layout(project_path: str | Path) -> bool:
+    root = normalize_project_root(project_path)
+    return (
+        (root / "install.sh").is_file()
+        and (root / "apps" / "api" / "main.py").is_file()
+        and (root / "apps" / "api" / "requirements.txt").is_file()
+        and (root / "apps" / "web" / "package.json").is_file()
+    )
+
+
+def enforce_controller_update_source_policy(
+    project_path: str,
+    *,
+    allow_noncanonical_project: bool = False,
+) -> Path:
+    normalized = normalize_project_root(project_path)
+    canonical = canonical_project_root(normalized)
+
+    if normalized != canonical and not allow_noncanonical_project:
+        raise ValueError(
+            "Controller updates must stage from the canonical project root, not a clone workspace under .agents/. "
+            f"Merge back into {canonical} first, or pass an explicit allow-noncanonical override."
+        )
+
+    if not has_installable_controller_layout(normalized):
+        raise ValueError(
+            f"Controller update source must be an installable Pixel Forge root: {normalized}"
+        )
+
+    return normalized
+
+
+def _git_error_message(stderr: str, fallback: str) -> str:
+    message = stderr.strip()
+    return message or fallback
+
+
+def _resolve_git_commit(project_path: str, git_ref: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", project_path, "rev-parse", "--verify", f"{git_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError(
+            _git_error_message(
+                result.stderr,
+                f"Unable to resolve git ref {git_ref!r} in {project_path}",
+            )
+        )
+
+    resolved = result.stdout.strip()
+    if not resolved:
+        raise ValueError(f"Unable to resolve git ref {git_ref!r} in {project_path}")
+    return resolved
+
+
 def normalize_pending_controller_update(payload: dict[str, Any]) -> dict[str, Any]:
     project_path = _normalize_text(payload.get("projectPath") or payload.get("project_path"))
     if not project_path:
@@ -47,6 +131,7 @@ def normalize_pending_controller_update(payload: dict[str, Any]) -> dict[str, An
     preview_url = _normalize_text(payload.get("previewUrl") or payload.get("preview_url"))
     request_id = _normalize_text(payload.get("requestId") or payload.get("request_id"))
     commit_hash = _normalize_text(payload.get("commitHash") or payload.get("commit_hash"))
+    git_ref = _normalize_text(payload.get("gitRef") or payload.get("git_ref"))
     created_at = _normalize_text(payload.get("createdAt") or payload.get("created_at"))
     source = _normalize_text(payload.get("source")) or "manual"
     summary = _normalize_text(payload.get("summary")) or "Update ready to load."
@@ -62,6 +147,7 @@ def normalize_pending_controller_update(payload: dict[str, Any]) -> dict[str, An
         "source": source,
         "requestId": request_id,
         "commitHash": commit_hash,
+        "gitRef": git_ref,
         "createdAt": created_at or datetime.now(timezone.utc).isoformat(),
         "canRollback": bool(payload.get("canRollback", True)),
     }
@@ -72,6 +158,8 @@ def _snapshot_ignore(directory: str, names: list[str]) -> set[str]:
     directory_path = Path(directory)
     if ".git" in names:
         ignored.add(".git")
+    if ".agents" in names:
+        ignored.add(".agents")
     if ".venv" in names:
         ignored.add(".venv")
     if "node_modules" in names:
@@ -117,6 +205,47 @@ def create_controller_update_snapshot(project_path: str, update_id: str) -> str:
     return str(destination)
 
 
+def create_controller_update_snapshot_from_git_ref(
+    project_path: str,
+    update_id: str,
+    git_ref: str,
+) -> tuple[str, str]:
+    source = Path(project_path).expanduser().resolve()
+    if not source.is_dir():
+        raise ValueError(f"projectPath does not exist: {project_path}")
+
+    resolved_commit = _resolve_git_commit(str(source), git_ref)
+    destination = controller_update_snapshots_dir() / update_id
+    if destination.exists():
+        shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        ["git", "-C", str(source), "archive", "--format=tar", resolved_commit],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise ValueError(
+            _git_error_message(
+                result.stderr.decode("utf-8", errors="replace"),
+                f"Unable to archive git ref {git_ref!r} from {project_path}",
+            )
+        )
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:
+            archive.extractall(destination, filter="data")
+    except (tarfile.TarError, OSError) as exc:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise ValueError(
+            f"Unable to extract git snapshot for ref {git_ref!r}: {exc}"
+        ) from exc
+
+    return str(destination), resolved_commit
+
+
 def controller_update_snapshot_has_runtime_layout(snapshot_path: str | None) -> bool:
     if not snapshot_path:
         return False
@@ -150,8 +279,31 @@ def read_pending_controller_update() -> dict[str, Any] | None:
 
 def write_pending_controller_update(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = normalize_pending_controller_update(payload)
-    normalized["snapshotPath"] = create_controller_update_snapshot(
-        normalized["projectPath"], normalized["id"]
+    allow_noncanonical_project = bool(
+        payload.get("allowNoncanonicalProject") or payload.get("allow_noncanonical_project")
+    )
+    normalized["projectPath"] = str(
+        enforce_controller_update_source_policy(
+            normalized["projectPath"],
+            allow_noncanonical_project=allow_noncanonical_project,
+        )
+    )
+    git_ref = normalized.get("gitRef")
+    if isinstance(git_ref, str) and git_ref:
+        snapshot_path, resolved_commit = create_controller_update_snapshot_from_git_ref(
+            normalized["projectPath"],
+            normalized["id"],
+            git_ref,
+        )
+        normalized["snapshotPath"] = snapshot_path
+        normalized["commitHash"] = resolved_commit
+    else:
+        normalized["snapshotPath"] = create_controller_update_snapshot(
+            normalized["projectPath"], normalized["id"]
+        )
+    normalized["version"] = (
+        read_version_for_project(normalized["snapshotPath"])
+        or normalized["version"]
     )
     path = pending_controller_update_path()
     path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
@@ -165,11 +317,31 @@ def repair_pending_controller_update_snapshot(
         return None
 
     normalized = normalize_pending_controller_update(payload)
+    normalized["projectPath"] = str(
+        enforce_controller_update_source_policy(
+            normalized["projectPath"],
+            allow_noncanonical_project=True,
+        )
+    )
     if controller_update_snapshot_has_runtime_layout(normalized["snapshotPath"]):
         return normalized
 
-    normalized["snapshotPath"] = create_controller_update_snapshot(
-        normalized["projectPath"], normalized["id"]
+    git_ref = normalized.get("gitRef")
+    if isinstance(git_ref, str) and git_ref:
+        snapshot_path, resolved_commit = create_controller_update_snapshot_from_git_ref(
+            normalized["projectPath"],
+            normalized["id"],
+            git_ref,
+        )
+        normalized["snapshotPath"] = snapshot_path
+        normalized["commitHash"] = resolved_commit
+    else:
+        normalized["snapshotPath"] = create_controller_update_snapshot(
+            normalized["projectPath"], normalized["id"]
+        )
+    normalized["version"] = (
+        read_version_for_project(normalized["snapshotPath"])
+        or normalized["version"]
     )
     path = pending_controller_update_path()
     path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")

@@ -120,213 +120,13 @@ LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
 INSTALL_DIR="${PIXEL_FORGE_INSTALL_DIR:-$HOME/.local/lib/${INSTALL_NAME}}"
 BACKUP_DIR="${PIXEL_FORGE_BACKUP_DIR:-$HOME/.local/lib/${INSTALL_NAME}.rollback}"
-SERVICE="${PIXEL_FORGE_SERVICE_NAME:-${INSTALL_NAME}}"
-PORT="${PIXEL_FORGE_PORT:-7001}"
-URL_HOST="${PIXEL_FORGE_URL_HOST:-pixel-forge.localhost}"
-URL="http://${URL_HOST}:${PORT}"
 SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}"
 RUNTIME_DIR="${PIXEL_FORGE_RUNTIME_DIR:-${SHARED_STATE_DIR}/runtime}"
-PID_FILE="${PIXEL_FORGE_PID_FILE:-${RUNTIME_DIR}/${SERVICE}.pid}"
-LOG_FILE="${PIXEL_FORGE_LOG_FILE:-${RUNTIME_DIR}/${SERVICE}.log}"
 export PIXEL_FORGE_BIN_DIR="${PIXEL_FORGE_BIN_DIR:-$LAUNCHER_DIR}"
 
 mkdir -p "$RUNTIME_DIR"
 
-have_systemd_service() {
-    command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$SERVICE" >/dev/null 2>&1
-}
-
-read_pid() {
-    if [ ! -f "$PID_FILE" ]; then
-        return 1
-    fi
-    cat "$PID_FILE"
-}
-
-is_pid_running() {
-    local pid="$1"
-    [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1
-}
-
-clear_stale_pidfile() {
-    local pid
-    pid="$(read_pid || true)"
-    if [ -n "$pid" ] && ! is_pid_running "$pid"; then
-        rm -f "$PID_FILE"
-    fi
-}
-
-start_background() {
-    clear_stale_pidfile
-    local pid
-    pid="$(read_pid || true)"
-    if [ -n "$pid" ] && is_pid_running "$pid"; then
-        echo "Pixel Forge already running (PID: $pid). Open: $URL"
-        return 0
-    fi
-
-    (
-        cd "$INSTALL_DIR"
-        export PIXEL_FORGE_PORT="$PORT"
-        export PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR"
-        nohup "$INSTALL_DIR/.venv/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT" >>"$LOG_FILE" 2>&1 &
-        echo "$!" > "$PID_FILE"
-    )
-
-    sleep 1
-    pid="$(read_pid || true)"
-    if [ -z "$pid" ] || ! is_pid_running "$pid"; then
-        echo "Failed to start Pixel Forge. Recent log output:" >&2
-        tail -n 40 "$LOG_FILE" >&2 || true
-        exit 1
-    fi
-
-    echo "Pixel Forge started. Open: $URL"
-}
-
-stop_background() {
-    clear_stale_pidfile
-    local pid
-    pid="$(read_pid || true)"
-    if [ -z "$pid" ]; then
-        echo "Pixel Forge is not running."
-        return 0
-    fi
-
-    kill "$pid" >/dev/null 2>&1 || true
-    for _ in $(seq 1 20); do
-        if ! is_pid_running "$pid"; then
-            rm -f "$PID_FILE"
-            echo "Pixel Forge stopped."
-            return 0
-        fi
-        sleep 0.25
-    done
-
-    kill -9 "$pid" >/dev/null 2>&1 || true
-    rm -f "$PID_FILE"
-    echo "Pixel Forge stopped."
-}
-
-run_foreground() {
-    cd "$INSTALL_DIR"
-    export PIXEL_FORGE_PORT="$PORT"
-    export PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR"
-    exec "$INSTALL_DIR/.venv/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT"
-}
-
-case "${1:-start}" in
-    start)
-        if have_systemd_service; then
-            systemctl --user start "$SERVICE"
-            echo "Pixel Forge started (systemd). Open: $URL"
-        else
-            start_background
-        fi
-        ;;
-    run)
-        run_foreground
-        ;;
-    stop)
-        if have_systemd_service; then
-            systemctl --user stop "$SERVICE"
-            echo "Pixel Forge stopped."
-        else
-            stop_background
-        fi
-        ;;
-    restart)
-        "$0" stop
-        sleep 1
-        "$0" start
-        ;;
-    rollback)
-        if [ ! -d "$BACKUP_DIR" ]; then
-            echo "No rollback build available."
-            exit 1
-        fi
-        "$0" stop
-        mkdir -p "$INSTALL_DIR"
-        find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-        cp -a "$BACKUP_DIR"/. "$INSTALL_DIR"/
-        "$0" start
-        echo "Pixel Forge rolled back to the previous installed build."
-        ;;
-    status)
-        if have_systemd_service; then
-            systemctl --user status "$SERVICE" --no-pager
-        else
-            clear_stale_pidfile
-            pid="$(read_pid || true)"
-            if [ -n "${pid:-}" ] && is_pid_running "$pid"; then
-                echo "Pixel Forge running (PID: $pid)"
-                echo "URL: $URL"
-            else
-                echo "Pixel Forge is not running."
-            fi
-        fi
-        ;;
-    logs)
-        if have_systemd_service; then
-            journalctl --user -u "$SERVICE" -f --no-pager
-        else
-            touch "$LOG_FILE"
-            tail -f "$LOG_FILE"
-        fi
-        ;;
-    open)
-        exec "$LAUNCHER_DIR/pixel-forge-shell"
-        ;;
-    open-web)
-        xdg-open "$URL" 2>/dev/null || echo "Open: $URL"
-        ;;
-    tunnel)
-        shift
-        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/selection_tunnel_cli.py" "$@"
-        ;;
-    stage-update)
-        shift
-        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" stage "$@"
-        ;;
-    show-update)
-        shift
-        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" show "$@"
-        ;;
-    clear-update)
-        shift
-        exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/controller_update_cli.py" clear "$@"
-        ;;
-    --help|-h)
-        echo "Usage: pixel-forge [start|run|stop|restart|rollback|status|logs|open|open-web|tunnel|stage-update|show-update|clear-update]"
-        echo ""
-        echo "Commands:"
-        echo "  start     Start the service (systemd when available, background otherwise)"
-        echo "  run       Run the service in the foreground"
-        echo "  stop      Stop the service"
-        echo "  restart   Restart the service"
-        echo "  rollback  Restore the previous installed build"
-        echo "  status    Show service status"
-        echo "  logs      Tail service logs"
-        echo "  open      Open the desktop shell"
-        echo "  open-web  Open the raw web UI in a browser"
-        echo "  tunnel    Read a request pack's selection tunnel JSON"
-        echo "  stage-update  Stage a controller update for in-app apply"
-        echo "  show-update   Show the staged controller update payload"
-        echo "  clear-update  Clear the staged controller update payload"
-        echo ""
-        echo "Environment:"
-        echo "  PIXEL_FORGE_INSTALL_DIR         Installed app root"
-        echo "  PIXEL_FORGE_BACKUP_DIR          Rollback build root"
-        echo "  PIXEL_FORGE_SERVICE_NAME        systemd/pidfile service name"
-        echo "  PIXEL_FORGE_PORT                Service port (default: 7001)"
-        echo "  PIXEL_FORGE_URL_HOST            Hostname used for open/open-web output"
-        echo "  PIXEL_FORGE_SHARED_STATE_DIR    Shared Pixel Forge state root"
-        ;;
-    *)
-        echo "Unknown command: $1 (try: pixel-forge --help)"
-        exit 1
-        ;;
-esac
+exec "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/pixel_forge_cli.py" "$@"
 LAUNCHER
 
 chmod +x "$BIN_DIR/pixel-forge"
@@ -373,7 +173,7 @@ if [ ! -x "$ELECTRON_BIN" ]; then
 fi
 
 export PIXEL_FORGE_SHELL_URL="$URL"
-exec "$ELECTRON_BIN" --no-sandbox "$INSTALL_DIR/desktop"
+exec "$ELECTRON_BIN" --no-sandbox "$INSTALL_DIR/desktop" "$@"
 SHELL
 
 chmod +x "$BIN_DIR/pixel-forge-shell"
@@ -450,7 +250,9 @@ echo "  pixel-forge open     # Open the desktop shell"
 echo "  pixel-forge open-web # Open the raw web UI"
 echo "  pixel-forge rollback # Restore the previous installed build"
 echo "  pixel-forge tunnel --project <path> --request <id>"
-echo "  pixel-forge stage-update --project \$PWD --summary 'Update ready to load'"
+echo "  pixel-forge controller-update stage --project \$PWD --git-ref HEAD --summary 'Update ready to load'"
+echo "  pixel-forge controller-update apply"
+echo "  pixel-forge clone promote <session> --into master --commit --push --stage"
 echo "  pixel-forge-shell    # Open the desktop shell"
 echo "  pixel-forge logs     # Tail logs"
 echo "  pixel-forge status   # Check status"

@@ -15,6 +15,7 @@ TEST-RESULTS-SUMMARY.md
 
 # Pixel Forge runtime
 .pixel-forge/
+.agents/
 
 # Python
 __pycache__/

@@ -655,30 +655,50 @@ function launchDetachedControllerUpdateUi() {
   proc.unref()
 }
 
-function launchDetachedControllerUpdateRunner(installProjectPath, updateId) {
-  const proc = spawn(
-    process.execPath,
-    [
-      path.join(__dirname, 'controller-update-runner.mjs'),
-      '--state-dir',
-      APP_STATE_DIR,
-      '--install-root',
-      installProjectPath,
-      '--update-id',
-      updateId || '',
-      '--shell-url',
-      SHELL_URL,
-    ],
-    {
-      detached: true,
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-      },
-    },
-  )
+function pixelForgeCommand(binaryName) {
+  const binDir = normalizeText(process.env.PIXEL_FORGE_BIN_DIR)
+  if (binDir) {
+    return path.join(path.resolve(binDir), binaryName)
+  }
+  return binaryName
+}
+
+function launchControllerUpdateViaCli(bootstrapState, updateId = null) {
+  const sanitizedState = sanitizeBootstrapState(bootstrapState)
+  if (!sanitizedState.projectPath) {
+    throw new Error('bootstrap projectPath is required')
+  }
+
+  const args = [
+    'controller-update',
+    'apply',
+    '--project',
+    sanitizedState.projectPath,
+    '--detach',
+    '--show-ui',
+  ]
+  if (sanitizedState.previewUrl) {
+    args.push('--preview-url', sanitizedState.previewUrl)
+  }
+  if (sanitizedState.activeMode) {
+    args.push('--mode', sanitizedState.activeMode)
+  }
+
+  const proc = spawn(pixelForgeCommand('pixel-forge'), args, {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  })
   proc.unref()
+
+  setControllerUpdateApplyState({
+    status: 'running',
+    updateId,
+    phase: 'installing',
+    progress: 16,
+    message: 'Closing Pixel Forge and handing off to the canonical updater…',
+    error: null,
+  })
 }
 
 function exitCurrentShellForControllerUpdate() {
@@ -958,42 +978,7 @@ function runShellCommand(command, cwd) {
   })
 }
 
-async function isShellReady(timeoutMs = 0) {
-  const deadline = Date.now() + Math.max(0, timeoutMs)
-
-  do {
-    try {
-      const response = await fetch(SHELL_URL, { cache: 'no-store' })
-      if (response.ok) {
-        return true
-      }
-    } catch {
-      // Retry until the service is ready again.
-    }
-    if (timeoutMs <= 0 || Date.now() >= deadline) {
-      break
-    }
-    await sleep(1000)
-  } while (Date.now() < deadline)
-
-  return false
-}
-
-async function waitForShellReady(timeoutMs = 90000) {
-  const deadline = Date.now() + timeoutMs
-
-  while (Date.now() < deadline) {
-    if (await isShellReady()) {
-      return
-    }
-    await sleep(1000)
-  }
-
-  throw new Error('Pixel Forge did not come back after update.')
-}
-
 async function applyControllerUpdate(projectPath, bootstrapState) {
-  const installProjectPath = normalizeText(projectPath)
   const sanitizedState = sanitizeBootstrapState(bootstrapState)
   const updateId = normalizeText(bootstrapState?.updateId)
   if (!sanitizedState.projectPath) {
@@ -1010,18 +995,7 @@ async function applyControllerUpdate(projectPath, bootstrapState) {
       error: null,
     })
 
-    await writeBootstrapState(sanitizedState)
-    const runnerInstallRoot = installProjectPath || sanitizedState.projectPath
-    setControllerUpdateApplyState({
-      status: 'running',
-      updateId,
-      phase: 'installing',
-      progress: 16,
-      message: 'Closing Pixel Forge and handing off to the external updater…',
-      error: null,
-    })
-    launchDetachedControllerUpdateUi()
-    launchDetachedControllerUpdateRunner(runnerInstallRoot, updateId)
+    launchControllerUpdateViaCli(sanitizedState, updateId)
     exitCurrentShellForControllerUpdate()
     return { ok: true }
   } catch (error) {
@@ -1042,23 +1016,21 @@ async function startPendingControllerUpdate(payload) {
   if (!existingPendingUpdate) {
     throw new Error('No staged Pixel Forge update is ready to load.')
   }
-  const pendingUpdate = await ensurePendingControllerUpdateSnapshot(existingPendingUpdate)
-
-  return applyControllerUpdate(pendingUpdate.snapshotPath || pendingUpdate.projectPath, {
+  return applyControllerUpdate(projectPath, {
     ...payload,
-    updateId: pendingUpdate.id,
+    updateId: existingPendingUpdate.id,
     projectPath:
       typeof payload?.projectPath === 'string' && payload.projectPath.trim()
         ? payload.projectPath
-        : pendingUpdate.projectPath,
+        : existingPendingUpdate.projectPath,
     previewUrl:
       typeof payload?.previewUrl === 'string' && payload.previewUrl.trim()
         ? payload.previewUrl
-        : pendingUpdate.previewUrl,
+        : existingPendingUpdate.previewUrl,
     activeMode:
       payload?.activeMode === 'live-editor' || payload?.activeMode === 'screenshot'
         ? payload.activeMode
-        : pendingUpdate.activeMode,
+        : existingPendingUpdate.activeMode,
   })
 }
 

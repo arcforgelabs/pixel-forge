@@ -12,12 +12,16 @@
 
 import { create } from 'zustand'
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
-import type { PixelForgeDesktopPendingControllerUpdate } from '@/types/pixel-forge-desktop'
+import type {
+  PixelForgeDesktopPendingControllerUpdate,
+  PixelForgePendingPreviewUpdate,
+} from '@/types/pixel-forge-desktop'
 import { useSessionStore } from '../../../store/session-store'
 import {
   buildSelectionArtifacts,
   type SelectionRecord,
 } from '../selection-engine'
+import { isCloneWorkspaceBound } from '../mirror-targets'
 import {
   buildCompletionSummary,
   summarizeBackendStatus,
@@ -199,12 +203,15 @@ async function stageControllerUpdateNotice(options: {
   activeMode: 'live-editor' | 'screenshot'
   requestId: string | null
 }) {
-  if (typeof window === 'undefined') {
+  if (typeof fetch === 'undefined') {
     return
   }
   const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
   const summary = `Pixel Forge update from ${requestLabel} is ready to load.`
-  const desktopApp = window.pixelForgeDesktop?.app
+  const desktopApp =
+    typeof window !== 'undefined'
+      ? window.pixelForgeDesktop?.app
+      : undefined
   let update: PixelForgeDesktopPendingControllerUpdate
 
   if (desktopApp) {
@@ -258,6 +265,59 @@ async function stageControllerUpdateNotice(options: {
   }
 
   useSessionStore.getState().setPendingControllerUpdate(update)
+}
+
+async function stagePreviewUpdateNotice(options: {
+  projectPath: string
+  workspacePath: string
+  previewUrl: string | null
+  activeMode: 'live-editor' | 'screenshot'
+  requestId: string | null
+  agentDeckSessionId: string | null
+}) {
+  if (typeof fetch === 'undefined') {
+    return
+  }
+
+  const requestLabel = options.requestId ? `request ${options.requestId}` : 'latest request'
+  const response = await fetch(`${HTTP_BACKEND_URL}/api/preview-updates`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      project_path: options.projectPath,
+      workspace_path: options.workspacePath,
+      preview_url: options.previewUrl,
+      active_mode: options.activeMode,
+      summary: `Pixel Forge preview from ${requestLabel} is ready to load.`,
+      source: 'live-editor',
+      request_id: options.requestId,
+      agent_deck_session_id: options.agentDeckSessionId,
+    }),
+  })
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const payload = await response.json() as { detail?: string }
+      if (typeof payload.detail === 'string' && payload.detail) {
+        message = payload.detail
+      }
+    } catch {
+      const text = await response.text()
+      if (text) {
+        message = text
+      }
+    }
+    throw new Error(message)
+  }
+
+  const payload = await response.json() as {
+    update: PixelForgePendingPreviewUpdate
+  }
+  useSessionStore.getState().setPendingPreviewUpdate(payload.update)
 }
 
 // ============================================================================
@@ -424,7 +484,27 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
           } = get()
           const isRemoteTarget = !!data.is_remote_target
           const isSelfEditSafeMode = !!data.self_edit_safe_mode
-          const canStageControllerUpdate = isSelfEditSafeMode && !!window.pixelForgeDesktop?.app
+          const selfEditScope =
+            data.self_edit_scope === 'preview' || data.self_edit_scope === 'controller'
+              ? data.self_edit_scope
+              : null
+          const sessionState = useSessionStore.getState()
+          const resolvedWorkspacePath =
+            typeof data.workspace_path === 'string' && data.workspace_path.trim()
+              ? data.workspace_path.trim()
+              : sessionState.liveEditorSession?.workspacePath ?? null
+          const cloneWorkspaceBound = isCloneWorkspaceBound({
+            projectPath: sessionState.projectPath,
+            workspacePath: resolvedWorkspacePath,
+          })
+          const canLoadPreviewUpdate = selfEditScope === 'preview'
+            || (isSelfEditSafeMode && cloneWorkspaceBound)
+          const canStageControllerUpdate = selfEditScope === 'controller'
+            || (isSelfEditSafeMode && !cloneWorkspaceBound)
+          const canApplyControllerUpdate =
+            canStageControllerUpdate
+            && typeof window !== 'undefined'
+            && !!window.pixelForgeDesktop?.app
           const requestId =
             typeof data.request_id === 'string' && data.request_id
               ? data.request_id
@@ -439,14 +519,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
             content: buildCompletionSummary({
               requestId,
               selectionCount,
-              selfEditSafeMode: isSelfEditSafeMode,
+              selfEditSafeMode: canLoadPreviewUpdate,
               controllerUpdateStaged: canStageControllerUpdate,
               isRemoteTarget,
             }),
             timestamp: new Date(),
             isRemoteComplete: isRemoteTarget || undefined,
             systemTone: 'success',
-            canLoadPreviewUpdate: isSelfEditSafeMode || undefined,
+            canLoadPreviewUpdate: canLoadPreviewUpdate || undefined,
+            canApplyControllerUpdate: canApplyControllerUpdate || undefined,
           }
 
           if (currentStreamContent) {
@@ -506,12 +587,28 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               workspacePath: data.workspace_path ?? null,
               agentDeckSessionId: data.agent_deck_session_id ?? null,
               agentDeckSessionTitle: data.agent_deck_session_title ?? null,
+              agentDeckTool: data.agent_deck_tool ?? null,
               requestId: data.request_id ?? null,
             })
             console.log('[live-editor] Session synced to session-store:', data.session_id)
           }
-          if (isSelfEditSafeMode) {
-            const sessionState = useSessionStore.getState()
+          if (canLoadPreviewUpdate) {
+            if (sessionState.projectPath && resolvedWorkspacePath) {
+              void stagePreviewUpdateNotice({
+                projectPath: sessionState.projectPath,
+                workspacePath: resolvedWorkspacePath,
+                previewUrl: sessionState.previewUrl,
+                activeMode: sessionState.activeMode,
+                requestId,
+                agentDeckSessionId:
+                  typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
+                    ? data.agent_deck_session_id
+                    : sessionState.liveEditorSession?.agentDeckSessionId ?? null,
+              }).catch((error) => {
+                console.error('[live-editor] Failed to stage preview update notice:', error)
+              })
+            }
+          } else if (canStageControllerUpdate) {
             if (sessionState.projectPath) {
               void stageControllerUpdateNotice({
                 projectPath: sessionState.projectPath,
@@ -534,6 +631,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
               workspacePath: data.workspace_path ?? null,
               agentDeckSessionId: data.agent_deck_session_id ?? null,
               agentDeckSessionTitle: data.agent_deck_session_title ?? null,
+              agentDeckTool: data.agent_deck_tool ?? null,
               requestId: data.request_id ?? null,
             })
           }
@@ -716,16 +814,23 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => ({
       currentRequestId: null,
     })
 
-    const previewUrl = useSessionStore.getState().previewUrl
-    const agentType = useSessionStore.getState().agentType
-    const targetAgentDeckSessionId =
-      useSessionStore.getState().selectedAgentDeckTargetId
+    const sessionState = useSessionStore.getState()
+    const previewUrl = sessionState.previewUrl
+    const targetAgentDeckSessionId = sessionState.selectedAgentDeckTargetId
+    const selectedTarget =
+      sessionState.agentDeckTargets.find((target) => target.id === targetAgentDeckSessionId)
+      ?? null
+    const agentType =
+      sessionState.liveEditorSession?.agentDeckTool
+      || selectedTarget?.tool
+      || sessionState.agentType
+      || 'claude'
     const payload: Record<string, unknown> = {
       message: trimmedContent,
       project_path: projectPath,
       element_context: elementContext,
       preview_url: previewUrl || '',
-      agent_type: agentType || 'claude',
+      agent_type: agentType,
     }
 
     if (requestAttachments.length > 0) {
