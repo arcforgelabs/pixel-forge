@@ -7,6 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionStore } from '@/store/session-store'
+import {
+  hasBlockingOverlay,
+  useDesktopPreviewOverlayGuard,
+} from '@/hooks/useDesktopPreviewOverlayGuard'
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -362,14 +366,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
   const editable = target.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')
   return editable instanceof HTMLElement
-}
-
-function hasBlockingRadixOverlay(): boolean {
-  return (
-    document.querySelector(
-      '[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]'
-    ) !== null
-  )
 }
 
 export function LiveEditorPane() {
@@ -824,7 +820,7 @@ export function LiveEditorPane() {
       return
     }
 
-    if (hasBlockingRadixOverlay()) {
+    if (hasBlockingOverlay()) {
       await desktopPreview.hide()
       return
     }
@@ -851,6 +847,8 @@ export function LiveEditorPane() {
       height: rect.height,
     })
   }, [getActivePreviewTab])
+
+  useDesktopPreviewOverlayGuard(desktopPreviewRef, updateEmbeddedPreviewBounds)
 
   const loadApp = useCallback(async (
     urlOverride?: string,
@@ -1542,23 +1540,6 @@ export function LiveEditorPane() {
       void desktopPreview.hide()
     }
   }, [activePreviewTabId, previewTabs, updateEmbeddedPreviewBounds])
-
-  useEffect(() => {
-    if (!desktopPreviewRef.current) {
-      return
-    }
-
-    const syncBounds = () => {
-      void updateEmbeddedPreviewBounds()
-    }
-
-    syncBounds()
-
-    const observer = new MutationObserver(syncBounds)
-    observer.observe(document.body, { childList: true, subtree: true })
-
-    return () => observer.disconnect()
-  }, [updateEmbeddedPreviewBounds])
 
   useEffect(() => {
     void syncAllPreviewSelectionModes()
