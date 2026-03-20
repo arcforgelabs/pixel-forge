@@ -69,6 +69,7 @@ from project_store import (
     upsert_profile_state,
     upsert_session,
 )
+from project_chats import reconcile_project_chats
 from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
@@ -581,6 +582,26 @@ def serialize_agent_deck_session_target(
     }
 
 
+def serialize_project_chat(chat_record) -> dict[str, object]:
+    return {
+        "id": chat_record.id,
+        "project_path": chat_record.project_path,
+        "title": chat_record.title,
+        "thread_id": chat_record.thread_id,
+        "workspace_path": chat_record.workspace_path,
+        "backend": chat_record.backend,
+        "agent_deck_session_id": chat_record.agent_deck_session_id,
+        "agent_deck_session_title": chat_record.agent_deck_session_title,
+        "agent_deck_tool": chat_record.agent_deck_tool,
+        "agent_deck_session_status": chat_record.agent_deck_session_status,
+        "binding_state": chat_record.binding_state,
+        "workspace_kind": chat_record.workspace_kind,
+        "origin_kind": chat_record.origin_kind,
+        "created_at": chat_record.created_at,
+        "last_active": chat_record.last_active,
+    }
+
+
 def serialize_profile_state(profile_state) -> dict[str, object]:
     return {
         "profile_id": profile_state.profile_id,
@@ -740,6 +761,39 @@ async def get_project_sessions(project_path: str):
             serialize_session(session)
             for session in list_project_sessions(project_path)
         ]
+    }
+
+
+@app.get("/api/projects/{project_path:path}/chats")
+async def get_project_chats(project_path: str):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    try:
+        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
+        visible_sessions = await list_project_agent_deck_sessions(normalized_project_path)
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    live_session_ids = {session.id for session in live_sessions}
+    sessions = detach_missing_agent_deck_session_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
+    detach_missing_agent_deck_thread_bindings(
+        normalized_project_path,
+        live_session_ids,
+    )
+
+    chats = reconcile_project_chats(
+        normalized_project_path,
+        sessions=sessions,
+        visible_targets=visible_sessions,
+    )
+
+    return {
+        "chats": [serialize_project_chat(chat) for chat in chats]
     }
 
 
