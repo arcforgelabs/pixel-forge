@@ -234,6 +234,27 @@ async def _launch_new_session(
     return await _run_json_object_command(args)
 
 
+def _payload_session_metadata(
+    payload: dict[str, object],
+    *,
+    fallback_title: str,
+    default_path: str,
+) -> tuple[str, str, str | None, str | None]:
+    agent_deck_title = str(payload.get("title") or fallback_title)
+    workspace_path = str(payload.get("path") or "").strip() or _normalize_path(default_path)
+    tmux_session = (
+        str(payload.get("tmux_session")).strip()
+        if isinstance(payload.get("tmux_session"), str) and str(payload.get("tmux_session")).strip()
+        else None
+    )
+    status = (
+        str(payload.get("status")).strip()
+        if isinstance(payload.get("status"), str) and str(payload.get("status")).strip()
+        else None
+    )
+    return agent_deck_title, workspace_path, tmux_session, status
+
+
 def _session_tool(payload: dict[str, object], default: str = "claude") -> str:
     tool = payload.get("tool")
     if isinstance(tool, str) and tool.strip():
@@ -504,19 +525,12 @@ async def _build_session_info(
     if not agent_deck_session_id:
         raise AgentDeckBridgeError("Agent Deck did not return a session ID")
 
-    agent_deck_title = str(payload.get("title") or fallback_title)
-    workspace_path = str(payload.get("path") or "").strip() or _normalize_path(project_path)
-    tmux_session = (
-        str(payload.get("tmux_session")).strip()
-        if isinstance(payload.get("tmux_session"), str) and str(payload.get("tmux_session")).strip()
-        else None
+    agent_deck_title, workspace_path, tmux_session, status = _payload_session_metadata(
+        payload,
+        fallback_title=fallback_title,
+        default_path=project_path,
     )
     session_tool = _session_tool(payload)
-    status = (
-        str(payload.get("status")).strip()
-        if isinstance(payload.get("status"), str) and str(payload.get("status")).strip()
-        else None
-    )
     acpx_agent: str | None = None
     acpx_session_name: str | None = None
     acpx_record_id: str | None = None
@@ -544,6 +558,13 @@ async def _build_session_info(
                 agent_deck_session_id,
                 workspace_path,
             )
+            agent_deck_title, workspace_path, tmux_session, status = _payload_session_metadata(
+                payload,
+                fallback_title=agent_deck_title,
+                default_path=workspace_path,
+            )
+            if claude_session_id:
+                jsonl_path = claude_jsonl_path(workspace_path, claude_session_id)
             if not claude_session_id:
                 fallback_claude_id = payload.get("claude_session_id")
                 if isinstance(fallback_claude_id, str) and fallback_claude_id:
