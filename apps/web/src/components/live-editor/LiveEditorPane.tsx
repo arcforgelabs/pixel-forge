@@ -364,6 +364,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return editable instanceof HTMLElement
 }
 
+function hasBlockingRadixOverlay(): boolean {
+  return (
+    document.querySelector(
+      '[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]'
+    ) !== null
+  )
+}
+
 export function LiveEditorPane() {
   const {
     projectPath,
@@ -813,6 +821,11 @@ export function LiveEditorPane() {
   const updateEmbeddedPreviewBounds = useCallback(async () => {
     const desktopPreview = desktopPreviewRef.current
     if (!desktopPreview) {
+      return
+    }
+
+    if (hasBlockingRadixOverlay()) {
+      await desktopPreview.hide()
       return
     }
 
@@ -1529,6 +1542,23 @@ export function LiveEditorPane() {
       void desktopPreview.hide()
     }
   }, [activePreviewTabId, previewTabs, updateEmbeddedPreviewBounds])
+
+  useEffect(() => {
+    if (!desktopPreviewRef.current) {
+      return
+    }
+
+    const syncBounds = () => {
+      void updateEmbeddedPreviewBounds()
+    }
+
+    syncBounds()
+
+    const observer = new MutationObserver(syncBounds)
+    observer.observe(document.body, { childList: true, subtree: true })
+
+    return () => observer.disconnect()
+  }, [updateEmbeddedPreviewBounds])
 
   useEffect(() => {
     void syncAllPreviewSelectionModes()
