@@ -459,7 +459,19 @@ function normalizeRegisteredSkill(skill: ApiRegisteredSkill): RegisteredSkill {
 }
 
 function mergeProject(projects: SavedProject[], project: SavedProject): SavedProject[] {
-  return [project, ...projects.filter((existing) => existing.path !== project.path)];
+  const existingIndex = projects.findIndex((existing) => existing.path === project.path);
+  if (existingIndex === -1) {
+    return [...projects, project];
+  }
+
+  return projects.map((existing, index) => (
+    index === existingIndex
+      ? {
+          ...existing,
+          ...project,
+        }
+      : existing
+  ));
 }
 
 function mergeSession(

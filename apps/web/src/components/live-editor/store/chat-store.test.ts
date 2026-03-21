@@ -864,7 +864,7 @@ describe('live editor selection history', () => {
             id: 'controller-update-1',
             projectPath: '/tmp/example-project',
             snapshotPath: '/tmp/.pixel-forge/controller-updates/controller-update-1',
-            version: '1.3.1',
+            version: '1.3.2',
             previewUrl: 'http://example.localhost:3000',
             activeMode: 'live-editor',
             summary: 'Pixel Forge update from request request-2 is ready to load.',

@@ -785,7 +785,7 @@ def list_projects() -> list[ProjectRecord]:
             """
             SELECT path, name, output_mode, custom_output_path, created_at, last_opened
             FROM projects
-            ORDER BY last_opened DESC, created_at DESC, path ASC
+            ORDER BY created_at ASC, path ASC
             """
         ).fetchall()
 

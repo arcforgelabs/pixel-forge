@@ -18,8 +18,8 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import type {
+  PixelForgeDesktopPreviewInputState,
   PixelForgePendingPreviewUpdate,
-  PixelForgeDesktopPreviewTool,
 } from '@/types/pixel-forge-desktop'
 import {
   AlertTriangle,
@@ -399,8 +399,20 @@ export function LiveEditorPane() {
     }
 
     let cancelled = false
-    const applyInputState = (inputState?: { armedTool?: PixelForgeDesktopPreviewTool | null } | null) => {
+    const applyInputState = (inputState?: PixelForgeDesktopPreviewInputState | null) => {
       if (cancelled) {
+        return
+      }
+      const reflectedActiveTabId =
+        typeof inputState?.activePreviewTabId === 'string'
+          ? inputState.activePreviewTabId.trim() || null
+          : null
+      const currentActiveTabId = activeTabIdRef.current
+      if (
+        reflectedActiveTabId
+        && currentActiveTabId
+        && reflectedActiveTabId !== currentActiveTabId
+      ) {
         return
       }
       useLiveEditorStore
@@ -419,9 +431,7 @@ export function LiveEditorPane() {
     const handleAppEvent = (rawEvent: Event) => {
       const event = rawEvent as CustomEvent<{
         type?: string
-        inputState?: {
-          armedTool?: PixelForgeDesktopPreviewTool | null
-        } | null
+        inputState?: PixelForgeDesktopPreviewInputState | null
       }>
       if (event.detail?.type === 'preview-input-state-changed') {
         applyInputState(event.detail.inputState)
@@ -1284,6 +1294,7 @@ export function LiveEditorPane() {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
     if (!tab) return
 
+    activeTabIdRef.current = tabId
     setActivePreviewTabId(tabId)
     setTargetUrl(tab.url)
     setAuthIssue(null)
@@ -2046,6 +2057,9 @@ export function LiveEditorPane() {
           removeElement(element.id)
         }
       } else if (event.data.type === 'pixel-forge-cancel-select') {
+        if (!sourceTab || sourceTab.id !== activePreviewTab?.id) {
+          return
+        }
         setActivePreviewTool(null)
       } else if (event.data.type === 'pixel-forge-auth-required') {
         const status = Number(event.data.data?.status || 0)
@@ -2195,6 +2209,9 @@ export function LiveEditorPane() {
     }
 
     if (payload.type === 'browser-select-cancelled') {
+      if (sourceTab.id !== activePreviewTab?.id) {
+        return
+      }
       setActivePreviewTool(null)
       return
     }

@@ -214,6 +214,43 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(profile_state.active_project_path)
         self.assertIsNone(profile_state.active_live_editor_thread_id)
 
+    def test_list_projects_preserves_creation_order_after_reopening(self) -> None:
+        first_project_path = Path(self.tempdir.name) / "first-project"
+        second_project_path = Path(self.tempdir.name) / "second-project"
+        project_store.upsert_project(str(first_project_path))
+        project_store.upsert_project(str(second_project_path))
+
+        with project_store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE projects
+                SET created_at = ?, last_opened = ?
+                WHERE path = ?
+                """,
+                ("2026-03-20T00:00:00Z", "2026-03-20T00:00:00Z", str(first_project_path)),
+            )
+            conn.execute(
+                """
+                UPDATE projects
+                SET created_at = ?, last_opened = ?
+                WHERE path = ?
+                """,
+                ("2026-03-21T00:00:00Z", "2026-03-21T00:00:00Z", str(second_project_path)),
+            )
+            conn.commit()
+
+        project_store.upsert_project(str(first_project_path))
+
+        temp_projects = [
+            project.path
+            for project in project_store.list_projects()
+            if project.path.startswith(self.tempdir.name)
+        ]
+        self.assertEqual(
+            temp_projects,
+            [str(first_project_path), str(second_project_path)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

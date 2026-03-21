@@ -652,6 +652,105 @@ describe("session-store chat creation", () => {
   });
 });
 
+describe("session-store project ordering", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/api/projects") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              path: "/tmp/example-project",
+              name: "example-project",
+              output_mode: "scratch",
+              custom_output_path: null,
+              created_at: "2026-03-20T00:00:00Z",
+              last_opened: "2026-03-21T00:00:00Z",
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/urls")) {
+          return new Response(
+            JSON.stringify({ urls: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/sessions")) {
+          return new Response(
+            JSON.stringify({ sessions: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/chats")) {
+          return new Response(
+            JSON.stringify({ chats: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/agent-deck-sessions")) {
+          return new Response(
+            JSON.stringify({ sessions: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    useSessionStore.setState({
+      projectPath: "/tmp/other-project",
+      projectName: "other-project",
+      previewUrl: null,
+      recentProjects: [
+        {
+          path: "/tmp/other-project",
+          name: "other-project",
+          previewUrls: [],
+          outputMode: "scratch",
+          customOutputPath: undefined,
+          lastOpened: "2026-03-20T00:05:00Z",
+        },
+        {
+          path: "/tmp/example-project",
+          name: "example-project",
+          previewUrls: [],
+          outputMode: "scratch",
+          customOutputPath: undefined,
+          lastOpened: "2026-03-20T00:00:00Z",
+        },
+      ],
+      projectSessions: [],
+      projectSessionsByProject: {},
+      projectChats: [],
+      projectChatsByProject: {},
+      agentDeckTargets: [],
+      selectedAgentDeckTargetId: null,
+      defaultAgentType: "claude",
+      liveEditorSession: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("preserves the existing sidebar project order when reopening a project", async () => {
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      persistProfile: false,
+    });
+
+    expect(useSessionStore.getState().recentProjects.map((project) => project.path)).toEqual([
+      "/tmp/other-project",
+      "/tmp/example-project",
+    ]);
+  });
+});
+
 describe("createAgentDeckTargetSession", () => {
   beforeEach(() => {
     vi.stubGlobal(
