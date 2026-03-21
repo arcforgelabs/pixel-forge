@@ -10,6 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 
@@ -188,6 +189,46 @@ def _is_remote_preview(url: str | None) -> bool:
     return hostname not in {"localhost", "127.0.0.1", "::1", ""} and not hostname.endswith(".localhost")
 
 
+def _selection_source_summary(
+    selection_tunnel: dict[str, object] | None,
+) -> list[tuple[str | None, str, int]]:
+    if not isinstance(selection_tunnel, dict):
+        return []
+
+    raw_selections = selection_tunnel.get("selections")
+    if not isinstance(raw_selections, list):
+        return []
+
+    grouped: list[tuple[str | None, str, int]] = []
+    counts: dict[tuple[str | None, str], int] = {}
+    order: list[tuple[str | None, str]] = []
+
+    for entry in raw_selections:
+        if not isinstance(entry, dict):
+            continue
+
+        source_url = str(entry.get("sourceUrl") or "").strip()
+        if not source_url:
+            continue
+
+        source_label_raw = entry.get("sourceTabLabel")
+        source_label = (
+            str(source_label_raw).strip()
+            if isinstance(source_label_raw, str) and str(source_label_raw).strip()
+            else None
+        )
+        key = (source_label, source_url)
+        if key not in counts:
+            counts[key] = 0
+            order.append(key)
+        counts[key] += 1
+
+    for key in order:
+        grouped.append((key[0], key[1], counts[key]))
+
+    return grouped
+
+
 def _write_session_brief(
     project_path: str,
     thread_id: str,
@@ -253,7 +294,7 @@ def create_request_pack(
     acp_session_id: str | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
-    bootstrap: bool = True,
+    continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
     session_working_rules: list[str] | None = None,
     turn_working_rules: list[str] | None = None,
@@ -273,6 +314,8 @@ def create_request_pack(
     normalized_requested_skills = normalize_requested_skills(
         requested_skills if requested_skills is not None else extract_requested_skills(message)
     )
+    selection_sources = _selection_source_summary(selection_tunnel)
+    selection_count = sum(count for _, _, count in selection_sources)
 
     selected_path: Path | None = None
     relative_selected_path: str | None = None
@@ -336,7 +379,7 @@ def create_request_pack(
     if acp_session_id:
         request_sections.append(f"- ACP Session ID: `{acp_session_id}`")
 
-    if bootstrap:
+    if continuation_mode == "bootstrap":
         request_intro = [
             "",
             "## Session Bootstrap",
@@ -355,6 +398,28 @@ def create_request_pack(
             working_rules = [
                 "- Read this request pack before changing code.",
                 "- Make the smallest correct change.",
+            ]
+    elif continuation_mode == "attached-session":
+        request_intro = [
+            "",
+            "## Session Continuity",
+            "",
+            f"- Read `{relative_session_brief_path}` for the stable Pixel Forge thread constraints.",
+            "- This turn continues an already-running Agent Deck session through Pixel Forge.",
+            "- Do not treat this as a new session bootstrap. Keep the existing Agent Deck session continuity and use the new Pixel Forge context for this turn.",
+        ]
+        if informational_only:
+            working_rules = [
+                "- Read this request pack before answering.",
+                "- This is an informational continuation into an already-running Agent Deck session, not a code-change bootstrap.",
+                "- Prefer the new Pixel Forge artifacts over repo/source digging unless those artifacts are insufficient.",
+                "- Keep the reply concise and directly answer the user's question.",
+            ]
+        else:
+            working_rules = [
+                "- Read this request pack before changing code.",
+                "- Make the smallest correct change.",
+                "- Treat this as a continuation into the existing Agent Deck session, not a fresh repo bootstrap.",
             ]
     else:
         request_intro = [
@@ -405,6 +470,26 @@ def create_request_pack(
             *working_rules,
         ]
     )
+    request_sections.extend(
+        [
+            "",
+            "## Turn Provenance",
+            "",
+            "- Source: `pixel-forge`",
+            f"- Continuity mode: `{continuation_mode}`",
+            f"- Selected element count: `{selection_count}`",
+        ]
+    )
+    if selection_sources:
+        request_sections.extend(
+            [
+                "- Selection sources:",
+                *[
+                    f"  - `{label or 'Preview'}` at `{url}` ({count} selection{'s' if count != 1 else ''})"
+                    for label, url, count in selection_sources
+                ],
+            ]
+        )
     if preview_url:
         preview_lines = [
             "",
@@ -486,9 +571,20 @@ def create_request_pack(
                 "acpx_record_id": acpx_record_id,
                 "acp_session_id": acp_session_id,
                 "preview_url": preview_url,
-                "bootstrap": bootstrap,
+                "continuation_mode": continuation_mode,
+                "bootstrap": continuation_mode == "bootstrap",
                 "informational_only": informational_only,
                 "requested_skills": normalized_requested_skills,
+                "source": "pixel-forge",
+                "selected_element_count": selection_count,
+                "selection_sources": [
+                    {
+                        "label": label,
+                        "url": url,
+                        "count": count,
+                    }
+                    for label, url, count in selection_sources
+                ],
                 "session_brief_file": relative_session_brief_path,
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,

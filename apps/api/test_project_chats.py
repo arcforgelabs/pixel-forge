@@ -78,6 +78,36 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(chats[0].agent_deck_session_id, "deck-a")
         self.assertEqual(chats[0].title, "pixel-forge-thread-a")
 
+    def test_does_not_reattach_detached_root_chat_by_project_path_alone(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    workspace_path="/tmp/project",
+                    agent_deck_session_id=None,
+                    agent_deck_session_title="Chat draft-root",
+                    agent_deck_tool=None,
+                )
+            ],
+            visible_targets=[
+                create_target(
+                    id="deck-root",
+                    title="former multi-chat",
+                    path="/tmp/project",
+                    tool="codex",
+                    status="running",
+                )
+            ],
+        )
+
+        self.assertEqual(len(chats), 2)
+        managed_chat = next(chat for chat in chats if chat.thread_id == "thread-a")
+        adopted_chat = next(chat for chat in chats if chat.id == "agent-deck:deck-root")
+        self.assertEqual(managed_chat.binding_state, "detached")
+        self.assertIsNone(managed_chat.agent_deck_session_id)
+        self.assertEqual(adopted_chat.binding_state, "attached")
+        self.assertEqual(adopted_chat.title, "former multi-chat")
+
     def test_adopts_unmatched_visible_session_as_chat(self) -> None:
         chats = reconcile_project_chats(
             "/tmp/project",
@@ -100,7 +130,7 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(chats[0].workspace_kind, "root")
         self.assertEqual(chats[0].title, "closeout-root")
 
-    def test_does_not_duplicate_managed_chat_when_visible_session_matches_workspace(self) -> None:
+    def test_keeps_root_managed_chat_separate_from_visible_root_session(self) -> None:
         chats = reconcile_project_chats(
             "/tmp/project",
             sessions=[
@@ -121,10 +151,13 @@ class ProjectChatsReconcileTest(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(len(chats), 1)
-        self.assertEqual(chats[0].thread_id, "thread-a")
-        self.assertEqual(chats[0].agent_deck_session_id, "deck-root")
-        self.assertEqual(chats[0].binding_state, "attached")
+        self.assertEqual(len(chats), 2)
+        managed_chat = next(chat for chat in chats if chat.thread_id == "thread-a")
+        adopted_chat = next(chat for chat in chats if chat.id == "agent-deck:deck-root")
+        self.assertIsNone(managed_chat.agent_deck_session_id)
+        self.assertEqual(managed_chat.binding_state, "detached")
+        self.assertEqual(adopted_chat.agent_deck_session_id, "deck-root")
+        self.assertEqual(adopted_chat.binding_state, "attached")
 
     def test_finds_reconciled_chat_by_agent_deck_session_id(self) -> None:
         chats = reconcile_project_chats(

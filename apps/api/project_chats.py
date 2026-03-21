@@ -78,6 +78,10 @@ def _match_target_for_session(
             return matched
 
     normalized_workspace_path = normalize_project_path(session.workspace_path)
+    normalized_project_path = normalize_project_path(session.project_path)
+    if normalized_workspace_path == normalized_project_path:
+        return None
+
     path_candidates = [
         target
         for target in visible_targets
