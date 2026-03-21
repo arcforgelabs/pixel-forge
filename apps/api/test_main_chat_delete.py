@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import main
 from agent_deck_bridge import AgentDeckBridgeError, AgentDeckDeleteAssessment
+from project_chats import ProjectChatRecord
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
@@ -93,6 +94,49 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         delete_target.assert_awaited_once()
         delete_session.assert_called_once_with("/tmp/project", "thread-a")
         delete_thread.assert_called_once_with("thread-a")
+
+
+class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_create_project_chat_uses_project_path_when_generating_thread_id(self) -> None:
+        created_chat = ProjectChatRecord(
+            id="thread-a",
+            project_path="/tmp/project",
+            title="Chat thread-a",
+            thread_id="thread-a",
+            workspace_path="/tmp/project",
+            backend="agent-deck",
+            agent_deck_session_id=None,
+            agent_deck_session_title="Chat thread-a",
+            agent_deck_tool=None,
+            agent_deck_session_status=None,
+            binding_state="detached",
+            workspace_kind="root",
+            origin_kind="managed",
+            created_at="2026-03-21T00:00:00Z",
+            last_active="2026-03-21T00:00:00Z",
+        )
+
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "upsert_project", Mock()),
+            patch.object(main, "project_name_for_path", Mock(return_value="project")),
+            patch.object(main, "generate_session_id", Mock(return_value="thread-a")) as generate_id,
+            patch.object(main, "upsert_session", Mock()) as upsert_session,
+            patch.object(
+                main,
+                "_load_reconciled_project_chats",
+                AsyncMock(return_value=([], [created_chat])),
+            ),
+        ):
+            payload = await main.create_project_chat(
+                "/tmp/project",
+                main.AgentDeckSessionRequest(agent_type="claude", title=None, workspace_mode="root"),
+            )
+
+        generate_id.assert_called_once_with("/tmp/project")
+        upsert_session.assert_called_once()
+        self.assertEqual(payload["thread_id"], "thread-a")
+        self.assertEqual(payload["title"], "Chat thread-a")
 
 
 if __name__ == "__main__":

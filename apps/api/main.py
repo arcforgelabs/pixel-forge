@@ -943,7 +943,7 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
-    thread_id = generate_session_id()
+    thread_id = generate_session_id(normalized_project_path)
     draft_title = request.title.strip() if request.title and request.title.strip() else f"Chat {thread_id[:8]}"
 
     try:
