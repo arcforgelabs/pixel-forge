@@ -87,6 +87,16 @@ class SessionOutputStreamStats:
     last_output: str = ""
 
 
+@dataclass(slots=True)
+class AgentDeckSessionActivity:
+    session_id: str
+    session_title: str
+    workspace_path: str
+    tool: str | None
+    status: str | None
+    output: str
+
+
 class AgentDeckBridgeError(RuntimeError):
     pass
 
@@ -1223,16 +1233,20 @@ async def send_agent_deck_prompt_reliably(
     *,
     project_path: str,
     prompt: str,
+    no_wait: bool = False,
 ) -> None:
+    args = [
+        "agent-deck",
+        "session",
+        "send",
+        session_info.agent_deck_session_id,
+        prompt,
+        "-q",
+    ]
+    if no_wait:
+        args.append("--no-wait")
     code, stdout, stderr = await _run_command(
-        [
-            "agent-deck",
-            "session",
-            "send",
-            session_info.agent_deck_session_id,
-            prompt,
-            "-q",
-        ],
+        args,
         cwd=project_path,
     )
     if code != 0:
@@ -1305,7 +1319,7 @@ async def wait_for_agent_deck_turn_completion(
         payload = await session_show(session_info.agent_deck_session_id)
         status = str(payload.get("status") or "").strip().lower()
 
-        if status in {"running", "busy"}:
+        if status in {"running", "busy", "active", "connected"}:
             saw_running = True
             settled_polls = 0
         elif status in {"waiting", "idle", ""}:
@@ -1599,3 +1613,30 @@ async def get_last_output(agent_deck_session_id: str) -> str:
     if code != 0:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to read Agent Deck output")
     return stdout.strip()
+
+
+async def get_agent_deck_session_activity(
+    project_path: str,
+    agent_deck_session_id: str,
+) -> AgentDeckSessionActivity:
+    payload = await session_show(agent_deck_session_id)
+    _require_matching_project_path(project_path, payload)
+
+    title, workspace_path, _, status = _payload_session_metadata(
+        payload,
+        fallback_title=agent_deck_session_id,
+        default_path=project_path,
+    )
+    tool = _session_tool(payload, default="")
+    output = await get_last_output(agent_deck_session_id)
+    if not _session_output_has_meaningful_activity(output):
+        output = ""
+
+    return AgentDeckSessionActivity(
+        session_id=agent_deck_session_id,
+        session_title=title,
+        workspace_path=workspace_path,
+        tool=tool or None,
+        status=status,
+        output=output,
+    )

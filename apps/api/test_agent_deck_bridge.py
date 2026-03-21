@@ -312,6 +312,62 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
                     prompt="Fix the bug",
                 )
 
+    async def test_send_agent_deck_prompt_reliably_can_bypass_ready_wait(self) -> None:
+        run_command = AsyncMock(return_value=(0, "", ""))
+
+        with patch.object(agent_deck_bridge, "_run_command", run_command):
+            await agent_deck_bridge.send_agent_deck_prompt_reliably(
+                _session_info(),
+                project_path="/tmp/project",
+                prompt="Queue the follow-up",
+                no_wait=True,
+            )
+
+        run_command.assert_awaited_once_with(
+            [
+                "agent-deck",
+                "session",
+                "send",
+                "deck-a",
+                "Queue the follow-up",
+                "-q",
+                "--no-wait",
+            ],
+            cwd="/tmp/project",
+        )
+
+    async def test_get_agent_deck_session_activity_ignores_startup_noise(self) -> None:
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "session_show",
+                AsyncMock(
+                    return_value={
+                        "id": "deck-a",
+                        "title": "former multi-chat",
+                        "path": "/tmp/project",
+                        "tool": "codex",
+                        "status": "running",
+                    }
+                ),
+            ),
+            patch.object(
+                agent_deck_bridge,
+                "get_last_output",
+                AsyncMock(return_value="OpenAI Codex\nDo you trust the contents of this directory?"),
+            ),
+        ):
+            activity = await agent_deck_bridge.get_agent_deck_session_activity(
+                "/tmp/project",
+                "deck-a",
+            )
+
+        self.assertEqual(activity.session_id, "deck-a")
+        self.assertEqual(activity.session_title, "former multi-chat")
+        self.assertEqual(activity.tool, "codex")
+        self.assertEqual(activity.status, "running")
+        self.assertEqual(activity.output, "")
+
 
 class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_stream_codex_session_output_emits_incremental_text_chunks(self) -> None:

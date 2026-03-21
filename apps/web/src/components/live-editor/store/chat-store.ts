@@ -66,6 +66,7 @@ export interface ChatMessage {
   systemTone?: 'info' | 'success' | 'error'
   canApplyControllerUpdate?: boolean
   canLoadPreviewUpdate?: boolean
+  observedSessionId?: string | null
 }
 
 export interface SelectedElement extends SelectionRecord {
@@ -74,6 +75,17 @@ export interface SelectedElement extends SelectionRecord {
 
 interface PendingOutboundMessage {
   payload: Record<string, unknown>
+}
+
+interface ObservedAgentDeckActivity {
+  thread_id: string | null
+  agent_deck_session_id: string | null
+  agent_deck_session_title: string | null
+  agent_deck_tool: string | null
+  agent_deck_session_status: string | null
+  workspace_path: string | null
+  binding_state: 'attached' | 'detached'
+  output: string
 }
 
 export type LiveEditorPanelTab = 'chat' | 'elements'
@@ -762,12 +774,53 @@ async function stagePreviewUpdateNotice(options: {
   useSessionStore.getState().setPendingPreviewUpdate(payload.update)
 }
 
+async function fetchObservedAgentDeckActivity(options: {
+  projectPath: string
+  threadId?: string | null
+  agentDeckSessionId?: string | null
+}) {
+  const query = new URLSearchParams()
+  if (options.threadId?.trim()) {
+    query.set('thread_id', options.threadId.trim())
+  }
+  if (options.agentDeckSessionId?.trim()) {
+    query.set('agent_deck_session_id', options.agentDeckSessionId.trim())
+  }
+
+  const response = await fetch(
+    `${HTTP_BACKEND_URL}/api/projects/${encodeURIComponent(options.projectPath)}/chat-items/activity?${query.toString()}`,
+    {
+      credentials: 'include',
+    }
+  )
+
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const payload = await response.json() as { detail?: string }
+      if (typeof payload.detail === 'string' && payload.detail) {
+        message = payload.detail
+      }
+    } catch {
+      const text = await response.text()
+      if (text) {
+        message = text
+      }
+    }
+    throw new Error(message)
+  }
+
+  return await response.json() as ObservedAgentDeckActivity
+}
+
 // ============================================================================
 // Store
 // ============================================================================
 
 export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   const threadPersistenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  let observedThreadKey: string | null = null
+  let observedThreadPollTimer: ReturnType<typeof setTimeout> | null = null
 
   const resolveThreadSession = (threadKey: string | null | undefined) => {
     if (!threadKey) {
@@ -824,6 +877,159 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
       return { threadStates: nextThreadStates }
     })
+  }
+
+  const stopObservedThreadPolling = () => {
+    observedThreadKey = null
+    if (observedThreadPollTimer) {
+      clearTimeout(observedThreadPollTimer)
+      observedThreadPollTimer = null
+    }
+  }
+
+  const syncObservedAgentDeckActivity = async (threadKey: string) => {
+    const sessionStore = useSessionStore.getState()
+    const projectPath = sessionStore.projectPath
+    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const boundSession = resolveThreadSession(threadKey)
+    const agentDeckSessionId =
+      boundSession?.agentDeckSessionId
+      ?? threadState.targetAgentDeckSessionId
+      ?? null
+
+    if (!projectPath || !agentDeckSessionId) {
+      stopObservedThreadPolling()
+      return
+    }
+
+    const hasNonObservedMessages = threadState.messages.some(
+      (message) => !message.observedSessionId
+    )
+    if (
+      hasNonObservedMessages
+      || threadState.isStreaming
+      || threadState.currentRequestId
+    ) {
+      stopObservedThreadPolling()
+      return
+    }
+
+    try {
+      const activity = await fetchObservedAgentDeckActivity({
+        projectPath,
+        threadId: boundSession?.threadId ?? threadKey,
+        agentDeckSessionId,
+      })
+      if (observedThreadKey !== threadKey) {
+        return
+      }
+
+      updateThreadState(threadKey, (currentState) => {
+        const currentHasNonObservedMessages = currentState.messages.some(
+          (message) => !message.observedSessionId
+        )
+        if (
+          currentHasNonObservedMessages
+          || currentState.isStreaming
+          || currentState.currentRequestId
+        ) {
+          return currentState
+        }
+
+        const observedMessageId = `observed:${agentDeckSessionId}`
+        const nextMessages = currentState.messages.filter(
+          (message) => message.observedSessionId === agentDeckSessionId || !message.observedSessionId
+        )
+        const existingObservedIndex = nextMessages.findIndex(
+          (message) => message.id === observedMessageId
+        )
+
+        let observedMessage: ChatMessage | null = null
+        const meaningfulOutput = activity.output.trim()
+        if (meaningfulOutput) {
+          observedMessage = {
+            id: observedMessageId,
+            role: 'assistant',
+            content: meaningfulOutput,
+            timestamp: new Date(),
+            observedSessionId: agentDeckSessionId,
+          }
+        } else if (activity.binding_state === 'attached') {
+          const sessionLabel =
+            activity.agent_deck_session_title?.trim()
+            || agentDeckSessionId
+          const statusLabel = activity.agent_deck_session_status?.trim() || 'connected'
+          observedMessage = {
+            id: observedMessageId,
+            role: 'system',
+            content: `Attached to Agent Deck session \`${sessionLabel}\` (${statusLabel}). Waiting for output...`,
+            timestamp: new Date(),
+            systemTone: 'info',
+            observedSessionId: agentDeckSessionId,
+          }
+        }
+
+        if (!observedMessage) {
+          if (existingObservedIndex === -1) {
+            return currentState
+          }
+          nextMessages.splice(existingObservedIndex, 1)
+        } else if (existingObservedIndex === -1) {
+          nextMessages.push(observedMessage)
+        } else {
+          nextMessages[existingObservedIndex] = observedMessage
+        }
+
+        return {
+          ...currentState,
+          messages: nextMessages,
+        }
+      })
+    } catch (error) {
+      if (observedThreadKey !== threadKey) {
+        return
+      }
+      console.error('[live-editor] Failed to observe Agent Deck session:', error)
+    } finally {
+      if (observedThreadKey === threadKey) {
+        observedThreadPollTimer = setTimeout(() => {
+          void syncObservedAgentDeckActivity(threadKey)
+        }, 1000)
+      }
+    }
+  }
+
+  const maybeObserveActiveThread = () => {
+    const activeThreadKey = get().activeThreadKey
+    const threadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+    const boundSession = resolveThreadSession(activeThreadKey)
+    const agentDeckSessionId =
+      boundSession?.agentDeckSessionId
+      ?? threadState.targetAgentDeckSessionId
+      ?? null
+    const hasNonObservedMessages = threadState.messages.some(
+      (message) => !message.observedSessionId
+    )
+
+    if (
+      !agentDeckSessionId
+      || hasNonObservedMessages
+      || threadState.isStreaming
+      || threadState.currentRequestId
+    ) {
+      stopObservedThreadPolling()
+      return
+    }
+
+    if (observedThreadKey === activeThreadKey && observedThreadPollTimer) {
+      return
+    }
+
+    stopObservedThreadPolling()
+    observedThreadKey = activeThreadKey
+    observedThreadPollTimer = setTimeout(() => {
+      void syncObservedAgentDeckActivity(activeThreadKey)
+    }, 0)
   }
 
   const closeThreadSocket = (threadKey: string, silent = true) => {
@@ -901,6 +1107,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     ) {
       sessionStore.setLiveEditorSession(session)
     }
+    maybeObserveActiveThread()
   }
 
   const persistThreadSessionNow = async (threadKey: string) => {
@@ -955,6 +1162,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         editorState: savedSession.editorState ?? null,
       })
     }
+    maybeObserveActiveThread()
   }
 
   const scheduleThreadPersistence = (threadKey: string, delay = 150) => {
@@ -1479,6 +1687,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return createStoreState(nextThreadKey, nextThreadStates)
       })
       syncActiveThreadTargetSelection(nextThreadKey)
+      maybeObserveActiveThread()
     },
 
     resetForProject: () => {
@@ -1486,6 +1695,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         clearTimeout(timer)
       }
       threadPersistenceTimers.clear()
+      stopObservedThreadPolling()
       const currentThreadStates = get().threadStates
       for (const threadKey of Object.keys(currentThreadStates)) {
         closeThreadSocket(threadKey, true)
@@ -1524,6 +1734,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
       set(createStoreState(nextActiveThreadKey, nextThreadStates))
       syncActiveThreadTargetSelection(nextActiveThreadKey)
+      maybeObserveActiveThread()
     },
 
     persistThreadState: async (threadKey) => {
@@ -1549,6 +1760,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     },
 
     disconnectAll: () => {
+      stopObservedThreadPolling()
       const currentThreadStates = get().threadStates
       for (const threadKey of Object.keys(currentThreadStates)) {
         closeThreadSocket(threadKey, true)
@@ -1646,6 +1858,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         currentSelectionCount: selectionTunnel.selections.length,
         currentRequestId: null,
       }))
+      stopObservedThreadPolling()
 
       const previewUrl = getThreadPreviewUrl(activeThreadKey)
       const selectedTarget =
@@ -1706,6 +1919,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           messages: [],
         })
       )
+      maybeObserveActiveThread()
     },
 
     newSession: (targetAgentDeckSessionId = null) => {
@@ -1725,6 +1939,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         })
       )
       scheduleThreadPersistence(nextDraftKey, 0)
+      maybeObserveActiveThread()
     },
 
     removeThread: (threadKey, fallbackThreadKey = null) => {
@@ -1763,6 +1978,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       })
 
       syncActiveThreadTargetSelection(nextActiveThreadKey)
+      maybeObserveActiveThread()
     },
 
     setTargetAgentDeckSessionId: (sessionId) => {
@@ -1786,6 +2002,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }))
       useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
       scheduleThreadPersistence(activeThreadKey)
+      maybeObserveActiveThread()
     },
 
     setDraftAgentType: (agentType) => {

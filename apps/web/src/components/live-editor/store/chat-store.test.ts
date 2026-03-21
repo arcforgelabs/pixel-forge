@@ -395,6 +395,52 @@ describe('live editor selection history', () => {
     ).toBeNull()
   })
 
+  it('hydrates attached Agent Deck output into an otherwise blank adopted chat lane', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/chat-items/activity')) {
+        return jsonResponse({
+          thread_id: useLiveEditorStore.getState().activeThreadKey,
+          agent_deck_session_id: 'deck-session-a',
+          agent_deck_session_title: 'former multi-chat',
+          agent_deck_tool: 'codex',
+          agent_deck_session_status: 'running',
+          workspace_path: '/tmp/example-project',
+          binding_state: 'attached',
+          output: 'Continuing existing Agent Deck work...',
+        })
+      }
+      if (url.includes('/api/profile-state')) {
+        return jsonResponse({
+          profile_id: 'default',
+          active_project_path: '/tmp/example-project',
+          active_mode: 'live-editor',
+          active_live_editor_thread_id: 'thread-a',
+          default_agent_type: 'claude',
+          updated_at: '2026-03-20T00:00:00Z',
+        })
+      }
+      return jsonResponse({})
+    })
+
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+    })
+
+    useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          role: 'assistant',
+          content: 'Continuing existing Agent Deck work...',
+          observedSessionId: 'deck-session-a',
+        },
+      ])
+    })
+  })
+
   it('persists sanitized editor state through the shared session API', async () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementationOnce(async () =>

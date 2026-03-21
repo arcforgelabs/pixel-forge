@@ -674,7 +674,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   async function handleCreateProjectChat(startFreshThread = false) {
     if (startFreshThread) {
       const emptyThreadKey = Object.entries(threadStates).find(
-        ([, ts]) => ts.messages.length === 0
+        ([threadKey, ts]) => {
+          if (ts.messages.length > 0) {
+            return false;
+          }
+          if (ts.targetAgentDeckSessionId) {
+            return false;
+          }
+          return !projectSessions.some((session) => session.threadId === threadKey);
+        }
       )?.[0];
       if (emptyThreadKey) {
         activateThread(emptyThreadKey);

@@ -26,6 +26,7 @@ from agent_deck_bridge import (
     assess_agent_deck_delete_state,
     create_agent_deck_session_target,
     delete_agent_deck_session_target,
+    get_agent_deck_session_activity,
     get_last_output,
     ensure_agent_deck_session,
     launch_agent_deck_closeout_session,
@@ -1157,6 +1158,67 @@ async def start_project_chat_item_closeout(
     return {
         "status": "started",
         "session": serialize_agent_deck_session_target(closeout_session),
+    }
+
+
+@app.get("/api/projects/{project_path:path}/chat-items/activity")
+async def get_project_chat_item_activity(
+    project_path: str,
+    thread_id: str | None = None,
+    agent_deck_session_id: str | None = None,
+):
+    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+        _resolve_chat_item_context(
+            project_path,
+            thread_id=thread_id,
+            agent_deck_session_id=agent_deck_session_id,
+        )
+    )
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    if not resolved_agent_deck_session_id:
+        return {
+            "thread_id": normalized_thread_id,
+            "agent_deck_session_id": None,
+            "agent_deck_session_title": getattr(session_record, "agent_deck_session_title", None),
+            "agent_deck_tool": getattr(session_record, "agent_deck_tool", None),
+            "agent_deck_session_status": None,
+            "workspace_path": getattr(session_record, "workspace_path", None)
+            or getattr(thread_record, "workspace_path", normalized_project_path),
+            "binding_state": "detached",
+            "output": "",
+        }
+
+    try:
+        activity = await get_agent_deck_session_activity(
+            normalized_project_path,
+            resolved_agent_deck_session_id,
+        )
+    except AgentDeckBridgeError as exc:
+        if _is_missing_agent_deck_session_error(exc):
+            return {
+                "thread_id": normalized_thread_id,
+                "agent_deck_session_id": None,
+                "agent_deck_session_title": getattr(session_record, "agent_deck_session_title", None),
+                "agent_deck_tool": getattr(session_record, "agent_deck_tool", None),
+                "agent_deck_session_status": None,
+                "workspace_path": getattr(session_record, "workspace_path", None)
+                or getattr(thread_record, "workspace_path", normalized_project_path),
+                "binding_state": "detached",
+                "output": "",
+            }
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "thread_id": normalized_thread_id,
+        "agent_deck_session_id": activity.session_id,
+        "agent_deck_session_title": activity.session_title,
+        "agent_deck_tool": activity.tool,
+        "agent_deck_session_status": activity.status,
+        "workspace_path": activity.workspace_path,
+        "binding_state": "attached",
+        "output": activity.output,
     }
 
 
@@ -2986,16 +3048,27 @@ async def live_editor_chat(websocket: WebSocket):
                             baseline_output = await get_last_output(
                                 session_info.agent_deck_session_id
                             )
+                        normalized_session_status = (session_info.status or "").strip().lower()
+                        queue_onto_busy_session = normalized_session_status not in {
+                            "",
+                            "waiting",
+                            "idle",
+                        }
                         await send_agent_deck_prompt_reliably(
                             session_info,
                             project_path=session_info.workspace_path,
                             prompt=dispatch_prompt,
+                            no_wait=queue_onto_busy_session,
                         )
                         tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
                         await websocket.send_json(
                             {
                                 "type": "status",
-                                "message": f"Request delivered to {tool_label}. Waiting for completion...",
+                                "message": (
+                                    f"Queued request to busy {tool_label} session. Waiting for completion..."
+                                    if queue_onto_busy_session
+                                    else f"Request delivered to {tool_label}. Waiting for completion..."
+                                ),
                             }
                         )
                         turn_wait_task = asyncio.create_task(
