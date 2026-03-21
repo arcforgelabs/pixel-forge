@@ -5,6 +5,7 @@ import type {
   PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPendingControllerUpdate,
 } from "@/types/pixel-forge-desktop";
+import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
 
 export type ActiveMode = "screenshot" | "live-editor";
 export type OutputMode = "scratch" | "custom";
@@ -673,15 +674,8 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const payload = (await response.json()) as { detail?: string };
-      message = payload.detail || message;
-    } catch {
-      const text = await response.text();
-      message = text || message;
-    }
-    throw new Error(message);
+    const payload = await readResponsePayload(response);
+    throw new Error(getResponseErrorMessage(response, payload));
   }
 
   return (await response.json()) as T;

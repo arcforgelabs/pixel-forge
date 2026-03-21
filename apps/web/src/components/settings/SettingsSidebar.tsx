@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
+import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
 import { capitalize } from "@/lib/utils";
 import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
@@ -112,24 +113,10 @@ async function requestSidebarJson<T>(path: string, init?: RequestInit): Promise<
     },
   });
 
-  let payload: unknown = null;
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    payload = await response.json();
-  } else {
-    const text = await response.text();
-    payload = text ? { detail: text } : null;
-  }
+  const payload = await readResponsePayload(response);
 
   if (!response.ok) {
-    const detail =
-      payload
-      && typeof payload === "object"
-      && "detail" in payload
-      && typeof (payload as { detail?: unknown }).detail === "string"
-        ? (payload as { detail: string }).detail
-        : `HTTP ${response.status}`;
-    throw new Error(detail);
+    throw new Error(getResponseErrorMessage(response, payload));
   }
 
   return payload as T;

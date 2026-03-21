@@ -11,6 +11,7 @@ import { create } from 'zustand'
 
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { getDesktopApp, hasDesktopAppMethod } from '@/lib/desktop-app'
+import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import type {
   PersistedPreviewTab,
   PersistedThreadEditorState,
@@ -703,19 +704,8 @@ async function stageControllerUpdateNotice(options: {
     })
 
     if (!response.ok) {
-      let message = `HTTP ${response.status}`
-      try {
-        const payload = await response.json() as { detail?: string }
-        if (typeof payload.detail === 'string' && payload.detail) {
-          message = payload.detail
-        }
-      } catch {
-        const text = await response.text()
-        if (text) {
-          message = text
-        }
-      }
-      throw new Error(message)
+      const payload = await readResponsePayload(response)
+      throw new Error(getResponseErrorMessage(response, payload))
     }
 
     const payload = await response.json() as {
@@ -759,19 +749,8 @@ async function stagePreviewUpdateNotice(options: {
   })
 
   if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    try {
-      const payload = await response.json() as { detail?: string }
-      if (typeof payload.detail === 'string' && payload.detail) {
-        message = payload.detail
-      }
-    } catch {
-      const text = await response.text()
-      if (text) {
-        message = text
-      }
-    }
-    throw new Error(message)
+    const payload = await readResponsePayload(response)
+    throw new Error(getResponseErrorMessage(response, payload))
   }
 
   const payload = await response.json() as {
@@ -780,6 +759,33 @@ async function stagePreviewUpdateNotice(options: {
   useSessionStore.getState().setPendingPreviewUpdate(payload.update)
 }
 
+async function fetchObservedAgentDeckActivity(options: {
+  projectPath: string
+  threadId?: string | null
+  agentDeckSessionId?: string | null
+}) {
+  const query = new URLSearchParams()
+  if (options.threadId?.trim()) {
+    query.set('thread_id', options.threadId.trim())
+  }
+  if (options.agentDeckSessionId?.trim()) {
+    query.set('agent_deck_session_id', options.agentDeckSessionId.trim())
+  }
+
+  const response = await fetch(
+    `${HTTP_BACKEND_URL}/api/projects/${encodeURIComponent(options.projectPath)}/chat-items/activity?${query.toString()}`,
+    {
+      credentials: 'include',
+    }
+  )
+
+  if (!response.ok) {
+    const payload = await readResponsePayload(response)
+    throw new Error(getResponseErrorMessage(response, payload))
+  }
+
+  return await response.json() as ObservedAgentDeckActivity
+}
 // ============================================================================
 // Store
 // ============================================================================
