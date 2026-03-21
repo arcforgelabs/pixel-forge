@@ -30,7 +30,7 @@ fi
 : "${PIXEL_FORGE_AGENT_DECK_PROFILE:=workstation-v2}"
 : "${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/foundations/agent-deck}"
 : "${PIXEL_FORGE_AGENT_DECK_CMD:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-deck-workstation-v2.sh}"
-: "${PIXEL_FORGE_DESKTOP_ENTRY_NAME:=Pixel Forge Workstation V2}"
+: "${PIXEL_FORGE_DESKTOP_ENTRY_NAME:=Pixel Forge (alpha)}"
 : "${PIXEL_FORGE_DESKTOP_FILE_NAME:=pixel-forge-workstation-v2.desktop}"
 : "${PIXEL_FORGE_DESKTOP_ICON_NAME:=pixel-forge-workstation-v2}"
 
