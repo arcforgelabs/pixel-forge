@@ -373,9 +373,11 @@ export function LiveEditorPane() {
     activeMode,
     liveEditorSession,
     projectSessions,
+    projectChats,
     agentDeckTargets,
     createAgentDeckTargetSession,
     refreshProjectChats,
+    pendingControllerUpdate,
     pendingPreviewUpdate,
     setPendingPreviewUpdate,
     setPreviewUrl,
@@ -505,34 +507,54 @@ export function LiveEditorPane() {
     || getTargetAgentDeckSessionId()
     || liveEditorSession?.agentDeckSessionId
     || null
+  const currentProjectChat =
+    (currentThreadSession?.threadId
+      ? projectChats.find((chat) => chat.threadId === currentThreadSession.threadId) ?? null
+      : null)
+    || (
+      activeThreadTargetAgentDeckSessionId
+        ? projectChats.find((chat) => chat.agentDeckSessionId === activeThreadTargetAgentDeckSessionId) ?? null
+        : null
+    )
+  const currentChatWorkspacePath =
+    currentProjectChat?.workspacePath?.trim()
+    || currentThreadSession?.workspacePath?.trim()
+    || liveEditorSession?.workspacePath?.trim()
+    || null
+  const currentChatIsCloneBacked = isCloneWorkspaceBound({
+    projectPath,
+    workspacePath: currentChatWorkspacePath,
+  })
   const selectedAgentDeckTarget = agentDeckTargets.find(
     (target) => target.id === activeThreadTargetAgentDeckSessionId
   ) ?? null
   const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
     projectPath,
-    liveWorkspacePath: currentThreadSession?.workspacePath || liveEditorSession?.workspacePath || null,
+    liveWorkspacePath: currentChatWorkspacePath,
     liveAgentDeckSessionId: activeThreadTargetAgentDeckSessionId,
     selectedTargetId: activeThreadTargetAgentDeckSessionId,
     agentDeckTargets,
   })
-  const liveSessionBoundToCanonicalRoot = Boolean(
-    currentThreadSession?.workspacePath
-    && !isCloneWorkspaceBound({ projectPath, workspacePath: currentThreadSession.workspacePath })
-  )
-  const previewAudienceWorkspacePath = liveSessionBoundToCanonicalRoot
-    ? null
-    : resolvedMirrorTarget?.workspacePath || null
-  const previewAudienceSessionId = liveSessionBoundToCanonicalRoot
-    ? null
-    : resolvedMirrorTarget?.agentDeckSessionId || null
+  const previewAudienceWorkspacePath = currentChatIsCloneBacked
+    ? currentChatWorkspacePath || resolvedMirrorTarget?.workspacePath || null
+    : projectPath || null
+  const previewAudienceSessionId = currentChatIsCloneBacked
+    ? activeThreadTargetAgentDeckSessionId
+    : null
   const relevantPendingPreviewUpdate = isPendingPreviewUpdateForAudience({
     pendingPreviewUpdate,
     projectPath,
     audienceWorkspacePath: previewAudienceWorkspacePath,
     audienceSessionId: previewAudienceSessionId,
   })
+    && currentChatIsCloneBacked
     ? pendingPreviewUpdate
     : null
+  const relevantPendingControllerUpdate =
+    !currentChatIsCloneBacked
+    && pendingControllerUpdate?.projectPath === projectPath
+      ? pendingControllerUpdate
+      : null
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
   const canLaunchSelfMirror = RUNTIME_KIND === 'controller'
@@ -704,7 +726,7 @@ export function LiveEditorPane() {
       setPendingPreviewUpdate(null)
       return
     }
-    if (!projectPath || !previewAudienceWorkspacePath) {
+    if (!projectPath || !previewAudienceWorkspacePath || !currentChatIsCloneBacked) {
       setPendingPreviewUpdate(null)
       return
     }
@@ -732,6 +754,7 @@ export function LiveEditorPane() {
     }
   }, [
     canLaunchSelfMirror,
+    currentChatIsCloneBacked,
     previewAudienceSessionId,
     previewAudienceWorkspacePath,
     projectPath,
@@ -1512,17 +1535,25 @@ export function LiveEditorPane() {
       throw new Error('Select a project before launching a Pixel Forge target')
     }
 
-    const boundWorkspacePath = currentThreadSession?.workspacePath?.trim() || null
-    if (isCloneWorkspaceBound({ projectPath, workspacePath: boundWorkspacePath })) {
+    if (currentChatIsCloneBacked && currentChatWorkspacePath) {
       return {
-        sourceRoot: boundWorkspacePath,
-        audienceWorkspacePath: boundWorkspacePath,
+        sourceRoot:
+          relevantPendingPreviewUpdate?.snapshotPath?.trim()
+          || currentChatWorkspacePath,
+        audienceWorkspacePath: currentChatWorkspacePath,
+      }
+    }
+
+    if (currentProjectChat) {
+      return {
+        sourceRoot: relevantPendingControllerUpdate?.snapshotPath?.trim() || null,
+        audienceWorkspacePath: projectPath,
       }
     }
 
     const resolvedSourceRoot = resolveIsolatedMirrorSourceRoot({
       projectPath,
-      liveWorkspacePath: boundWorkspacePath || resolvedMirrorTarget?.workspacePath || null,
+      liveWorkspacePath: resolvedMirrorTarget?.workspacePath || null,
       selectedTargetPath: selectedAgentDeckTarget?.path || null,
     })
     if (resolvedSourceRoot) {
@@ -1556,9 +1587,13 @@ export function LiveEditorPane() {
     agentDeckTargets,
     bindMirrorTargetToActiveThread,
     createAgentDeckTargetSession,
-    currentThreadSession?.workspacePath,
+    currentChatIsCloneBacked,
+    currentChatWorkspacePath,
+    currentProjectChat,
     draftAgentType,
     projectPath,
+    relevantPendingControllerUpdate?.snapshotPath,
+    relevantPendingPreviewUpdate?.snapshotPath,
     resolvedMirrorTarget?.workspacePath,
     resolvedMirrorTarget?.agentDeckSessionId,
     selectedAgentDeckTarget?.path,
