@@ -7,6 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -15,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
 import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { capitalize } from "@/lib/utils";
 import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
@@ -864,6 +871,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       },
     },
   ];
+  const defaultSettingsSections =
+    activeMode === "live-editor"
+      ? ["application", "live-editor", "general"]
+      : ["application", "screenshot", "general"];
 
   return (
     <>
@@ -1334,19 +1345,29 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
       {/* Settings Dialog */}
       <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(88vh,56rem)] flex-col overflow-hidden p-0 sm:max-w-md">
+          <DialogHeader className="border-b border-border/40 px-6 py-4">
             <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-6 py-2">
-            <section className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <RefreshCw className="h-3.5 w-3.5" />
-                Application
-              </div>
-
-              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="px-6 py-4">
+              <Accordion
+                type="multiple"
+                defaultValue={defaultSettingsSections}
+                className="space-y-3"
+              >
+                <AccordionItem
+                  value="application"
+                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
+                >
+                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Application
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Controller Version</p>
@@ -1473,32 +1494,44 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     later, the staged controller build will still be available here.
                   </p>
                 )}
-              </div>
-            </section>
+                  </AccordionContent>
+                </AccordionItem>
 
-            {/* Screenshot settings */}
-            {activeMode === "screenshot" && (
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <Layers className="h-3.5 w-3.5" />
-                  Screenshot
-                </div>
-                <OutputSettingsSection
-                  stack={settings.generatedCodeConfig}
-                  setStack={setStack}
-                  shouldDisableUpdates={shouldDisableStackUpdates}
-                />
-              </section>
-            )}
+                {/* Screenshot settings */}
+                {activeMode === "screenshot" && (
+                  <AccordionItem
+                    value="screenshot"
+                    className="rounded-lg border border-border/60 bg-muted/10 px-3"
+                  >
+                    <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
+                      <span className="flex items-center gap-2">
+                        <Layers className="h-3.5 w-3.5" />
+                        Screenshot
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="pb-3">
+                      <OutputSettingsSection
+                        stack={settings.generatedCodeConfig}
+                        setStack={setStack}
+                        shouldDisableUpdates={shouldDisableStackUpdates}
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
 
-            {/* Live Editor settings */}
-            {activeMode === "live-editor" && (
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <Radio className="h-3.5 w-3.5" />
-                  Live Editor
-                </div>
-
+                {/* Live Editor settings */}
+                {activeMode === "live-editor" && (
+                  <AccordionItem
+                    value="live-editor"
+                    className="rounded-lg border border-border/60 bg-muted/10 px-3"
+                  >
+                    <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
+                      <span className="flex items-center gap-2">
+                        <Radio className="h-3.5 w-3.5" />
+                        Live Editor
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 pb-3">
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Connection</span>
@@ -1685,17 +1718,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     New Chat
                   </Button>
                 </div>
-              </section>
-            )}
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
 
-            {/* General settings */}
-            <section className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <BookOpen className="h-3.5 w-3.5" />
-                Installed Skills
-              </div>
-
-              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+                <AccordionItem
+                  value="installed-skills"
+                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
+                >
+                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <BookOpen className="h-3.5 w-3.5" />
+                      Installed Skills
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 pb-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-foreground">Runtime skill homes</p>
@@ -1818,15 +1855,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     ))}
                   </div>
                 </div>
-              </div>
-            </section>
+                  </AccordionContent>
+                </AccordionItem>
 
-            <section className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <Palette className="h-3.5 w-3.5" />
-                General
-              </div>
-
+                <AccordionItem
+                  value="general"
+                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
+                >
+                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <Palette className="h-3.5 w-3.5" />
+                      General
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 pb-3">
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Default Agent</Label>
                 <Select
@@ -1865,8 +1907,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                   }
                 />
               </div>
-            </section>
-          </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </>
