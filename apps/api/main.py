@@ -2156,18 +2156,25 @@ def build_live_editor_dispatch_prompt(
     requested_skills: list[str] | None = None,
     self_edit_safe_mode: bool = False,
     self_edit_scope: Literal["controller", "preview"] | None = None,
-    bootstrap: bool = True,
+    continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
 ) -> str:
     normalized_requested_skills = normalize_requested_skills(requested_skills)
 
     if informational_only:
-        if bootstrap:
+        if continuation_mode == "bootstrap":
             base = f"""Read `{request_file_path}` and answer that Pixel Forge request.
 
 Start by reading the request file itself, then the referenced selected-surface artifacts.
 This is an informational inspection request. Do not edit code, rebuild, restart, deploy, or reload unless the user explicitly asks.
 Prefer answering directly from the captured Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
+Keep the reply concise and directly answer the user's question."""
+        elif continuation_mode == "attached-session":
+            base = f"""Pixel Forge continuation into an already-running Agent Deck session.
+
+Read `{request_file_path}` and the referenced artifacts for this turn.
+This is the first Pixel Forge turn for an existing Agent Deck session, not a new bootstrap.
+Keep the current Agent Deck session continuity and use the new Pixel Forge context for this turn.
 Keep the reply concise and directly answer the user's question."""
         else:
             base = f"""New Pixel Forge turn for this existing session.
@@ -2177,10 +2184,17 @@ This is an informational delta, not a full session reboot and not a code-change 
 Prefer answering directly from the new Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
 Keep the reply concise and directly answer the user's question."""
     else:
-        if bootstrap:
+        if continuation_mode == "bootstrap":
             base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
 
 Start by reading the request file itself, then read every referenced context file before changing code.
+Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+        elif continuation_mode == "attached-session":
+            base = f"""Pixel Forge continuation into an already-running Agent Deck session.
+
+Read `{request_file_path}` and any context files it references.
+This is the first Pixel Forge turn for an existing Agent Deck session, not a full session bootstrap.
+Keep the current Agent Deck session continuity and use the new Pixel Forge context for this turn.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
         else:
             base = f"""New Pixel Forge turn for this existing session.
@@ -2200,7 +2214,7 @@ This request explicitly asks for these skills: {requested_skill_list}.
 Immediately after reading `{request_file_path}`, invoke each listed skill via the Skill tool before reading source code, using repo-specific tools, or making changes. Do not treat these skill requests as optional flavor text."""
 
     if not informational_only:
-        if bootstrap:
+        if continuation_mode == "bootstrap":
             base += """
 
 If you need Pixel Forge-specific CLI or tunnel workflow help beyond what the request pack already gives you, the `using-pixel-forge` skill can help."""
@@ -2215,7 +2229,7 @@ If you need extra Pixel Forge-specific CLI or tunnel workflow help beyond this r
 
 Use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack if you need the frozen structured selection state for this turn.
 Treat the request pack, selected-elements artifact, selection tunnel, and attachments as the primary truth for the selected live surface."""
-        elif bootstrap:
+        elif continuation_mode == "bootstrap":
             base += f"""
 
 If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
@@ -2228,7 +2242,7 @@ Treat the request pack, selected-elements artifact, and selection tunnel as auth
 If you need the frozen selection state for this turn, use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
-    if bootstrap and len(selection_sources) > 1:
+    if continuation_mode != "delta" and len(selection_sources) > 1:
         source_lines = "\n".join(
             f"- {label or 'Preview'} ({count} selection{'s' if count != 1 else ''}) at {url}"
             for label, url, count in selection_sources
@@ -2238,7 +2252,7 @@ If you need the frozen selection state for this turn, use `{selection_tunnel_url
 Selections span multiple preview sources. Use the grouped sources in the request pack as the source of truth for target-vs-reference context, and do not collapse them into one preview URL:
 {source_lines}"""
 
-    if bootstrap and self_edit_safe_mode:
+    if continuation_mode != "delta" and self_edit_safe_mode:
         base += """
 
 This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
@@ -2252,7 +2266,7 @@ This is an isolated clone-backed self-edit session. Finish by stating whether th
 
 This is the canonical Pixel Forge root. Finish by stating whether the controller update is ready to stage/load after this request completes."""
 
-    if preview_url and bootstrap:
+    if preview_url and continuation_mode != "delta":
         if informational_only:
             base += f"""
 
@@ -3054,10 +3068,15 @@ async def live_editor_chat(websocket: WebSocket):
                     if self_edit_safe_mode
                     else None
                 )
-                bootstrap_dispatch = (
-                    not previous_request_id
-                    or previous_agent_deck_session_id != session_info.agent_deck_session_id
-                )
+                if previous_request_id:
+                    continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "delta"
+                elif (
+                    previous_agent_deck_session_id
+                    and previous_agent_deck_session_id == session_info.agent_deck_session_id
+                ):
+                    continuation_mode = "attached-session"
+                else:
+                    continuation_mode = "bootstrap"
 
                 request_pack = create_request_pack(
                     session_info.workspace_path,
@@ -3073,7 +3092,7 @@ async def live_editor_chat(websocket: WebSocket):
                     acp_session_id=session_info.acp_session_id,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
-                    bootstrap=bootstrap_dispatch,
+                    continuation_mode=continuation_mode,
                     informational_only=informational_only,
                     requested_skills=requested_skills,
                     session_working_rules=(
@@ -3117,7 +3136,11 @@ async def live_editor_chat(websocket: WebSocket):
                 await websocket.send_json(
                     {
                         "type": "status",
-                        "message": f"Dispatching request pack {request_pack.relative_directory} to Agent Deck...",
+                        "message": (
+                            f"Sending Pixel Forge continuation {request_pack.relative_directory} into existing Agent Deck session..."
+                            if continuation_mode == "attached-session"
+                            else f"Dispatching request pack {request_pack.relative_directory} to Agent Deck..."
+                        ),
                     }
                 )
 
@@ -3138,7 +3161,7 @@ async def live_editor_chat(websocket: WebSocket):
                     ),
                     self_edit_safe_mode=self_edit_safe_mode,
                     self_edit_scope=self_edit_scope,
-                    bootstrap=bootstrap_dispatch,
+                    continuation_mode=continuation_mode,
                     informational_only=informational_only,
                     requested_skills=requested_skills,
                 )
