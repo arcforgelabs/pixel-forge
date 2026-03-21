@@ -164,6 +164,7 @@ export interface ThreadChatState {
   activePreviewTabId: string | null
   urlHistory: string[]
   urlHistoryCursor: number
+  observeRemoteActivity: boolean
 }
 
 interface ActiveThreadViewState {
@@ -362,6 +363,7 @@ function createEmptyThreadState(): ThreadChatState {
     selectedElements: [],
     selectionUndoStack: [],
     selectionRedoStack: [],
+    observeRemoteActivity: false,
     ...createEmptyThreadEditorState(),
   }
 }
@@ -650,8 +652,29 @@ function resetThreadRuntimeState(
     ws: null,
     connected: false,
     queuedMessages: [],
+    observeRemoteActivity: false,
     ...overrides,
   }
+}
+
+function shouldContinueObservingActivity(threadState: ThreadChatState): boolean {
+  const hasNonObservedMessages = threadState.messages.some(
+    (message) => !message.observedSessionId
+  )
+  return threadState.observeRemoteActivity || !hasNonObservedMessages
+}
+
+function activityLooksLive(activity: ObservedAgentDeckActivity): boolean {
+  if (activity.binding_state !== 'attached' || !activity.agent_deck_session_id) {
+    return false
+  }
+
+  if (activity.output.trim()) {
+    return true
+  }
+
+  const normalizedStatus = activity.agent_deck_session_status?.trim().toLowerCase() || ''
+  return ['running', 'busy', 'active', 'connected', 'waiting'].includes(normalizedStatus)
 }
 
 async function stageControllerUpdateNotice(options: {
@@ -870,11 +893,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return
     }
 
-    const hasNonObservedMessages = threadState.messages.some(
-      (message) => !message.observedSessionId
-    )
     if (
-      hasNonObservedMessages
+      !shouldContinueObservingActivity(threadState)
       || threadState.isStreaming
       || threadState.currentRequestId
     ) {
@@ -893,11 +913,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }
 
       updateThreadState(threadKey, (currentState) => {
-        const currentHasNonObservedMessages = currentState.messages.some(
-          (message) => !message.observedSessionId
-        )
         if (
-          currentHasNonObservedMessages
+          !shouldContinueObservingActivity(currentState)
           || currentState.isStreaming
           || currentState.currentRequestId
         ) {
@@ -975,13 +992,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       boundSession?.agentDeckSessionId
       ?? threadState.targetAgentDeckSessionId
       ?? null
-    const hasNonObservedMessages = threadState.messages.some(
-      (message) => !message.observedSessionId
-    )
-
     if (
       !agentDeckSessionId
-      || hasNonObservedMessages
+      || !shouldContinueObservingActivity(threadState)
       || threadState.isStreaming
       || threadState.currentRequestId
     ) {
@@ -1076,6 +1089,105 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       sessionStore.setLiveEditorSession(session)
     }
     maybeObserveActiveThread()
+  }
+
+  const handleInterruptedSocketClose = async (
+    threadKey: string,
+    threadState: ThreadChatState
+  ) => {
+    const sessionStore = useSessionStore.getState()
+    const projectPath = sessionStore.projectPath
+    const boundSession = resolveThreadSession(threadKey)
+    const agentDeckSessionId =
+      boundSession?.agentDeckSessionId
+      ?? threadState.targetAgentDeckSessionId
+      ?? null
+
+    const finalizeInterruptedTurn = (message: ChatMessage) => {
+      updateThreadState(threadKey, (currentThreadState) => {
+        const nextMessages = [...currentThreadState.messages]
+        if (currentThreadState.currentStreamContent) {
+          nextMessages.push({
+            id: generateId(),
+            role: 'assistant',
+            content: currentThreadState.currentStreamContent,
+            attachments:
+              currentThreadState.pendingAssistantAttachments.length > 0
+                ? currentThreadState.pendingAssistantAttachments
+                : undefined,
+            timestamp: new Date(),
+          })
+        }
+        nextMessages.push(message)
+        return resetThreadRuntimeState(currentThreadState, {
+          messages: nextMessages,
+        })
+      })
+    }
+
+    if (!projectPath || !agentDeckSessionId) {
+      finalizeInterruptedTurn({
+        id: generateId(),
+        role: 'system',
+        content: 'Live Editor connection closed before completion.',
+        timestamp: new Date(),
+        systemTone: 'error',
+      })
+      return
+    }
+
+    try {
+      const activity = await fetchObservedAgentDeckActivity({
+        projectPath,
+        threadId: boundSession?.threadId ?? threadKey,
+        agentDeckSessionId,
+      })
+
+      if (activityLooksLive(activity)) {
+        updateThreadState(threadKey, (currentThreadState) => {
+          const nextMessages = currentThreadState.messages.filter(
+            (message) => message.observedSessionId !== agentDeckSessionId
+          )
+          const partialOutput = currentThreadState.currentStreamContent.trim()
+
+          if (partialOutput) {
+            nextMessages.push({
+              id: `observed:${agentDeckSessionId}`,
+              role: 'assistant',
+              content: partialOutput,
+              timestamp: new Date(),
+              observedSessionId: agentDeckSessionId,
+            })
+          }
+
+          nextMessages.push({
+            id: generateId(),
+            role: 'system',
+            content: 'Live Editor transport disconnected. Continuing to observe Agent Deck session...',
+            timestamp: new Date(),
+            systemTone: 'info',
+          })
+
+          return resetThreadRuntimeState(currentThreadState, {
+            messages: nextMessages,
+            targetAgentDeckSessionId: activity.agent_deck_session_id,
+            observeRemoteActivity: true,
+          })
+        })
+        maybeObserveActiveThread()
+        return
+      }
+    } catch (error) {
+      console.error('[live-editor] Failed to verify interrupted Agent Deck session:', error)
+    }
+
+    finalizeInterruptedTurn({
+      id: generateId(),
+      role: 'system',
+      content: 'Live Editor connection closed before completion.',
+      timestamp: new Date(),
+      systemTone: 'error',
+    })
   }
 
   const persistThreadSessionNow = async (threadKey: string) => {
@@ -1557,31 +1669,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const threadState = getThreadStateSnapshot(get().threadStates, threadKeyRef)
 
       if (threadState.isStreaming) {
-        const nextMessages = [...threadState.messages]
-        if (threadState.currentStreamContent) {
-          nextMessages.push({
-            id: generateId(),
-            role: 'assistant',
-            content: threadState.currentStreamContent,
-            attachments:
-              threadState.pendingAssistantAttachments.length > 0
-                ? threadState.pendingAssistantAttachments
-                : undefined,
-            timestamp: new Date(),
-          })
-        }
-        nextMessages.push({
-          id: generateId(),
-          role: 'system',
-          content: 'Live Editor connection closed before completion.',
-          timestamp: new Date(),
-          systemTone: 'error',
-        })
-        updateThreadState(threadKeyRef, (currentThreadState) =>
-          resetThreadRuntimeState(currentThreadState, {
-            messages: nextMessages,
-          })
-        )
+        void handleInterruptedSocketClose(threadKeyRef, threadState)
       } else {
         updateThreadState(threadKeyRef, (currentThreadState) => ({
           ...currentThreadState,
@@ -1825,6 +1913,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             : 'Preparing live edit request...',
         currentSelectionCount: selectionTunnel.selections.length,
         currentRequestId: null,
+        observeRemoteActivity: false,
       }))
       stopObservedThreadPolling()
 

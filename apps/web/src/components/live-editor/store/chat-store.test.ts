@@ -646,6 +646,75 @@ describe('live editor selection history', () => {
     )
   })
 
+  it('keeps observing an attached Agent Deck session when the websocket closes mid-turn', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/chat-items/activity')) {
+        return jsonResponse({
+          thread_id: 'thread-1',
+          agent_deck_session_id: 'deck-session-1',
+          agent_deck_session_title: 'main-workspace',
+          agent_deck_tool: 'codex',
+          agent_deck_session_status: 'connected',
+          workspace_path: '/tmp/example-project/.agents/thread-1',
+          binding_state: 'attached',
+          output: 'Applied the Pixel Forge cleanup.',
+        })
+      }
+      return jsonResponse({})
+    })
+
+    useSessionStore.setState({
+      liveEditorSession: {
+        threadId: 'thread-1',
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project/.agents/thread-1',
+        agentDeckSessionId: 'deck-session-1',
+        agentDeckSessionTitle: 'main-workspace',
+        agentDeckTool: 'codex',
+        requestId: 'request-1',
+      },
+    })
+    useLiveEditorStore.getState().activateThread('thread-1')
+    setActiveThreadState({
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user',
+          content: 'Finish the cleanup',
+          timestamp: new Date(),
+        },
+      ],
+      isStreaming: true,
+      currentStreamContent: 'Worked for 1m 14s',
+      targetAgentDeckSessionId: 'deck-session-1',
+    })
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+
+    ws?.onclose?.(new Event('close') as unknown as CloseEvent)
+
+    await vi.waitFor(() => {
+      const state = useLiveEditorStore.getState()
+      expect(state.isStreaming).toBe(false)
+      expect(
+        state.messages.some((message) =>
+          message.content.includes('Continuing to observe Agent Deck session')
+        )
+      ).toBe(true)
+      expect(
+        state.messages.some((message) => message.content === 'Applied the Pixel Forge cleanup.')
+      ).toBe(true)
+      expect(
+        state.messages.some((message) =>
+          message.content.includes('Live Editor connection closed before completion.')
+        )
+      ).toBe(false)
+    })
+  })
+
   it('matches tool results to the correct running tool by tool call id', () => {
     const now = new Date()
 

@@ -683,24 +683,13 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         toast('An empty chat already exists — use it or send a message first.');
         return;
       }
+
+      resetLiveEditorThread(null);
+      toast.success("Started fresh local draft");
+      return;
     }
     try {
       const created = await createProjectChatSession({ agentType: defaultAgentType });
-      if (startFreshThread) {
-        if (!created.threadId) {
-          throw new Error("Created chat is missing its draft thread.");
-        }
-        const createdThread = useSessionStore
-          .getState()
-          .projectSessions.find((session) => session.threadId === created.threadId);
-        if (!createdThread) {
-          throw new Error("Created chat is missing its saved draft state.");
-        }
-        switchToThread(createdThread);
-        activateThread(created.threadId);
-        toast.success(`Started fresh chat · ${created.title}`);
-        return;
-      }
       toast.success(`Created chat ${created.title}`);
     } catch (error) {
       const message =

@@ -59,6 +59,50 @@ def _sort_timestamp(chat: ProjectChatRecord) -> str:
     return chat.last_active or chat.created_at or ""
 
 
+def _session_has_meaningful_editor_state(session: SessionRecord) -> bool:
+    editor_state = session.editor_state
+    if not isinstance(editor_state, dict):
+        return False
+
+    if str(editor_state.get("targetUrl") or "").strip():
+        return True
+
+    if editor_state.get("activePreviewTool") == "select":
+        return True
+
+    url_history = editor_state.get("urlHistory")
+    if isinstance(url_history, list) and any(
+        isinstance(entry, str) and entry.strip() for entry in url_history
+    ):
+        return True
+
+    preview_tabs = editor_state.get("previewTabs")
+    if isinstance(preview_tabs, list):
+        if len(preview_tabs) > 1:
+            return True
+        if len(preview_tabs) == 1 and isinstance(preview_tabs[0], dict):
+            tab = preview_tabs[0]
+            if str(tab.get("url") or "").strip():
+                return True
+            if tab.get("localTarget") is not None:
+                return True
+
+    return False
+
+
+def _should_surface_session_as_chat(
+    session: SessionRecord,
+    project_path: str,
+) -> bool:
+    if session.agent_deck_session_id:
+        return True
+
+    if normalize_project_path(session.workspace_path) != normalize_project_path(project_path):
+        return True
+
+    return _session_has_meaningful_editor_state(session)
+
+
 def _match_target_for_session(
     session: SessionRecord,
     *,
@@ -121,6 +165,9 @@ def reconcile_project_chats(
     chats: list[ProjectChatRecord] = []
 
     for session in sessions:
+        if not _should_surface_session_as_chat(session, normalized_project_path):
+            continue
+
         matched_target = _match_target_for_session(
             session,
             visible_targets=visible_targets,

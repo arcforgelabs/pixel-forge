@@ -87,6 +87,26 @@ class ProjectChatsReconcileTest(unittest.TestCase):
                     agent_deck_session_id=None,
                     agent_deck_session_title="Chat draft-root",
                     agent_deck_tool=None,
+                    editor_state={
+                        "draftAgentType": "claude",
+                        "activePreviewTool": None,
+                        "targetUrl": "https://example.com/root",
+                        "activeTab": "chat",
+                        "viewportMode": "fluid",
+                        "showUrlHistory": False,
+                        "previewTabs": [
+                            {
+                                "id": "preview-restored",
+                                "url": "https://example.com/root",
+                                "title": "Root",
+                                "mode": "browser",
+                                "localTarget": None,
+                            }
+                        ],
+                        "activePreviewTabId": "preview-restored",
+                        "urlHistory": ["https://example.com/root"],
+                        "urlHistoryCursor": 0,
+                    },
                 )
             ],
             visible_targets=[
@@ -138,6 +158,26 @@ class ProjectChatsReconcileTest(unittest.TestCase):
                     agent_deck_session_id=None,
                     workspace_path="/tmp/project",
                     agent_deck_session_title="closeout-root",
+                    editor_state={
+                        "draftAgentType": "claude",
+                        "activePreviewTool": None,
+                        "targetUrl": "https://example.com/root",
+                        "activeTab": "chat",
+                        "viewportMode": "fluid",
+                        "showUrlHistory": False,
+                        "previewTabs": [
+                            {
+                                "id": "preview-restored",
+                                "url": "https://example.com/root",
+                                "title": "Root",
+                                "mode": "browser",
+                                "localTarget": None,
+                            }
+                        ],
+                        "activePreviewTabId": "preview-restored",
+                        "urlHistory": ["https://example.com/root"],
+                        "urlHistoryCursor": 0,
+                    },
                 )
             ],
             visible_targets=[
@@ -158,6 +198,80 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(managed_chat.binding_state, "detached")
         self.assertEqual(adopted_chat.agent_deck_session_id, "deck-root")
         self.assertEqual(adopted_chat.binding_state, "attached")
+
+    def test_skips_blank_detached_root_draft_sessions(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    workspace_path="/tmp/project",
+                    agent_deck_session_id=None,
+                    agent_deck_session_title="Chat blank-root",
+                    agent_deck_tool=None,
+                    editor_state={
+                        "draftAgentType": "claude",
+                        "activePreviewTool": None,
+                        "targetUrl": "",
+                        "activeTab": "chat",
+                        "viewportMode": "fluid",
+                        "showUrlHistory": False,
+                        "previewTabs": [
+                            {
+                                "id": "preview-restored",
+                                "url": "",
+                                "title": "Tab 1",
+                                "mode": None,
+                                "localTarget": None,
+                            }
+                        ],
+                        "activePreviewTabId": "preview-restored",
+                        "urlHistory": [],
+                        "urlHistoryCursor": -1,
+                    },
+                )
+            ],
+            visible_targets=[],
+        )
+
+        self.assertEqual(chats, [])
+
+    def test_keeps_detached_root_draft_with_meaningful_editor_state(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    workspace_path="/tmp/project",
+                    agent_deck_session_id=None,
+                    agent_deck_session_title="Useful draft",
+                    agent_deck_tool=None,
+                    editor_state={
+                        "draftAgentType": "claude",
+                        "activePreviewTool": None,
+                        "targetUrl": "https://field.arcforge.au/",
+                        "activeTab": "chat",
+                        "viewportMode": "fluid",
+                        "showUrlHistory": False,
+                        "previewTabs": [
+                            {
+                                "id": "preview-restored",
+                                "url": "https://field.arcforge.au/",
+                                "title": "Field",
+                                "mode": "browser",
+                                "localTarget": None,
+                            }
+                        ],
+                        "activePreviewTabId": "preview-restored",
+                        "urlHistory": ["https://field.arcforge.au/"],
+                        "urlHistoryCursor": 0,
+                    },
+                )
+            ],
+            visible_targets=[],
+        )
+
+        self.assertEqual(len(chats), 1)
+        self.assertEqual(chats[0].title, "Useful draft")
+        self.assertEqual(chats[0].binding_state, "detached")
 
     def test_finds_reconciled_chat_by_agent_deck_session_id(self) -> None:
         chats = reconcile_project_chats(
