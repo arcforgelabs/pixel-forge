@@ -268,6 +268,23 @@ def _base_env() -> dict[str, str]:
     return env
 
 
+def _without_nested_agent_deck_session_env(env: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(env)
+    for key in (
+        "TMUX",
+        "TMUX_PANE",
+        "AGENTDECK_INSTANCE_ID",
+        "AGENTDECK_TITLE",
+        "AGENTDECK_TOOL",
+        "CLAUDE_SESSION_ID",
+        "GEMINI_SESSION_ID",
+        "OPENCODE_SESSION_ID",
+        "CODEX_SESSION_ID",
+    ):
+        cleaned.pop(key, None)
+    return cleaned
+
+
 def _have_systemd_service() -> bool:
     try:
         result = subprocess.run(
@@ -503,10 +520,12 @@ def _command_agent_deck_surface_open(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _agent_deck_tui_exec_env() -> dict[str, str]:
+def _agent_deck_tui_exec_env(*, for_external_terminal: bool = False) -> dict[str, str]:
     env = _base_env()
     env.update(agent_deck_env())
     env.setdefault("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", agent_deck_tui_title())
+    if for_external_terminal:
+        env = _without_nested_agent_deck_session_env(env)
     return env
 
 
@@ -546,7 +565,7 @@ def _command_agent_deck_tui_open(_args: argparse.Namespace) -> int:
 
     subprocess.Popen(
         command,
-        env=_agent_deck_tui_exec_env(),
+        env=_agent_deck_tui_exec_env(for_external_terminal=True),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
