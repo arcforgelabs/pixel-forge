@@ -759,33 +759,6 @@ async function stagePreviewUpdateNotice(options: {
   useSessionStore.getState().setPendingPreviewUpdate(payload.update)
 }
 
-async function fetchObservedAgentDeckActivity(options: {
-  projectPath: string
-  threadId?: string | null
-  agentDeckSessionId?: string | null
-}) {
-  const query = new URLSearchParams()
-  if (options.threadId?.trim()) {
-    query.set('thread_id', options.threadId.trim())
-  }
-  if (options.agentDeckSessionId?.trim()) {
-    query.set('agent_deck_session_id', options.agentDeckSessionId.trim())
-  }
-
-  const response = await fetch(
-    `${HTTP_BACKEND_URL}/api/projects/${encodeURIComponent(options.projectPath)}/chat-items/activity?${query.toString()}`,
-    {
-      credentials: 'include',
-    }
-  )
-
-  if (!response.ok) {
-    const payload = await readResponsePayload(response)
-    throw new Error(getResponseErrorMessage(response, payload))
-  }
-
-  return await response.json() as ObservedAgentDeckActivity
-}
 // ============================================================================
 // Store
 // ============================================================================
