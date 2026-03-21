@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
       ipcRenderer.invoke('pixel-forge-app:focus-shell'),
     getPreviewInputState: () =>
       ipcRenderer.invoke('pixel-forge-app:get-preview-input-state'),
+    openAgentDeckSurface: (payload) =>
+      ipcRenderer.invoke('pixel-forge-app:open-agent-deck-surface', payload),
     applyControllerUpdate: (payload) =>
       ipcRenderer.invoke('pixel-forge-app:apply-controller-update', payload),
     applyPendingControllerUpdate: (payload) =>

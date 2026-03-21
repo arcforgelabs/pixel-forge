@@ -299,6 +299,12 @@ func main() {
 			webEnabled = true
 			webArgs = append(webArgs, args[1:]...)
 			// fall through to TUI launch below
+		case "web-standalone":
+			if err := runStandaloneWebSurface(profile, args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: standalone web surface failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "uninstall":
 			handleUninstall(args[1:])
 			return
@@ -2335,6 +2341,7 @@ func printHelp() {
 	fmt.Println("  openclaw, oc     Manage OpenClaw gateway integration")
 	fmt.Println("  remote           Manage remote Agent Deck sessions")
 	fmt.Println("  web              Start TUI with web UI server running alongside")
+	fmt.Println("  web-standalone   Start the web UI server without launching the TUI")
 	fmt.Println("  profile          Manage profiles")
 	fmt.Println("  update           Check for and install updates")
 	fmt.Println("  uninstall        Uninstall Agent Deck")
@@ -2407,7 +2414,9 @@ func printHelp() {
 	fmt.Println("  agent-deck skill attach my-app react  # Attach skill to project")
 	fmt.Println("  agent-deck group move my-app work     # Move session to group")
 	fmt.Println("  agent-deck web                        # TUI + web server on 127.0.0.1:8420")
+	fmt.Println("  agent-deck web-standalone             # Web surface only on 127.0.0.1:8420")
 	fmt.Println("  agent-deck web --listen :9000         # TUI + web on custom port")
+	fmt.Println("  agent-deck web-standalone --listen :9001  # Web surface only on custom port")
 	fmt.Println("  agent-deck web --read-only            # TUI + web in read-only mode")
 	fmt.Println("  agent-deck web --token secret         # TUI + web with auth token")
 	fmt.Println("  agent-deck web --help                 # Show web command flags")

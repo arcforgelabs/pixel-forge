@@ -177,6 +177,24 @@ interface ChatCloseoutResponse {
   };
 }
 
+interface AgentDeckSurfaceRecord {
+  running: boolean;
+  ready: boolean;
+  pid: number | null;
+  url: string;
+  host: string;
+  port: number;
+  profile: string;
+  homeDir: string;
+  dbPath: string;
+  logFile: string;
+  pidFile: string;
+}
+
+interface AgentDeckSurfaceResponse {
+  surface: AgentDeckSurfaceRecord;
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -243,6 +261,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
+  const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
+  const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
+  const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
   const visibleProjects = recentProjects.filter((project) => (
     !(
       RUNTIME_KIND !== "controller"
@@ -374,6 +395,27 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     );
   }, [projectPath]);
 
+  useEffect(() => {
+    if (!settingsSidebarOpen || RUNTIME_KIND !== "controller") {
+      return;
+    }
+
+    let cancelled = false;
+    void requestSidebarJson<AgentDeckSurfaceResponse>("/api/agent-deck-surface")
+      .then((payload) => {
+        if (!cancelled) {
+          setAgentDeckSurface(payload.surface);
+        }
+      })
+      .catch((error) => {
+        console.error("[settings] Failed to load Agent Deck surface status:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsSidebarOpen]);
+
   function setStack(stack: Stack) {
     setSettings((prev: Settings) => ({
       ...prev,
@@ -412,6 +454,46 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       toast.error(message);
     } finally {
       setIsApplyingControllerUpdate(false);
+    }
+  }
+
+  async function handleOpenAgentDeckSurface() {
+    try {
+      setIsOpeningAgentDeckSurface(true);
+      const payload = await requestSidebarJson<AgentDeckSurfaceResponse>(
+        "/api/agent-deck-surface/start",
+        { method: "POST" }
+      );
+      setAgentDeckSurface(payload.surface);
+
+      if (hasDesktopAppMethod(desktopApp, "openAgentDeckSurface")) {
+        await desktopApp.openAgentDeckSurface({ url: payload.surface.url });
+      } else {
+        window.open(payload.surface.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to open the Agent Deck surface";
+      toast.error(message);
+    } finally {
+      setIsOpeningAgentDeckSurface(false);
+    }
+  }
+
+  async function handleStopAgentDeckSurface() {
+    try {
+      setIsStoppingAgentDeckSurface(true);
+      const payload = await requestSidebarJson<AgentDeckSurfaceResponse>(
+        "/api/agent-deck-surface",
+        { method: "DELETE" }
+      );
+      setAgentDeckSurface(payload.surface);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to stop the Agent Deck surface";
+      toast.error(message);
+    } finally {
+      setIsStoppingAgentDeckSurface(false);
     }
   }
 
@@ -1429,6 +1511,66 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     </p>
                   </div>
                 )}
+
+                <div className="rounded-lg border border-border/70 bg-card/70 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Agent Deck Surface
+                    </p>
+                    <span
+                      className={
+                        agentDeckSurface?.ready
+                          ? "text-xs text-emerald-200"
+                          : agentDeckSurface?.running
+                            ? "text-xs text-amber-200"
+                            : "text-xs text-muted-foreground"
+                      }
+                    >
+                      {agentDeckSurface?.ready
+                        ? "running"
+                        : agentDeckSurface?.running
+                          ? "starting"
+                          : "stopped"}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-foreground">
+                    Launch the integrated Agent Deck shell against this same alpha control plane and profile.
+                  </p>
+                  {agentDeckSurface?.url && (
+                    <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                      {agentDeckSurface.url}
+                    </p>
+                  )}
+                  {agentDeckSurface?.homeDir && (
+                    <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                      {agentDeckSurface.homeDir}
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleOpenAgentDeckSurface()}
+                      disabled={isOpeningAgentDeckSurface}
+                      className="gap-1.5"
+                    >
+                      <Loader2 className={`h-3.5 w-3.5 ${isOpeningAgentDeckSurface ? "animate-spin" : "hidden"}`} />
+                      Open Agent Deck Surface
+                    </Button>
+                    {agentDeckSurface?.running && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleStopAgentDeckSurface()}
+                        disabled={isStoppingAgentDeckSurface}
+                        className="gap-1.5"
+                      >
+                        <Loader2 className={`h-3.5 w-3.5 ${isStoppingAgentDeckSurface ? "animate-spin" : "hidden"}`} />
+                        Stop Surface
+                      </Button>
+                    )}
+                  </div>
+                </div>
 
                 {!controllerAcpxBridgeAvailable && (
                   <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">

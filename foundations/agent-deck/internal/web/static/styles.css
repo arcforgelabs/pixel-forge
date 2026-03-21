@@ -265,6 +265,14 @@ body {
   min-height: 24px;
 }
 
+.session-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .menu-indent {
   width: calc(var(--level, 0) * 14px);
   flex: 0 0 auto;
@@ -276,11 +284,17 @@ body {
 }
 
 .session-title {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  color: var(--muted);
 }
 
 .tool-badge {

@@ -63,7 +63,7 @@ func TestIndexServed(t *testing.T) {
 	if !strings.Contains(contentType, "text/html") {
 		t.Fatalf("expected html content-type, got: %s", contentType)
 	}
-	if !strings.Contains(rr.Body.String(), "Agent Deck Web") {
+	if !strings.Contains(rr.Body.String(), "Pixel Forge (alpha) Agent Deck") {
 		t.Fatalf("expected shell html body, got: %s", rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), "menu-filter") {
@@ -91,7 +91,7 @@ func TestSessionRouteServed(t *testing.T) {
 	if !strings.Contains(contentType, "text/html") {
 		t.Fatalf("expected html content-type, got: %s", contentType)
 	}
-	if !strings.Contains(rr.Body.String(), "Agent Deck Web") {
+	if !strings.Contains(rr.Body.String(), "Pixel Forge (alpha) Agent Deck") {
 		t.Fatalf("expected shell html body, got: %s", rr.Body.String())
 	}
 }
@@ -131,7 +131,7 @@ func TestManifestServed(t *testing.T) {
 	if !strings.Contains(contentType, "application/manifest+json") {
 		t.Fatalf("expected manifest content-type, got: %s", contentType)
 	}
-	if !strings.Contains(rr.Body.String(), "\"name\": \"Agent Deck Web\"") {
+	if !strings.Contains(rr.Body.String(), "\"name\": \"Pixel Forge (alpha) Agent Deck\"") {
 		t.Fatalf("expected manifest payload, got: %s", rr.Body.String())
 	}
 }

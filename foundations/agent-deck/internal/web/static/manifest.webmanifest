@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Agent Deck Web",
-  "short_name": "Agent Deck",
-  "description": "Web terminal interface for Agent Deck tmux sessions.",
+  "name": "Pixel Forge (alpha) Agent Deck",
+  "short_name": "PF Agent Deck",
+  "description": "Integrated Agent Deck surface for the Pixel Forge alpha workstation lane.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

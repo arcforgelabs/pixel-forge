@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 
-from runtime_config import agent_deck_home_dir, source_root
+from runtime_config import agent_deck_home_dir, shared_db_path, source_root
 
 
 DEFAULT_AGENT_DECK_PROFILE = "workstation-v2"
@@ -34,6 +34,7 @@ def agent_deck_env() -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("PIXEL_FORGE_AGENT_DECK_PROFILE", agent_deck_profile())
     env.setdefault("AGENTDECK_PROFILE", env["PIXEL_FORGE_AGENT_DECK_PROFILE"])
+    env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
     home_dir = str(agent_deck_home_dir())
     env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", home_dir)
     env.setdefault("AGENTDECK_DIR", home_dir)

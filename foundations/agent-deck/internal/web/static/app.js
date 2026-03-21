@@ -546,7 +546,7 @@
   function renderTopBarState() {
     const selected = findSessionById(state.selectedSessionId)
     const sessionLabel = selected
-      ? selected.title || selected.id
+      ? selected.chatTitle || selected.title || selected.id
       : "no session selected"
     const detailParts = [sessionLabel]
     if (state.readOnly) {
@@ -765,7 +765,7 @@
   }
 
   function sessionMatches(session, query) {
-    const target = `${session.title || ""} ${session.tool || ""} ${session.status || ""} ${session.groupPath || ""} ${session.id || ""}`
+    const target = `${session.chatTitle || ""} ${session.chatId || ""} ${session.title || ""} ${session.tool || ""} ${session.status || ""} ${session.groupPath || ""} ${session.id || ""}`
     return normalize(target).includes(query)
   }
 
@@ -886,6 +886,19 @@
   function renderSessionRow(item) {
     const session = item.session
     const isSelected = state.selectedSessionId === session.id
+    const primaryTitle = session.chatTitle || session.title || session.id || "session"
+    const metaParts = []
+    if (session.chatId) {
+      metaParts.push(session.chatId)
+    }
+    if (session.title && session.chatTitle && session.title !== session.chatTitle) {
+      metaParts.push(session.title)
+    } else if (!session.chatId && session.id) {
+      metaParts.push(session.id)
+    }
+    if (session.workspaceKind) {
+      metaParts.push(session.workspaceKind)
+    }
 
     const btn = document.createElement("button")
     btn.type = "button"
@@ -905,9 +918,21 @@
     const status = document.createElement("span")
     status.className = `status-dot status-${normalize(session.status)}`
 
+    const copy = document.createElement("span")
+    copy.className = "session-copy"
+
     const title = document.createElement("span")
     title.className = "session-title"
-    title.textContent = session.title || session.id || "session"
+    title.textContent = primaryTitle
+
+    copy.appendChild(title)
+
+    if (metaParts.length > 0) {
+      const meta = document.createElement("span")
+      meta.className = "session-meta"
+      meta.textContent = metaParts.join(" | ")
+      copy.appendChild(meta)
+    }
 
     const tool = document.createElement("span")
     tool.className = "tool-badge"
@@ -915,7 +940,7 @@
 
     row.appendChild(indent)
     row.appendChild(status)
-    row.appendChild(title)
+    row.appendChild(copy)
     row.appendChild(tool)
     btn.appendChild(row)
     return btn
@@ -969,7 +994,9 @@
       createTerminalUI(session.id)
     }
 
-    const infoText = `Selected session: ${session.title || session.id} (${session.id}) | tool=${session.tool || "shell"} | status=${session.status || "unknown"}`
+    const sessionLabel = session.chatTitle || session.title || session.id
+    const identityLabel = session.chatId ? ` | chat=${session.chatId}` : ""
+    const infoText = `Selected session: ${sessionLabel} (${session.id})${identityLabel} | tool=${session.tool || "shell"} | status=${session.status || "unknown"}`
     state.terminalUI.info.textContent = infoText
     renderTerminalEvents()
     renderTopBarState()

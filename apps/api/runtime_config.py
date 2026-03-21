@@ -8,6 +8,8 @@ from pathlib import Path
 DEFAULT_INSTANCE_SLUG = "pixel-forge"
 DEFAULT_API_PORT = 7001
 DEFAULT_WEB_PORT = 5173
+DEFAULT_AGENT_DECK_SURFACE_HOST = "127.0.0.1"
+DEFAULT_AGENT_DECK_SURFACE_PORT = 8422
 DEFAULT_RUNTIME_KIND = "controller"
 
 
@@ -50,11 +52,35 @@ def shell_url() -> str:
     return f"http://{url_host()}:{api_port()}"
 
 
+def agent_deck_surface_host() -> str:
+    return os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_HOST") or DEFAULT_AGENT_DECK_SURFACE_HOST
+
+
+def agent_deck_surface_port() -> int:
+    return int(
+        os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_PORT") or DEFAULT_AGENT_DECK_SURFACE_PORT
+    )
+
+
+def agent_deck_surface_url() -> str:
+    explicit = os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_URL")
+    if explicit:
+        return explicit
+    return f"http://{agent_deck_surface_host()}:{agent_deck_surface_port()}"
+
+
 def shared_state_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
     base_dir = Path(override).expanduser() if override else Path.home() / ".pixel-forge"
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
+
+
+def runtime_dir() -> Path:
+    override = os.environ.get("PIXEL_FORGE_RUNTIME_DIR")
+    path = Path(override).expanduser() if override else shared_state_dir() / "runtime"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def agent_deck_home_dir() -> Path:

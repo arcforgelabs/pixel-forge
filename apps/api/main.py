@@ -41,6 +41,11 @@ from agent_deck_bridge import (
     type_agent_deck_prompt,
     wait_for_agent_deck_turn_completion,
 )
+from agent_deck_surface import (
+    ensure_agent_deck_surface_started,
+    read_agent_deck_surface_status,
+    stop_agent_deck_surface,
+)
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
@@ -1399,6 +1404,25 @@ async def get_pending_controller_update():
 @app.get("/api/runtime-info")
 async def get_runtime_info():
     return await asyncio.to_thread(read_runtime_info)
+
+
+@app.get("/api/agent-deck-surface")
+async def get_agent_deck_surface_status():
+    return {"surface": await asyncio.to_thread(read_agent_deck_surface_status)}
+
+
+@app.post("/api/agent-deck-surface/start")
+async def start_agent_deck_surface():
+    try:
+        status = await asyncio.to_thread(ensure_agent_deck_surface_started)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"surface": status}
+
+
+@app.delete("/api/agent-deck-surface")
+async def delete_agent_deck_surface():
+    return {"surface": await asyncio.to_thread(stop_agent_deck_surface)}
 
 
 @app.post("/api/controller-update")

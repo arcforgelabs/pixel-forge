@@ -53,6 +53,11 @@ type MenuGroup struct {
 type MenuSession struct {
 	ID              string         `json:"id"`
 	Title           string         `json:"title"`
+	ChatID          string         `json:"chatId,omitempty"`
+	ChatTitle       string         `json:"chatTitle,omitempty"`
+	BindingState    string         `json:"bindingState,omitempty"`
+	WorkspaceKind   string         `json:"workspaceKind,omitempty"`
+	OriginKind      string         `json:"originKind,omitempty"`
 	Tool            string         `json:"tool"`
 	Status          session.Status `json:"status"`
 	GroupPath       string         `json:"groupPath"`

@@ -33,6 +33,7 @@ const IS_UPDATER_UI_MODE = process.argv.includes('--pixel-forge-updater-ui')
 app.setName(process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge')
 
 let mainWindow = null
+let agentDeckSurfaceWindow = null
 let updaterWindow = null
 let pickerOverlayWindow = null
 let pickerOverlayResolver = null
@@ -1434,6 +1435,51 @@ async function createMainWindow() {
   })
 }
 
+function openAgentDeckSurfaceWindow(url) {
+  const targetUrl = typeof url === 'string' ? url.trim() : ''
+  if (!targetUrl) {
+    throw new Error('Agent Deck surface URL is required')
+  }
+
+  if (agentDeckSurfaceWindow && !agentDeckSurfaceWindow.isDestroyed()) {
+    if (agentDeckSurfaceWindow.webContents.getURL() !== targetUrl) {
+      agentDeckSurfaceWindow.loadURL(targetUrl)
+    }
+    agentDeckSurfaceWindow.show()
+    agentDeckSurfaceWindow.focus()
+    return { ok: true }
+  }
+
+  agentDeckSurfaceWindow = new BrowserWindow({
+    width: 1440,
+    height: 960,
+    minWidth: 960,
+    minHeight: 720,
+    backgroundColor: '#0b0d10',
+    autoHideMenuBar: true,
+    title: `${app.getName()} Agent Deck`,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+
+  agentDeckSurfaceWindow.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
+    shell.openExternal(nextUrl)
+    return { action: 'deny' }
+  })
+
+  agentDeckSurfaceWindow.on('closed', () => {
+    agentDeckSurfaceWindow = null
+  })
+
+  agentDeckSurfaceWindow.loadURL(targetUrl)
+  agentDeckSurfaceWindow.show()
+  agentDeckSurfaceWindow.focus()
+  return { ok: true }
+}
+
 app.whenReady().then(() => {
   if (IS_UPDATER_UI_MODE) {
     ipcMain.handle('pixel-forge-updater:get-state', async () => {
@@ -1667,6 +1713,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('pixel-forge-app:get-preview-input-state', async (event) => {
     return readPreviewInputState(event.sender.id)
+  })
+
+  ipcMain.handle('pixel-forge-app:open-agent-deck-surface', async (_event, payload) => {
+    return openAgentDeckSurfaceWindow(payload?.url)
   })
 
   ipcMain.handle('pixel-forge-app:consume-bootstrap-state', async () => {

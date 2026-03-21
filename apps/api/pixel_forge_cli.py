@@ -19,8 +19,13 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
+from agent_deck_surface import (
+    ensure_agent_deck_surface_started,
+    read_agent_deck_surface_status,
+    stop_agent_deck_surface,
+)
 from runtime_config import shared_state_dir
-from runtime_config import agent_deck_home_dir
+from runtime_config import agent_deck_home_dir, shared_db_path
 from runtime_version import read_runtime_info_for_root
 from selection_tunnel_cli import selection_tunnel_path
 
@@ -234,6 +239,7 @@ def _base_env() -> dict[str, str]:
     env.setdefault("PIXEL_FORGE_URL_HOST", url_host())
     env.setdefault("PIXEL_FORGE_SHARED_STATE_DIR", str(shared_state_dir()))
     env.setdefault("PIXEL_FORGE_RUNTIME_DIR", str(runtime_dir()))
+    env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
     env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", str(agent_deck_home_dir()))
     env.setdefault("AGENTDECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
     env.setdefault("AGENT_DECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
@@ -446,6 +452,32 @@ def _command_open_web(_args: argparse.Namespace) -> int:
         subprocess.run([resolved, shell_url()], check=False, env=_base_env())
     else:
         print(f"Open: {shell_url()}")
+    return 0
+
+
+def _command_agent_deck_surface_status(_args: argparse.Namespace) -> int:
+    print(json.dumps(read_agent_deck_surface_status(), indent=2))
+    return 0
+
+
+def _command_agent_deck_surface_start(_args: argparse.Namespace) -> int:
+    print(json.dumps(ensure_agent_deck_surface_started(), indent=2))
+    return 0
+
+
+def _command_agent_deck_surface_stop(_args: argparse.Namespace) -> int:
+    print(json.dumps(stop_agent_deck_surface(), indent=2))
+    return 0
+
+
+def _command_agent_deck_surface_open(_args: argparse.Namespace) -> int:
+    status = ensure_agent_deck_surface_started()
+    resolved = shutil.which("xdg-open")
+    if resolved:
+        subprocess.run([resolved, status["url"]], check=False, env=_base_env())
+    else:
+        print(f"Open: {status['url']}")
+    print(json.dumps(status, indent=2))
     return 0
 
 
@@ -734,6 +766,23 @@ def build_parser() -> argparse.ArgumentParser:
         command = subparsers.add_parser(command_name, help=help_text)
         command.set_defaults(handler=handler)
 
+    agent_deck_surface = subparsers.add_parser(
+        "agent-deck-surface",
+        help="Manage the alpha-owned Agent Deck visual surface",
+    )
+    agent_deck_surface_subparsers = agent_deck_surface.add_subparsers(
+        dest="agent_deck_surface_command",
+        required=True,
+    )
+    for command_name, help_text, handler in (
+        ("status", "Show Agent Deck surface status", _command_agent_deck_surface_status),
+        ("start", "Start the Agent Deck surface", _command_agent_deck_surface_start),
+        ("stop", "Stop the Agent Deck surface", _command_agent_deck_surface_stop),
+        ("open", "Start and open the Agent Deck surface", _command_agent_deck_surface_open),
+    ):
+        command = agent_deck_surface_subparsers.add_parser(command_name, help=help_text)
+        command.set_defaults(handler=handler)
+
     tunnel = subparsers.add_parser("tunnel", help="Read a Pixel Forge selection tunnel artifact")
     tunnel.add_argument("--project", required=True, help="Workspace path that owns the request pack")
     tunnel.add_argument("--request", required=True, help="Pixel Forge request id")
@@ -831,6 +880,7 @@ def _rewrite_compatibility_aliases(argv: list[str]) -> list[str]:
         "apply-update": ["controller-update", "apply"],
         "update-status": ["controller-update", "status"],
         "promote-clone": ["clone", "promote"],
+        "open-agent-deck-surface": ["agent-deck-surface", "open"],
     }
     replacement = alias_map.get(argv[0])
     if replacement:

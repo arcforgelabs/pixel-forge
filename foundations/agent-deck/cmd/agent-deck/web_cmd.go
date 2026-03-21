@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/ui"
 	"github.com/asheshgoplani/agent-deck/internal/web"
 )
 
@@ -54,6 +59,10 @@ func buildWebServer(profile string, args []string, menuData web.MenuDataLoader) 
 	}
 
 	effectiveProfile := session.GetEffectiveProfile(profile)
+	if menuData == nil {
+		menuData = web.NewSessionDataService(effectiveProfile)
+	}
+	menuData = web.WrapWithPixelForgeChatIdentity(menuData)
 
 	resolvedPushSubject := *pushVAPIDSubject
 	resolvedPushPublic := ""
@@ -85,4 +94,26 @@ func buildWebServer(profile string, args []string, menuData web.MenuDataLoader) 
 	})
 
 	return server, nil
+}
+
+func runStandaloneWebSurface(profile string, args []string) error {
+	effectiveProfile := session.GetEffectiveProfile(profile)
+	server, err := buildWebServer(effectiveProfile, args, nil)
+	if err != nil {
+		return err
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	go func() {
+		<-sigChan
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	fmt.Printf("%s web surface: http://%s\n", ui.RuntimeDisplayName(), server.Addr())
+	return server.Start()
 }
