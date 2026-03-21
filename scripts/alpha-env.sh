@@ -41,7 +41,7 @@ fi
 : "${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME:=Agent Deck (alpha)}"
 : "${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME:=pixel-forge-agent-deck-alpha.desktop}"
 : "${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:=pixel-forge-agent-deck-alpha}"
-: "${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/apps/web/public/favicon/alpha.png}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/apps/web/public/favicon/agent-deck-alpha.png}"
 : "${PIXEL_FORGE_DESKTOP_ENTRY_NAME:=Pixel Forge (alpha)}"
 : "${PIXEL_FORGE_DESKTOP_FILE_NAME:=pixel-forge-alpha.desktop}"
 : "${PIXEL_FORGE_DESKTOP_ICON_NAME:=pixel-forge-alpha}"
