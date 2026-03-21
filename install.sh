@@ -36,6 +36,8 @@ AGENT_DECK_SURFACE_HOST="${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-127.0.0.1}"
 AGENT_DECK_SURFACE_PORT="${PIXEL_FORGE_AGENT_DECK_SURFACE_PORT:-8422}"
 AGENT_DECK_SURFACE_URL="${PIXEL_FORGE_AGENT_DECK_SURFACE_URL:-http://${AGENT_DECK_SURFACE_HOST}:${AGENT_DECK_SURFACE_PORT}}"
 AGENT_DECK_FOUNDATION_INSTALL_DIR="$INSTALL_DIR/foundations/agent-deck"
+AGENT_DECK_FOUNDATION_BUILD_DIR="$AGENT_DECK_FOUNDATION_INSTALL_DIR/build"
+AGENT_DECK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_BUILD_DIR/agent-deck"
 AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-alpha.sh"
 AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
 STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_alpha_state_root.py"
@@ -85,6 +87,57 @@ backup_install_dir() {
     cp -a "$INSTALL_DIR"/. "$BACKUP_DIR"/
 }
 
+install_agent_deck_foundation_binary() {
+    if [ ! -d "$AGENT_DECK_FOUNDATION_INSTALL_DIR/cmd/agent-deck" ]; then
+        return
+    fi
+
+    rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+    mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+
+    if command -v go >/dev/null 2>&1; then
+        echo "Building bundled alpha Agent Deck binary..."
+        (
+            cd "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
+            "$(command -v go)" build -o "$AGENT_DECK_BUNDLED_BINARY_PATH" ./cmd/agent-deck
+        )
+        return
+    fi
+
+    if [ -x "$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck" ]; then
+        echo "Using prebuilt alpha Agent Deck binary from the foundation bundle..."
+        cp "$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck" "$AGENT_DECK_BUNDLED_BINARY_PATH"
+        chmod +x "$AGENT_DECK_BUNDLED_BINARY_PATH"
+        return
+    fi
+
+    echo "Error: unable to provision the bundled alpha Agent Deck binary. Install Go or provide foundations/agent-deck/agent-deck before running install.sh." >&2
+    exit 1
+}
+
+terminate_legacy_alpha_processes() {
+    if ! command -v pgrep >/dev/null 2>&1; then
+        return
+    fi
+
+    local -a legacy_pids=()
+    mapfile -t legacy_pids < <(pgrep -f "$LEGACY_ALPHA_INSTALL_NAME" 2>/dev/null || true)
+    if [ "${#legacy_pids[@]}" -eq 0 ]; then
+        return
+    fi
+
+    kill "${legacy_pids[@]}" 2>/dev/null || true
+    for _ in $(seq 1 5); do
+        sleep 1
+        mapfile -t legacy_pids < <(pgrep -f "$LEGACY_ALPHA_INSTALL_NAME" 2>/dev/null || true)
+        if [ "${#legacy_pids[@]}" -eq 0 ]; then
+            return
+        fi
+    done
+
+    kill -9 "${legacy_pids[@]}" 2>/dev/null || true
+}
+
 cleanup_legacy_alpha_install() {
     if [ "$INSTALL_NAME" = "$LEGACY_ALPHA_INSTALL_NAME" ]; then
         return
@@ -97,6 +150,7 @@ cleanup_legacy_alpha_install() {
         systemctl --user daemon-reload 2>/dev/null || true
     fi
 
+    terminate_legacy_alpha_processes
     rm -f "$BIN_DIR/${LEGACY_ALPHA_CLI_NAME}"
     rm -f "$BIN_DIR/${LEGACY_ALPHA_SHELL_NAME}"
     rm -f "$HOME/.local/share/applications/${LEGACY_ALPHA_DESKTOP_FILE_NAME}"
@@ -140,7 +194,7 @@ if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
     echo "Bundling alpha Agent Deck foundation..."
     mkdir -p "$INSTALL_DIR/foundations"
     cp -r "$AGENT_DECK_FOUNDATION_SOURCE_DIR" "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
-    rm -rf "$AGENT_DECK_FOUNDATION_INSTALL_DIR/build"
+    install_agent_deck_foundation_binary
 fi
 if [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
     mkdir -p "$INSTALL_DIR/scripts"
