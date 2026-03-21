@@ -41,5 +41,5 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
         self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], expected)
         self.assertEqual(env["AGENTDECK_DIR"], expected)
         self.assertEqual(env["AGENT_DECK_DIR"], expected)
-        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "workstation-v2")
-        self.assertEqual(env["AGENTDECK_PROFILE"], "workstation-v2")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "alpha")
+        self.assertEqual(env["AGENTDECK_PROFILE"], "alpha")

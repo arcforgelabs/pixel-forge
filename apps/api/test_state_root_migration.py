@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from state_root_migration import MIGRATION_MARKER_NAME, ensure_state_root_ready
+from state_root_migration import (
+    MIGRATION_MARKER_NAME,
+    ensure_agent_deck_profile_slug,
+    ensure_state_root_ready,
+)
 
 
 class StateRootMigrationTest(unittest.TestCase):
@@ -32,7 +36,8 @@ class StateRootMigrationTest(unittest.TestCase):
 
             self.assertTrue(result.migrated)
             self.assertEqual((target / "pixel-forge.db").read_text(encoding="utf-8"), "db")
-            self.assertTrue((target / "agent-deck" / "profiles" / "workstation-v2" / "state.db").is_file())
+            self.assertTrue((target / "agent-deck" / "profiles" / "alpha" / "state.db").is_file())
+            self.assertFalse((target / "agent-deck" / "profiles" / "workstation-v2").exists())
             self.assertTrue((target / "workspaces" / "chat-1" / "README.txt").is_file())
             self.assertFalse((target / "runtime").exists())
 
@@ -56,6 +61,20 @@ class StateRootMigrationTest(unittest.TestCase):
             self.assertFalse(result.migrated)
             self.assertEqual((target / "pixel-forge.db").read_text(encoding="utf-8"), "current")
             self.assertFalse((target / MIGRATION_MARKER_NAME).exists())
+
+    def test_existing_alpha_root_promotes_legacy_profile_slug_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_root:
+            base = Path(temp_root)
+            target = base / "alpha"
+            legacy_profile = target / "agent-deck" / "profiles" / "workstation-v2"
+            legacy_profile.mkdir(parents=True)
+            (legacy_profile / "state.db").write_text("profile", encoding="utf-8")
+
+            migrated = ensure_agent_deck_profile_slug(target)
+
+            self.assertTrue(migrated)
+            self.assertTrue((target / "agent-deck" / "profiles" / "alpha" / "state.db").is_file())
+            self.assertFalse(legacy_profile.exists())
 
 
 if __name__ == "__main__":

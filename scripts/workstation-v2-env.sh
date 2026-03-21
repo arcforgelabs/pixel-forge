@@ -31,7 +31,7 @@ fi
 : "${PIXEL_FORGE_LOG_FILE:=$PIXEL_FORGE_RUNTIME_DIR/${PIXEL_FORGE_SERVICE_NAME}.log}"
 : "${PIXEL_FORGE_SHELL_URL:=http://${PIXEL_FORGE_URL_HOST}:${PIXEL_FORGE_API_PORT}}"
 : "${PIXEL_FORGE_PREVIEW_PARTITION:=persist:${PIXEL_FORGE_INSTANCE_SLUG}-preview}"
-: "${PIXEL_FORGE_AGENT_DECK_PROFILE:=workstation-v2}"
+: "${PIXEL_FORGE_AGENT_DECK_PROFILE:=alpha}"
 : "${PIXEL_FORGE_AGENT_DECK_HOME:=$PIXEL_FORGE_SHARED_STATE_DIR/agent-deck}"
 : "${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/foundations/agent-deck}"
 : "${PIXEL_FORGE_AGENT_DECK_CMD:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-deck-workstation-v2.sh}"

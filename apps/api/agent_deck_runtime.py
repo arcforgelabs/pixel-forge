@@ -4,9 +4,10 @@ import os
 import shlex
 
 from runtime_config import agent_deck_home_dir, shared_db_path, source_root
+from state_root_migration import default_alpha_agent_deck_profile
 
 
-DEFAULT_AGENT_DECK_PROFILE = "workstation-v2"
+DEFAULT_AGENT_DECK_PROFILE = default_alpha_agent_deck_profile()
 
 
 def agent_deck_profile() -> str:

@@ -68,11 +68,11 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 ## Current System Shape
 
 - This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge-alpha`.
-- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
+- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=alpha` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-workstation-v2 agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
-- Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is now a legacy alpha migration source, not the active root.
+- Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is only a one-way migration fallback when present and should be retired after successful alpha verification.
 - The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only activity records in `workstation_events`.
 - Persisted `sessions.thread_id` remains the stable chat-id compatibility surface in this lane. Agent Deck session ids are binding metadata and lookup keys, not the primary user-facing category.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
@@ -157,7 +157,7 @@ The important boundary is:
 
 #### Integrated Agent Deck Surface Lane
 
-- The second shell is the vendored Agent Deck web surface running in standalone mode against the same alpha-owned Agent Deck home and profile.
+- The second shell is the vendored Agent Deck web surface running in standalone mode against the same alpha-owned Agent Deck home and the alpha profile slug.
 - Pixel Forge owns the launcher/runtime path for that surface and can open it from the same installed alpha app lane instead of delegating to the stable standalone Agent Deck install.
 - The surface still attaches to real tmux-backed Agent Deck sessions, but it now overlays shared Pixel Forge chat identity where a live session is bound to a saved chat.
 - This lane proves two shells over one workstation foundation, but its menu/status updates still rest on Agent Deck status files plus storage snapshots rather than the final native workstation event bus.
