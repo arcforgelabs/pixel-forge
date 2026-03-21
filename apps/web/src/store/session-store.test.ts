@@ -624,6 +624,32 @@ describe("session-store chat creation", () => {
     expect(state.selectedAgentDeckTargetId).toBeNull();
     expect(state.defaultAgentType).toBe("claude");
   });
+
+  it("surfaces plain-text chat creation failures without rereading the response body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.includes("/api/projects/")
+          && url.includes("/chats")
+          && init?.method === "POST"
+        ) {
+          return new Response("Chat creation is temporarily unavailable", {
+            status: 503,
+            headers: { "Content-Type": "text/plain" },
+          });
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    await expect(
+      useSessionStore.getState().createProjectChatSession({
+        agentType: "claude",
+      })
+    ).rejects.toThrow("Chat creation is temporarily unavailable");
+  });
 });
 
 describe("createAgentDeckTargetSession", () => {

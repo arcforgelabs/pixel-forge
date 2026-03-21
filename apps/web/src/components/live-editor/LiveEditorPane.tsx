@@ -16,6 +16,7 @@ import { HTTP_BACKEND_URL, RUNTIME_KIND, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import type {
   PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPreviewTool,
@@ -335,19 +336,8 @@ async function requestPreviewJson<T>(path: string, init?: RequestInit): Promise<
   })
 
   if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    try {
-      const payload = await response.json()
-      if (typeof payload?.detail === 'string') {
-        message = payload.detail
-      }
-    } catch {
-      const text = await response.text()
-      if (text) {
-        message = text
-      }
-    }
-    throw new Error(message)
+    const payload = await readResponsePayload(response)
+    throw new Error(getResponseErrorMessage(response, payload))
   }
 
   return response.json() as Promise<T>
