@@ -39,6 +39,13 @@ AGENT_DECK_FOUNDATION_INSTALL_DIR="$INSTALL_DIR/foundations/agent-deck"
 AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-workstation-v2.sh"
 AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
 STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_alpha_state_root.py"
+AGENT_DECK_TUI_LAUNCHER_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME:-pixel-forge-agent-deck-alpha}"
+AGENT_DECK_TUI_TITLE="${PIXEL_FORGE_AGENT_DECK_TUI_TITLE:-Agent Deck (alpha)}"
+AGENT_DECK_TUI_WM_CLASS="${PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS:-pixel-forge-agent-deck-alpha}"
+AGENT_DECK_TUI_DESKTOP_ENTRY_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME:-Agent Deck (alpha)}"
+AGENT_DECK_TUI_DESKTOP_FILE_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME:-pixel-forge-agent-deck-alpha.desktop}"
+AGENT_DECK_TUI_ICON_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:-pixel-forge-agent-deck-alpha}"
+AGENT_DECK_TUI_ICON_SOURCE="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/alpha.png}"
 SKIP_SYSTEMD="${PIXEL_FORGE_INSTALL_SKIP_SYSTEMD:-0}"
 SKIP_DESKTOP_INTEGRATION="${PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION:-0}"
 DESKTOP_ENTRY_NAME="${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-Pixel Forge}"
@@ -206,6 +213,49 @@ LAUNCHER
 
 chmod +x "$BIN_DIR/${CLI_NAME}"
 
+cat > "$BIN_DIR/${AGENT_DECK_TUI_LAUNCHER_NAME}" <<TUI
+#!/bin/bash
+
+set -euo pipefail
+
+LAUNCHER_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+CLI_NAME="\${PIXEL_FORGE_CLI_NAME:-$CLI_NAME}"
+INSTALL_DIR="\${PIXEL_FORGE_INSTALL_DIR:-$INSTALL_DIR}"
+SHARED_STATE_DIR="\${PIXEL_FORGE_SHARED_STATE_DIR:-$SHARED_STATE_DIR}"
+LEGACY_SHARED_STATE_DIR="\${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$LEGACY_SHARED_STATE_DIR}"
+PIXEL_FORGE_DB_PATH="\${PIXEL_FORGE_DB_PATH:-$DB_PATH}"
+PIXEL_FORGE_AGENT_DECK_PROFILE="\${PIXEL_FORGE_AGENT_DECK_PROFILE:-$AGENT_DECK_PROFILE}"
+PIXEL_FORGE_AGENT_DECK_HOME="\${PIXEL_FORGE_AGENT_DECK_HOME:-$AGENT_DECK_HOME}"
+PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT="\${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-$AGENT_DECK_FOUNDATION_INSTALL_DIR}"
+PIXEL_FORGE_AGENT_DECK_CMD="\${PIXEL_FORGE_AGENT_DECK_CMD:-$AGENT_DECK_CMD_DEFAULT}"
+PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER="\${PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER:-$STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH}"
+PIXEL_FORGE_AGENT_DECK_TUI_TITLE="\${PIXEL_FORGE_AGENT_DECK_TUI_TITLE:-$AGENT_DECK_TUI_TITLE}"
+PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS="\${PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS:-$AGENT_DECK_TUI_WM_CLASS}"
+export PIXEL_FORGE_INSTALL_DIR="\$INSTALL_DIR"
+export PIXEL_FORGE_SHARED_STATE_DIR="\$SHARED_STATE_DIR"
+export PIXEL_FORGE_LEGACY_SHARED_STATE_DIR="\$LEGACY_SHARED_STATE_DIR"
+export PIXEL_FORGE_DB_PATH
+export PIXEL_FORGE_AGENT_DECK_PROFILE
+export PIXEL_FORGE_AGENT_DECK_HOME
+export PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT
+export PIXEL_FORGE_AGENT_DECK_CMD
+export PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER
+export PIXEL_FORGE_AGENT_DECK_TUI_TITLE
+export PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS
+export AGENTDECK_PROFILE="\${AGENTDECK_PROFILE:-\$PIXEL_FORGE_AGENT_DECK_PROFILE}"
+export AGENTDECK_DIR="\${AGENTDECK_DIR:-\$PIXEL_FORGE_AGENT_DECK_HOME}"
+export AGENT_DECK_DIR="\${AGENT_DECK_DIR:-\$PIXEL_FORGE_AGENT_DECK_HOME}"
+
+if [[ "\${1:-}" == "run" ]]; then
+    shift
+    exec "\$PIXEL_FORGE_AGENT_DECK_CMD" "\$@"
+fi
+
+exec "\$LAUNCHER_DIR/\$CLI_NAME" agent-deck-tui open "\$@"
+TUI
+
+chmod +x "$BIN_DIR/${AGENT_DECK_TUI_LAUNCHER_NAME}"
+
 cat > "$BIN_DIR/${SHELL_NAME}" <<SHELL
 #!/bin/bash
 
@@ -355,6 +405,11 @@ else
         exit 1
     fi
     cp "$DESKTOP_ICON_SOURCE" "$ICON_DIR/${DESKTOP_ICON_NAME}.png"
+    if [ ! -f "$AGENT_DECK_TUI_ICON_SOURCE" ]; then
+        echo "Error: Agent Deck alpha icon source missing at $AGENT_DECK_TUI_ICON_SOURCE" >&2
+        exit 1
+    fi
+    cp "$AGENT_DECK_TUI_ICON_SOURCE" "$ICON_DIR/${AGENT_DECK_TUI_ICON_NAME}.png"
 
     DESKTOP_DIR="$HOME/.local/share/applications"
     mkdir -p "$DESKTOP_DIR"
@@ -370,6 +425,19 @@ Type=Application
 Categories=Development;WebDevelopment;
 StartupNotify=true
 StartupWMClass=pixel-forge-desktop
+DESKTOP
+
+    cat > "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}" << DESKTOP
+[Desktop Entry]
+Name=${AGENT_DECK_TUI_DESKTOP_ENTRY_NAME}
+Comment=Alpha-owned Agent Deck terminal app for Pixel Forge integration
+Exec=bash -lc 'exec ${AGENT_DECK_TUI_LAUNCHER_NAME}'
+Icon=${AGENT_DECK_TUI_ICON_NAME}
+Terminal=false
+Type=Application
+Categories=Development;
+StartupNotify=true
+StartupWMClass=${AGENT_DECK_TUI_WM_CLASS}
 DESKTOP
 
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
@@ -398,7 +466,10 @@ echo "  ${CLI_NAME} tunnel --project <path> --request <id>"
 echo "  ${CLI_NAME} controller-update stage --project \$PWD --git-ref HEAD --summary 'Update ready to load'"
 echo "  ${CLI_NAME} controller-update apply"
 echo "  ${CLI_NAME} clone promote <session> --into master --commit --push --stage"
+echo "  ${CLI_NAME} agent-deck-tui open   # Open Agent Deck (alpha) in a terminal window"
+echo "  ${CLI_NAME} agent-deck-tui run    # Run Agent Deck (alpha) in the current terminal"
 echo "  ${SHELL_NAME}    # Open the desktop shell"
+echo "  ${AGENT_DECK_TUI_LAUNCHER_NAME}   # Open Agent Deck (alpha)"
 echo "  ${CLI_NAME} logs     # Tail logs"
 echo "  ${CLI_NAME} status   # Check status"
 echo ""

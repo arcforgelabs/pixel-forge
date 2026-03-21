@@ -1515,7 +1515,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                 <div className="rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Agent Deck Surface
+                      Agent Deck Web Surface
                     </p>
                     <span
                       className={
@@ -1555,7 +1555,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       className="gap-1.5"
                     >
                       <Loader2 className={`h-3.5 w-3.5 ${isOpeningAgentDeckSurface ? "animate-spin" : "hidden"}`} />
-                      Open Agent Deck Surface
+                      Open Agent Deck Web Surface
                     </Button>
                     {agentDeckSurface?.running && (
                       <Button

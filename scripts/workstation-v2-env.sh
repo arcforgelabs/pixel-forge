@@ -35,6 +35,13 @@ fi
 : "${PIXEL_FORGE_AGENT_DECK_HOME:=$PIXEL_FORGE_SHARED_STATE_DIR/agent-deck}"
 : "${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/foundations/agent-deck}"
 : "${PIXEL_FORGE_AGENT_DECK_CMD:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-deck-workstation-v2.sh}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME:=pixel-forge-agent-deck-alpha}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_TITLE:=Agent Deck (alpha)}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS:=pixel-forge-agent-deck-alpha}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME:=Agent Deck (alpha)}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME:=pixel-forge-agent-deck-alpha.desktop}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:=pixel-forge-agent-deck-alpha}"
+: "${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/apps/web/public/favicon/alpha.png}"
 : "${PIXEL_FORGE_DESKTOP_ENTRY_NAME:=Pixel Forge (alpha)}"
 : "${PIXEL_FORGE_DESKTOP_FILE_NAME:=pixel-forge-workstation-v2.desktop}"
 : "${PIXEL_FORGE_DESKTOP_ICON_NAME:=pixel-forge-workstation-v2}"
@@ -69,6 +76,13 @@ export PIXEL_FORGE_AGENT_DECK_PROFILE
 export PIXEL_FORGE_AGENT_DECK_HOME
 export PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT
 export PIXEL_FORGE_AGENT_DECK_CMD
+export PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME
+export PIXEL_FORGE_AGENT_DECK_TUI_TITLE
+export PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS
+export PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME
+export PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME
+export PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME
+export PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE
 export PIXEL_FORGE_DESKTOP_ENTRY_NAME
 export PIXEL_FORGE_DESKTOP_FILE_NAME
 export PIXEL_FORGE_DESKTOP_ICON_NAME

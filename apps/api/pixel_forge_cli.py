@@ -19,6 +19,7 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
+from agent_deck_runtime import agent_deck_command, agent_deck_env, agent_deck_profile
 from agent_deck_surface import (
     ensure_agent_deck_surface_started,
     read_agent_deck_surface_status,
@@ -33,6 +34,9 @@ from selection_tunnel_cli import selection_tunnel_path
 APPLY_STATE_FILE = "controller-update-apply-state.json"
 BOOTSTRAP_STATE_FILE = "controller-bootstrap-state.json"
 DEFAULT_INSTALL_NAME = "pixel-forge"
+DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME = "pixel-forge-agent-deck-alpha"
+DEFAULT_AGENT_DECK_TUI_TITLE = "Agent Deck (alpha)"
+DEFAULT_AGENT_DECK_TUI_WM_CLASS = "pixel-forge-agent-deck-alpha"
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -73,6 +77,24 @@ def service_name() -> str:
 
 def shell_name() -> str:
     return os.environ.get("PIXEL_FORGE_SHELL_NAME", f"{install_name()}-shell")
+
+
+def agent_deck_tui_launcher_name() -> str:
+    return os.environ.get(
+        "PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME",
+        DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME,
+    )
+
+
+def agent_deck_tui_title() -> str:
+    return os.environ.get("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", DEFAULT_AGENT_DECK_TUI_TITLE)
+
+
+def agent_deck_tui_wm_class() -> str:
+    return os.environ.get(
+        "PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS",
+        DEFAULT_AGENT_DECK_TUI_WM_CLASS,
+    )
 
 
 def port() -> str:
@@ -481,6 +503,72 @@ def _command_agent_deck_surface_open(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _agent_deck_tui_exec_env() -> dict[str, str]:
+    env = _base_env()
+    env.update(agent_deck_env())
+    env.setdefault("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", agent_deck_tui_title())
+    return env
+
+
+def _agent_deck_tui_terminal_command(
+    command: Sequence[str],
+    title: str,
+    wm_class: str,
+) -> list[str] | None:
+    candidates: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("ghostty", (f"--class={wm_class}", f"--title={title}", "-e")),
+        ("gnome-terminal", (f"--class={wm_class}", f"--title={title}", "--")),
+        ("x-terminal-emulator", (f"--title={title}", "--")),
+    )
+    for binary, prefix in candidates:
+        resolved = shutil.which(binary)
+        if not resolved:
+            continue
+        return [resolved, *prefix, *command]
+    return None
+
+
+def _command_agent_deck_tui_run(_args: argparse.Namespace) -> int:
+    _exec(agent_deck_command(), env=_agent_deck_tui_exec_env())
+
+
+def _command_agent_deck_tui_open(_args: argparse.Namespace) -> int:
+    command = _agent_deck_tui_terminal_command(
+        agent_deck_command(),
+        agent_deck_tui_title(),
+        agent_deck_tui_wm_class(),
+    )
+    if command is None:
+        raise SystemExit(
+            "No supported terminal emulator found for Agent Deck (alpha). "
+            f"Run `{agent_deck_tui_launcher_name()} run` in a terminal instead."
+        )
+
+    subprocess.Popen(
+        command,
+        env=_agent_deck_tui_exec_env(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "terminal": Path(command[0]).name,
+                "title": agent_deck_tui_title(),
+                "wmClass": agent_deck_tui_wm_class(),
+                "profile": agent_deck_profile(),
+                "homeDir": str(agent_deck_home_dir()),
+                "launcher": agent_deck_tui_launcher_name(),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def _command_tunnel(args: argparse.Namespace) -> int:
     try:
         payload = json.loads(
@@ -766,6 +854,21 @@ def build_parser() -> argparse.ArgumentParser:
         command = subparsers.add_parser(command_name, help=help_text)
         command.set_defaults(handler=handler)
 
+    agent_deck_tui = subparsers.add_parser(
+        "agent-deck-tui",
+        help="Open or run the alpha-owned Agent Deck terminal app",
+    )
+    agent_deck_tui_subparsers = agent_deck_tui.add_subparsers(
+        dest="agent_deck_tui_command",
+        required=True,
+    )
+    for command_name, help_text, handler in (
+        ("open", "Open the Agent Deck alpha TUI in a separate terminal window", _command_agent_deck_tui_open),
+        ("run", "Run the Agent Deck alpha TUI in the current terminal", _command_agent_deck_tui_run),
+    ):
+        command = agent_deck_tui_subparsers.add_parser(command_name, help=help_text)
+        command.set_defaults(handler=handler)
+
     agent_deck_surface = subparsers.add_parser(
         "agent-deck-surface",
         help="Manage the alpha-owned Agent Deck visual surface",
@@ -880,6 +983,7 @@ def _rewrite_compatibility_aliases(argv: list[str]) -> list[str]:
         "apply-update": ["controller-update", "apply"],
         "update-status": ["controller-update", "status"],
         "promote-clone": ["clone", "promote"],
+        "open-agent-deck-tui": ["agent-deck-tui", "open"],
         "open-agent-deck-surface": ["agent-deck-surface", "open"],
     }
     replacement = alias_map.get(argv[0])
