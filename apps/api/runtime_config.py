@@ -57,6 +57,17 @@ def shared_state_dir() -> Path:
     return base_dir
 
 
+def agent_deck_home_dir() -> Path:
+    override = (
+        os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME")
+        or os.environ.get("AGENTDECK_DIR")
+        or os.environ.get("AGENT_DECK_DIR")
+    )
+    path = Path(override).expanduser() if override else shared_state_dir() / "agent-deck"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def skills_install_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_SKILLS_INSTALL_DIR")
     path = Path(override).expanduser() if override else shared_state_dir() / "skills"

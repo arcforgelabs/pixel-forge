@@ -2261,6 +2261,10 @@ func GenerateLaunchdPlist() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	agentDeckDir, err := GetAgentDeckDir()
+	if err != nil {
+		return "", err
+	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -2280,6 +2284,7 @@ func GenerateLaunchdPlist() (string, error) {
 	plist = strings.ReplaceAll(plist, "__BRIDGE_PATH__", bridgePath)
 	plist = strings.ReplaceAll(plist, "__LOG_PATH__", logPath)
 	plist = strings.ReplaceAll(plist, "__HOME__", homeDir)
+	plist = strings.ReplaceAll(plist, "__AGENTDECK_DIR__", agentDeckDir)
 	agentDeckPath := findAgentDeck()
 	plist = strings.ReplaceAll(plist, "__PATH__", buildDaemonPath(agentDeckPath))
 
@@ -2364,6 +2369,12 @@ const conductorPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
         <string>__PATH__</string>
         <key>HOME</key>
         <string>__HOME__</string>
+        <key>AGENTDECK_DIR</key>
+        <string>__AGENTDECK_DIR__</string>
+        <key>AGENT_DECK_DIR</key>
+        <string>__AGENTDECK_DIR__</string>
+        <key>PIXEL_FORGE_AGENT_DECK_HOME</key>
+        <string>__AGENTDECK_DIR__</string>
     </dict>
 
     <key>ThrottleInterval</key>
@@ -2409,6 +2420,12 @@ const transitionNotifierPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
         <string>__PATH__</string>
         <key>HOME</key>
         <string>__HOME__</string>
+        <key>AGENTDECK_DIR</key>
+        <string>__AGENTDECK_DIR__</string>
+        <key>AGENT_DECK_DIR</key>
+        <string>__AGENTDECK_DIR__</string>
+        <key>PIXEL_FORGE_AGENT_DECK_HOME</key>
+        <string>__AGENTDECK_DIR__</string>
     </dict>
 
     <key>ThrottleInterval</key>
@@ -2433,6 +2450,9 @@ StandardOutput=journal
 StandardError=journal
 Environment=PATH=__PATH__
 Environment=HOME=__HOME__
+Environment=AGENTDECK_DIR=__AGENTDECK_DIR__
+Environment=AGENT_DECK_DIR=__AGENTDECK_DIR__
+Environment=PIXEL_FORGE_AGENT_DECK_HOME=__AGENTDECK_DIR__
 
 [Install]
 WantedBy=default.target
@@ -2452,6 +2472,9 @@ StandardOutput=append:__LOG_PATH__
 StandardError=append:__LOG_PATH__
 Environment=PATH=__PATH__
 Environment=HOME=__HOME__
+Environment=AGENTDECK_DIR=__AGENTDECK_DIR__
+Environment=AGENT_DECK_DIR=__AGENTDECK_DIR__
+Environment=PIXEL_FORGE_AGENT_DECK_HOME=__AGENTDECK_DIR__
 
 [Install]
 WantedBy=default.target
@@ -2497,6 +2520,10 @@ func GenerateSystemdBridgeService() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	agentDeckDir, err := GetAgentDeckDir()
+	if err != nil {
+		return "", err
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -2512,6 +2539,7 @@ func GenerateSystemdBridgeService() (string, error) {
 	unit = strings.ReplaceAll(unit, "__BRIDGE_PATH__", bridgePath)
 	unit = strings.ReplaceAll(unit, "__LOG_PATH__", logPath)
 	unit = strings.ReplaceAll(unit, "__HOME__", homeDir)
+	unit = strings.ReplaceAll(unit, "__AGENTDECK_DIR__", agentDeckDir)
 	agentDeckPath := findAgentDeck()
 	unit = strings.ReplaceAll(unit, "__PATH__", buildDaemonPath(agentDeckPath))
 	return unit, nil
@@ -2537,6 +2565,7 @@ func GenerateTransitionNotifierLaunchdPlist() (string, error) {
 	plist := strings.ReplaceAll(transitionNotifierPlistTemplate, "__AGENT_DECK__", execPath)
 	plist = strings.ReplaceAll(plist, "__LOG_PATH__", logPath)
 	plist = strings.ReplaceAll(plist, "__HOME__", homeDir)
+	plist = strings.ReplaceAll(plist, "__AGENTDECK_DIR__", agentDeckDir)
 	plist = strings.ReplaceAll(plist, "__PATH__", buildDaemonPath(agentDeckPath))
 	return plist, nil
 }
@@ -2570,6 +2599,7 @@ func GenerateSystemdTransitionNotifierService() (string, error) {
 	unit := strings.ReplaceAll(systemdTransitionNotifierServiceTemplate, "__AGENT_DECK__", execPath)
 	unit = strings.ReplaceAll(unit, "__LOG_PATH__", logPath)
 	unit = strings.ReplaceAll(unit, "__HOME__", homeDir)
+	unit = strings.ReplaceAll(unit, "__AGENTDECK_DIR__", agentDeckDir)
 	unit = strings.ReplaceAll(unit, "__PATH__", buildDaemonPath(agentDeckPath))
 	return unit, nil
 }

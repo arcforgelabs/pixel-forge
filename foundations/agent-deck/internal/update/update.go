@@ -107,11 +107,7 @@ func shouldIgnoreLatestVersion(latestVersion, ignoredVersion string) bool {
 
 // getCacheDir returns the cache directory path
 func getCacheDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".agent-deck"), nil
+	return session.GetAgentDeckDir()
 }
 
 // loadCache loads the update cache from disk
@@ -675,13 +671,10 @@ func extractBinaryFromTarGz(tarPath string) ([]byte, error) {
 // UpdateBridgePy refreshes the installed bridge.py from the embedded runtime template.
 // This keeps bridge behavior in sync with the currently running binary.
 func UpdateBridgePy() error {
-	// Get the conductor directory
-	home, err := os.UserHomeDir()
+	conductorDir, err := session.ConductorDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return fmt.Errorf("failed to resolve conductor directory: %w", err)
 	}
-
-	conductorDir := filepath.Join(home, ".agent-deck", "conductor")
 	bridgePath := filepath.Join(conductorDir, "bridge.py")
 
 	// Check if conductor directory exists

@@ -1,12 +1,12 @@
 import { useEffect } from "react";
 
 const CODING_SETTINGS = {
-  title: "Coding...",
-  favicon: "/favicon/coding.png",
+  title: "Coding... · Pixel Forge (alpha)",
+  favicon: "/favicon/coding-alpha.png",
 };
 const DEFAULT_SETTINGS = {
-  title: "Pixel Forge",
-  favicon: "/favicon/main.png",
+  title: "Pixel Forge (alpha)",
+  favicon: "/favicon/alpha.png",
 };
 
 const useBrowserTabIndicator = (isCoding: boolean) => {

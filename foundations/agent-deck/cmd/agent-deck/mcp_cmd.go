@@ -89,6 +89,10 @@ func handleMCPList(args []string) {
 	mcps := session.GetAvailableMCPs()
 
 	if len(mcps) == 0 {
+		configPath := "~/.agent-deck/config.toml"
+		if resolved, err := session.GetConfigPath(); err == nil {
+			configPath = resolved
+		}
 		if *jsonOutput {
 			out.Print("", map[string]interface{}{
 				"mcps": []interface{}{},
@@ -96,7 +100,7 @@ func handleMCPList(args []string) {
 		} else if !quietMode {
 			fmt.Println("No MCPs configured.")
 			fmt.Println()
-			fmt.Println("Define MCPs in ~/.agent-deck/config.toml:")
+			fmt.Printf("Define MCPs in %s:\n", configPath)
 			fmt.Println()
 			fmt.Println("  [mcps.exa]")
 			fmt.Println("  command = \"npx\"")

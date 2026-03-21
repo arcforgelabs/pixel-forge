@@ -20,6 +20,7 @@ from controller_update_state import (
     write_pending_controller_update,
 )
 from runtime_config import shared_state_dir
+from runtime_config import agent_deck_home_dir
 from runtime_version import read_runtime_info_for_root
 from selection_tunnel_cli import selection_tunnel_path
 
@@ -233,6 +234,9 @@ def _base_env() -> dict[str, str]:
     env.setdefault("PIXEL_FORGE_URL_HOST", url_host())
     env.setdefault("PIXEL_FORGE_SHARED_STATE_DIR", str(shared_state_dir()))
     env.setdefault("PIXEL_FORGE_RUNTIME_DIR", str(runtime_dir()))
+    env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", str(agent_deck_home_dir()))
+    env.setdefault("AGENTDECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
+    env.setdefault("AGENT_DECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
     return env
 
 

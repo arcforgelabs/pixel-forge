@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/platform"
 )
@@ -714,21 +715,13 @@ func (s *Session) SetInjectStatusLine(inject bool) {
 // LogFile returns the path to this session's log file
 // Logs are stored in ~/.agent-deck/logs/<session-name>.log
 func (s *Session) LogFile() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/tmp"
-	}
-	logDir := filepath.Join(homeDir, ".agent-deck", "logs")
+	logDir := agentdeckhome.JoinOrTemp("logs")
 	return filepath.Join(logDir, s.Name+".log")
 }
 
 // LogDir returns the directory containing all session logs
 func LogDir() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/tmp"
-	}
-	return filepath.Join(homeDir, ".agent-deck", "logs")
+	return agentdeckhome.JoinOrTemp("logs")
 }
 
 // NewSession creates a new Session instance with a unique name
@@ -3827,11 +3820,7 @@ func BindSwitchKeyWithAck(key, targetSession, sessionID string) error {
 
 // GetAckSignalPath returns the path to the acknowledgment signal file
 func GetAckSignalPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeDir, ".agent-deck", "ack-signal"), nil
+	return agentdeckhome.Join("ack-signal")
 }
 
 // ReadAndClearAckSignal reads the session ID from the signal file and deletes it.

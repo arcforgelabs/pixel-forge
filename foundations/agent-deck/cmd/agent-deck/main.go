@@ -2486,7 +2486,7 @@ func detectTool(cmd string) string {
 // handleUninstall removes agent-deck from the system
 func handleUninstall(args []string) {
 	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
-	keepData := fs.Bool("keep-data", false, "Keep ~/.agent-deck/ (sessions, config, logs)")
+	keepData := fs.Bool("keep-data", false, "Keep Agent Deck data (sessions, config, logs)")
 	keepTmuxConfig := fs.Bool("keep-tmux-config", false, "Keep tmux configuration")
 	dryRun := fs.Bool("dry-run", false, "Show what would be removed without removing")
 	yes := fs.Bool("y", false, "Skip confirmation prompts")
@@ -2498,7 +2498,7 @@ func handleUninstall(args []string) {
 		fmt.Println()
 		fmt.Println("Options:")
 		fmt.Println("  --dry-run           Show what would be removed without removing")
-		fmt.Println("  --keep-data         Keep ~/.agent-deck/ (sessions, config, logs)")
+		fmt.Println("  --keep-data         Keep Agent Deck data (sessions, config, logs)")
 		fmt.Println("  --keep-tmux-config  Keep tmux configuration")
 		fmt.Println("  -y                  Skip confirmation prompts")
 		fmt.Println()
@@ -2524,7 +2524,10 @@ func handleUninstall(args []string) {
 	}
 
 	homeDir, _ := os.UserHomeDir()
-	dataDir := filepath.Join(homeDir, ".agent-deck")
+	dataDir, err := session.GetAgentDeckDir()
+	if err != nil {
+		dataDir = filepath.Join(homeDir, ".agent-deck")
+	}
 
 	// Track what we find
 	type foundItem struct {
@@ -2825,7 +2828,14 @@ func handleUninstall(args []string) {
 					)
 					fmt.Printf("Creating backup at %s...\n", backupFile)
 
-					cmd := exec.Command("tar", "-czf", backupFile, "-C", homeDir, ".agent-deck")
+					cmd := exec.Command(
+						"tar",
+						"-czf",
+						backupFile,
+						"-C",
+						filepath.Dir(dataDir),
+						filepath.Base(dataDir),
+					)
 					if err := cmd.Run(); err != nil {
 						fmt.Printf("Warning: failed to create backup: %v\n", err)
 					} else {
@@ -2851,7 +2861,7 @@ func handleUninstall(args []string) {
 
 	if *keepData {
 		fmt.Printf("Note: Data directory preserved at %s\n", dataDir)
-		fmt.Println("      Remove manually with: rm -rf ~/.agent-deck")
+		fmt.Printf("      Remove manually with: rm -rf %s\n", dataDir)
 	}
 
 	if *keepTmuxConfig {

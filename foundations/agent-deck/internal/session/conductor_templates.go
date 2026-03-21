@@ -178,6 +178,7 @@ No local orchestration UX/state machine exists here.
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -193,10 +194,19 @@ from aiogram.filters import CommandStart
 # Configuration
 # ---------------------------------------------------------------------------
 
-AGENT_DECK_DIR = Path.home() / ".agent-deck"
+def resolve_agent_deck_dir() -> Path:
+    for key in ("AGENTDECK_DIR", "AGENT_DECK_DIR", "PIXEL_FORGE_AGENT_DECK_HOME"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return Path(value).expanduser()
+    return Path.home() / ".agent-deck"
+
+
+AGENT_DECK_DIR = resolve_agent_deck_dir()
 CONFIG_PATH = AGENT_DECK_DIR / "config.toml"
 CONDUCTOR_DIR = AGENT_DECK_DIR / "conductor"
 LOG_PATH = CONDUCTOR_DIR / "bridge.log"
+CONDUCTOR_DIR.mkdir(parents=True, exist_ok=True)
 
 TG_MAX_LENGTH = 4096
 RESPONSE_TIMEOUT = 300

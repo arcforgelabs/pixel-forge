@@ -895,7 +895,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border/40 px-3 py-3">
-            <span className="text-sm font-semibold tracking-tight">Pixel Forge</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold tracking-tight">Pixel Forge</span>
+              <Badge
+                variant="outline"
+                className="border-orange-400/40 bg-orange-500/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-[0.28em] text-orange-200"
+              >
+                Alpha
+              </Badge>
+            </div>
             <button
               onClick={toggleSettingsSidebar}
               className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-300 hover:text-foreground active:scale-95"

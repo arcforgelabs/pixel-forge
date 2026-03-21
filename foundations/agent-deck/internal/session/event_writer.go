@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 )
 
 // StatusEvent represents a session status change event.
@@ -23,11 +25,7 @@ type StatusEvent struct {
 
 // GetEventsDir returns the path to the events directory.
 func GetEventsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), ".agent-deck", "events")
-	}
-	return filepath.Join(home, ".agent-deck", "events")
+	return agentdeckhome.JoinOrTemp("events")
 }
 
 // WriteStatusEvent atomically writes a status event to the events directory.

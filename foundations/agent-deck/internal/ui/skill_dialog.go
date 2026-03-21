@@ -464,13 +464,17 @@ func (d *SkillDialog) renderEmptyStateHelp() string {
 	helpStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
 	highlightStyle := lipgloss.NewStyle().Foreground(ColorYellow)
 	pathStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+	poolPath := "~/.agent-deck/skills/pool"
+	if resolved, err := session.GetSkillPoolPath(); err == nil {
+		poolPath = resolved
+	}
 
 	lines := []string{
 		"",
 		highlightStyle.Render("No pool skills available"),
 		"",
 		helpStyle.Render("Place reusable skills in:"),
-		pathStyle.Render("  ~/.agent-deck/skills/pool"),
+		pathStyle.Render("  " + poolPath),
 		"",
 		helpStyle.Render("Only pool skills appear in Available."),
 	}

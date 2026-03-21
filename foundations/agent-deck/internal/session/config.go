@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 )
 
 const (
@@ -33,11 +35,7 @@ type Config struct {
 
 // GetAgentDeckDir returns the base agent-deck directory (~/.agent-deck)
 func GetAgentDeckDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-	return filepath.Join(homeDir, ".agent-deck"), nil
+	return agentdeckhome.Dir()
 }
 
 // GetConfigPath returns the path to the global config file

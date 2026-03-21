@@ -872,13 +872,17 @@ func (m *MCPDialog) renderEmptyStateHelp() string {
 	helpStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
 	highlightStyle := lipgloss.NewStyle().Foreground(ColorYellow)
 	pathStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+	configPath := "~/.agent-deck/config.toml"
+	if resolved, err := session.GetConfigPath(); err == nil {
+		configPath = resolved
+	}
 
 	lines := []string{
 		"",
 		highlightStyle.Render("No MCPs configured"),
 		"",
 		helpStyle.Render("To add MCPs, edit:"),
-		pathStyle.Render("  ~/.agent-deck/config.toml"),
+		pathStyle.Render("  " + configPath),
 		"",
 		helpStyle.Render("Example:"),
 		helpStyle.Render("  [mcps.example]"),

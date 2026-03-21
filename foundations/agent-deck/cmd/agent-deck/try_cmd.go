@@ -25,6 +25,10 @@ func handleTry(profile string, args []string) {
 	sandbox := fs.Bool("sandbox", false, "Run session in Docker sandbox")
 
 	fs.Usage = func() {
+		configPath := "~/.agent-deck/config.toml"
+		if resolved, err := session.GetConfigPath(); err == nil {
+			configPath = resolved
+		}
 		fmt.Println("Usage: agent-deck try <name> [options]")
 		fmt.Println()
 		fmt.Println("Quick experiment: find or create a dated folder and start a session.")
@@ -43,7 +47,7 @@ func handleTry(profile string, args []string) {
 		fmt.Println("  agent-deck try myproject -c gemini  # Use Gemini instead of Claude")
 		fmt.Println("  agent-deck try myproject --no-session  # Just create folder")
 		fmt.Println()
-		fmt.Println("Config (~/.agent-deck/config.toml):")
+		fmt.Printf("Config (%s):\n", configPath)
 		fmt.Println("  [experiments]")
 		fmt.Println("  directory = \"~/src/tries\"    # Base directory for experiments")
 		fmt.Println("  date_prefix = true           # Add YYYY-MM-DD- prefix")

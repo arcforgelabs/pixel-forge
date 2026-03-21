@@ -67,7 +67,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 ## Current System Shape
 
 - This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge/workstation-v2`.
-- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2`.
+- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2` plus an isolated Agent Deck home at `~/.pixel-forge/workstation-v2/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
@@ -136,6 +136,7 @@ The important boundary is:
 - `workstation_events` is the first shared event log. Right now it records deduped `activity` snapshots for one chat/session pair instead of raw token events.
 - Pixel Forge consumes that event log through SSE for observed attached/adopted chats, so the frontend no longer depends on a chat-item polling loop as the primary truth.
 - The send path is still legacy for now: live dispatch enters through `/ws/live-editor`, and the event producer currently derives activity through the existing Agent Deck activity adapter instead of a native Agent Deck event tap.
+- Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
 

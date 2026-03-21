@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 )
 
@@ -161,7 +162,7 @@ func (p *SocketProxy) Start() error {
 		return nil
 	}
 
-	logDir := filepath.Join(os.Getenv("HOME"), ".agent-deck", "logs", "mcppool")
+	logDir := agentdeckhome.JoinOrTemp("logs", "mcppool")
 	_ = os.MkdirAll(logDir, 0755)
 	p.logFile = filepath.Join(logDir, fmt.Sprintf("%s_socket.log", p.name))
 

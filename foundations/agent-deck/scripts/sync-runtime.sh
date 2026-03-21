@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-RUNTIME_DIR="${HOME}/.agent-deck"
+RUNTIME_DIR="${AGENTDECK_DIR:-${AGENT_DECK_DIR:-${PIXEL_FORGE_AGENT_DECK_HOME:-${HOME}/.agent-deck}}}"
 CONDUCTOR_DIR="${RUNTIME_DIR}/conductor"
 SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 RUNTIME_ROOT=""
@@ -13,7 +13,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/sync-runtime.sh [--runtime-root <path>]
 
-Syncs runtime assets into ~/.agent-deck from either:
+Syncs runtime assets into the active Agent Deck home from either:
   - the repo checkout (default), or
   - a published runtime layer release (--runtime-root)
 EOF

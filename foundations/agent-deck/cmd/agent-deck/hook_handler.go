@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 )
 
@@ -173,11 +174,7 @@ func isTerminalHookEvent(event string) bool {
 
 // getHooksDir returns the path to the hooks status directory.
 func getHooksDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), ".agent-deck", "hooks")
-	}
-	return filepath.Join(home, ".agent-deck", "hooks")
+	return agentdeckhome.JoinOrTemp("hooks")
 }
 
 // cleanStaleHookFiles removes hook status files older than 24 hours.

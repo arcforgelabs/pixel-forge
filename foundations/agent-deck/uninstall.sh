@@ -7,7 +7,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/asheshgoplani/agent-deck/main/uninstall.sh | bash
 #
 # Options:
-#   --keep-data         Keep ~/.agent-deck/ (sessions, config, logs)
+#   --keep-data         Keep Agent Deck data (sessions, config, logs)
 #   --keep-tmux-config  Keep tmux configuration
 #   --non-interactive   Skip all prompts (removes everything)
 #   --dry-run           Show what would be removed without removing
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: uninstall.sh [options]"
             echo ""
             echo "Options:"
-            echo "  --keep-data         Keep ~/.agent-deck/ (sessions, config, logs)"
+            echo "  --keep-data         Keep Agent Deck data (sessions, config, logs)"
             echo "  --keep-tmux-config  Keep tmux configuration in ~/.tmux.conf"
             echo "  --non-interactive   Skip all prompts (removes everything)"
             echo "  --dry-run           Show what would be removed without removing"
@@ -112,7 +112,7 @@ for loc in "${BINARY_LOCATIONS[@]}"; do
 done
 
 # Check for data directory
-DATA_DIR="$HOME/.agent-deck"
+DATA_DIR="${AGENTDECK_DIR:-${AGENT_DECK_DIR:-${PIXEL_FORGE_AGENT_DECK_HOME:-$HOME/.agent-deck}}}"
 if [[ -d "$DATA_DIR" ]]; then
     FOUND_ITEMS+=("data")
 
@@ -318,7 +318,7 @@ if [[ " ${FOUND_ITEMS[*]} " =~ " data " ]] && [[ "$KEEP_DATA" != "true" ]]; then
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             BACKUP_FILE="$HOME/agent-deck-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
             echo -e "Creating backup at $BACKUP_FILE..."
-            tar -czf "$BACKUP_FILE" -C "$HOME" .agent-deck
+            tar -czf "$BACKUP_FILE" -C "$(dirname "$DATA_DIR")" "$(basename "$DATA_DIR")"
             echo -e "${GREEN}✓${NC} Backup created: $BACKUP_FILE"
         fi
     fi
@@ -335,7 +335,7 @@ echo ""
 
 if [[ "$KEEP_DATA" == "true" ]]; then
     echo -e "${YELLOW}Note:${NC} Data directory preserved at $DATA_DIR"
-    echo "      Remove manually with: rm -rf ~/.agent-deck"
+    echo "      Remove manually with: rm -rf $DATA_DIR"
 fi
 
 if [[ "$KEEP_TMUX_CONFIG" == "true" ]]; then
