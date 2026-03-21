@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from state_db import connect as connect_state_db
 from state_db import legacy_instance_db_paths
@@ -42,6 +43,7 @@ class SessionRecord:
     workspace_path: str
     thread_id: str
     backend: str
+    origin_kind: str
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     agent_deck_tool: str | None
@@ -67,6 +69,10 @@ def normalize_project_path(project_path: str) -> str:
 def project_name_for_path(project_path: str) -> str:
     normalized_path = normalize_project_path(project_path).rstrip(os.sep)
     return os.path.basename(normalized_path) or normalized_path
+
+
+def _next_chat_id() -> str:
+    return f"chat-{uuid4().hex[:12]}"
 
 
 def _connect() -> sqlite3.Connection:
@@ -309,6 +315,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 workspace_path TEXT NOT NULL,
                 thread_id TEXT NOT NULL UNIQUE,
                 backend TEXT NOT NULL,
+                origin_kind TEXT NOT NULL DEFAULT 'managed',
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
@@ -316,6 +323,19 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_session_bindings (
+                chat_id TEXT PRIMARY KEY,
+                project_path TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
+                agent_deck_session_id TEXT NOT NULL UNIQUE,
+                agent_deck_session_title TEXT,
+                agent_deck_tool TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE,
+                FOREIGN KEY (chat_id) REFERENCES sessions(thread_id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS profile_state (
@@ -333,6 +353,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON project_urls (project_path, last_used DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_last_active
                 ON sessions (project_path, last_active DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_project
+                ON chat_session_bindings (project_path, updated_at DESC);
             """
         )
         existing_session_columns = {
@@ -346,6 +368,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         if "agent_deck_tool" not in existing_session_columns:
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN agent_deck_tool TEXT"
+            )
+        if "origin_kind" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN origin_kind TEXT NOT NULL DEFAULT 'managed'"
             )
         if "editor_state_json" not in existing_session_columns:
             conn.execute(
@@ -383,8 +409,48 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             WHERE workspace_path IS NULL OR TRIM(workspace_path) = ''
             """
         )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET origin_kind = 'managed'
+            WHERE origin_kind IS NULL OR TRIM(origin_kind) = ''
+            """
+        )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        conn.execute(
+            """
+            INSERT INTO chat_session_bindings (
+                chat_id,
+                project_path,
+                workspace_path,
+                agent_deck_session_id,
+                agent_deck_session_title,
+                agent_deck_tool,
+                created_at,
+                updated_at
+            )
+            SELECT
+                thread_id,
+                project_path,
+                workspace_path,
+                agent_deck_session_id,
+                agent_deck_session_title,
+                agent_deck_tool,
+                created_at,
+                last_active
+            FROM sessions
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+            ON CONFLICT(chat_id) DO UPDATE SET
+                project_path = excluded.project_path,
+                workspace_path = excluded.workspace_path,
+                agent_deck_session_id = excluded.agent_deck_session_id,
+                agent_deck_session_title = excluded.agent_deck_session_title,
+                agent_deck_tool = excluded.agent_deck_tool,
+                updated_at = excluded.updated_at
+            """
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO profile_state (
@@ -417,6 +483,10 @@ def _normalize_active_mode(value: object | None) -> str:
 
 def _normalize_agent_type(value: object | None) -> str:
     return "codex" if value == "codex" else "claude"
+
+
+def _normalize_origin_kind(value: object | None) -> str:
+    return "adopted" if value == "adopted" else "managed"
 
 
 def _normalize_profile_id(profile_id: str | None = None) -> str:
@@ -577,12 +647,113 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
         workspace_path=row["workspace_path"] or row["project_path"],
         thread_id=row["thread_id"],
         backend=row["backend"],
+        origin_kind=_normalize_origin_kind(row["origin_kind"]),
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
         agent_deck_tool=row["agent_deck_tool"],
         editor_state=editor_state,
         created_at=row["created_at"],
         last_active=row["last_active"],
+    )
+
+
+_SESSION_SELECT_SQL = """
+    SELECT
+        sessions.id,
+        sessions.project_path,
+        COALESCE(chat_session_bindings.workspace_path, sessions.workspace_path) AS workspace_path,
+        sessions.thread_id,
+        sessions.backend,
+        sessions.origin_kind,
+        COALESCE(
+            chat_session_bindings.agent_deck_session_id,
+            sessions.agent_deck_session_id
+        ) AS agent_deck_session_id,
+        COALESCE(
+            chat_session_bindings.agent_deck_session_title,
+            sessions.agent_deck_session_title
+        ) AS agent_deck_session_title,
+        COALESCE(
+            chat_session_bindings.agent_deck_tool,
+            sessions.agent_deck_tool
+        ) AS agent_deck_tool,
+        sessions.editor_state_json,
+        sessions.created_at,
+        CASE
+            WHEN chat_session_bindings.updated_at IS NOT NULL
+             AND chat_session_bindings.updated_at > sessions.last_active
+                THEN chat_session_bindings.updated_at
+            ELSE sessions.last_active
+        END AS last_active
+    FROM sessions
+    LEFT JOIN chat_session_bindings
+        ON chat_session_bindings.chat_id = sessions.thread_id
+"""
+
+
+def _fetch_session_records(
+    conn: sqlite3.Connection,
+    *,
+    where_sql: str,
+    params: tuple[object, ...],
+) -> list[SessionRecord]:
+    rows = conn.execute(
+        f"""
+        {_SESSION_SELECT_SQL}
+        WHERE {where_sql}
+        ORDER BY last_active DESC, sessions.id DESC
+        """,
+        params,
+    ).fetchall()
+    return [_row_to_session_record(row) for row in rows]
+
+
+def _delete_chat_binding(conn: sqlite3.Connection, chat_id: str) -> None:
+    conn.execute(
+        """
+        DELETE FROM chat_session_bindings
+        WHERE chat_id = ?
+        """,
+        (chat_id,),
+    )
+
+
+def _upsert_chat_binding(
+    conn: sqlite3.Connection,
+    *,
+    project_path: str,
+    chat_id: str,
+    workspace_path: str,
+    agent_deck_session_id: str,
+    agent_deck_session_title: str | None,
+    agent_deck_tool: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO chat_session_bindings (
+            chat_id,
+            project_path,
+            workspace_path,
+            agent_deck_session_id,
+            agent_deck_session_title,
+            agent_deck_tool
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+            project_path = excluded.project_path,
+            workspace_path = excluded.workspace_path,
+            agent_deck_session_id = excluded.agent_deck_session_id,
+            agent_deck_session_title = excluded.agent_deck_session_title,
+            agent_deck_tool = excluded.agent_deck_tool,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            chat_id,
+            project_path,
+            workspace_path,
+            agent_deck_session_id,
+            agent_deck_session_title,
+            agent_deck_tool,
+        ),
     )
 
 
@@ -628,17 +799,11 @@ def detach_missing_agent_deck_session_bindings(
     }
 
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
-            FROM sessions
-            WHERE project_path = ?
-            ORDER BY last_active DESC, id DESC
-            """,
-            (normalized_path,),
-        ).fetchall()
-        records = [_row_to_session_record(row) for row in rows]
+        records = _fetch_session_records(
+            conn,
+            where_sql="sessions.project_path = ?",
+            params=(normalized_path,),
+        )
         stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
         detached_thread_ids = [
             record.thread_id
@@ -657,6 +822,14 @@ def detach_missing_agent_deck_session_bindings(
             placeholders = ",".join("?" for _ in detached_thread_ids)
             conn.execute(
                 f"""
+                DELETE FROM chat_session_bindings
+                WHERE project_path = ?
+                  AND chat_id IN ({placeholders})
+                """,
+                (normalized_path, *detached_thread_ids),
+            )
+            conn.execute(
+                f"""
                 UPDATE sessions
                 SET agent_deck_session_id = NULL,
                     agent_deck_session_title = NULL,
@@ -669,18 +842,11 @@ def detach_missing_agent_deck_session_bindings(
         if stale_ids or detached_thread_ids:
             conn.commit()
 
-        refreshed_rows = conn.execute(
-            """
-            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
-            FROM sessions
-            WHERE project_path = ?
-            ORDER BY last_active DESC, id DESC
-            """,
-            (normalized_path,),
-        ).fetchall()
-
-    return [_row_to_session_record(row) for row in refreshed_rows]
+        return _fetch_session_records(
+            conn,
+            where_sql="sessions.project_path = ?",
+            params=(normalized_path,),
+        )
 
 
 def list_project_urls(project_path: str) -> list[ProjectUrlRecord]:
@@ -704,17 +870,11 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
     normalized_path = normalize_project_path(project_path)
 
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
-            FROM sessions
-            WHERE project_path = ?
-            ORDER BY last_active DESC, id DESC
-            """,
-            (normalized_path,),
-        ).fetchall()
-        records = [_row_to_session_record(row) for row in rows]
+        records = _fetch_session_records(
+            conn,
+            where_sql="sessions.project_path = ?",
+            params=(normalized_path,),
+        )
         stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
         if stale_ids:
             placeholders = ",".join("?" for _ in stale_ids)
@@ -736,20 +896,68 @@ def get_project_session(
         return None
 
     with _connect() as conn:
-        row = conn.execute(
+        records = _fetch_session_records(
+            conn,
+            where_sql="sessions.project_path = ? AND sessions.thread_id = ?",
+            params=(normalized_path, normalized_thread_id),
+        )
+
+    if not records:
+        return None
+    return records[0]
+
+
+def get_project_session_by_agent_deck_session_id(
+    project_path: str,
+    agent_deck_session_id: str,
+) -> SessionRecord | None:
+    normalized_path = normalize_project_path(project_path)
+    normalized_session_id = agent_deck_session_id.strip()
+    if not normalized_session_id:
+        return None
+
+    with _connect() as conn:
+        records = _fetch_session_records(
+            conn,
+            where_sql=(
+                "sessions.project_path = ? AND COALESCE("
+                "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                ") = ?"
+            ),
+            params=(normalized_path, normalized_session_id),
+        )
+
+    if not records:
+        return None
+    return records[0]
+
+
+def detach_project_session_binding(
+    project_path: str,
+    thread_id: str,
+) -> SessionRecord | None:
+    normalized_path = normalize_project_path(project_path)
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return None
+
+    with _connect() as conn:
+        _delete_chat_binding(conn, normalized_thread_id)
+        conn.execute(
             """
-            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, created_at, last_active
-            FROM sessions
+            UPDATE sessions
+            SET agent_deck_session_id = NULL,
+                agent_deck_session_title = NULL,
+                agent_deck_tool = NULL,
+                last_active = CURRENT_TIMESTAMP
             WHERE project_path = ?
               AND thread_id = ?
             """,
             (normalized_path, normalized_thread_id),
-        ).fetchone()
+        )
+        conn.commit()
 
-    if row is None:
-        return None
-    return _row_to_session_record(row)
+    return get_project_session(normalized_path, normalized_thread_id)
 
 
 def get_project(project_path: str) -> ProjectRecord | None:
@@ -1018,6 +1226,7 @@ def upsert_session(
     *,
     thread_id: str,
     backend: str,
+    origin_kind: str = "managed",
     workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
@@ -1032,6 +1241,7 @@ def upsert_session(
         if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
         else None
     )
+    normalized_workspace_path = normalize_project_path(workspace_path or project_path)
     serialized_editor_state = _serialize_session_editor_state(editor_state)
 
     with _connect() as conn:
@@ -1049,24 +1259,20 @@ def upsert_session(
         conflicting_record: SessionRecord | None = None
         stale_ids: list[int] = []
         if normalized_agent_deck_session_id:
-            rows = conn.execute(
-                """
-                SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                       agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
-                FROM sessions
-                WHERE project_path = ?
-                  AND agent_deck_session_id = ?
-                  AND thread_id <> ?
-                ORDER BY last_active DESC, id DESC
-                """,
-                (
+            rows = _fetch_session_records(
+                conn,
+                where_sql=(
+                    "sessions.project_path = ? AND COALESCE("
+                    "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                    ") = ? AND sessions.thread_id <> ?"
+                ),
+                params=(
                     normalized_path,
                     normalized_agent_deck_session_id,
                     thread_id.strip(),
                 ),
-            ).fetchall()
-            for row in rows:
-                record = _row_to_session_record(row)
+            )
+            for record in rows:
                 if _is_stale_clone_session(record):
                     stale_ids.append(record.id)
                     continue
@@ -1092,15 +1298,17 @@ def upsert_session(
                 workspace_path,
                 thread_id,
                 backend,
+                origin_kind,
                 agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
                 editor_state_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
+                origin_kind = excluded.origin_kind,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
@@ -1109,15 +1317,28 @@ def upsert_session(
             """,
             (
                 normalized_path,
-                normalize_project_path(workspace_path or project_path),
+                normalized_workspace_path,
                 thread_id.strip(),
                 backend.strip() or "agent-deck",
+                _normalize_origin_kind(origin_kind),
                 normalized_agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
                 serialized_editor_state,
             ),
         )
+        if normalized_agent_deck_session_id:
+            _upsert_chat_binding(
+                conn,
+                project_path=normalized_path,
+                chat_id=thread_id.strip(),
+                workspace_path=normalized_workspace_path,
+                agent_deck_session_id=normalized_agent_deck_session_id,
+                agent_deck_session_title=agent_deck_session_title,
+                agent_deck_tool=agent_deck_tool,
+            )
+        else:
+            _delete_chat_binding(conn, thread_id.strip())
         conn.execute(
             """
             UPDATE projects
@@ -1128,19 +1349,48 @@ def upsert_session(
         )
         conn.commit()
 
-        row = conn.execute(
-            """
-            SELECT id, project_path, workspace_path, thread_id, backend, agent_deck_session_id,
-                   agent_deck_session_title, agent_deck_tool, editor_state_json, created_at, last_active
-            FROM sessions
-            WHERE thread_id = ?
-            """,
-            (thread_id.strip(),),
-        ).fetchone()
-
-    if row is None:
+    saved = get_project_session(normalized_path, thread_id.strip())
+    if saved is None:
         raise RuntimeError("Session record disappeared during upsert")
-    return _row_to_session_record(row)
+    return saved
+
+
+def create_adopted_project_session(
+    project_path: str,
+    *,
+    workspace_path: str,
+    agent_deck_session_id: str,
+    agent_deck_session_title: str | None,
+    agent_deck_tool: str | None,
+) -> SessionRecord:
+    existing = get_project_session_by_agent_deck_session_id(
+        project_path,
+        agent_deck_session_id,
+    )
+    if existing is not None:
+        return upsert_session(
+            project_path,
+            thread_id=existing.thread_id,
+            backend=existing.backend,
+            origin_kind="adopted",
+            workspace_path=workspace_path,
+            agent_deck_session_id=agent_deck_session_id,
+            agent_deck_session_title=agent_deck_session_title,
+            agent_deck_tool=agent_deck_tool,
+            editor_state=existing.editor_state,
+        )
+
+    return upsert_session(
+        project_path,
+        thread_id=_next_chat_id(),
+        backend="agent-deck",
+        origin_kind="adopted",
+        workspace_path=workspace_path,
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=agent_deck_session_title,
+        agent_deck_tool=agent_deck_tool,
+        editor_state=None,
+    )
 
 
 def update_session_title(
@@ -1166,6 +1416,16 @@ def update_session_title(
             """,
             (normalized_title, normalized_path, normalized_thread_id),
         )
+        conn.execute(
+            """
+            UPDATE chat_session_bindings
+            SET agent_deck_session_title = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_path = ?
+              AND chat_id = ?
+            """,
+            (normalized_title, normalized_path, normalized_thread_id),
+        )
         conn.commit()
 
     return get_project_session(normalized_path, normalized_thread_id)
@@ -1181,6 +1441,7 @@ def delete_session(
         return False
 
     with _connect() as conn:
+        _delete_chat_binding(conn, normalized_thread_id)
         result = conn.execute(
             """
             DELETE FROM sessions

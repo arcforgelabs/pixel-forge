@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ ("$current_branch" == "main" || "$current_branch" == "master") && "${AGENTDECK_ALLOW_MAIN_COMMIT:-0}" != "1" ]]; then
+  echo "Blocked: committing on '$current_branch' is disabled for this fork workflow." >&2
+  echo "Use your custom branch, or set AGENTDECK_ALLOW_MAIN_COMMIT=1 for an intentional commit." >&2
+  exit 1
+fi

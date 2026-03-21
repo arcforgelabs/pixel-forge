@@ -156,7 +156,7 @@ def reconcile_project_chats(
                 agent_deck_session_status=matched_target.status if matched_target is not None else None,
                 binding_state="attached" if matched_target is not None else "detached",
                 workspace_kind=_workspace_kind(normalized_project_path, session.workspace_path),
-                origin_kind="managed",
+                origin_kind=session.origin_kind,
                 created_at=session.created_at,
                 last_active=session.last_active,
             )

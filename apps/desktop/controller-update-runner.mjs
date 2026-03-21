@@ -23,11 +23,23 @@ function isTruthy(value) {
     && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
 
+const instanceSlug = normalizeText(process.env.PIXEL_FORGE_INSTANCE_SLUG) || 'pixel-forge'
 const stateDir = path.resolve(argValue('--state-dir') || '')
 const installRoot = path.resolve(argValue('--install-root') || '')
 const updateId = normalizeText(argValue('--update-id'))
-const shellUrl = normalizeText(argValue('--shell-url')) || 'http://pixel-forge.localhost:7001'
+const shellHost =
+  normalizeText(process.env.PIXEL_FORGE_URL_HOST)
+  || `${instanceSlug}.localhost`
+const shellPort =
+  normalizeText(process.env.PIXEL_FORGE_API_PORT)
+  || normalizeText(process.env.PIXEL_FORGE_PORT)
+  || '7001'
+const shellUrl =
+  normalizeText(argValue('--shell-url'))
+  || normalizeText(process.env.PIXEL_FORGE_SHELL_URL)
+  || `http://${shellHost}:${shellPort}`
 const pixelForgeBinDir = normalizeText(process.env.PIXEL_FORGE_BIN_DIR)
+const pixelForgeShellName = normalizeText(process.env.PIXEL_FORGE_SHELL_NAME) || 'pixel-forge-shell'
 
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')
@@ -434,7 +446,7 @@ function relaunchPixelForge() {
   }
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const proc = spawn('bash', ['-lc', JSON.stringify(pixelForgeCommand('pixel-forge-shell'))], {
+  const proc = spawn('bash', ['-lc', JSON.stringify(pixelForgeCommand(pixelForgeShellName))], {
     detached: true,
     stdio: 'ignore',
     env,

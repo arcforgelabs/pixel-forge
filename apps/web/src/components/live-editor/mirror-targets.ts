@@ -231,6 +231,7 @@ export function isPixelForgeTargetUrl(url: string | null | undefined): boolean {
     const hostname = parsed.hostname.toLowerCase()
     return (
       hostname === 'pixel-forge.localhost'
+      || (hostname.startsWith('pixel-forge-') && hostname.endsWith('.localhost'))
       || hostname.includes('-mirror-target-')
       || hostname.includes('-dev-target-')
     )

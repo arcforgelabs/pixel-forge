@@ -1,0 +1,246 @@
+spec:
+  id: AD-CONDUCTOR-MINIMAL-001
+  title: Minimal Conductor Control-Plane Requirements
+  version: 1
+  status: active
+  updated_at: "2026-03-05"
+  intent: >
+    Freeze the minimal architecture contract for conductor orchestration.
+    This spec is normative and should be audited as pass/fail.
+    Fork-level intent/goal alignment lives in SPECS.md and this file is the
+    conductor-specific executable guardrail.
+
+scope:
+  in:
+    - Conductor identity authority boundaries
+    - Transition and escalation dispatch paths
+    - Control-plane audit guarantees
+    - Restart continuity guarantees
+  out:
+    - Model/provider selection policy
+    - UI concerns
+    - Legacy bridge feature parity
+
+requirements:
+  - id: R1_CANONICAL_IDENTITY_HOME
+    statement: Cato identity MUST have one canonical home.
+    source_of_truth: "~/.openclaw/workspace-conductor"
+    must:
+      - Identity/persona/behavior framing is sourced from OpenClaw workspace files.
+      - Agent Deck may reference identity, but MUST NOT be the authority for it.
+    must_not:
+      - Treat "~/.agent-deck/conductor/**" as canonical identity source.
+      - Require Agent Deck identity-doc edits to change Cato behavior.
+    audit_checks:
+      - id: R1-C1
+        type: behavioral
+        procedure:
+          - Change SOUL.md or AGENTS.md in "~/.openclaw/workspace-conductor".
+          - Start a fresh Cato run.
+        pass_if: Behavior changes without editing Agent Deck identity docs.
+
+  - id: R2_DUMB_CONDUCTOR_BOUNDARY
+    statement: ".agent-deck/conductor MUST be transport-only; all intelligence lives in OpenClaw."
+    must:
+      - Transition/escalation signals are dispatched directly to OpenClaw ingress (`openclaw system event` or Gateway hooks).
+      - Agent Deck conductor runtime acts only as relay/invocation plumbing (receive -> forward -> return).
+      - Bridge runtime forwards typed signal envelopes and relays conductor output without local triage policy.
+    must_not:
+      - Run policy engines/state machines in "~/.agent-deck/conductor/bridge.py".
+      - Route transition handling through bridge command modes (`--dispatch-event`, `--tick`, `--escalate`).
+      - Own heartbeat/escalation lifecycle or parked/ownership state in bridge runtime/template code.
+      - Implement multi-platform relay complexity (Slack and channel fan-out) in bridge runtime.
+      - Implement bridge-level operator convenience commands (`/status`, `/sessions`, `/restart`, etc.).
+      - Expose conductor ownership/status management UX in Agent Deck CLI help surface.
+      - Ship legacy conductor operator bootstrap shell surfaces (setup/teardown/plist templates) in repo runtime paths.
+      - Keep dormant runtime-adapter stubs or detached ownership engines outside the active transport path.
+      - Keep heartbeat daemon/script generation code in Agent Deck conductor runtime paths.
+      - Keep bridge compatibility parser wrappers for removed command modes.
+      - Keep documentation references to removed `conductor/setup.sh` bootstrap surface in active operator docs.
+      - Keep policy-brain prose in Agent Deck template sources (policy gates, AUTO/PARK/NEED triage instructions, heartbeat rules pointers).
+      - Leave legacy runtime heartbeat timers/scripts active after installing a stripped branch build.
+    audit_checks:
+      - id: R2-C1
+        type: code
+        command: rg -n "DispatchBridgeTransitionEvent|RunBridgeHeartbeatTick|RunBridgeManualEscalation" cmd internal
+        pass_if: No matches.
+      - id: R2-C2
+        type: code
+        command: rg -n -- "--dispatch-event|--tick|--escalate" internal/session/conductor.go internal/session/conductor_templates.go
+        pass_if: No bridge command-mode handling remains.
+      - id: R2-C3
+        type: code
+        command: rg -n "openclaw system event|/hooks/wake|/hooks/agent" cmd internal
+        pass_if: At least one direct OpenClaw ingress path exists for transition/escalation dispatch.
+      - id: R2-C4
+        type: code
+        command: rg -n "async def heartbeat_loop|async def run_heartbeat_cycle|select_heartbeat_conductors|dispatch_escalation_notification" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: No bridge-managed heartbeat/escalation engine functions remain.
+      - id: R2-C5
+        type: code
+        command: rg -n "PARK_COMMAND\\s*=|RESUME_COMMAND\\s*=|ACK_COMMAND\\s*=|RESOLVE_COMMAND\\s*=|def autonomous_memory_gate|def load_ownership_document|def save_parked_sessions|CREATE TABLE IF NOT EXISTS escalations" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: No bridge-owned parked/ownership/escalation lifecycle state-machine markers remain.
+      - id: R2-C6
+        type: code
+        command: rg -n "def build_signal_payload|def send_to_conductor|transport-only" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: Transport contract helpers and markers are present.
+      - id: R2-C7
+        type: code
+        command: rg -n "slack_bolt|AsyncSocketModeHandler|create_slack_app|/ad-status|/ad-sessions|/ad-restart|/ad-help|user\\.slack" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: No Slack/multi-platform bridge markers remain.
+      - id: R2-C8
+        type: code
+        command: rg -n "@dp\\.message\\(Command\\(\"status\"\\)\\)|@dp\\.message\\(Command\\(\"sessions\"\\)\\)|@dp\\.message\\(Command\\(\"restart\"\\)\\)|build_status_response|build_sessions_response|restart_conductor" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: No bridge-owned operator convenience commands remain.
+      - id: R2-C9
+        type: code
+        command: rg -n "case \"conductor\"|Conductor Commands:|conductor setup|conductor teardown|conductor tick|conductor escalate|conductor reconfigure" cmd/agent-deck/main.go
+        pass_if: No removed conductor operator-surface commands appear in help output.
+      - id: R2-C10
+        type: code
+        command: bash -lc "rg --files cmd/agent-deck | rg 'conductor_cmd\\.go|conductor_cmd_test\\.go'"
+        pass_if: Conductor command source files are fully removed.
+      - id: R2-C11
+        type: code
+        command: bash -lc "rg --files conductor | rg -v '^conductor/bridge.py$'"
+        pass_if: No legacy conductor bootstrap/operator file surfaces remain.
+      - id: R2-C12
+        type: code
+        command: bash -lc "rg --files internal/conductor/runtime"
+        pass_if: No dormant runtime adapter package remains.
+      - id: R2-C13
+        type: code
+        command: bash -lc "rg --files internal/session | rg 'conductor_ownership\\.go'"
+        pass_if: No detached conductor ownership policy engine remains in Agent Deck runtime.
+      - id: R2-C14
+        type: code
+        command: bash -lc "rg -n 'InstallHeartbeatDaemon|UninstallHeartbeatDaemon|InstallHeartbeatScript|GenerateHeartbeatPlist|HeartbeatPlistLabel|GenerateSystemdHeartbeatTimer|GenerateSystemdHeartbeatService|SystemdHeartbeatServiceName|SystemdHeartbeatTimerName|SystemdHeartbeatServicePath|SystemdHeartbeatTimerPath|MigrateConductorHeartbeatScripts|SetConductorHeartbeatEnabled|SyncConductorHeartbeatDaemon|conductorHeartbeatScript|conductorHeartbeatPlistTemplate|systemdHeartbeatTimerTemplate|systemdHeartbeatServiceTemplate' internal/session/conductor.go internal/session/conductor_test.go"
+        pass_if: No conductor heartbeat runtime scaffolding remains in source.
+      - id: R2-C15
+        type: code
+        command: rg -n "import argparse|parse_bridge_args|Reserved for compatibility; ignored in daemon mode" internal/session/conductor_templates.go conductor/bridge.py
+        pass_if: No bridge compatibility parser wrapper remains.
+      - id: R2-C16
+        type: code
+        command: rg -n "conductor/setup\\.sh|\\./setup\\.sh" README.md skills/agent-deck/SKILL.md
+        pass_if: Active docs do not reference removed setup.sh bootstrap path.
+      - id: R2-C17
+        type: code
+        command: rg -n "Auto-Response Guidelines|Core Rules|Choose AUTO, PARK, or NEED|HEARTBEAT_RULES\\.md|review past patterns" internal/session/conductor_templates.go
+        pass_if: Agent Deck template source no longer carries policy-brain triage prose.
+      - id: R2-C18
+        type: code
+        command: rg -n "Agent Deck is transport plumbing only|~/.openclaw/workspace-conductor/" internal/session/conductor_templates.go
+        pass_if: Template source explicitly marks Agent Deck as adapter-only and OpenClaw as canonical policy home.
+      - id: R2-C19
+        type: code
+        command: rg -n "sync-runtime\\.sh.*--runtime-root" scripts/runtime-layers.sh
+        pass_if: Layer activation always runs runtime sync after the active release is switched.
+      - id: R2-C20
+        type: code
+        command: rg -n "install -m 0755 .*bridge\\.py|installed bridge\\.py" scripts/sync-runtime.sh
+        pass_if: Runtime sync script installs bridge.py from the selected runtime source into the live runtime path.
+      - id: R2-C21
+        type: code
+        command: rg -n "agent-deck-conductor-heartbeat-\\*\\.service|agent-deck-conductor-heartbeat-\\*\\.timer|heartbeat\\.sh" scripts/sync-runtime.sh
+        pass_if: Runtime sync script removes legacy heartbeat unit/script artifacts from prior control-plane versions.
+      - id: R2-C22
+        type: code
+        command: rg -n 'json:"ownership"|json:"managed"|\"ownership\":|\"managed\":' cmd/agent-deck/main.go cmd/agent-deck/session_cmd.go
+        pass_if: Adapter JSON surfaces expose ownership/managed fields for deterministic managed+waiting heartbeat selection.
+
+transport_contract:
+  input_envelope:
+    required_fields:
+      - version
+      - type
+      - source
+      - idempotency_key
+      - profile
+      - session
+      - ts
+      - actor
+      - action
+      - reason
+      - target
+    notes:
+      - Bridge wraps user text with `[SIGNAL] <json-envelope>` before forwarding.
+      - Bridge accepts only the configured single user channel (`user.telegram`) as signal source.
+  forwarding:
+    behavior:
+      - Resolve one deterministic target conductor (configured `default_name`, else first discovered).
+      - Invoke `agent-deck session send` with one blocking wait path for request/response relay.
+  output_relay:
+    behavior:
+      - Return raw conductor output (chunked per platform limits) to originating channel.
+      - Adapter lane JSON (`agent-deck ... list/show/current --json`) exposes `ownership` (`user|cato`) and `managed` (true only for `cato`) so OpenClaw heartbeat can select managed+waiting lanes deterministically.
+  failure_semantics:
+    behavior:
+      - Delivery failures are returned as explicit relay errors.
+      - Bridge does not run local retry, triage, escalation, parked, or ownership policy engines.
+
+  - id: R3_AUDITABLE_CONTROL_PLANE
+    statement: Every relay/transition dispatch action MUST be auditable.
+    required_fields:
+      - ts
+      - actor
+      - action
+      - reason
+      - target
+      - idempotency_key
+    must:
+      - Persist structured audit records for each dispatch action.
+      - Preserve enough data to reconstruct who decided what and why.
+    must_not:
+      - Emit unstructured-only logs for dispatch decisions.
+      - Drop reason metadata on relay/transition events.
+    audit_checks:
+      - id: R3-C1
+        type: runtime
+        procedure:
+          - Trigger one Telegram relay action and one transition dispatch action.
+          - Export corresponding audit records.
+        pass_if: Each record includes all required_fields and can be replayed in order.
+
+  - id: R4_RESTART_CONTINUITY
+    statement: Control-plane state MUST survive restart without instruction drift.
+    must:
+      - Persist state required to continue triage/escalation flow after restart.
+      - Resume under the same policy contract after restart.
+    must_not:
+      - Require manual re-seeding of policy/ownership state after restart.
+      - Lose parked/escalation continuity across restart.
+    audit_checks:
+      - id: R4-C1
+        type: runtime
+        procedure:
+          - Capture pre-restart snapshot (transition notifier state and last signal metadata).
+          - Restart conductor session/process.
+          - Trigger one transition event and verify it dispatches without manual re-seeding.
+        pass_if: Post-restart state is consistent with pre-restart snapshot and dispatch succeeds.
+
+definition_of_done:
+  - id: DOD-1
+    description: R1 passes.
+  - id: DOD-2
+    description: R2 passes.
+  - id: DOD-3
+    description: R3 passes.
+  - id: DOD-4
+    description: R4 passes.
+  - id: DOD-ALL
+    description: All four requirements pass simultaneously with no conflicting owner for identity, runtime logic, audit, or state.
+
+audit_runner:
+  command: ./resources/specs/audit-conductor-control-plane-minimal.sh
+  notes:
+    - Includes automated code checks for R2, plus static guardrails for R3/R4.
+    - R1-C1, R3-C1, and R4-C1 remain runtime/behavioral checks and require live execution.
+
+known_violations_2026_03_04: []
+
+resolved_in_2026_03_04:
+  - commit: 22bf359
+    note: Transition, tick, and manual escalation now dispatch directly to OpenClaw ingress.
+  - commit: 6494300
+    note: Bridge command modes (`--tick`, `--dispatch-event`, `--escalate`) removed from embedded bridge template.

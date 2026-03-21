@@ -19,6 +19,7 @@ def create_session(**overrides) -> SessionRecord:
         "workspace_path": "/tmp/project/.agents/thread-a",
         "thread_id": "thread-a",
         "backend": "agent-deck",
+        "origin_kind": "managed",
         "agent_deck_session_id": "deck-a",
         "agent_deck_session_title": "pixel-forge-thread-a",
         "agent_deck_tool": "claude",

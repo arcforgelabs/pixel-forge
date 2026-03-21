@@ -65,6 +65,10 @@ def service_name() -> str:
     return os.environ.get("PIXEL_FORGE_SERVICE_NAME", install_name())
 
 
+def shell_name() -> str:
+    return os.environ.get("PIXEL_FORGE_SHELL_NAME", f"{install_name()}-shell")
+
+
 def port() -> str:
     return os.environ.get("PIXEL_FORGE_PORT", "7001")
 
@@ -206,10 +210,10 @@ def _resolve_uvicorn_executable() -> str:
 
 
 def _resolve_shell_launcher() -> str | None:
-    candidate = bin_dir() / "pixel-forge-shell"
+    candidate = bin_dir() / shell_name()
     if candidate.is_file():
         return str(candidate)
-    return shutil.which("pixel-forge-shell")
+    return shutil.which(shell_name())
 
 
 def _resolve_node_executable() -> str:
@@ -426,7 +430,9 @@ def _command_logs(_args: argparse.Namespace) -> int:
 def _command_open(_args: argparse.Namespace) -> int:
     launcher = _resolve_shell_launcher()
     if not launcher:
-        raise SystemExit("Unable to find pixel-forge-shell in PIXEL_FORGE_BIN_DIR or PATH")
+        raise SystemExit(
+            f"Unable to find {shell_name()} in PIXEL_FORGE_BIN_DIR or PATH"
+        )
     _exec([launcher], env=_base_env())
 
 
@@ -550,7 +556,10 @@ def _write_bootstrap_state(project_path: str | None, preview_url: str | None, ac
 def _launch_updater_ui() -> None:
     launcher = _resolve_shell_launcher()
     if not launcher:
-        print("Warning: unable to find pixel-forge-shell for updater UI", file=sys.stderr)
+        print(
+            f"Warning: unable to find {shell_name()} for updater UI",
+            file=sys.stderr,
+        )
         return
     subprocess.Popen(
         [launcher, "--pixel-forge-updater-ui"],

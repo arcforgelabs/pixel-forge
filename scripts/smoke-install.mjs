@@ -19,13 +19,15 @@ const expectedVersion = (await readJsonFile(path.join(repoRoot, 'package.json'))
 
 try {
   await installPixelForge(repoRoot, context)
+  const cliName = context.env.PIXEL_FORGE_CLI_NAME || context.env.PIXEL_FORGE_INSTALL_NAME || 'pixel-forge'
+  const shellName = context.env.PIXEL_FORGE_SHELL_NAME || `${cliName}-shell`
 
   for (const requiredPath of [
     path.join(context.paths.installDir, 'VERSION'),
     path.join(context.paths.installDir, 'frontend', 'index.html'),
     path.join(context.paths.installDir, '.venv', 'bin', 'uvicorn'),
-    path.join(context.paths.binDir, 'pixel-forge'),
-    path.join(context.paths.binDir, 'pixel-forge-shell'),
+    path.join(context.paths.binDir, cliName),
+    path.join(context.paths.binDir, shellName),
   ]) {
     assert(await pathExists(requiredPath), `Missing install artifact: ${requiredPath}`)
   }

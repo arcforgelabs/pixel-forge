@@ -1,9 +1,21 @@
+const DEFAULT_URL_HOST =
+  String(
+    import.meta.env.VITE_PIXEL_FORGE_URL_HOST
+    || import.meta.env.PIXEL_FORGE_URL_HOST
+    || "pixel-forge.localhost"
+  ).trim() || "pixel-forge.localhost";
+const DEFAULT_API_PORT =
+  String(
+    import.meta.env.VITE_PIXEL_FORGE_API_PORT
+    || import.meta.env.PIXEL_FORGE_API_PORT
+    || "7001"
+  ).trim() || "7001";
 const DEFAULT_BACKEND_ORIGIN =
   typeof window !== "undefined"
     ? window.location.origin
-    : "http://pixel-forge.localhost:7001";
+    : `http://${DEFAULT_URL_HOST}:${DEFAULT_API_PORT}`;
 const DEFAULT_BACKEND_HOST =
-  typeof window !== "undefined" ? window.location.host : "pixel-forge.localhost:7001";
+  typeof window !== "undefined" ? window.location.host : `${DEFAULT_URL_HOST}:${DEFAULT_API_PORT}`;
 const DEFAULT_HTTP_PROTOCOL =
   typeof window !== "undefined" && window.location.protocol === "https:"
     ? "https"

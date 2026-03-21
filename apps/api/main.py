@@ -18,6 +18,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from agent_deck_bridge import (
     AgentDeckBridgeError,
@@ -44,7 +45,7 @@ from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from live_editor_threads import (
@@ -55,12 +56,14 @@ from live_editor_threads import (
     update_live_editor_thread,
 )
 from project_store import (
+    create_adopted_project_session,
     detach_missing_agent_deck_session_bindings,
     delete_project,
     ensure_state_store_initialized,
     get_profile_state,
     delete_session,
     get_project_session,
+    get_project_session_by_agent_deck_session_id,
     list_project_sessions,
     list_project_urls,
     list_projects,
@@ -93,12 +96,18 @@ from published_update_state import (
     write_pending_preview_update,
 )
 from runtime_version import read_runtime_info
+from workstation_events import (
+    get_chat_activity_snapshot,
+    list_workstation_events,
+    sync_chat_activity_event,
+)
 from local_targets import (
     list_pixel_forge_targets,
     serialize_local_target,
     start_pixel_forge_target,
 )
 from runtime_config import api_port as runtime_api_port
+from runtime_config import url_host as runtime_url_host
 
 from session_manager import (
     generate_session_id,
@@ -647,6 +656,14 @@ def _resolve_chat_item_context(
         if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
         else None
     )
+    if session_record is None and resolved_agent_deck_session_id is not None:
+        session_record = get_project_session_by_agent_deck_session_id(
+            normalized_project_path,
+            resolved_agent_deck_session_id,
+        )
+        if session_record is not None:
+            normalized_thread_id = session_record.thread_id
+            thread_record = get_live_editor_thread(normalized_thread_id)
     if not resolved_agent_deck_session_id and session_record is not None:
         resolved_agent_deck_session_id = session_record.agent_deck_session_id
     if not resolved_agent_deck_session_id and thread_record is not None:
@@ -727,6 +744,28 @@ async def _load_reconciled_project_chats(
         sessions=sessions,
         visible_targets=list(visible_sessions_by_id.values()),
     )
+    adopted_chats = [
+        chat
+        for chat in chats
+        if chat.origin_kind == "adopted"
+        and chat.thread_id is None
+        and chat.agent_deck_session_id
+    ]
+    if adopted_chats:
+        for chat in adopted_chats:
+            create_adopted_project_session(
+                normalized_project_path,
+                workspace_path=chat.workspace_path,
+                agent_deck_session_id=chat.agent_deck_session_id,
+                agent_deck_session_title=chat.agent_deck_session_title,
+                agent_deck_tool=chat.agent_deck_tool,
+            )
+        sessions = list_project_sessions(normalized_project_path)
+        chats = reconcile_project_chats(
+            normalized_project_path,
+            sessions=sessions,
+            visible_targets=list(visible_sessions_by_id.values()),
+        )
     return normalized_project_path, chats
 
 
@@ -943,7 +982,7 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
-    thread_id = generate_session_id()
+    thread_id = f"chat-{uuid4().hex[:12]}"
     draft_title = request.title.strip() if request.title and request.title.strip() else f"Chat {thread_id[:8]}"
 
     try:
@@ -1177,6 +1216,17 @@ async def get_project_chat_item_activity(
     if not os.path.isdir(normalized_project_path):
         raise HTTPException(status_code=404, detail="Project path does not exist")
 
+    if normalized_thread_id:
+        try:
+            return await get_chat_activity_snapshot(
+                normalized_project_path,
+                normalized_thread_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AgentDeckBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     if not resolved_agent_deck_session_id:
         return {
             "thread_id": normalized_thread_id,
@@ -1220,6 +1270,75 @@ async def get_project_chat_item_activity(
         "binding_state": "attached",
         "output": activity.output,
     }
+
+
+@app.get("/api/projects/{project_path:path}/chats/{chat_id}/events")
+async def stream_project_chat_events(
+    project_path: str,
+    chat_id: str,
+    request: Request,
+):
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    if not normalized_chat_id:
+        raise HTTPException(status_code=400, detail="chat_id is required")
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    if get_project_session(normalized_project_path, normalized_chat_id) is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    async def event_stream():
+        last_event_id = 0
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                await sync_chat_activity_event(
+                    normalized_project_path,
+                    normalized_chat_id,
+                )
+            except ValueError:
+                yield "event: error\ndata: {\"detail\":\"chat not found\"}\n\n"
+                break
+            except AgentDeckBridgeError as exc:
+                payload = json.dumps({"detail": str(exc)})
+                yield f"event: error\ndata: {payload}\n\n"
+                await asyncio.sleep(1.0)
+                continue
+
+            events = list_workstation_events(
+                normalized_project_path,
+                normalized_chat_id,
+                after_id=last_event_id,
+            )
+            if not events:
+                yield ": keepalive\n\n"
+                await asyncio.sleep(1.0)
+                continue
+
+            for event in events:
+                last_event_id = max(last_event_id, event.id)
+                payload = json.dumps(
+                    {
+                        "id": event.id,
+                        "event_type": event.event_type,
+                        **event.payload,
+                    }
+                )
+                yield f"id: {event.id}\nevent: {event.event_type}\ndata: {payload}\n\n"
+
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/skills")
@@ -2983,7 +3102,7 @@ async def live_editor_chat(websocket: WebSocket):
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     selection_tunnel_url=(
-                        f"http://pixel-forge.localhost:{runtime_api_port()}/api/live-editor/selection-tunnel?"
+                        f"http://{runtime_url_host()}:{runtime_api_port()}/api/live-editor/selection-tunnel?"
                         + urlencode(
                             {
                                 "project_path": session_info.workspace_path,

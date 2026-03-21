@@ -53,6 +53,27 @@ class MockWebSocket extends EventTarget {
   }
 }
 
+class MockEventSource extends EventTarget {
+  static instances: MockEventSource[] = []
+
+  url: string
+  withCredentials: boolean
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onerror: ((event: Event) => void) | null = null
+  close = vi.fn()
+
+  constructor(url: string | URL, init?: EventSourceInit) {
+    super()
+    this.url = String(url)
+    this.withCredentials = Boolean(init?.withCredentials)
+    MockEventSource.instances.push(this)
+  }
+
+  emitMessage(payload: unknown) {
+    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent)
+  }
+}
+
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -106,6 +127,8 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
 describe('live editor selection history', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
+    MockEventSource.instances = []
+    vi.stubGlobal('EventSource', MockEventSource as unknown as typeof EventSource)
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -396,39 +419,26 @@ describe('live editor selection history', () => {
   })
 
   it('hydrates attached Agent Deck output into an otherwise blank adopted chat lane', async () => {
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString()
-      if (url.includes('/chat-items/activity')) {
-        return jsonResponse({
-          thread_id: useLiveEditorStore.getState().activeThreadKey,
-          agent_deck_session_id: 'deck-session-a',
-          agent_deck_session_title: 'former multi-chat',
-          agent_deck_tool: 'codex',
-          agent_deck_session_status: 'running',
-          workspace_path: '/tmp/example-project',
-          binding_state: 'attached',
-          output: 'Continuing existing Agent Deck work...',
-        })
-      }
-      if (url.includes('/api/profile-state')) {
-        return jsonResponse({
-          profile_id: 'default',
-          active_project_path: '/tmp/example-project',
-          active_mode: 'live-editor',
-          active_live_editor_thread_id: 'thread-a',
-          default_agent_type: 'claude',
-          updated_at: '2026-03-20T00:00:00Z',
-        })
-      }
-      return jsonResponse({})
-    })
-
     setActiveThreadState({
       targetAgentDeckSessionId: 'deck-session-a',
     })
 
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+    stream?.emitMessage({
+      id: 1,
+      event_type: 'activity',
+      chat_id: useLiveEditorStore.getState().activeThreadKey,
+      thread_id: useLiveEditorStore.getState().activeThreadKey,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      agent_deck_session_status: 'running',
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      output: 'Continuing existing Agent Deck work...',
+    })
 
     await vi.waitFor(() => {
       expect(useLiveEditorStore.getState().messages).toMatchObject([

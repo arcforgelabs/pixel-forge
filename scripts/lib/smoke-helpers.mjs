@@ -54,6 +54,7 @@ export async function createSmokeContext(name) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `pixel-forge-${name}-`))
   const port = await reservePort()
   const installName = `pixel-forge-${name}`
+  const shellName = `${installName}-shell`
   const paths = {
     root,
     installDir: path.join(root, 'install'),
@@ -75,6 +76,8 @@ export async function createSmokeContext(name) {
     ...process.env,
     PATH: pathEntries.join(path.delimiter),
     PIXEL_FORGE_INSTALL_NAME: installName,
+    PIXEL_FORGE_CLI_NAME: installName,
+    PIXEL_FORGE_SHELL_NAME: shellName,
     PIXEL_FORGE_INSTALL_DIR: paths.installDir,
     PIXEL_FORGE_BACKUP_DIR: paths.rollbackDir,
     PIXEL_FORGE_BIN_DIR: paths.binDir,
@@ -149,9 +152,13 @@ export async function installPixelForge(sourceRoot, context) {
   })
 }
 
+function cliNameForContext(context) {
+  return context.env.PIXEL_FORGE_CLI_NAME || context.env.PIXEL_FORGE_INSTALL_NAME || 'pixel-forge'
+}
+
 export async function runPixelForge(context, args, options = {}) {
   return await runProcess(
-    path.join(context.paths.binDir, 'pixel-forge'),
+    path.join(context.paths.binDir, cliNameForContext(context)),
     args,
     {
       cwd: options.cwd ?? repoRoot,
@@ -305,7 +312,7 @@ export async function reportSmokeFailure(name, error, context) {
 }
 
 export async function cleanupSmokeContext(context) {
-  if (await pathExists(path.join(context.paths.binDir, 'pixel-forge'))) {
+  if (await pathExists(path.join(context.paths.binDir, cliNameForContext(context)))) {
     await runPixelForge(context, ['stop']).catch(() => {})
   }
 

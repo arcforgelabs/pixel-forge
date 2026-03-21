@@ -39,6 +39,17 @@ def web_host() -> str:
     return os.environ.get("PIXEL_FORGE_WEB_HOST") or f"{instance_slug()}.localhost"
 
 
+def url_host() -> str:
+    return os.environ.get("PIXEL_FORGE_URL_HOST") or web_host()
+
+
+def shell_url() -> str:
+    explicit = os.environ.get("PIXEL_FORGE_SHELL_URL")
+    if explicit:
+        return explicit
+    return f"http://{url_host()}:{api_port()}"
+
+
 def shared_state_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
     base_dir = Path(override).expanduser() if override else Path.home() / ".pixel-forge"

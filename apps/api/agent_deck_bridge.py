@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
+from agent_deck_runtime import agent_deck_command, agent_deck_env
 from live_editor_threads import LiveEditorThreadRecord
 
 
@@ -191,6 +192,39 @@ async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, st
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
+async def _run_command_with_env(
+    args: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env=env,
+    )
+    stdout, stderr = await proc.communicate()
+    return proc.returncode, stdout.decode(), stderr.decode()
+
+
+def _agent_deck_args(*args: str) -> list[str]:
+    return [*agent_deck_command(), *args]
+
+
+async def _run_agent_deck_command(
+    args: list[str],
+    *,
+    cwd: str | None = None,
+) -> tuple[int, str, str]:
+    return await _run_command_with_env(
+        _agent_deck_args(*args),
+        cwd=cwd,
+        env=agent_deck_env(),
+    )
+
+
 def _decode_json_output(stdout: str, args: list[str]) -> object:
     try:
         return json.loads(stdout)
@@ -227,6 +261,38 @@ async def _run_json_array_command(args: list[str], cwd: str | None = None) -> li
     return payload
 
 
+async def _run_agent_deck_json_command(args: list[str], cwd: str | None = None) -> object:
+    code, stdout, stderr = await _run_agent_deck_command(args, cwd=cwd)
+    if code != 0:
+        error_output = stderr.strip() or stdout.strip() or "Unknown error"
+        raise AgentDeckBridgeError(error_output)
+    return _decode_json_output(stdout, _agent_deck_args(*args))
+
+
+async def _run_agent_deck_json_object_command(
+    args: list[str],
+    cwd: str | None = None,
+) -> dict[str, object]:
+    payload = await _run_agent_deck_json_command(args, cwd=cwd)
+    if not isinstance(payload, dict):
+        raise AgentDeckBridgeError(
+            f"Agent Deck returned an unexpected JSON shape for {' '.join(_agent_deck_args(*args))}"
+        )
+    return payload
+
+
+async def _run_agent_deck_json_array_command(
+    args: list[str],
+    cwd: str | None = None,
+) -> list[object]:
+    payload = await _run_agent_deck_json_command(args, cwd=cwd)
+    if not isinstance(payload, list):
+        raise AgentDeckBridgeError(
+            f"Agent Deck returned an unexpected JSON shape for {' '.join(_agent_deck_args(*args))}"
+        )
+    return payload
+
+
 def _convert_to_claude_dir_name(path: str) -> str:
     return CLAUDE_DIR_NAME_RE.sub("-", path)
 
@@ -259,22 +325,22 @@ def claude_jsonl_path(project_path: str, claude_session_id: str | None) -> Path 
 
 
 async def session_show(agent_deck_session_id: str) -> dict[str, object]:
-    return await _run_json_object_command(
-        ["agent-deck", "session", "show", agent_deck_session_id, "-json"]
+    return await _run_agent_deck_json_object_command(
+        ["session", "show", agent_deck_session_id, "-json"]
     )
 
 
 async def _start_existing_session(agent_deck_session_id: str) -> None:
-    code, _, stderr = await _run_command(
-        ["agent-deck", "session", "start", agent_deck_session_id]
+    code, _, stderr = await _run_agent_deck_command(
+        ["session", "start", agent_deck_session_id]
     )
     if code != 0:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to start Agent Deck session")
 
 
 async def _rename_session(agent_deck_session_id: str, new_title: str) -> None:
-    code, _, stderr = await _run_command(
-        ["agent-deck", "rename", agent_deck_session_id, new_title]
+    code, _, stderr = await _run_agent_deck_command(
+        ["rename", agent_deck_session_id, new_title]
     )
     if code != 0:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to rename Agent Deck session")
@@ -296,7 +362,6 @@ async def _launch_new_session(
         else _normalize_path(project_path)
     )
     args = [
-        "agent-deck",
         "launch",
         "-json",
         "-no-wait",
@@ -307,7 +372,7 @@ async def _launch_new_session(
     if workspace_mode == "clone":
         args.append(f"-clone={_clone_name(session_title)}")
     args.append(launch_path)
-    return await _run_json_object_command(args)
+    return await _run_agent_deck_json_object_command(args)
 
 
 def _payload_session_metadata(
@@ -414,7 +479,7 @@ async def _list_project_session_targets(
     *,
     include_acpx_backed: bool,
 ) -> list[AgentDeckSessionTarget]:
-    payload = await _run_json_array_command(["agent-deck", "ls", "-json"])
+    payload = await _run_agent_deck_json_array_command(["ls", "-json"])
     sessions: list[AgentDeckSessionTarget] = []
 
     for entry in payload:
@@ -546,7 +611,7 @@ async def _default_local_branch(repo_root: str) -> str:
 
 
 async def _unique_group_session_title(group_path: str | None, preferred_title: str) -> str:
-    payload = await _run_json_array_command(["agent-deck", "ls", "-json"])
+    payload = await _run_agent_deck_json_array_command(["ls", "-json"])
     normalized_group_path = _normalized_text(group_path)
     existing_titles = {
         str(entry.get("title")).strip()
@@ -579,8 +644,8 @@ async def _load_session_action_context(
     clone_branch_state: str | None = None
 
     if is_clone:
-        clone_payload = await _run_json_object_command(
-            ["agent-deck", "clone", "info", agent_deck_session_id, "-json"]
+        clone_payload = await _run_agent_deck_json_object_command(
+            ["clone", "info", agent_deck_session_id, "-json"]
         )
         repo_root = _normalize_path(
             _normalized_text(clone_payload.get("main_repo")) or normalized_project_path
@@ -672,7 +737,6 @@ async def delete_agent_deck_session_target(
 
     if force_clone_remove and context.is_clone:
         args = [
-            "agent-deck",
             "clone",
             "finish",
             agent_deck_session_id,
@@ -680,7 +744,7 @@ async def delete_agent_deck_session_target(
             "--force",
             "-json",
         ]
-        code, stdout, stderr = await _run_command(args)
+        code, stdout, stderr = await _run_agent_deck_command(args)
         if code == 0:
             return
         error_output = stderr.strip() or stdout.strip() or ""
@@ -690,8 +754,8 @@ async def delete_agent_deck_session_target(
             error_output or f"agent-deck clone finish failed (exit {code})"
         )
 
-    code, stdout, stderr = await _run_command(
-        ["agent-deck", "rm", agent_deck_session_id, "-q"],
+    code, stdout, stderr = await _run_agent_deck_command(
+        ["rm", agent_deck_session_id, "-q"],
         cwd=context.repo_root,
     )
     if code != 0:
@@ -767,7 +831,6 @@ async def launch_agent_deck_closeout_session(
     prompt = _build_closeout_prompt(context, user_prompt=user_prompt)
     normalized_tool = tool.strip().lower() if isinstance(tool, str) and tool.strip() else "codex"
     args = [
-        "agent-deck",
         "launch",
         "-json",
         f"-t={session_title}",
@@ -776,7 +839,7 @@ async def launch_agent_deck_closeout_session(
         f"-m={prompt}",
         context.repo_root,
     ]
-    payload = await _run_json_object_command(args)
+    payload = await _run_agent_deck_json_object_command(args)
     return _payload_to_session_target(payload)
 
 
@@ -1236,7 +1299,6 @@ async def send_agent_deck_prompt_reliably(
     no_wait: bool = False,
 ) -> None:
     args = [
-        "agent-deck",
         "session",
         "send",
         session_info.agent_deck_session_id,
@@ -1245,7 +1307,7 @@ async def send_agent_deck_prompt_reliably(
     ]
     if no_wait:
         args.append("--no-wait")
-    code, stdout, stderr = await _run_command(
+    code, stdout, stderr = await _run_agent_deck_command(
         args,
         cwd=project_path,
     )
@@ -1607,8 +1669,8 @@ async def send_codex_prompt_and_capture_output(
 
 
 async def get_last_output(agent_deck_session_id: str) -> str:
-    code, stdout, stderr = await _run_command(
-        ["agent-deck", "session", "output", agent_deck_session_id, "-q"]
+    code, stdout, stderr = await _run_agent_deck_command(
+        ["session", "output", agent_deck_session_id, "-q"]
     )
     if code != 0:
         raise AgentDeckBridgeError(stderr.strip() or "Failed to read Agent Deck output")

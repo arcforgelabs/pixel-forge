@@ -198,6 +198,25 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")
 
+    def test_create_adopted_project_session_persists_a_first_class_chat_lane(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        workspace_path = project_path / ".agents" / "adopted-lane"
+        workspace_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        adopted = project_store.create_adopted_project_session(
+            str(project_path),
+            workspace_path=str(workspace_path),
+            agent_deck_session_id="deck-adopted",
+            agent_deck_session_title="Existing Agent Deck Work",
+            agent_deck_tool="claude",
+        )
+
+        self.assertEqual(adopted.origin_kind, "adopted")
+        self.assertTrue(adopted.thread_id.startswith("chat-"))
+        self.assertEqual(adopted.agent_deck_session_id, "deck-adopted")
+        self.assertEqual(adopted.workspace_path, str(workspace_path))
+
     def test_deleting_active_project_clears_profile_pointer(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
         project_store.upsert_project(str(project_path))

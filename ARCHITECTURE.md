@@ -18,7 +18,7 @@ Preferred path:
 ./start-dev.sh
 ```
 
-That starts the API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available.
+That starts the workstation-v2 API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/workstation-v2-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-workstation-v2.localhost` with shared state under `~/.pixel-forge/workstation-v2`.
 
 Manual fallback:
 
@@ -37,8 +37,10 @@ pnpm dev
 
 ```bash
 ./install.sh
-pixel-forge open
+pixel-forge-workstation-v2 open
 ```
+
+This install lane is side-by-side. It should not replace the stable installed `pixel-forge` controller or the stable standalone `agent-deck` install.
 
 ### Verification
 
@@ -64,12 +66,17 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 
 ## Current System Shape
 
+- This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge/workstation-v2`.
+- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
+- The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only activity records in `workstation_events`.
+- Persisted `sessions.thread_id` remains the stable chat-id compatibility surface in this lane. Agent Deck session ids are binding metadata and lookup keys, not the primary user-facing category.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
 - The Projects sidebar and advanced Settings retarget control now render one reconciled Pixel Forge chat model per project. Persisted lanes remain authoritative, visible Agent Deck sessions are reconciliation inputs, unmatched live sessions are adopted into chat rows before they appear, and fresh chats are created through that same chat-facing surface as draft lanes instead of a raw-session picker.
+- Pixel Forge now observes attached or adopted chat activity primarily through `/api/projects/{project}/chats/{chat}/events`, which streams the shared workstation activity log over SSE into the Live Editor store.
 - Fresh Live Editor chats now start as unbound drafts. They carry only intended agent state until the first real bind, and that first bind creates the isolated Agent Deck clone workspace under the project `.agents/` tree while the canonical repo root remains the project identity.
 - One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped editor surface: preview tabs, active target URL, viewport/tool state, selection/history state, and chat state all move together. The default self-edit mirror source follows that same bound workspace.
 - The shared session store persists the durable subset of that thread editor surface, including tab descriptors and restore metadata, and the UI reacquires runtime-only browser handles when a lane is reopened instead of pretending old handles survived a restart.
@@ -95,6 +102,9 @@ Use these identities consistently:
 
 - `project root`: the canonical repo identity the operator chose
 - `isolated session`: the clone-backed working copy under `.agents/<name>`
+- `chat id`: the persisted user-facing lane identity; today this is the existing `sessions.thread_id` compatibility surface
+- `binding`: the current chat-to-live-Agent-Deck mapping stored separately from the durable chat row
+- `workstation event`: one append-only activity record in `workstation_events` for a chat
 - `lane`: the thread-owned editor/chat state plus its eventual Agent Deck session and writable-workspace binding; draft lanes keep intended agent state before the real bind exists
 - `mirror`: a runnable Pixel Forge preview built from one source root or frozen clone snapshot
 - `staged update`: the frozen controller-install candidate
@@ -119,6 +129,14 @@ The important boundary is:
 - clone preview publication freezes a clone snapshot per session and reloads the primary mirror tab for that workspace by default, without removing the ability to keep multiple mirror candidates open
 - controller install reads from the staged frozen snapshot, not the live repo
 
+### Workstation-v2 Shared Kernel Slice
+
+- `sessions` holds the durable Pixel Forge chat lanes and still owns the stable chat id.
+- `chat_session_bindings` maps one chat to its current live Agent Deck session, workspace path, title, and tool. Detaching a dead session clears the binding without deleting the chat.
+- `workstation_events` is the first shared event log. Right now it records deduped `activity` snapshots for one chat/session pair instead of raw token events.
+- Pixel Forge consumes that event log through SSE for observed attached/adopted chats, so the frontend no longer depends on a chat-item polling loop as the primary truth.
+- The send path is still legacy for now: live dispatch enters through `/ws/live-editor`, and the event producer currently derives activity through the existing Agent Deck activity adapter instead of a native Agent Deck event tap.
+
 ### Current Handoff Lanes
 
 #### Native Endpoint Lane
@@ -131,6 +149,7 @@ The important boundary is:
 - Streaming comes from the native agent transcript path (`claude_session_id` + JSONL today for Claude).
 - Codex/native non-JSONL sessions now adapt the best truthful stream surface available from Agent Deck session output: real text deltas become assistant chunks, progress-only lines become status updates, and completion still follows the actual Agent Deck settle state.
 - When a native session still cannot provide a truthful token-like stream surface, Pixel Forge keeps using Agent Deck's ready-gated send path, polls completion itself, and emits status heartbeats instead of treating the CLI's completion timeout as the UI truth.
+- Observed attached or adopted chats now hydrate through the shared workstation event stream first; the older activity polling path remains only as compatibility glue where a chat id does not exist yet.
 
 #### ACPX Sidecar Lane
 
@@ -168,9 +187,10 @@ flowchart LR
   Shell --> UI[React Product UI<br/>apps/web]
   Shell --> Preview[Embedded Chromium Preview Tabs]
   UI --> API[FastAPI Control Plane<br/>apps/api]
-  API --> State[(Shared State<br/>~/.pixel-forge)]
+  API --> State[(Shared State Root<br/>~/.pixel-forge/workstation-v2)]
+  API --> Kernel[(Shared Workstation Kernel<br/>sessions + bindings + events)]
   API --> Packs[Request Packs + Selection Tunnel<br/>&lt;workspace&gt;/.pixel-forge/requests]
-  API --> AgentDeck[Persistent Agent Deck Session]
+  API --> AgentDeck[Vendored Agent Deck Foundation<br/>foundations/agent-deck]
   API --> Mirrors[Mirror / Dev Runtimes]
   API --> Staged[Staged Controller Update Record]
   Staged --> Runner[Detached Update Runner]
@@ -199,14 +219,14 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the current limiting factor from `SPECS.md`: the context transport is still more file-oriented and indirect than the eventual sidecar path should be.
+The next target release should attack the current limiting factor from `SPECS.md`: chat identity, live session binding, and activity transport are only partially unified today.
 
 The smallest complete unit that matters:
 
-- keep the frozen request-pack and selection-tunnel lane as the minimum truthful handoff
-- trust visible-session continuity and stop repeating stable setup framing on every turn
-- keep the first-turn bootstrap brief stable and keep later turns request-delta-focused
-- make deploy/apply expectations follow the active preview target truth instead of repo-only inference
+- keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
+- move from snapshot activity sync toward native Agent Deck lifecycle and transcript event ingestion
+- move the send/settle path onto the same shared workstation event plane instead of split websocket plus adapter polling
+- expose the same control-plane records to both shells so Agent Deck is not only an external command target
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists
 
 ### Next Target Release Diagram
@@ -231,7 +251,9 @@ flowchart LR
 The final ideal state is a boring, recursive, truthful loop:
 
 - one embedded browser model for localhost, remote sites, and Pixel Forge itself
-- one shared control plane for controller and mirror runtimes
+- one shared workstation kernel with one control plane, one event stream, one transcript model, and one chat identity
+- Agent Deck as the execution and workspace kernel surface over that shared state
+- Pixel Forge as the visual browser and editor shell over that same shared state
 - one native visible endpoint session with a richer sidecar transport layer that can use both frozen evidence and live attach into the prepared preview session
 - one promotion path from mirror preview candidate to installed controller, with rollback if needed
 - recursion stays faithful because mirrors are real Pixel Forge runtimes, not special target-only surrogates

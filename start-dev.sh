@@ -5,12 +5,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/scripts/workstation-v2-env.sh" ]; then
+    # This clone is the dedicated workstation-v2 lane. Apply isolated defaults
+    # unless the operator explicitly overrides them in the environment.
+    # shellcheck disable=SC1091
+    source "$SCRIPT_DIR/scripts/workstation-v2-env.sh"
+fi
+
 # Ensure common tool paths are available (desktop launchers may not source profile)
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
     [ -d "$p" ] && case ":$PATH:" in *":$p:"*) ;; *) export PATH="$p:$PATH" ;; esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_DIR="$SCRIPT_DIR/apps/api"
 WEB_DIR="$SCRIPT_DIR/apps/web"
 INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-pixel-forge}"
