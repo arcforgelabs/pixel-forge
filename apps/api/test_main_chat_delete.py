@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import main
-from agent_deck_bridge import AgentDeckBridgeError, AgentDeckDeleteAssessment
+from agent_deck_bridge import (
+    AgentDeckBridgeError,
+    AgentDeckDeleteAssessment,
+    AgentDeckSessionInfo,
+)
 from project_chats import ProjectChatRecord
 
 
@@ -137,6 +141,75 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         upsert_session.assert_called_once()
         self.assertEqual(payload["thread_id"], "thread-a")
         self.assertEqual(payload["title"], "Chat thread-a")
+
+
+class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
+        session_info = AgentDeckSessionInfo(
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="Chat thread-a",
+            workspace_path="/tmp/project/.agents/thread-a",
+            tmux_session="tmux-a",
+            tool="claude",
+            status="waiting",
+            acpx_agent=None,
+            acpx_session_name=None,
+            acpx_record_id=None,
+            acp_session_id=None,
+            claude_session_id="claude-session-a",
+            jsonl_path=Path("/tmp/claude.jsonl"),
+        )
+        websocket = Mock()
+        websocket.send_json = AsyncMock()
+        create_task_calls: list[object] = []
+        fake_wait_task = object()
+
+        def fake_create_task(coro: object) -> object:
+            create_task_calls.append(coro)
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            return fake_wait_task
+
+        with (
+            patch.object(main, "get_last_output", AsyncMock()) as get_last_output,
+            patch.object(
+                main,
+                "send_agent_deck_prompt_reliably",
+                AsyncMock(),
+            ) as send_prompt,
+            patch.object(
+                main,
+                "wait_for_agent_deck_turn_completion",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(main.asyncio, "create_task", side_effect=fake_create_task),
+        ):
+            baseline_output, turn_wait_task, status_heartbeat_task = (
+                await main._deliver_live_editor_prompt_to_agent_deck_session(
+                    session_info=session_info,
+                    websocket=websocket,
+                    dispatch_prompt="Read request.md",
+                )
+            )
+
+        get_last_output.assert_not_awaited()
+        send_prompt.assert_awaited_once_with(
+            session_info,
+            project_path="/tmp/project/.agents/thread-a",
+            prompt="Read request.md",
+            no_wait=False,
+        )
+        websocket.send_json.assert_awaited_once_with(
+            {
+                "type": "status",
+                "message": "Request delivered to Claude. Waiting for completion...",
+            }
+        )
+        self.assertEqual(baseline_output, "")
+        self.assertIs(turn_wait_task, fake_wait_task)
+        self.assertIsNone(status_heartbeat_task)
+        self.assertEqual(len(create_task_calls), 1)
 
 
 if __name__ == "__main__":

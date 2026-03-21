@@ -36,8 +36,6 @@ from agent_deck_bridge import (
     rename_agent_deck_session_target,
     stream_claude_jsonl,
     stream_codex_session_output,
-    submit_agent_deck_prompt,
-    type_agent_deck_prompt,
     wait_for_agent_deck_turn_completion,
 )
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
@@ -2157,6 +2155,66 @@ If the preview target is external or not controlled by this workspace, state tha
     return base
 
 
+async def _deliver_live_editor_prompt_to_agent_deck_session(
+    *,
+    session_info,
+    websocket: WebSocket,
+    dispatch_prompt: str,
+) -> tuple[str, asyncio.Task[object], asyncio.Task[object] | None]:
+    baseline_output = ""
+    normalized_session_status = (session_info.status or "").strip().lower()
+    queue_onto_busy_session = normalized_session_status not in {
+        "",
+        "waiting",
+        "idle",
+    }
+
+    if session_info.tool == "codex":
+        baseline_output = await get_last_output(session_info.agent_deck_session_id)
+
+    await send_agent_deck_prompt_reliably(
+        session_info,
+        project_path=session_info.workspace_path,
+        prompt=dispatch_prompt,
+        no_wait=queue_onto_busy_session and session_info.tool != "claude",
+    )
+
+    tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
+    if session_info.tool == "codex":
+        status_message = (
+            f"Queued request to busy {tool_label} session. Waiting for completion..."
+            if queue_onto_busy_session
+            else f"Request delivered to {tool_label}. Waiting for completion..."
+        )
+    else:
+        status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+
+    await websocket.send_json(
+        {
+            "type": "status",
+            "message": status_message,
+        }
+    )
+
+    turn_wait_task = asyncio.create_task(
+        wait_for_agent_deck_turn_completion(
+            session_info,
+            completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+        )
+    )
+    status_heartbeat_task: asyncio.Task[object] | None = None
+    if session_info.tool != "claude":
+        status_heartbeat_task = asyncio.create_task(
+            _emit_live_editor_wait_heartbeat(
+                websocket,
+                tool=session_info.tool,
+                wait_task=turn_wait_task,
+            )
+        )
+
+    return baseline_output, turn_wait_task, status_heartbeat_task
+
+
 async def generate_with_claude_cli(
     image_path: str | None,
     system_prompt: str,
@@ -3051,63 +3109,16 @@ async def live_editor_chat(websocket: WebSocket):
                         if jsonl_path and jsonl_path.exists()
                         else 0
                     )
-                    baseline_output = ""
-
-                    if session_info.tool == "claude":
-                        await type_agent_deck_prompt(
-                            session_info,
-                            prompt=dispatch_prompt,
-                        )
-                        await submit_agent_deck_prompt(session_info)
-                        turn_wait_task = asyncio.create_task(
-                            wait_for_agent_deck_turn_completion(
-                                session_info,
-                                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-                            )
-                        )
-                        send_task: asyncio.Task[None] = turn_wait_task
-                    else:
-                        if session_info.tool == "codex":
-                            baseline_output = await get_last_output(
-                                session_info.agent_deck_session_id
-                            )
-                        normalized_session_status = (session_info.status or "").strip().lower()
-                        queue_onto_busy_session = normalized_session_status not in {
-                            "",
-                            "waiting",
-                            "idle",
-                        }
-                        await send_agent_deck_prompt_reliably(
-                            session_info,
-                            project_path=session_info.workspace_path,
-                            prompt=dispatch_prompt,
-                            no_wait=queue_onto_busy_session,
-                        )
-                        tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
-                        await websocket.send_json(
-                            {
-                                "type": "status",
-                                "message": (
-                                    f"Queued request to busy {tool_label} session. Waiting for completion..."
-                                    if queue_onto_busy_session
-                                    else f"Request delivered to {tool_label}. Waiting for completion..."
-                                ),
-                            }
-                        )
-                        turn_wait_task = asyncio.create_task(
-                            wait_for_agent_deck_turn_completion(
-                                session_info,
-                                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-                            )
-                        )
-                        status_heartbeat_task = asyncio.create_task(
-                            _emit_live_editor_wait_heartbeat(
-                                websocket,
-                                tool=session_info.tool,
-                                wait_task=turn_wait_task,
-                            )
-                        )
-                        send_task = turn_wait_task
+                    (
+                        baseline_output,
+                        turn_wait_task,
+                        status_heartbeat_task,
+                    ) = await _deliver_live_editor_prompt_to_agent_deck_session(
+                        session_info=session_info,
+                        websocket=websocket,
+                        dispatch_prompt=dispatch_prompt,
+                    )
+                    send_task = turn_wait_task
 
                     stream_stats = None
                     if jsonl_path:
