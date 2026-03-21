@@ -20,6 +20,12 @@ Preferred path:
 
 That starts the alpha-lane API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/alpha-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-alpha.localhost` with shared state under `~/.pixel-forge-alpha`.
 
+Source branch of record for continuing this lane from a normal repo checkout or worktree:
+
+```bash
+git switch dev/pixel-forge-alpha
+```
+
 Manual fallback:
 
 ```bash
@@ -44,6 +50,12 @@ pixel-forge-agent-deck-alpha
 ```
 
 This install lane is side-by-side. It should not replace the stable installed `pixel-forge` controller or the stable standalone `agent-deck` install.
+
+### Branch Truth
+
+- `dev/pixel-forge-alpha` is the source branch of record for the alpha lane.
+- The earlier bootstrap clone/branch was an R&D bring-up path, not the long-term branch identity.
+- Future alpha work should continue from a normal repo checkout or dedicated worktree on `dev/pixel-forge-alpha`.
 
 ### Verification
 
@@ -134,7 +146,7 @@ The important boundary is:
 - clone preview publication freezes a clone snapshot per session and reloads the primary mirror tab for that workspace by default, without removing the ability to keep multiple mirror candidates open
 - controller install reads from the staged frozen snapshot, not the live repo
 
-### Workstation-v2 Shared Kernel Slice
+### Alpha Shared Kernel Slice
 
 - `sessions` holds the durable Pixel Forge chat lanes and still owns the stable chat id.
 - `chat_session_bindings` maps one chat to its current live Agent Deck session, workspace path, title, and tool. Detaching a dead session clears the binding without deleting the chat.
