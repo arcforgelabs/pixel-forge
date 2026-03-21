@@ -6,11 +6,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/scripts/workstation-v2-env.sh" ]; then
-    # This clone is the dedicated workstation-v2 lane. Apply isolated defaults
+if [ -f "$SCRIPT_DIR/scripts/alpha-env.sh" ]; then
+    # This clone is the dedicated alpha lane. Apply isolated defaults
     # unless the operator explicitly overrides them in the environment.
     # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/scripts/workstation-v2-env.sh"
+    source "$SCRIPT_DIR/scripts/alpha-env.sh"
 fi
 
 # Ensure common tool paths are available (desktop launchers may not source profile)

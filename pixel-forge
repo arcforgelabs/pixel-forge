@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$ROOT_DIR/scripts/workstation-v2-env.sh" ]; then
+if [ -f "$ROOT_DIR/scripts/alpha-env.sh" ]; then
     # shellcheck disable=SC1091
-    source "$ROOT_DIR/scripts/workstation-v2-env.sh"
+    source "$ROOT_DIR/scripts/alpha-env.sh"
 fi
 exec python3 "$ROOT_DIR/apps/api/pixel_forge_cli.py" "$@"

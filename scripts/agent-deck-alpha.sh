@@ -4,9 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [[ -f "$SCRIPT_DIR/workstation-v2-env.sh" ]]; then
+if [[ -f "$SCRIPT_DIR/alpha-env.sh" ]]; then
   # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/workstation-v2-env.sh"
+  source "$SCRIPT_DIR/alpha-env.sh"
 fi
 FOUNDATION_ROOT="${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-$REPO_ROOT/foundations/agent-deck}"
 BUILD_DIR="$FOUNDATION_ROOT/build"
@@ -27,7 +27,7 @@ if [[ -f "$STATE_ROOT_MIGRATION_HELPER" ]]; then
 fi
 
 if [[ ! -d "$FOUNDATION_ROOT/cmd/agent-deck" ]]; then
-  echo "workstation-v2 Agent Deck foundation is missing at $FOUNDATION_ROOT" >&2
+  echo "alpha Agent Deck foundation is missing at $FOUNDATION_ROOT" >&2
   exit 1
 fi
 

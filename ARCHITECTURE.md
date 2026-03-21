@@ -18,7 +18,7 @@ Preferred path:
 ./start-dev.sh
 ```
 
-That starts the workstation-v2 API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/workstation-v2-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-workstation-v2.localhost` with shared state under `~/.pixel-forge-alpha`.
+That starts the alpha-lane API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/alpha-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-alpha.localhost` with shared state under `~/.pixel-forge-alpha`.
 
 Manual fallback:
 
@@ -37,9 +37,9 @@ pnpm dev
 
 ```bash
 ./install.sh
-pixel-forge-workstation-v2 open
-pixel-forge-workstation-v2 agent-deck-tui open
-pixel-forge-workstation-v2 agent-deck-surface open
+pixel-forge-alpha open
+pixel-forge-alpha agent-deck-tui open
+pixel-forge-alpha agent-deck-surface open
 pixel-forge-agent-deck-alpha
 ```
 
@@ -69,11 +69,11 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 
 ## Current System Shape
 
-- This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge-alpha`.
-- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=alpha` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
+- This clone is the dedicated alpha R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-alpha`, `pixel-forge-alpha-shell`, `pixel-forge-alpha.localhost`, and `~/.pixel-forge-alpha`.
+- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-alpha.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=alpha` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The alpha lane now ships two separate Agent Deck operator surfaces over the same alpha-owned runtime: a dedicated terminal app launcher for the real TUI and a separate web surface for browser/shell embedding.
-- The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-workstation-v2 agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
+- The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-alpha agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is only a one-way migration fallback when present and should be retired after successful alpha verification.
 - The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only activity records in `workstation_events`.
@@ -167,7 +167,7 @@ The important boundary is:
 
 #### Integrated Agent Deck TUI Lane
 
-- `pixel-forge-agent-deck-alpha` and `pixel-forge-workstation-v2 agent-deck-tui open` launch the real vendored Agent Deck terminal UI in a separate terminal window, with a dedicated desktop entry/WM class so it can sit side-by-side with the stable Agent Deck in the dock/app grid.
+- `pixel-forge-agent-deck-alpha` and `pixel-forge-alpha agent-deck-tui open` launch the real vendored Agent Deck terminal UI in a separate terminal window, with a dedicated desktop entry/WM class so it can sit side-by-side with the stable Agent Deck in the dock/app grid.
 - That TUI is isolated to the alpha-owned Agent Deck home/profile and is intended only for Pixel Forge alpha integration work, not for the stable standalone Agent Deck universe.
 - This keeps the operator-visible terminal app available side-by-side with the main installed Agent Deck while preventing the alpha lane from borrowing or polluting the stable runtime state.
 

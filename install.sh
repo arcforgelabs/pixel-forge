@@ -7,9 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/scripts/workstation-v2-env.sh" ]; then
+if [ -f "$SCRIPT_DIR/scripts/alpha-env.sh" ]; then
     # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/scripts/workstation-v2-env.sh"
+    source "$SCRIPT_DIR/scripts/alpha-env.sh"
 fi
 
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
@@ -21,7 +21,7 @@ BIN_DIR="${PIXEL_FORGE_BIN_DIR:-$HOME/.local/bin}"
 WEB_DIR="$SCRIPT_DIR/apps/web"
 DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
 AGENT_DECK_FOUNDATION_SOURCE_DIR="$SCRIPT_DIR/foundations/agent-deck"
-AGENT_DECK_RUNNER_SOURCE="$SCRIPT_DIR/scripts/agent-deck-workstation-v2.sh"
+AGENT_DECK_RUNNER_SOURCE="$SCRIPT_DIR/scripts/agent-deck-alpha.sh"
 PORT="${PIXEL_FORGE_PORT:-7001}"
 URL_HOST="${PIXEL_FORGE_URL_HOST:-pixel-forge.localhost}"
 SERVICE_NAME="${PIXEL_FORGE_SERVICE_NAME:-${INSTALL_NAME}}"
@@ -36,7 +36,7 @@ AGENT_DECK_SURFACE_HOST="${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-127.0.0.1}"
 AGENT_DECK_SURFACE_PORT="${PIXEL_FORGE_AGENT_DECK_SURFACE_PORT:-8422}"
 AGENT_DECK_SURFACE_URL="${PIXEL_FORGE_AGENT_DECK_SURFACE_URL:-http://${AGENT_DECK_SURFACE_HOST}:${AGENT_DECK_SURFACE_PORT}}"
 AGENT_DECK_FOUNDATION_INSTALL_DIR="$INSTALL_DIR/foundations/agent-deck"
-AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-workstation-v2.sh"
+AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-alpha.sh"
 AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
 STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_alpha_state_root.py"
 AGENT_DECK_TUI_LAUNCHER_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME:-pixel-forge-agent-deck-alpha}"
@@ -52,6 +52,14 @@ DESKTOP_ENTRY_NAME="${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-Pixel Forge}"
 DESKTOP_FILE_NAME="${PIXEL_FORGE_DESKTOP_FILE_NAME:-${INSTALL_NAME}.desktop}"
 DESKTOP_ICON_NAME="${PIXEL_FORGE_DESKTOP_ICON_NAME:-${INSTALL_NAME}}"
 DESKTOP_ICON_SOURCE="${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/alpha.png}"
+LEGACY_ALPHA_INSTALL_NAME="pixel-forge-workstation-v2"
+LEGACY_ALPHA_CLI_NAME="pixel-forge-workstation-v2"
+LEGACY_ALPHA_SHELL_NAME="pixel-forge-workstation-v2-shell"
+LEGACY_ALPHA_SERVICE_NAME="pixel-forge-workstation-v2"
+LEGACY_ALPHA_INSTALL_DIR="$HOME/.local/lib/pixel-forge-workstation-v2"
+LEGACY_ALPHA_BACKUP_DIR="$HOME/.local/lib/pixel-forge-workstation-v2.rollback"
+LEGACY_ALPHA_DESKTOP_FILE_NAME="pixel-forge-workstation-v2.desktop"
+LEGACY_ALPHA_DESKTOP_ICON_NAME="pixel-forge-workstation-v2"
 
 # Ensure pnpm/node are in PATH.
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
@@ -75,6 +83,26 @@ backup_install_dir() {
     rm -rf "$BACKUP_DIR"
     mkdir -p "$BACKUP_DIR"
     cp -a "$INSTALL_DIR"/. "$BACKUP_DIR"/
+}
+
+cleanup_legacy_alpha_install() {
+    if [ "$INSTALL_NAME" = "$LEGACY_ALPHA_INSTALL_NAME" ]; then
+        return
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user stop "${LEGACY_ALPHA_SERVICE_NAME}.service" 2>/dev/null || true
+        systemctl --user disable "${LEGACY_ALPHA_SERVICE_NAME}.service" 2>/dev/null || true
+        rm -f "$SYSTEMD_DIR/${LEGACY_ALPHA_SERVICE_NAME}.service"
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
+
+    rm -f "$BIN_DIR/${LEGACY_ALPHA_CLI_NAME}"
+    rm -f "$BIN_DIR/${LEGACY_ALPHA_SHELL_NAME}"
+    rm -f "$HOME/.local/share/applications/${LEGACY_ALPHA_DESKTOP_FILE_NAME}"
+    rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/${LEGACY_ALPHA_DESKTOP_ICON_NAME}.png"
+    rm -rf "$LEGACY_ALPHA_INSTALL_DIR"
+    rm -rf "$LEGACY_ALPHA_BACKUP_DIR"
 }
 
 echo "Installing Pixel Forge..."
@@ -443,6 +471,8 @@ DESKTOP
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 fi
+
+cleanup_legacy_alpha_install
 
 INSTALL_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$INSTALL_DIR/runtime-install-metadata.json" <<METADATA

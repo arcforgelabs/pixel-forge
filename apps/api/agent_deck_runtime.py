@@ -24,7 +24,7 @@ def agent_deck_command() -> list[str]:
     if explicit:
         return shlex.split(explicit)
 
-    runner = source_root() / "scripts" / "agent-deck-workstation-v2.sh"
+    runner = source_root() / "scripts" / "agent-deck-alpha.sh"
     if runner.is_file():
         return [str(runner)]
 
