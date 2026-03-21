@@ -13,10 +13,18 @@ BUILD_DIR="$FOUNDATION_ROOT/build"
 BUILD_BIN="${PIXEL_FORGE_AGENT_DECK_BINARY:-$BUILD_DIR/agent-deck}"
 
 export AGENTDECK_PROFILE="${AGENTDECK_PROFILE:-${PIXEL_FORGE_AGENT_DECK_PROFILE:-workstation-v2}}"
-export PIXEL_FORGE_AGENT_DECK_HOME="${PIXEL_FORGE_AGENT_DECK_HOME:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge/workstation-v2}/agent-deck}"
-export PIXEL_FORGE_DB_PATH="${PIXEL_FORGE_DB_PATH:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge/workstation-v2}/pixel-forge.db}"
+export PIXEL_FORGE_AGENT_DECK_HOME="${PIXEL_FORGE_AGENT_DECK_HOME:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge-alpha}/agent-deck}"
+export PIXEL_FORGE_DB_PATH="${PIXEL_FORGE_DB_PATH:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge-alpha}/pixel-forge.db}"
 export AGENTDECK_DIR="${AGENTDECK_DIR:-$PIXEL_FORGE_AGENT_DECK_HOME}"
 export AGENT_DECK_DIR="${AGENT_DECK_DIR:-$AGENTDECK_DIR}"
+
+STATE_ROOT_MIGRATION_HELPER="${PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER:-$REPO_ROOT/ensure_alpha_state_root.py}"
+if [[ ! -f "$STATE_ROOT_MIGRATION_HELPER" ]]; then
+  STATE_ROOT_MIGRATION_HELPER="$REPO_ROOT/apps/api/ensure_alpha_state_root.py"
+fi
+if [[ -f "$STATE_ROOT_MIGRATION_HELPER" ]]; then
+  python3 "$STATE_ROOT_MIGRATION_HELPER" >/dev/null
+fi
 
 if [[ ! -d "$FOUNDATION_ROOT/cmd/agent-deck" ]]; then
   echo "workstation-v2 Agent Deck foundation is missing at $FOUNDATION_ROOT" >&2

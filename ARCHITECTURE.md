@@ -18,7 +18,7 @@ Preferred path:
 ./start-dev.sh
 ```
 
-That starts the workstation-v2 API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/workstation-v2-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-workstation-v2.localhost` with shared state under `~/.pixel-forge/workstation-v2`.
+That starts the workstation-v2 API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/workstation-v2-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-workstation-v2.localhost` with shared state under `~/.pixel-forge-alpha`.
 
 Manual fallback:
 
@@ -67,12 +67,12 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 
 ## Current System Shape
 
-- This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge/workstation-v2`.
-- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2` plus an isolated Agent Deck home at `~/.pixel-forge/workstation-v2/agent-deck`.
+- This clone is the dedicated workstation-v2 R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-workstation-v2`, `pixel-forge-workstation-v2-shell`, `pixel-forge-workstation-v2.localhost`, and `~/.pixel-forge-alpha`.
+- The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-workstation-v2.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=workstation-v2` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-workstation-v2 agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
-- Shared control-plane truth lives under `~/.pixel-forge` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata.
+- Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is now a legacy alpha migration source, not the active root.
 - The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only activity records in `workstation_events`.
 - Persisted `sessions.thread_id` remains the stable chat-id compatibility surface in this lane. Agent Deck session ids are binding metadata and lookup keys, not the primary user-facing category.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
@@ -88,7 +88,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Live Editor handoff has two prompt shapes: bootstrap on the first turn for a new or rebound endpoint session, then delta-only framing for later turns on that same visible session.
 - Stable Live Editor workflow rules live in a thread-level `session-brief.md`, while each per-turn `request.md` carries the new delta context for that turn.
 - Explicit slash-skill requests are promoted out of freeform user prose into a dedicated request-pack `## Skills` section, and the dispatch wrapper treats them as invoke-now instructions instead of optional hints.
-- Slash-skill autocomplete and skill visibility come from scanning the real skill folder trees on disk: the managed Pixel Forge skill home plus external agent skill homes like Claude, Codex, and OpenClaw. The managed Pixel Forge skill home lives under `~/.pixel-forge`, not inside the mutable app install tree, so reinstalling Pixel Forge does not wipe the skill surface.
+- Slash-skill autocomplete and skill visibility come from scanning the real skill folder trees on disk: the managed Pixel Forge skill home plus external agent skill homes like Claude, Codex, and OpenClaw. The managed alpha skill home lives under `~/.pixel-forge-alpha`, not inside the mutable app install tree, so reinstalling Pixel Forge does not wipe the skill surface.
 - Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
 - Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface.
 - Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
@@ -198,7 +198,7 @@ flowchart LR
   Shell --> UI[React Product UI<br/>apps/web]
   Shell --> Preview[Embedded Chromium Preview Tabs]
   UI --> API[FastAPI Control Plane<br/>apps/api]
-  API --> State[(Shared State Root<br/>~/.pixel-forge/workstation-v2)]
+  API --> State[(Shared State Root<br/>~/.pixel-forge-alpha)]
   API --> Kernel[(Shared Workstation Kernel<br/>sessions + bindings + events)]
   API --> Packs[Request Packs + Selection Tunnel<br/>&lt;workspace&gt;/.pixel-forge/requests]
   API --> AgentDeck[Vendored Agent Deck Foundation<br/>foundations/agent-deck]

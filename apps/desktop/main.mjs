@@ -15,7 +15,7 @@ const PREVIEW_PARTITION = process.env.PIXEL_FORGE_PREVIEW_PARTITION || `persist:
 const APP_STATE_DIR = path.resolve(
   process.env.PIXEL_FORGE_STATE_DIR
   || process.env.PIXEL_FORGE_SHARED_STATE_DIR
-  || path.join(os.homedir(), '.pixel-forge'),
+  || path.join(os.homedir(), '.pixel-forge-alpha'),
 )
 const CONTROLLER_UPDATE_SNAPSHOTS_DIR = path.join(APP_STATE_DIR, 'controller-updates')
 const PENDING_CONTROLLER_UPDATE_PATH = path.join(APP_STATE_DIR, 'pending-controller-update.json')
