@@ -142,6 +142,18 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
+        if (url.includes("/api/workspace-urls")) {
+          return new Response(
+            JSON.stringify({
+              urls: [
+                {
+                  url: "http://thread-a-preview-target.localhost:3102/admin/control-room",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
         if (url.includes("/api/projects/") && url.includes("/urls")) {
           return new Response(
             JSON.stringify({
@@ -170,6 +182,7 @@ describe("session-store thread switching", () => {
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
       liveEditorSession: null,
+      workspacePreviewUrlsByPath: {},
       projectSessions: [],
       projectSessionsByProject: {},
       projectChats: [],
@@ -249,6 +262,58 @@ describe("session-store thread switching", () => {
     expect(useSessionStore.getState().liveEditorSession).toMatchObject({
       threadId: "thread-a",
     });
+  });
+
+  it("uses the active workspace preview URLs instead of the root project URL list", async () => {
+    await useSessionStore.getState().hydrateProjects();
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      preferredThreadId: "thread-a",
+      persistProfile: false,
+    });
+
+    expect(useSessionStore.getState().previewUrl).toBe(
+      "http://thread-a-preview-target.localhost:3102/admin/control-room"
+    );
+    expect(
+      useSessionStore.getState().workspacePreviewUrlsByPath[
+        "/tmp/example-project/.agents/thread-a"
+      ]
+    ).toEqual([
+      "http://thread-a-preview-target.localhost:3102/admin/control-room",
+    ]);
+  });
+
+  it("persists clone preview URLs without overwriting the root project preview list", async () => {
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      recentProjects: [
+        {
+          path: "/tmp/example-project",
+          name: "example-project",
+          previewUrls: ["http://localhost:3002/admin/control-room"],
+          outputMode: "scratch",
+          customOutputPath: undefined,
+          lastOpened: "2026-03-20T00:00:00Z",
+        },
+      ],
+    });
+
+    await useSessionStore.getState().setPreviewUrl(
+      "http://thread-a-preview-target.localhost:3102/admin/control-room",
+      "/tmp/example-project/.agents/thread-a"
+    );
+
+    expect(useSessionStore.getState().recentProjects[0]?.previewUrls).toEqual([
+      "http://localhost:3002/admin/control-room",
+    ]);
+    expect(
+      useSessionStore.getState().workspacePreviewUrlsByPath[
+        "/tmp/example-project/.agents/thread-a"
+      ]
+    ).toEqual([
+      "http://thread-a-preview-target.localhost:3102/admin/control-room",
+    ]);
   });
 
   it("keeps the saved lane and detaches its dead Agent Deck binding", async () => {
@@ -649,6 +714,66 @@ describe("session-store chat creation", () => {
         agentType: "claude",
       })
     ).rejects.toThrow("Chat creation is temporarily unavailable");
+  });
+
+  it("surfaces a bound session as a visible project chat immediately", () => {
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [],
+      projectChatsByProject: {},
+      projectSessions: [],
+      projectSessionsByProject: {},
+      agentDeckTargets: [],
+    });
+
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-live",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project/.agents/thread-live",
+      agentDeckSessionId: "deck-live",
+      agentDeckSessionTitle: "Live chat",
+      agentDeckTool: "claude",
+      requestId: "request-live",
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.projectChats[0]).toMatchObject({
+      id: "thread-live",
+      threadId: "thread-live",
+      title: "Live chat",
+      agentDeckSessionId: "deck-live",
+      bindingState: "attached",
+      workspaceKind: "clone",
+    });
+    expect(state.projectChatsByProject["/tmp/example-project"][0]).toMatchObject({
+      id: "thread-live",
+      agentDeckSessionId: "deck-live",
+    });
+  });
+
+  it("does not surface an unbound local draft as a visible project chat", () => {
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [],
+      projectChatsByProject: {},
+      projectSessions: [],
+      projectSessionsByProject: {},
+      agentDeckTargets: [],
+    });
+
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-draft",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+      requestId: null,
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.projectChats).toHaveLength(0);
+    expect(state.projectChatsByProject["/tmp/example-project"]).toBeUndefined();
   });
 });
 

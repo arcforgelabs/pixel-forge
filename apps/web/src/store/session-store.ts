@@ -14,7 +14,7 @@ export type PersistedLiveEditorPanelTab = "chat" | "elements";
 export type PersistedLiveEditorViewportMode = "fluid" | "desktop" | "phone";
 
 export interface PersistedLocalTargetMeta {
-  kind: "pixel-forge";
+  kind: "pixel-forge" | "workspace-preview";
   runtimeKind: "mirror" | "dev";
   instanceSlug: string;
   projectPath: string;
@@ -157,6 +157,7 @@ interface SessionStore {
 
   // Server-backed project/session state
   recentProjects: SavedProject[];
+  workspacePreviewUrlsByPath: Record<string, string[]>;
   projectSessions: ProjectSessionRecord[];
   projectSessionsByProject: Record<string, ProjectSessionRecord[]>;
   projectChats: ProjectChatRecord[];
@@ -218,6 +219,7 @@ interface SessionStore {
   switchToThread: (session: ProjectSessionRecord | null) => void;
   refreshProjectSessions: (projectPath?: string | null) => Promise<ProjectSessionRecord[]>;
   refreshProjectChats: (projectPath?: string | null) => Promise<ProjectChatRecord[]>;
+  loadWorkspacePreviewUrls: (workspacePath?: string | null) => Promise<string[]>;
   refreshAgentDeckTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
   createProjectChatSession: (options?: {
@@ -232,7 +234,7 @@ interface SessionStore {
   selectedAgentDeckTargetId: string | null;
   setSelectedAgentDeckTargetId: (sessionId: string | null) => void;
   clearProject: () => void;
-  setPreviewUrl: (url: string | null) => Promise<void>;
+  setPreviewUrl: (url: string | null, workspacePath?: string | null) => Promise<void>;
   setOutputSettings: (
     outputMode: OutputMode,
     customOutputPath?: string | null
@@ -252,7 +254,7 @@ interface SessionStore {
   toggleSettingsSidebar: () => void;
 
   // Helpers
-  getCurrentProjectUrls: () => string[];
+  getCurrentWorkspaceUrls: (workspacePath?: string | null) => string[];
   setRuntimeInfo: (runtimeInfo: ControllerRuntimeInfo) => void;
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
@@ -520,6 +522,13 @@ function mergeProjectChat(
   return [chat, ...chats.filter((entry) => entry.id !== chat.id)];
 }
 
+function inferWorkspaceKind(
+  projectPath: string,
+  workspacePath: string
+): "root" | "clone" {
+  return workspacePath.startsWith(`${projectPath}/.agents/`) ? "clone" : "root";
+}
+
 function setProjectSessionsForPath(
   sessionsByProject: Record<string, ProjectSessionRecord[]>,
   projectPath: string | null,
@@ -547,6 +556,21 @@ function setProjectChatsForPath(
   return {
     ...chatsByProject,
     [projectPath]: chats,
+  };
+}
+
+function setWorkspacePreviewUrlsForPath(
+  previewUrlsByPath: Record<string, string[]>,
+  workspacePath: string | null,
+  urls: string[]
+): Record<string, string[]> {
+  if (!workspacePath) {
+    return previewUrlsByPath;
+  }
+
+  return {
+    ...previewUrlsByPath,
+    [workspacePath]: urls,
   };
 }
 
@@ -653,6 +677,62 @@ function projectSessionFromProjectChat(
   };
 }
 
+function projectChatFromSession(
+  projectPath: string | null,
+  session: LiveEditorSessionMeta | null,
+  existingChats: ProjectChatRecord[]
+): ProjectChatRecord | null {
+  if (!projectPath || !session) {
+    return null;
+  }
+
+  const threadId = session?.threadId?.trim() || null;
+  const agentDeckSessionId = session?.agentDeckSessionId?.trim() || null;
+  if (!threadId || !agentDeckSessionId) {
+    return null;
+  }
+
+  const resolvedSession = session;
+  const existingChat = existingChats.find((chat) => chat.id === threadId) ?? null;
+  const recordLikeSession = resolvedSession as Partial<ProjectSessionRecord>;
+  const now = new Date().toISOString();
+  const workspacePath = resolvedSession.workspacePath?.trim() || projectPath;
+
+  return {
+    id: existingChat?.id ?? threadId,
+    projectPath,
+    title:
+      existingChat?.title
+      ?? resolvedSession.agentDeckSessionTitle
+      ?? `Chat ${threadId}`,
+    threadId,
+    workspacePath,
+    backend: resolvedSession.backend,
+    agentDeckSessionId,
+    agentDeckSessionTitle:
+      resolvedSession.agentDeckSessionTitle
+      ?? existingChat?.agentDeckSessionTitle
+      ?? existingChat?.title
+      ?? `Chat ${threadId}`,
+    agentDeckTool: resolvedSession.agentDeckTool ?? existingChat?.agentDeckTool ?? null,
+    agentDeckSessionStatus:
+      existingChat?.agentDeckSessionStatus
+      ?? (agentDeckSessionId ? "unknown" : null),
+    bindingState: "attached",
+    workspaceKind: inferWorkspaceKind(projectPath, workspacePath),
+    originKind: existingChat?.originKind ?? "managed",
+    createdAt:
+      existingChat?.createdAt
+      ?? (typeof recordLikeSession.createdAt === "string"
+        ? recordLikeSession.createdAt
+        : now),
+    lastActive:
+      typeof recordLikeSession.lastActive === "string"
+        ? recordLikeSession.lastActive
+        : existingChat?.lastActive ?? now,
+  };
+}
+
 function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | null>(
   session: T,
   targets: AgentDeckSessionTarget[]
@@ -725,12 +805,46 @@ async function fetchProjectUrls(projectPath: string): Promise<string[]> {
   return payload.urls.map((urlRecord) => urlRecord.url);
 }
 
+async function fetchWorkspaceUrls(
+  projectPath: string,
+  workspacePath: string
+): Promise<string[]> {
+  const query = new URLSearchParams({
+    project_path: projectPath,
+    workspace_path: workspacePath,
+  });
+  const payload = await requestJson<{ urls: ApiProjectUrl[] }>(
+    `/api/workspace-urls?${query.toString()}`
+  );
+  return payload.urls.map((urlRecord) => urlRecord.url);
+}
+
 async function touchProjectUrl(projectPath: string, url: string): Promise<string[]> {
   const payload = await requestJson<{ urls: ApiProjectUrl[] }>(
     `/api/projects/${encodeURIComponent(projectPath)}/urls`,
     {
       method: "POST",
       body: JSON.stringify({ url }),
+    }
+  );
+
+  return payload.urls.map((urlRecord) => urlRecord.url);
+}
+
+async function touchWorkspaceUrl(
+  projectPath: string,
+  workspacePath: string,
+  url: string
+): Promise<string[]> {
+  const payload = await requestJson<{ urls: ApiProjectUrl[] }>(
+    "/api/workspace-urls",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        project_path: projectPath,
+        workspace_path: workspacePath,
+        url,
+      }),
     }
   );
 
@@ -928,6 +1042,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Server-backed project/session state
   recentProjects: [],
+  workspacePreviewUrlsByPath: {},
   projectSessions: [],
   projectSessionsByProject: {},
   projectChats: [],
@@ -1078,7 +1193,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       }),
     ]);
 
-    const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
     const hydratedSessions = projectSessions.map((session) =>
       detachUnavailableAgentDeckSession(session, agentDeckTargets)
     );
@@ -1089,6 +1203,25 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         : null)
       ?? hydratedSessions[0]
       ?? null;
+    const currentWorkspacePath =
+      currentSession?.workspacePath?.trim() || savedProject.path;
+    const currentWorkspaceUrls =
+      currentWorkspacePath === savedProject.path
+        ? previewUrls
+        : await fetchWorkspaceUrls(savedProject.path, currentWorkspacePath).catch(
+            (error) => {
+              console.error(
+                "[session-store] Failed to load workspace preview URLs:",
+                error
+              );
+              return [];
+            }
+          );
+    const currentPreviewUrl =
+      previewUrl?.trim()
+      || currentWorkspaceUrls[0]
+      || previewUrls[0]
+      || null;
     const hydratedTargets = ensureAgentDeckTargetPresent(
       agentDeckTargets,
       currentSession
@@ -1109,6 +1242,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       liveEditorSession: currentSession,
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
+      workspacePreviewUrlsByPath: setWorkspacePreviewUrlsForPath(
+        currentState.workspacePreviewUrlsByPath,
+        currentWorkspacePath,
+        currentWorkspaceUrls
+      ),
       projectSessions: hydratedSessions,
       projectSessionsByProject: setProjectSessionsForPath(
         currentState.projectSessionsByProject,
@@ -1147,15 +1285,36 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       return;
     }
 
-    set((state) => ({
-      projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
-      projectSessionsByProject: mergeSessionIntoProjectMap(
-        state.projectSessionsByProject,
+    set((state) => {
+      const mergedChat = projectChatFromSession(
         state.projectPath,
-        session
-      ),
-      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
-    }));
+        session,
+        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats
+      );
+      const nextProjectChats = mergedChat
+        ? mergeProjectChat(state.projectChats, mergedChat)
+        : state.projectChats;
+
+      return {
+        projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+        projectSessionsByProject: mergeSessionIntoProjectMap(
+          state.projectSessionsByProject,
+          state.projectPath,
+          session
+        ),
+        agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
+        ...(mergedChat
+          ? {
+              projectChats: nextProjectChats,
+              projectChatsByProject: setProjectChatsForPath(
+                state.projectChatsByProject,
+                state.projectPath,
+                nextProjectChats
+              ),
+            }
+          : {}),
+      };
+    });
   },
 
   persistProjectSession: async (session) => {
@@ -1178,20 +1337,41 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           }
         : liveEditorSession;
 
-    set((state) => ({
-      liveEditorSession: nextLiveEditorSession,
-      projectSessions: mergeSession(
-        state.projectSessions,
+    set((state) => {
+      const mergedChat = projectChatFromSession(
         state.projectPath,
-        savedSession
-      ),
-      projectSessionsByProject: mergeSessionIntoProjectMap(
-        state.projectSessionsByProject,
-        state.projectPath,
-        savedSession
-      ),
-      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
-    }));
+        savedSession,
+        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats
+      );
+      const nextProjectChats = mergedChat
+        ? mergeProjectChat(state.projectChats, mergedChat)
+        : state.projectChats;
+
+      return {
+        liveEditorSession: nextLiveEditorSession,
+        projectSessions: mergeSession(
+          state.projectSessions,
+          state.projectPath,
+          savedSession
+        ),
+        projectSessionsByProject: mergeSessionIntoProjectMap(
+          state.projectSessionsByProject,
+          state.projectPath,
+          savedSession
+        ),
+        agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
+        ...(mergedChat
+          ? {
+              projectChats: nextProjectChats,
+              projectChatsByProject: setProjectChatsForPath(
+                state.projectChatsByProject,
+                state.projectPath,
+                nextProjectChats
+              ),
+            }
+          : {}),
+      };
+    });
 
     return savedSession;
   },
@@ -1363,6 +1543,34 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       ),
     }));
     return chats;
+  },
+
+  loadWorkspacePreviewUrls: async (requestedWorkspacePath) => {
+    const normalizedWorkspacePath = requestedWorkspacePath?.trim() || null;
+    const { projectPath, workspacePreviewUrlsByPath } = get();
+    if (!projectPath || !normalizedWorkspacePath) {
+      return [];
+    }
+
+    const cached = workspacePreviewUrlsByPath[normalizedWorkspacePath];
+    if (cached) {
+      return cached;
+    }
+
+    const urls =
+      normalizedWorkspacePath === projectPath
+        ? await fetchProjectUrls(projectPath)
+        : await fetchWorkspaceUrls(projectPath, normalizedWorkspacePath);
+
+    set((state) => ({
+      workspacePreviewUrlsByPath: setWorkspacePreviewUrlsForPath(
+        state.workspacePreviewUrlsByPath,
+        normalizedWorkspacePath,
+        urls
+      ),
+    }));
+
+    return urls;
   },
 
   refreshAgentDeckTargets: async () => {
@@ -1584,7 +1792,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
   },
 
-  setPreviewUrl: async (url) => {
+  setPreviewUrl: async (url, requestedWorkspacePath) => {
     const normalizedUrl = url?.trim() || null;
     set({ previewUrl: normalizedUrl });
 
@@ -1593,18 +1801,34 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       return;
     }
 
-    const previewUrls = await touchProjectUrl(projectPath, normalizedUrl);
+    const normalizedWorkspacePath = requestedWorkspacePath?.trim() || projectPath;
+    const previewUrls =
+      normalizedWorkspacePath === projectPath
+        ? await touchProjectUrl(projectPath, normalizedUrl)
+        : await touchWorkspaceUrl(
+            projectPath,
+            normalizedWorkspacePath,
+            normalizedUrl
+          );
 
     set((state) => ({
-      recentProjects: state.recentProjects.map((project) =>
-        project.path === projectPath
-          ? {
-              ...project,
-              previewUrls,
-              lastOpened: new Date().toISOString(),
-            }
-          : project
+      workspacePreviewUrlsByPath: setWorkspacePreviewUrlsForPath(
+        state.workspacePreviewUrlsByPath,
+        normalizedWorkspacePath,
+        previewUrls
       ),
+      recentProjects:
+        normalizedWorkspacePath === projectPath
+          ? state.recentProjects.map((project) =>
+              project.path === projectPath
+                ? {
+                    ...project,
+                    previewUrls,
+                    lastOpened: new Date().toISOString(),
+                  }
+                : project
+            )
+          : state.recentProjects,
     }));
   },
 
@@ -1686,12 +1910,16 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ controllerUpdateApplyState });
   },
 
-  getCurrentProjectUrls: () => {
+  getCurrentWorkspaceUrls: (requestedWorkspacePath) => {
     const state = get();
     if (!state.projectPath) return [];
-    const project = state.recentProjects.find(
-      (entry) => entry.path === state.projectPath
-    );
-    return project?.previewUrls ?? [];
+    const normalizedWorkspacePath = requestedWorkspacePath?.trim() || state.projectPath;
+    if (normalizedWorkspacePath === state.projectPath) {
+      const project = state.recentProjects.find(
+        (entry) => entry.path === state.projectPath
+      );
+      return project?.previewUrls ?? [];
+    }
+    return state.workspacePreviewUrlsByPath[normalizedWorkspacePath] ?? [];
   },
 }));

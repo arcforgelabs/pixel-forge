@@ -9,9 +9,11 @@ import signal
 import socket
 import subprocess
 import time
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -26,9 +28,12 @@ from controller_update_state import (
 
 
 PIXEL_FORGE_TARGET_KIND = "pixel-forge"
+WORKSPACE_PREVIEW_TARGET_KIND = "workspace-preview"
+WORKSPACE_PREVIEW_ADAPTER_FILENAME = "pixel-forge.preview.json"
 DEFAULT_RUNTIME_KIND: Literal["mirror", "dev"] = "mirror"
 DEFAULT_TARGET_API_PORT = 7101
 DEFAULT_TARGET_WEB_PORT = 5175
+DEFAULT_WORKSPACE_WEB_PORT = 3100
 TARGET_START_TIMEOUT_SECONDS = 120.0
 
 
@@ -37,6 +42,7 @@ class LocalTargetRecord:
     kind: str
     runtime_kind: Literal["mirror", "dev"]
     project_path: str
+    workspace_path: str | None
     source_root: str
     build_label: str
     instance_slug: str
@@ -97,6 +103,36 @@ class MirrorLaunchSource:
     venv_python: Path | None
 
 
+@dataclass(slots=True)
+class WorkspacePreviewLaunchPlan:
+    mode: Literal["managed-process", "self-managed-script"]
+    launch_cwd: Path
+    command: list[str]
+    env: dict[str, str]
+    ready_path: str
+    build_label: str
+    stop_command: list[str] | None = None
+    resolution_kind: Literal["adapter", "heuristic"] = "heuristic"
+    adapter_id: str | None = None
+
+
+@dataclass(slots=True)
+class WorkspacePreviewAdapter:
+    adapter_id: str
+    label: str
+    mode: Literal["managed-process", "self-managed-script"]
+    cwd: str
+    command: list[str]
+    env: dict[str, str]
+    stop_command: list[str] | None
+    preferred_port: int | None
+    ready_path: str | None
+    match_origins: tuple[str, ...]
+    match_hosts: tuple[str, ...]
+    match_path_prefixes: tuple[str, ...]
+    is_default: bool = False
+
+
 def _build_base_env() -> dict[str, str]:
     env = os.environ.copy()
     path_entries = env.get("PATH", "").split(":") if env.get("PATH") else []
@@ -116,6 +152,470 @@ def _build_base_env() -> dict[str, str]:
 
     env["PATH"] = ":".join(merged_entries)
     return env
+
+
+def _iter_package_json_candidates(workspace_root: Path, *, max_depth: int = 4) -> list[Path]:
+    candidates: list[Path] = []
+    root_depth = len(workspace_root.parts)
+
+    for current_root, dirnames, filenames in os.walk(workspace_root):
+        current_path = Path(current_root)
+        depth = len(current_path.parts) - root_depth
+        dirnames[:] = [
+            entry
+            for entry in dirnames
+            if entry not in {"node_modules", ".git", ".agents", "dist", "build", ".next"}
+            and depth < max_depth
+        ]
+        if "package.json" not in filenames:
+            continue
+        candidates.append(current_path / "package.json")
+
+    return sorted(candidates)
+
+
+def _workspace_preview_adapter_path(workspace_root: Path) -> Path:
+    return workspace_root / WORKSPACE_PREVIEW_ADAPTER_FILENAME
+
+
+def _normalize_adapter_string_list(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    normalized: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        stripped = entry.strip()
+        if stripped:
+            normalized.append(stripped)
+    return tuple(normalized)
+
+
+def _parse_workspace_preview_adapter(
+    raw: dict[str, Any],
+    *,
+    source_path: Path,
+    index: int,
+) -> WorkspacePreviewAdapter:
+    adapter_id = str(raw.get("id") or "").strip() or f"adapter-{index}"
+    label = str(raw.get("label") or adapter_id).strip() or adapter_id
+    mode = str(raw.get("mode") or "managed-process").strip().lower()
+    if mode not in {"managed-process", "self-managed-script"}:
+        raise ValueError(
+            f"Unsupported workspace preview adapter mode '{mode}' in {source_path}"
+        )
+
+    command = raw.get("command")
+    if not isinstance(command, list) or not all(isinstance(part, str) and part.strip() for part in command):
+        raise ValueError(
+            f"Workspace preview adapter '{adapter_id}' in {source_path} must define a non-empty command array"
+        )
+
+    stop_command_value = raw.get("stopCommand")
+    stop_command: list[str] | None = None
+    if isinstance(stop_command_value, list) and all(
+        isinstance(part, str) and part.strip() for part in stop_command_value
+    ):
+        stop_command = [part.strip() for part in stop_command_value]
+
+    env_value = raw.get("env")
+    env: dict[str, str] = {}
+    if isinstance(env_value, dict):
+        for key, value in env_value.items():
+            if isinstance(key, str) and isinstance(value, str):
+                env[key] = value
+
+    preferred_port = raw.get("preferredPort")
+    normalized_preferred_port = (
+        int(preferred_port)
+        if isinstance(preferred_port, int) and preferred_port > 0
+        else None
+    )
+
+    ready_path_value = raw.get("readyPath")
+    ready_path = (
+        str(ready_path_value).strip()
+        if isinstance(ready_path_value, str) and str(ready_path_value).strip()
+        else None
+    )
+
+    match_value = raw.get("match")
+    match = match_value if isinstance(match_value, dict) else {}
+    return WorkspacePreviewAdapter(
+        adapter_id=adapter_id,
+        label=label,
+        mode=mode,  # type: ignore[arg-type]
+        cwd=str(raw.get("cwd") or ".").strip() or ".",
+        command=[part.strip() for part in command],
+        env=env,
+        stop_command=stop_command,
+        preferred_port=normalized_preferred_port,
+        ready_path=ready_path,
+        match_origins=_normalize_adapter_string_list(match.get("origins")),
+        match_hosts=_normalize_adapter_string_list(match.get("hosts")),
+        match_path_prefixes=_normalize_adapter_string_list(match.get("pathPrefixes")),
+        is_default=bool(raw.get("default")),
+    )
+
+
+def _load_workspace_preview_adapters(workspace_root: Path) -> list[WorkspacePreviewAdapter]:
+    adapter_path = _workspace_preview_adapter_path(workspace_root)
+    if not adapter_path.is_file():
+        return []
+
+    try:
+        payload = json.loads(adapter_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"Workspace preview adapter file is unreadable: {adapter_path}"
+        ) from exc
+
+    adapters_value = None
+    if isinstance(payload, dict):
+        adapters_value = payload.get("workspacePreviewAdapters")
+        if adapters_value is None:
+            adapters_value = payload.get("workspace_preview_adapters")
+    if not isinstance(adapters_value, list):
+        raise ValueError(
+            f"Workspace preview adapter file must define a workspacePreviewAdapters array: {adapter_path}"
+        )
+
+    adapters: list[WorkspacePreviewAdapter] = []
+    for index, raw_adapter in enumerate(adapters_value, start=1):
+        if not isinstance(raw_adapter, dict):
+            continue
+        adapters.append(
+            _parse_workspace_preview_adapter(
+                raw_adapter,
+                source_path=adapter_path,
+                index=index,
+            )
+        )
+    return adapters
+
+
+def _select_workspace_preview_adapter(
+    adapters: list[WorkspacePreviewAdapter],
+    *,
+    requested_url: str | None,
+) -> WorkspacePreviewAdapter | None:
+    if not adapters:
+        return None
+
+    requested_origin = ""
+    requested_host = ""
+    requested_path = _normalize_local_preview_path(requested_url)
+    if requested_url:
+        with suppress(ValueError):
+            parsed = urlparse(requested_url)
+            requested_host = (parsed.hostname or "").strip().lower()
+            if parsed.scheme and parsed.netloc:
+                requested_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+    ranked: list[tuple[int, int, WorkspacePreviewAdapter]] = []
+    for index, adapter in enumerate(adapters):
+        score = 0
+
+        if requested_origin and adapter.match_origins:
+            if requested_origin in adapter.match_origins:
+                score += 1000
+            else:
+                continue
+
+        if requested_host and adapter.match_hosts:
+            if requested_host in {host.lower() for host in adapter.match_hosts}:
+                score += 100
+            else:
+                continue
+
+        if adapter.match_path_prefixes:
+            matching_prefixes = [
+                prefix
+                for prefix in adapter.match_path_prefixes
+                if requested_path.startswith(prefix)
+            ]
+            if not matching_prefixes:
+                continue
+            score += max(len(prefix) for prefix in matching_prefixes)
+
+        if adapter.is_default:
+            score += 1
+        elif not adapter.match_origins and not adapter.match_hosts and not adapter.match_path_prefixes:
+            score += 1
+
+        ranked.append((score, -index, adapter))
+
+    if ranked:
+        ranked.sort(reverse=True)
+        return ranked[0][2]
+
+    default_adapters = [adapter for adapter in adapters if adapter.is_default]
+    if default_adapters:
+        return default_adapters[0]
+    if len(adapters) == 1:
+        sole_adapter = adapters[0]
+        if (
+            not sole_adapter.match_origins
+            and not sole_adapter.match_hosts
+            and not sole_adapter.match_path_prefixes
+        ):
+            return sole_adapter
+    return None
+
+
+def _render_workspace_preview_adapter_template(
+    value: str,
+    tokens: dict[str, str],
+) -> str:
+    rendered = value
+    for key, token_value in tokens.items():
+        rendered = rendered.replace(f"{{{key}}}", token_value)
+    return rendered
+
+
+def _resolve_workspace_adapter_path(workspace_root: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (workspace_root / candidate).resolve()
+
+
+def _build_workspace_preview_launch_plan_from_adapter(
+    *,
+    adapter: WorkspacePreviewAdapter,
+    project_path: str,
+    workspace_path: str,
+    requested_url: str | None,
+    port: int,
+    web_host: str,
+) -> WorkspacePreviewLaunchPlan:
+    workspace_root = Path(workspace_path).expanduser().resolve()
+    requested_path = _normalize_local_preview_path(requested_url)
+    ready_path = _normalize_local_preview_path(adapter.ready_path or requested_url)
+    bind_host = "127.0.0.1"
+    tokens = {
+        "port": str(port),
+        "host": bind_host,
+        "web_host": web_host,
+        "project": project_path,
+        "workspace": workspace_path,
+        "project_name": Path(project_path).name,
+        "workspace_name": Path(workspace_path).name,
+        "requested_path": requested_path,
+        "ready_path": ready_path,
+    }
+
+    launch_cwd = _resolve_workspace_adapter_path(
+        workspace_root,
+        _render_workspace_preview_adapter_template(adapter.cwd, tokens),
+    )
+    command = [
+        _render_workspace_preview_adapter_template(part, tokens)
+        for part in adapter.command
+    ]
+    stop_command = (
+        [
+            _render_workspace_preview_adapter_template(part, tokens)
+            for part in adapter.stop_command
+        ]
+        if adapter.stop_command
+        else None
+    )
+
+    env = _build_base_env()
+    env.update(
+        {
+            "HOST": bind_host,
+            "PORT": str(port),
+            "FIELD_PORT": str(port),
+            "PIXEL_FORGE_PREVIEW_PORT": str(port),
+            "PIXEL_FORGE_PREVIEW_HOST": bind_host,
+            "PIXEL_FORGE_PREVIEW_PUBLIC_HOST": web_host,
+            "CHOKIDAR_USEPOLLING": env.get("CHOKIDAR_USEPOLLING", "1"),
+            "CHOKIDAR_INTERVAL": env.get("CHOKIDAR_INTERVAL", "250"),
+            "WATCHFILES_FORCE_POLLING": env.get("WATCHFILES_FORCE_POLLING", "1"),
+        }
+    )
+    for key, value in adapter.env.items():
+        env[key] = _render_workspace_preview_adapter_template(value, tokens)
+
+    return WorkspacePreviewLaunchPlan(
+        mode=adapter.mode,
+        launch_cwd=launch_cwd,
+        command=command,
+        stop_command=stop_command,
+        env=env,
+        ready_path=ready_path,
+        build_label=adapter.label,
+        resolution_kind="adapter",
+        adapter_id=adapter.adapter_id,
+    )
+
+
+def _package_manager_command(package_dir: Path, workspace_root: Path) -> list[str]:
+    current = package_dir
+    workspace_root = workspace_root.resolve()
+    while True:
+        if (current / "pnpm-lock.yaml").is_file():
+            return ["pnpm", "run"]
+        if (current / "yarn.lock").is_file():
+            return ["yarn"]
+        if (current / "package-lock.json").is_file():
+            return ["npm", "run"]
+        if current == workspace_root or current.parent == current:
+            break
+        current = current.parent
+    return ["npm", "run"]
+
+
+def _pick_workspace_package_candidate(
+    workspace_root: Path,
+) -> tuple[Path, dict[str, Any]] | None:
+    ranked: list[tuple[int, int, Path, dict[str, Any]]] = []
+
+    for package_json_path in _iter_package_json_candidates(workspace_root):
+        try:
+            payload = json.loads(package_json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        scripts = payload.get("scripts")
+        if not isinstance(scripts, dict):
+            continue
+        if "dev" not in scripts and "start" not in scripts:
+            continue
+
+        package_dir = package_json_path.parent
+        depth = len(package_dir.relative_to(workspace_root).parts)
+        name_penalty = 1 if package_dir.name.lower() in {"client", "frontend", "web"} else 0
+        ranked.append((depth, name_penalty, package_json_path, payload))
+
+    if not ranked:
+        return None
+
+    ranked.sort(key=lambda entry: (entry[0], entry[1], str(entry[2])))
+    _, _, package_json_path, payload = ranked[0]
+    return package_json_path.parent, payload
+
+
+def _build_workspace_dev_command(
+    workspace_root: Path,
+    package_dir: Path,
+    package_payload: dict[str, Any],
+    port: int,
+) -> tuple[list[str], dict[str, str]]:
+    scripts = package_payload.get("scripts") if isinstance(package_payload, dict) else {}
+    if not isinstance(scripts, dict):
+        raise ValueError("Workspace package scripts are not available")
+
+    script_name = "dev" if "dev" in scripts else "start"
+    script_body = str(scripts.get(script_name) or "")
+    command = [*_package_manager_command(package_dir, workspace_root), script_name]
+
+    if "vite" in script_body:
+        command.extend(["--", "--host", "127.0.0.1", "--port", str(port)])
+
+    env = _build_base_env()
+    env.update(
+        {
+            "HOST": "127.0.0.1",
+            "PORT": str(port),
+            "FIELD_PORT": str(port),
+            "PIXEL_FORGE_PREVIEW_PORT": str(port),
+            "PIXEL_FORGE_PREVIEW_HOST": "127.0.0.1",
+            "CHOKIDAR_USEPOLLING": env.get("CHOKIDAR_USEPOLLING", "1"),
+            "CHOKIDAR_INTERVAL": env.get("CHOKIDAR_INTERVAL", "250"),
+            "WATCHFILES_FORCE_POLLING": env.get("WATCHFILES_FORCE_POLLING", "1"),
+        }
+    )
+    return command, env
+
+
+def _detect_workspace_preview_launch_plan(
+    *,
+    project_path: str,
+    workspace_path: str,
+    requested_url: str | None,
+    port: int,
+) -> WorkspacePreviewLaunchPlan:
+    workspace_root = Path(workspace_path).expanduser().resolve()
+    if not workspace_root.is_dir():
+        raise ValueError(f"Workspace does not exist: {workspace_root}")
+
+    control_room_stack = workspace_root / "scripts" / "control-room-stack.sh"
+    if control_room_stack.is_file():
+        env = _build_base_env()
+        env.update(
+            {
+                "PORT": str(port),
+            }
+        )
+        return WorkspacePreviewLaunchPlan(
+            mode="self-managed-script",
+            launch_cwd=workspace_root,
+            command=["bash", str(control_room_stack), "up"],
+            stop_command=["bash", str(control_room_stack), "down"],
+            env=env,
+            ready_path=_normalize_local_preview_path(requested_url),
+            build_label=_label_for_workspace(workspace_path, project_path),
+        )
+
+    package_candidate = _pick_workspace_package_candidate(workspace_root)
+    if package_candidate is None:
+        raise ValueError(
+            "Workspace does not expose a launchable local preview path yet. "
+            "Expected a repo-native stack script or a package.json with a dev/start script."
+        )
+
+    package_dir, package_payload = package_candidate
+    command, env = _build_workspace_dev_command(
+        workspace_root,
+        package_dir,
+        package_payload,
+        port,
+    )
+    return WorkspacePreviewLaunchPlan(
+        mode="managed-process",
+        launch_cwd=package_dir,
+        command=command,
+        stop_command=None,
+        env=env,
+        ready_path=_normalize_local_preview_path(requested_url),
+        build_label=_label_for_workspace(workspace_path, project_path),
+        resolution_kind="heuristic",
+        adapter_id=None,
+    )
+
+
+def _resolve_workspace_preview_launch_plan(
+    *,
+    project_path: str,
+    workspace_path: str,
+    requested_url: str | None,
+    port: int,
+    web_host: str,
+) -> WorkspacePreviewLaunchPlan:
+    workspace_root = Path(workspace_path).expanduser().resolve()
+    adapters = _load_workspace_preview_adapters(workspace_root)
+    adapter = _select_workspace_preview_adapter(
+        adapters,
+        requested_url=requested_url,
+    )
+    if adapter is not None:
+        return _build_workspace_preview_launch_plan_from_adapter(
+            adapter=adapter,
+            project_path=project_path,
+            workspace_path=workspace_path,
+            requested_url=requested_url,
+            port=port,
+            web_host=web_host,
+        )
+
+    return _detect_workspace_preview_launch_plan(
+        project_path=project_path,
+        workspace_path=workspace_path,
+        requested_url=requested_url,
+        port=port,
+    )
 
 
 def _metadata_path(instance_slug: str) -> Path:
@@ -147,6 +647,55 @@ def _label_for_source_root(source_root: str) -> str:
     if "controller-updates" in normalized.parts:
         return f"Staged {normalized.name}"
     return normalized.name or str(normalized)
+
+
+def _label_for_workspace(workspace_path: str, project_path: str) -> str:
+    normalized_workspace = Path(workspace_path).expanduser().resolve()
+    normalized_project = Path(project_path).expanduser().resolve()
+    if normalized_workspace == normalized_project:
+        return normalized_project.name or str(normalized_project)
+
+    with suppress(ValueError):
+        relative = normalized_workspace.relative_to(normalized_project)
+        return relative.as_posix()
+
+    return normalized_workspace.name or str(normalized_workspace)
+
+
+def _slug_for_workspace(project_path: str, workspace_path: str) -> str:
+    normalized_project_path = _normalize_project_path(project_path)
+    normalized_workspace_path = _normalize_project_path(workspace_path)
+    basename = re.sub(r"[^a-z0-9-]+", "-", Path(normalized_workspace_path).name.lower()).strip("-")
+    digest = hashlib.sha1(
+        f"{normalized_project_path}::{normalized_workspace_path}".encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{basename or 'workspace'}-preview-target-{digest}"
+
+
+def _normalize_local_preview_path(url: str | None) -> str:
+    if not url:
+        return "/"
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "/"
+
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    return path
+
+
+def _preferred_port_from_url(url: str | None, default_port: int) -> int:
+    if not url:
+        return default_port
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return default_port
+    if not parsed.port:
+        return default_port
+    return int(parsed.port)
 
 
 def _is_port_free(port: int) -> bool:
@@ -219,9 +768,10 @@ def _validate_pixel_forge_project(project_path: str) -> None:
 def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) -> LocalTargetRecord:
     runtime_kind = _normalize_runtime_kind(str(metadata.get("runtime_kind") or DEFAULT_RUNTIME_KIND))
     return LocalTargetRecord(
-        kind=PIXEL_FORGE_TARGET_KIND,
+        kind=str(metadata.get("kind") or PIXEL_FORGE_TARGET_KIND),
         runtime_kind=runtime_kind,
         project_path=str(metadata["project_path"]),
+        workspace_path=str(metadata["workspace_path"]) if metadata.get("workspace_path") else None,
         source_root=str(metadata["source_root"]),
         build_label=str(metadata.get("build_label") or _label_for_source_root(str(metadata["source_root"]))),
         instance_slug=str(metadata["instance_slug"]),
@@ -268,6 +818,26 @@ def _terminate_process_group(pid: int | None) -> None:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
         return
+
+
+def _run_stop_command(
+    command: list[str] | None,
+    *,
+    cwd: str | Path,
+    env: dict[str, str] | None,
+    log_file: Path,
+) -> None:
+    if not command:
+        return
+    with log_file.open("ab") as log_handle:
+        subprocess.run(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
 
 
 def _append_log_line(log_file: Path, line: str) -> None:
@@ -719,6 +1289,210 @@ def start_pixel_forge_target(
     )
 
 
+def start_workspace_preview_target(
+    project_path: str,
+    workspace_path: str,
+    *,
+    requested_url: str | None = None,
+    force_restart: bool = False,
+) -> LocalTargetRecord:
+    normalized_project_path = _normalize_project_path(project_path)
+    normalized_workspace_path = _normalize_project_path(workspace_path)
+    instance_slug = _slug_for_workspace(normalized_project_path, normalized_workspace_path)
+    state_dir = _target_state_dir(instance_slug)
+    metadata = _load_metadata(instance_slug)
+
+    if (
+        metadata
+        and metadata.get("kind") == WORKSPACE_PREVIEW_TARGET_KIND
+        and metadata.get("web_url")
+        and metadata.get("workspace_path") == normalized_workspace_path
+        and _is_http_ready(str(metadata["web_url"]))
+        and not force_restart
+    ):
+        return _record_from_metadata(metadata, already_running=True)
+
+    log_dir = state_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "workspace-preview.log"
+    log_file.write_text("", encoding="utf-8")
+
+    if metadata:
+        stop_command = metadata.get("stop_command")
+        if isinstance(stop_command, list):
+            _run_stop_command(
+                [str(entry) for entry in stop_command],
+                cwd=str(metadata.get("launch_cwd") or normalized_workspace_path),
+                env=_build_base_env(),
+                log_file=log_file,
+            )
+        else:
+            _terminate_process_group(int(metadata["pid"]) if metadata.get("pid") else None)
+
+    workspace_root = Path(normalized_workspace_path).expanduser().resolve()
+    adapters = _load_workspace_preview_adapters(workspace_root)
+    selected_adapter = _select_workspace_preview_adapter(
+        adapters,
+        requested_url=requested_url,
+    )
+    preferred_web_port = (
+        int(metadata["web_port"])
+        if metadata and metadata.get("web_port")
+        else (
+            selected_adapter.preferred_port
+            if selected_adapter and selected_adapter.preferred_port
+            else _preferred_port_from_url(requested_url, DEFAULT_WORKSPACE_WEB_PORT)
+        )
+    )
+    web_port = _find_available_port(preferred_web_port)
+    web_host = (
+        str(metadata["web_host"])
+        if metadata and metadata.get("web_host")
+        else f"{instance_slug}.localhost"
+    )
+    web_url = f"http://{web_host}:{web_port}"
+    plan = (
+        _build_workspace_preview_launch_plan_from_adapter(
+            adapter=selected_adapter,
+            project_path=normalized_project_path,
+            workspace_path=normalized_workspace_path,
+            requested_url=requested_url,
+            port=web_port,
+            web_host=web_host,
+        )
+        if selected_adapter is not None
+        else _detect_workspace_preview_launch_plan(
+            project_path=normalized_project_path,
+            workspace_path=normalized_workspace_path,
+            requested_url=requested_url,
+            port=web_port,
+        )
+    )
+    ready_url = f"{web_url.rstrip('/')}{plan.ready_path if plan.ready_path.startswith('/') else f'/{plan.ready_path}'}"
+
+    if not selected_adapter and adapters:
+        _append_log_line(
+            log_file,
+            "No workspace preview adapter matched the requested URL; falling back to bounded launch inference.",
+        )
+
+    if selected_adapter is not None:
+        _append_log_line(
+            log_file,
+            f"Using workspace preview adapter: {selected_adapter.adapter_id}",
+        )
+
+    if plan.mode == "self-managed-script":
+        with log_file.open("ab") as log_handle:
+            completed = subprocess.run(
+                plan.command,
+                cwd=str(plan.launch_cwd),
+                env=plan.env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "Workspace preview failed during startup.\n"
+                f"Command: {' '.join(shlex.quote(part) for part in plan.command)}\n"
+                f"Log file: {log_file}\n"
+                f"{_tail_log(log_file)}"
+            )
+        if not _is_http_ready(ready_url):
+            raise RuntimeError(
+                "Workspace preview did not become ready in time.\n"
+                f"Expected URL: {ready_url}\n"
+                f"Log file: {log_file}\n"
+                f"{_tail_log(log_file)}"
+            )
+        payload = {
+            "kind": WORKSPACE_PREVIEW_TARGET_KIND,
+            "runtime_kind": "dev",
+            "project_path": normalized_project_path,
+            "workspace_path": normalized_workspace_path,
+            "source_root": normalized_workspace_path,
+            "build_label": plan.build_label,
+            "instance_slug": instance_slug,
+            "api_port": web_port,
+            "web_port": web_port,
+            "web_host": web_host,
+            "api_url": web_url,
+            "web_url": web_url,
+            "state_dir": str(state_dir),
+            "log_file": str(log_file),
+            "pid": None,
+            "target_mode": False,
+            "created_at": metadata.get("created_at") if metadata else time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "launch_cwd": str(plan.launch_cwd),
+            "stop_command": plan.stop_command,
+            "mode": plan.mode,
+            "adapter_id": plan.adapter_id,
+            "resolution_kind": plan.resolution_kind,
+        }
+        _write_metadata(instance_slug, payload)
+        return _record_from_metadata(payload, already_running=False)
+
+    with log_file.open("ab") as log_handle:
+        proc = subprocess.Popen(
+            plan.command,
+            cwd=str(plan.launch_cwd),
+            env=plan.env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    deadline = time.time() + TARGET_START_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            break
+        if _is_http_ready(ready_url):
+            payload = {
+                "kind": WORKSPACE_PREVIEW_TARGET_KIND,
+                "runtime_kind": "dev",
+                "project_path": normalized_project_path,
+                "workspace_path": normalized_workspace_path,
+                "source_root": normalized_workspace_path,
+                "build_label": plan.build_label,
+                "instance_slug": instance_slug,
+                "api_port": web_port,
+                "web_port": web_port,
+                "web_host": web_host,
+                "api_url": web_url,
+                "web_url": web_url,
+                "state_dir": str(state_dir),
+                "log_file": str(log_file),
+                "pid": proc.pid,
+                "target_mode": False,
+                "created_at": metadata.get("created_at") if metadata else time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "launch_cwd": str(plan.launch_cwd),
+                "stop_command": plan.stop_command,
+                "mode": plan.mode,
+                "adapter_id": plan.adapter_id,
+                "resolution_kind": plan.resolution_kind,
+            }
+            _write_metadata(instance_slug, payload)
+            return _record_from_metadata(payload, already_running=False)
+        time.sleep(1.0)
+
+    tail = _tail_log(log_file)
+    if proc.poll() is None:
+        _terminate_process_group(proc.pid)
+        raise RuntimeError(
+            "Workspace preview did not become ready in time.\n"
+            f"Expected URL: {ready_url}\n"
+            f"Log file: {log_file}\n"
+            f"{tail}"
+        )
+
+    raise RuntimeError(
+        "Workspace preview exited during startup.\n"
+        f"Log file: {log_file}\n"
+        f"{tail}"
+    )
+
+
 def serialize_local_target(record: LocalTargetRecord) -> dict[str, Any]:
     return asdict(record)
 
@@ -743,6 +1517,8 @@ def list_pixel_forge_targets(
         metadata = _normalize_listed_target_metadata(metadata)
         if not metadata:
             continue
+        if str(metadata.get("kind") or PIXEL_FORGE_TARGET_KIND) != PIXEL_FORGE_TARGET_KIND:
+            continue
         if _normalize_project_path(str(metadata.get("project_path") or "")) != normalized_project_path:
             continue
         if runtime_kind and str(metadata.get("runtime_kind") or "") != runtime_kind:
@@ -750,6 +1526,53 @@ def list_pixel_forge_targets(
 
         pid = int(metadata["pid"]) if metadata.get("pid") else None
         running = _is_http_ready(str(metadata.get("web_url") or "")) and _process_alive(pid)
+        try:
+            records.append(_record_from_metadata(metadata, already_running=running))
+        except Exception:
+            continue
+
+    records.sort(
+        key=lambda record: (
+            record.created_at or "",
+            record.instance_slug,
+        ),
+        reverse=True,
+    )
+    return records
+
+
+def list_workspace_preview_targets(
+    project_path: str,
+    workspace_path: str | None = None,
+) -> list[LocalTargetRecord]:
+    normalized_project_path = _normalize_project_path(project_path)
+    normalized_workspace_path = (
+        _normalize_project_path(workspace_path)
+        if isinstance(workspace_path, str) and workspace_path.strip()
+        else None
+    )
+    records: list[LocalTargetRecord] = []
+    instances_root = runtime_shared_state_dir() / "instances"
+    if not instances_root.exists():
+        return records
+
+    for metadata_path in instances_root.glob("*/runtime.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("kind") or "") != WORKSPACE_PREVIEW_TARGET_KIND:
+            continue
+        if _normalize_project_path(str(metadata.get("project_path") or "")) != normalized_project_path:
+            continue
+        if normalized_workspace_path and _normalize_project_path(str(metadata.get("workspace_path") or "")) != normalized_workspace_path:
+            continue
+
+        web_url = str(metadata.get("web_url") or "")
+        pid = int(metadata["pid"]) if metadata.get("pid") else None
+        running = _is_http_ready(web_url) and (pid is None or _process_alive(pid))
         try:
             records.append(_record_from_metadata(metadata, already_running=running))
         except Exception:

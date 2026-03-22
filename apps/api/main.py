@@ -61,9 +61,11 @@ from project_store import (
     get_project_session,
     list_project_sessions,
     list_project_urls,
+    list_workspace_urls,
     list_projects,
     project_name_for_path,
     touch_project_url,
+    touch_workspace_url,
     update_session_title,
     upsert_project,
     upsert_profile_state,
@@ -93,8 +95,10 @@ from published_update_state import (
 from runtime_version import read_runtime_info
 from local_targets import (
     list_pixel_forge_targets,
+    list_workspace_preview_targets,
     serialize_local_target,
     start_pixel_forge_target,
+    start_workspace_preview_target,
 )
 from runtime_config import api_port as runtime_api_port
 
@@ -385,6 +389,12 @@ class ProjectUrlRequest(BaseModel):
     url: str
 
 
+class WorkspaceUrlRequest(BaseModel):
+    project_path: str
+    workspace_path: str
+    url: str
+
+
 class ProjectSessionUpsertRequest(BaseModel):
     thread_id: str
     backend: str = "agent-deck"
@@ -475,6 +485,13 @@ class LocalTargetStartRequest(BaseModel):
     runtime_kind: Literal["mirror", "dev"] = "mirror"
     force_restart: bool = True
     source_root: str | None = None
+
+
+class WorkspacePreviewTargetStartRequest(BaseModel):
+    project_path: str
+    workspace_path: str
+    requested_url: str | None = None
+    force_restart: bool = False
 
 
 class PendingControllerUpdateRequest(BaseModel):
@@ -802,6 +819,29 @@ async def get_project_urls(project_path: str):
 async def add_project_url(project_path: str, request: ProjectUrlRequest):
     try:
         urls = touch_project_url(project_path, request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"urls": [serialize_project_url(url) for url in urls]}
+
+
+@app.get("/api/workspace-urls")
+async def get_workspace_urls(project_path: str, workspace_path: str):
+    return {
+        "urls": [
+            serialize_project_url(url)
+            for url in list_workspace_urls(project_path, workspace_path)
+        ]
+    }
+
+
+@app.post("/api/workspace-urls")
+async def add_workspace_url(request: WorkspaceUrlRequest):
+    try:
+        urls = touch_workspace_url(
+            request.project_path,
+            request.workspace_path,
+            request.url,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"urls": [serialize_project_url(url) for url in urls]}
@@ -1263,6 +1303,39 @@ async def list_local_pixel_forge_targets(
             list_pixel_forge_targets,
             project_path,
             runtime_kind,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"targets": [serialize_local_target(record) for record in records]}
+
+
+@app.post("/api/local-targets/workspace-preview/start")
+async def start_local_workspace_preview_target(payload: WorkspacePreviewTargetStartRequest):
+    try:
+        record = await asyncio.to_thread(
+            start_workspace_preview_target,
+            payload.project_path,
+            payload.workspace_path,
+            requested_url=payload.requested_url,
+            force_restart=payload.force_restart,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return serialize_local_target(record)
+
+
+@app.get("/api/local-targets/workspace-preview")
+async def list_local_workspace_preview_targets(
+    project_path: str,
+    workspace_path: str | None = None,
+):
+    try:
+        records = await asyncio.to_thread(
+            list_workspace_preview_targets,
+            project_path,
+            workspace_path,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2142,11 +2215,11 @@ For Pixel Forge self-edit requests in the canonical root, do not replace the act
             elif _is_remote_preview(preview_url):
                 base += """
 
-For repo-controlled remote previews, deploy using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar."""
+If this workspace is an isolated clone, do not deploy to shared remote staging or production targets. Use only clone-scoped preview publication or other isolated verification tied to this workspace. Only use a shared remote deploy path from the canonical workspace when the user explicitly asked for deployment and the repo truly exposes that lane."""
             else:
                 base += """
 
-For local/dev previews, rebuild, restart, or reload the service serving this URL so the preview updates in place."""
+For local/dev previews, rebuild, restart, or reload only the local service or isolated preview instance serving this URL so the preview updates in place."""
 
             base += """
 

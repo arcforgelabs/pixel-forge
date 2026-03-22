@@ -74,6 +74,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Fresh Live Editor chats now start as unbound drafts. They carry only intended agent state until the first real bind, and that first bind creates the isolated Agent Deck clone workspace under the project `.agents/` tree while the canonical repo root remains the project identity.
 - The sidebar `+ New chat` path is local-first. Clicking it opens or reuses a local draft lane instead of eagerly persisting a blank managed root chat record, and reconciled project chats intentionally suppress legacy detached root drafts that still have only the default empty editor shell.
 - One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped editor surface: preview tabs, active target URL, viewport/tool state, selection/history state, and chat state all move together. The default self-edit mirror source follows that same bound workspace.
+- Preview sandbox ownership follows the workspace, not the chat. New chats usually create new workspaces, so the default product behavior is still one sandbox per chat, but any later chat that reuses an existing workspace must also reuse that workspace's preview sandbox instead of starting a second local runtime by default.
 - The shared session store persists the durable subset of that thread editor surface, including tab descriptors and restore metadata, and the UI reacquires runtime-only browser handles when a lane is reopened instead of pretending old handles survived a restart.
 - The shared control-plane store also keeps one default operator profile pointer for ordinary app reopen: last active project, active mode, active Live Editor thread, and the persistent default-agent preference. Claude Code is the default until the operator changes it. Controller-update bootstrap relaunch is an override path, not the only restore path.
 - If an Agent Deck session disappears outside Pixel Forge, the control-plane store detaches that dead binding from the persisted lane instead of hiding or deleting the lane. Workspace pointers and durable editor state survive; when that saved workspace still exists, the next backend reattach should target that same lane workspace rather than silently minting a second clone.
@@ -87,6 +88,9 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
 - Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update reuses the chat's primary mirror tab for that workspace by default, while still allowing separate mirror candidates to coexist when the operator opens them deliberately.
 - Mirror launch follows the current chat as-is. Existing clone-backed chats mirror from their latest clone preview snapshot when one exists or from their bound workspace otherwise; existing canonical-root chats mirror from the latest staged controller snapshot when one exists or from the live controller runtime otherwise. Only brand-new draft chats default to clone creation.
+- Clone-backed work must keep local preview isolation all the way down to localhost/dev runtimes. If a clone-backed lane opens a project-owned local preview, Pixel Forge should broker that load through a workspace-local sandbox instead of pointing multiple isolated workspaces at one shared localhost instance.
+- Repo-declared workspace preview adapters are the preferred launch truth for workspace sandboxes. When a repo declares `pixel-forge.preview.json` at its workspace root, Pixel Forge should use that contract first and only fall back to bounded launch inference when a workspace has not declared one yet.
+- Pixel Forge should broker repo-native local dev/watch commands where possible instead of inventing a second live-update engine. Build-and-serve is a fallback for workspaces that do not expose a truthful live local loop.
 - Reconciled project chats discovered from Agent Deck are first-class Live Editor lanes even before Pixel Forge has sent its own first request. Pixel Forge should not mislabel an attached adopted chat as an empty draft; selecting one hydrates the attached session's live status/output into the lane, and follow-up sends to a currently busy attached session are queued through Agent Deck rather than failing the default readiness gate.
 - Non-controller runtimes do not auto-restore persisted Pixel Forge local-target tabs on startup. That guard prevents mirror-in-mirror recursion while still preserving the tab metadata for deliberate reload.
 - Non-controller runtimes keep ordinary preview capability for external apps, but they do not reopen the originating Pixel Forge workspace or launch nested Pixel Forge target runtimes inside themselves. Mirror depth for Pixel Forge itself is intentionally capped at one layer.
@@ -201,14 +205,15 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the current limiting factor from `SPECS.md`: the context transport is still more file-oriented and indirect than the eventual sidecar path should be.
+The next target release should keep attacking the current limiting factor from `SPECS.md` while also finishing the new preview-runtime backbone: workspace preview launch truth should come from explicit repo contracts first, not silent runtime guessing.
 
 The smallest complete unit that matters:
 
 - keep the frozen request-pack and selection-tunnel lane as the minimum truthful handoff
 - trust visible-session continuity and stop repeating stable setup framing on every turn
 - keep the first-turn bootstrap brief stable and keep later turns request-delta-focused
-- make deploy/apply expectations follow the active preview target truth instead of repo-only inference
+- make preview-apply expectations follow the active preview target truth while keeping clone-backed work local-only unless the user explicitly asked for a canonical remote deploy lane
+- make workspace preview sandboxes adapter-first, with bounded launch inference used only as an onboarding fallback when a repo has not declared its preview contract yet
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists
 
 ### Next Target Release Diagram
@@ -237,6 +242,25 @@ The final ideal state is a boring, recursive, truthful loop:
 - one native visible endpoint session with a richer sidecar transport layer that can use both frozen evidence and live attach into the prepared preview session
 - one promotion path from mirror preview candidate to installed controller, with rollback if needed
 - recursion stays faithful because mirrors are real Pixel Forge runtimes, not special target-only surrogates
+- workspace preview sandboxes start through explicit repo-declared preview adapters; heuristics exist only to help undeclared repos bootstrap that contract and never remain the steady-state launch truth
+
+### Target Architecture
+
+The future ideal preview/runtime model is:
+
+- `chat` owns interaction and continuity
+- `workspace` owns code isolation
+- `workspace` owns one reusable preview sandbox
+- repo-declared preview adapters tell Pixel Forge how that sandbox should launch, become ready, and stop
+- Pixel Forge brokers and reuses that sandbox; it does not become a generic deploy engine and it does not silently guess forever
+
+This keeps the default behavior simple:
+
+- new chat usually means new workspace
+- new workspace usually means new sandbox
+- reusing a workspace reuses its sandbox
+- clone-backed work stays isolated all the way down to localhost
+- canonical-root shared deploy lanes remain explicit promotion flows, not something clone sandboxes can stomp on by accident
 
 ### Final Ideal State Diagram
 

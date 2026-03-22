@@ -251,6 +251,45 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             [str(first_project_path), str(second_project_path)],
         )
 
+    def test_workspace_preview_urls_are_isolated_from_root_project_urls(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        clone_workspace_path = project_path / ".agents" / "thread-a"
+        clone_workspace_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        root_urls = project_store.touch_project_url(
+            str(project_path),
+            "http://localhost:3002/admin/control-room",
+        )
+        clone_urls = project_store.touch_workspace_url(
+            str(project_path),
+            str(clone_workspace_path),
+            "http://thread-a-preview-target.localhost:3102/admin/control-room",
+        )
+
+        self.assertEqual(
+            [entry.url for entry in root_urls],
+            ["http://localhost:3002/admin/control-room"],
+        )
+        self.assertEqual(
+            [entry.url for entry in clone_urls],
+            ["http://thread-a-preview-target.localhost:3102/admin/control-room"],
+        )
+        self.assertEqual(
+            [entry.url for entry in project_store.list_project_urls(str(project_path))],
+            ["http://localhost:3002/admin/control-room"],
+        )
+        self.assertEqual(
+            [
+                entry.url
+                for entry in project_store.list_workspace_urls(
+                    str(project_path),
+                    str(clone_workspace_path),
+                )
+            ],
+            ["http://thread-a-preview-target.localhost:3102/admin/control-room"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

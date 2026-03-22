@@ -16,6 +16,7 @@ import { HTTP_BACKEND_URL, RUNTIME_KIND, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import type {
   PixelForgeDesktopPreviewInputState,
@@ -78,9 +79,10 @@ interface LoadAppOptions {
 }
 
 interface LocalPixelForgeTargetResponse {
-  kind: 'pixel-forge'
+  kind: 'pixel-forge' | 'workspace-preview'
   runtime_kind: 'mirror' | 'dev'
   project_path: string
+  workspace_path?: string | null
   source_root: string
   build_label: string
   instance_slug: string
@@ -147,6 +149,36 @@ function toLocalTargetMeta(
     buildLabel: record.build_label,
     createdAt: record.created_at,
   }
+}
+
+function isLocalPreviewUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return (
+      parsed.hostname === 'localhost'
+      || parsed.hostname === '127.0.0.1'
+      || parsed.hostname.endsWith('.localhost')
+    )
+  } catch {
+    return false
+  }
+}
+
+function getUrlOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
+
+function mergePreviewBaseUrl(baseUrl: string, requestedUrl: string): string {
+  const base = new URL(baseUrl)
+  const requested = new URL(requestedUrl)
+  base.pathname = requested.pathname
+  base.search = requested.search
+  base.hash = requested.hash
+  return base.toString()
 }
 
 function toAppliedSelection(
@@ -367,6 +399,7 @@ export function LiveEditorPane() {
     agentDeckTargets,
     createAgentDeckTargetSession,
     refreshProjectChats,
+    loadWorkspacePreviewUrls,
     pendingControllerUpdate,
     pendingPreviewUpdate,
     setPendingPreviewUpdate,
@@ -448,11 +481,12 @@ export function LiveEditorPane() {
   // We need a ref to loadApp so goBack/goForward can call it without circular deps
   const loadAppRef = useRef<((url?: string, options?: LoadAppOptions) => Promise<void>) | null>(null)
 
-  const currentProjectUrls = useSessionStore((state) => {
+  const currentProjectRootUrls = useSessionStore((state) => {
     if (!state.projectPath) return []
     const project = state.recentProjects.find((entry) => entry.path === state.projectPath)
     return project?.previewUrls ?? []
   })
+  const workspacePreviewUrlsByPath = useSessionStore((state) => state.workspacePreviewUrlsByPath)
 
   const {
     connect,
@@ -521,6 +555,12 @@ export function LiveEditorPane() {
     || currentThreadSession?.workspacePath?.trim()
     || liveEditorSession?.workspacePath?.trim()
     || null
+  const currentWorkspacePreviewUrls =
+    (currentChatWorkspacePath
+      ? workspacePreviewUrlsByPath[currentChatWorkspacePath]
+      : null)
+    ?? (projectPath ? workspacePreviewUrlsByPath[projectPath] : null)
+    ?? currentProjectRootUrls
   const currentChatIsCloneBacked = isCloneWorkspaceBound({
     projectPath,
     workspacePath: currentChatWorkspacePath,
@@ -655,6 +695,17 @@ export function LiveEditorPane() {
       activateThread(liveEditorSession.threadId)
     }
   }, [activateThread, liveEditorSession?.threadId])
+
+  useEffect(() => {
+    const workspacePath = currentChatWorkspacePath || projectPath
+    if (!workspacePath) {
+      return
+    }
+
+    void loadWorkspacePreviewUrls(workspacePath).catch((error) => {
+      console.error('[live-editor] Failed to load workspace preview URLs:', error)
+    })
+  }, [currentChatWorkspacePath, loadWorkspacePreviewUrls, projectPath])
 
   useEffect(() => {
     targetUrlRef.current = targetUrl
@@ -800,7 +851,7 @@ export function LiveEditorPane() {
       const normalizedUrl = url?.trim() || null
       internalPreviewUrlRef.current = normalizedUrl
       try {
-        await setPreviewUrl(normalizedUrl)
+        await setPreviewUrl(normalizedUrl, currentChatWorkspacePath || projectPath)
       } catch (error) {
         console.error('[live-editor] Failed to persist preview URL:', error)
         if (normalizedUrl) {
@@ -808,7 +859,7 @@ export function LiveEditorPane() {
         }
       }
     },
-    [setPreviewUrl]
+    [currentChatWorkspacePath, projectPath, setPreviewUrl]
   )
 
   const sendBrowserCommand = useCallback(async (
@@ -1012,6 +1063,60 @@ export function LiveEditorPane() {
 
   useDesktopPreviewOverlayGuard(desktopPreviewRef, updateEmbeddedPreviewBounds)
 
+  const resolveWorkspacePreviewTarget = useCallback(async (
+    urlToLoad: string,
+  ): Promise<{
+    url: string
+    localTarget: LocalTargetMeta | null
+  }> => {
+    if (!projectPath || !currentChatWorkspacePath || !currentChatIsCloneBacked) {
+      return { url: urlToLoad, localTarget: null }
+    }
+    if (!isLocalPreviewUrl(urlToLoad) || isPixelForgeTargetUrl(urlToLoad)) {
+      return { url: urlToLoad, localTarget: null }
+    }
+
+    const requestedOrigin = getUrlOrigin(urlToLoad)
+    const rootOrigins = currentProjectRootUrls
+      .map((entry) => getUrlOrigin(entry))
+      .filter((entry): entry is string => Boolean(entry))
+    if (!requestedOrigin) {
+      return { url: urlToLoad, localTarget: null }
+    }
+    const shouldResolveThroughSandbox =
+      rootOrigins.includes(requestedOrigin)
+      || requestedOrigin.includes('-preview-target-')
+
+    if (!shouldResolveThroughSandbox) {
+      return { url: urlToLoad, localTarget: null }
+    }
+
+    const record = await requestPreviewJson<LocalPixelForgeTargetResponse>(
+      '/api/local-targets/workspace-preview/start',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          project_path: projectPath,
+          workspace_path: currentChatWorkspacePath,
+          requested_url: urlToLoad,
+          force_restart: false,
+        }),
+      }
+    )
+
+    const localTarget = toLocalTargetMeta(record, currentChatWorkspacePath)
+
+    return {
+      url: mergePreviewBaseUrl(record.web_url, urlToLoad),
+      localTarget,
+    }
+  }, [
+    currentChatIsCloneBacked,
+    currentChatWorkspacePath,
+    currentProjectRootUrls,
+    projectPath,
+  ])
+
   const loadApp = useCallback(async (
     urlOverride?: string,
     options?: LoadAppOptions
@@ -1020,9 +1125,10 @@ export function LiveEditorPane() {
     if (!resolvedTabId) return
 
     const tab = previewTabsRef.current.find((entry) => entry.id === resolvedTabId) ?? null
-    const urlToLoad = (urlOverride || targetUrlRef.current || tab?.url || '').trim()
+    let urlToLoad = (urlOverride || targetUrlRef.current || tab?.url || '').trim()
 
     setActivePreviewTabId(resolvedTabId)
+    setShowUrlHistory(false)
 
     if (!urlToLoad) {
       setAuthIssue(null)
@@ -1039,6 +1145,7 @@ export function LiveEditorPane() {
                 snapshotDataUrl: null,
                 proxySessionId: null,
                 browserTabId: null,
+                localTarget: null,
               }
             : entry
         )
@@ -1055,6 +1162,9 @@ export function LiveEditorPane() {
           'Nested Pixel Forge previews are disabled inside target runtimes. Open an ordinary app URL or return to the controller.'
         )
       }
+
+      const workspaceResolvedTarget = await resolveWorkspacePreviewTarget(urlToLoad)
+      urlToLoad = workspaceResolvedTarget.url
 
       const desktopPreview = desktopPreviewRef.current
       if (!desktopPreview) {
@@ -1086,6 +1196,7 @@ export function LiveEditorPane() {
             browserTabId: data.browser_tab_id,
             frameSrc: 'about:blank',
             snapshotDataUrl: data.snapshot_data_url,
+            localTarget: workspaceResolvedTarget.localTarget,
           }
         })
       )
@@ -1123,11 +1234,13 @@ export function LiveEditorPane() {
     setActivePreviewTabId,
     setAuthIssue,
     setPreviewTabs,
+    setShowUrlHistory,
     setTargetUrl,
     syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     syncTabSelections,
     updateEmbeddedPreviewBounds,
+    resolveWorkspacePreviewTarget,
   ])
 
   // Keep loadAppRef in sync for back/forward navigation
@@ -1138,23 +1251,41 @@ export function LiveEditorPane() {
       return false
     }
 
-    const record = await requestPreviewJson<LocalPixelForgeTargetResponse>(
-      '/api/local-targets/pixel-forge/start',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          project_path: projectPath,
-          runtime_kind: tab.localTarget.runtimeKind,
-          force_restart: false,
-          source_root: tab.localTarget.sourceRoot,
-        }),
-      }
-    )
+    const record =
+      tab.localTarget.kind === 'pixel-forge'
+        ? await requestPreviewJson<LocalPixelForgeTargetResponse>(
+            '/api/local-targets/pixel-forge/start',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                project_path: projectPath,
+                runtime_kind: tab.localTarget.runtimeKind,
+                force_restart: false,
+                source_root: tab.localTarget.sourceRoot,
+              }),
+            }
+          )
+        : await requestPreviewJson<LocalPixelForgeTargetResponse>(
+            '/api/local-targets/workspace-preview/start',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                project_path: projectPath,
+                workspace_path: tab.localTarget.sourceRoot,
+                requested_url: tab.url,
+                force_restart: false,
+              }),
+            }
+          )
 
     attachLocalTargetToTab(tab.id, record, {
       audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
     })
-    await loadApp(record.web_url, {
+    const restoredUrl =
+      tab.localTarget.kind === 'workspace-preview'
+        ? mergePreviewBaseUrl(record.web_url, tab.url)
+        : record.web_url
+    await loadApp(restoredUrl, {
       tabId: tab.id,
       persist: false,
       announceSuccess: false,
@@ -1183,7 +1314,7 @@ export function LiveEditorPane() {
       return
     }
 
-    if (activePreviewTab.localTarget?.kind === 'pixel-forge') {
+    if (activePreviewTab.localTarget) {
       try {
         const restored = await restoreLocalTargetInTab(activePreviewTab)
         if (restored) {
@@ -1212,7 +1343,7 @@ export function LiveEditorPane() {
   }, [activeMode, activePreviewTabId, activeThreadKey, projectPath, restoreActivePreviewTab])
 
   const openUrlHistory = useCallback(async () => {
-    if (currentProjectUrls.length === 0) {
+    if (currentWorkspacePreviewUrls.length === 0) {
       return
     }
 
@@ -1227,7 +1358,7 @@ export function LiveEditorPane() {
           width: rect.width,
           height: rect.height,
         },
-        items: currentProjectUrls.map((url) => ({
+        items: currentWorkspacePreviewUrls.map((url) => ({
           value: url,
           label: url,
         })),
@@ -1243,7 +1374,9 @@ export function LiveEditorPane() {
     }
 
     setShowUrlHistory((current) => !current)
-  }, [currentProjectUrls, loadApp, setShowUrlHistory, setTargetUrl, targetUrl])
+  }, [currentWorkspacePreviewUrls, loadApp, setShowUrlHistory, setTargetUrl, targetUrl])
+
+  const hasDesktopUrlHistoryOverlay = Boolean(desktopOverlayRef.current)
 
   const applyControllerUpdate = useCallback(async () => {
     const desktopApp = desktopAppRef.current
@@ -2488,43 +2621,67 @@ export function LiveEditorPane() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       void loadApp()
+                      return
+                    }
+                    if (event.key === 'Escape') {
+                      setShowUrlHistory(false)
                     }
                   }}
                   placeholder="Enter preview URL..."
                   className="h-7 rounded-r-none border-border/60 bg-background/50 font-mono text-xs"
                 />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
-                  onClick={() => void openUrlHistory()}
-                  disabled={currentProjectUrls.length === 0}
-                  title="Recent preview URLs"
-                >
-                  <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
-                </Button>
-              </div>
-              {showUrlHistory && currentProjectUrls.length > 0 && (
-                <div className="mt-1 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
-                  <div className="max-h-48 overflow-y-auto py-1">
-                    {currentProjectUrls.map((url) => (
-                      <button
-                        key={url}
-                        onClick={() => {
-                          setTargetUrl(url)
-                          setShowUrlHistory(false)
-                          void loadApp(url)
-                        }}
-                        className={`flex w-full items-center px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
-                          url === targetUrl ? 'bg-primary/5 text-primary' : ''
-                        }`}
+                {hasDesktopUrlHistoryOverlay ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
+                    onClick={() => void openUrlHistory()}
+                    disabled={currentWorkspacePreviewUrls.length === 0}
+                    title="Recent preview URLs"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                ) : (
+                  <Popover open={showUrlHistory} onOpenChange={setShowUrlHistory}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
+                        disabled={currentWorkspacePreviewUrls.length === 0}
+                        title="Recent preview URLs"
                       >
-                        <span className="truncate">{url}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+                        <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
+                      </Button>
+                    </PopoverTrigger>
+                    {currentWorkspacePreviewUrls.length > 0 && (
+                      <PopoverContent
+                        align="end"
+                        sideOffset={6}
+                        className="w-[min(32rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] p-1"
+                      >
+                        <div className="max-h-48 overflow-y-auto">
+                          {currentWorkspacePreviewUrls.map((url) => (
+                            <button
+                              key={url}
+                              onClick={() => {
+                                setTargetUrl(url)
+                                setShowUrlHistory(false)
+                                void loadApp(url)
+                              }}
+                              className={`flex w-full items-center rounded-md px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-primary/10 ${
+                                url === targetUrl ? 'bg-primary/5 text-primary' : ''
+                              }`}
+                            >
+                              <span className="truncate">{url}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    )}
+                  </Popover>
+                )}
+              </div>
             </div>
             <Button
               variant="outline"

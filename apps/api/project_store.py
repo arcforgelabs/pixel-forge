@@ -303,6 +303,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS workspace_urls (
+                project_path TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
+                url TEXT NOT NULL,
+                last_used TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                use_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (project_path, workspace_path, url),
+                FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_path TEXT NOT NULL,
@@ -331,6 +341,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON projects (last_opened DESC);
             CREATE INDEX IF NOT EXISTS idx_project_urls_last_used
                 ON project_urls (project_path, last_used DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_urls_last_used
+                ON workspace_urls (project_path, workspace_path, last_used DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_last_active
                 ON sessions (project_path, last_active DESC);
             """
@@ -385,6 +397,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        _migrate_existing_project_urls_to_workspace_urls(conn)
         conn.execute(
             """
             INSERT OR IGNORE INTO profile_state (
@@ -401,6 +414,65 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def ensure_state_store_initialized() -> None:
     with _connect():
         return
+
+
+def _migrate_existing_project_urls_to_workspace_urls(conn: sqlite3.Connection) -> None:
+    tables = {
+        str(row["name"])
+        for row in conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('project_urls', 'workspace_urls')
+            """
+        ).fetchall()
+    }
+    if "project_urls" not in tables or "workspace_urls" not in tables:
+        return
+
+    rows = conn.execute(
+        """
+        SELECT project_path, url, last_used, use_count
+        FROM project_urls
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO workspace_urls (
+                project_path,
+                workspace_path,
+                url,
+                last_used,
+                use_count
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                row["project_path"],
+                row["project_path"],
+                row["url"],
+                row["last_used"],
+                row["use_count"],
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE workspace_urls
+            SET last_used = MAX(last_used, ?),
+                use_count = MAX(use_count, ?)
+            WHERE project_path = ?
+              AND workspace_path = ?
+              AND url = ?
+            """,
+            (
+                row["last_used"],
+                int(row["use_count"] or 1),
+                row["project_path"],
+                row["project_path"],
+                row["url"],
+            ),
+        )
 
 
 def _row_to_url_record(row: sqlite3.Row) -> ProjectUrlRecord:
@@ -451,7 +523,7 @@ def _normalize_local_target(value: object) -> dict[str, Any] | None:
     project_path = str(value.get("projectPath") or "").strip()
     source_root = str(value.get("sourceRoot") or "").strip()
     audience_workspace_path = str(value.get("audienceWorkspacePath") or "").strip()
-    if kind != "pixel-forge" or runtime_kind not in {"mirror", "dev"}:
+    if kind not in {"pixel-forge", "workspace-preview"} or runtime_kind not in {"mirror", "dev"}:
         return None
     if not project_path or not source_root:
         return None
@@ -685,16 +757,30 @@ def detach_missing_agent_deck_session_bindings(
 
 def list_project_urls(project_path: str) -> list[ProjectUrlRecord]:
     normalized_path = normalize_project_path(project_path)
+    return list_workspace_urls(normalized_path, normalized_path)
+
+
+def list_workspace_urls(
+    project_path: str,
+    workspace_path: str,
+) -> list[ProjectUrlRecord]:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_workspace_path = (
+        normalize_project_path(workspace_path)
+        if isinstance(workspace_path, str) and workspace_path.strip()
+        else normalized_project_path
+    )
 
     with _connect() as conn:
         rows = conn.execute(
             """
             SELECT url, last_used, use_count
-            FROM project_urls
+            FROM workspace_urls
             WHERE project_path = ?
+              AND workspace_path = ?
             ORDER BY last_used DESC, use_count DESC, url ASC
             """,
-            (normalized_path,),
+            (normalized_project_path, normalized_workspace_path),
         ).fetchall()
 
     return [_row_to_url_record(row) for row in rows]
@@ -972,6 +1058,20 @@ def delete_project(project_path: str) -> bool:
 
 def touch_project_url(project_path: str, url: str) -> list[ProjectUrlRecord]:
     normalized_path = normalize_project_path(project_path)
+    return touch_workspace_url(normalized_path, normalized_path, url)
+
+
+def touch_workspace_url(
+    project_path: str,
+    workspace_path: str,
+    url: str,
+) -> list[ProjectUrlRecord]:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_workspace_path = (
+        normalize_project_path(workspace_path)
+        if isinstance(workspace_path, str) and workspace_path.strip()
+        else normalized_project_path
+    )
     normalized_url = url.strip()
     if not normalized_url:
         raise ValueError("URL cannot be empty")
@@ -983,22 +1083,23 @@ def touch_project_url(project_path: str, url: str) -> list[ProjectUrlRecord]:
             FROM projects
             WHERE path = ?
             """,
-            (normalized_path,),
+            (normalized_project_path,),
         ).fetchone()
         if project_exists is None:
             raise ValueError("Project does not exist")
 
         conn.execute(
             """
-            INSERT INTO project_urls (
+            INSERT INTO workspace_urls (
                 project_path,
+                workspace_path,
                 url
-            ) VALUES (?, ?)
-            ON CONFLICT(project_path, url) DO UPDATE SET
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(project_path, workspace_path, url) DO UPDATE SET
                 last_used = CURRENT_TIMESTAMP,
-                use_count = project_urls.use_count + 1
+                use_count = workspace_urls.use_count + 1
             """,
-            (normalized_path, normalized_url),
+            (normalized_project_path, normalized_workspace_path, normalized_url),
         )
         conn.execute(
             """
@@ -1006,11 +1107,11 @@ def touch_project_url(project_path: str, url: str) -> list[ProjectUrlRecord]:
             SET last_opened = CURRENT_TIMESTAMP
             WHERE path = ?
             """,
-            (normalized_path,),
+            (normalized_project_path,),
         )
         conn.commit()
 
-    return list_project_urls(normalized_path)
+    return list_workspace_urls(normalized_project_path, normalized_workspace_path)
 
 
 def upsert_session(

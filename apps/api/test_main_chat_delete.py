@@ -144,6 +144,30 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
 
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
+    def test_build_dispatch_prompt_warns_clone_workspaces_off_shared_remote_deploys(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            request_file_path=".pixel-forge/requests/req/request.md",
+            preview_url="https://staging.example.com/jobs/123",
+            self_edit_safe_mode=False,
+            self_edit_scope=None,
+            informational_only=False,
+            continuation_mode="bootstrap",
+            requested_skills=[],
+        )
+
+        self.assertIn(
+            "If this workspace is an isolated clone, do not deploy to shared remote staging or production targets.",
+            prompt,
+        )
+        self.assertIn(
+            "Only use a shared remote deploy path from the canonical workspace when the user explicitly asked for deployment",
+            prompt,
+        )
+        self.assertNotIn(
+            "deploy using whatever deployment process this project uses",
+            prompt,
+        )
+
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",

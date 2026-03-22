@@ -26,7 +26,7 @@ export interface MirrorPreviewUpdateRef {
 }
 
 export interface MirrorTabLocalTargetRef {
-  kind: 'pixel-forge'
+  kind: 'pixel-forge' | 'workspace-preview'
   runtimeKind: 'mirror' | 'dev'
   sourceRoot: string
   audienceWorkspacePath?: string | null | undefined

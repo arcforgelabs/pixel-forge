@@ -84,3 +84,29 @@ do not treat /tmp/workspace as a skill.
                     }
                 ],
             )
+
+    def test_remote_preview_request_pack_warns_clone_workspaces_off_shared_deploys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Tighten the copy and ship the preview change.",
+                "<selected-elements />",
+                [],
+                preview_url="https://staging.example.com/jobs/123",
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+
+            self.assertIn(
+                "If this workspace is an isolated clone, do not deploy to shared remote staging or production targets.",
+                request_body,
+            )
+            self.assertIn(
+                "Only use a shared remote deploy path from the canonical workspace when the user explicitly asked for deployment",
+                request_body,
+            )
+            self.assertNotIn(
+                "deploy using the workspace's deployment process",
+                request_body,
+            )

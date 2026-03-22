@@ -94,7 +94,7 @@ export type ViewportMode = 'fluid' | 'desktop' | 'phone'
 export type PreviewMode = 'proxy' | 'browser' | null
 
 export interface LocalTargetMeta {
-  kind: 'pixel-forge'
+  kind: 'pixel-forge' | 'workspace-preview'
   runtimeKind: 'mirror' | 'dev'
   instanceSlug: string
   projectPath: string

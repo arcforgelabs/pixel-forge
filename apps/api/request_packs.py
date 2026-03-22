@@ -508,9 +508,9 @@ def create_request_pack(
                 [
                     "- If this workspace controls that target, do not stop at code changes. Apply the update to that preview target and verify that this exact location reflects the change before you finish.",
                     (
-                        "- For local/dev previews, rebuild, restart, or reload the local service serving this URL."
+                        "- For local/dev previews, rebuild, restart, or reload only the local service or isolated preview instance serving this URL."
                         if not _is_remote_preview(preview_url)
-                        else "- For repo-controlled remote previews, deploy using the workspace's deployment process."
+                        else "- If this workspace is an isolated clone, do not deploy to shared remote staging or production targets. Use only clone-scoped preview publication or other isolated verification tied to this workspace. Only use a shared remote deploy path from the canonical workspace when the user explicitly asked for deployment and the repo truly exposes that lane."
                     ),
                     "- If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload.",
                 ]
