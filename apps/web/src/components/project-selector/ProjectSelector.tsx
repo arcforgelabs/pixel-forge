@@ -41,6 +41,8 @@ export function ProjectSelector({
     customOutputPath: storedCustomOutputPath,
     projectPath: storedProjectPath,
     previewUrl: storedPreviewUrl,
+    authoritativeRuntimeKind,
+    authoritativeTargetProjectPath,
   } = useSessionStore();
   const [projectPath, setProjectPath] = useState(storedProjectPath || "");
   const [previewUrl, setPreviewUrl] = useState(storedPreviewUrl || "");
@@ -53,11 +55,13 @@ export function ProjectSelector({
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
   const projectPathInputRef = useRef<HTMLInputElement | null>(null);
+  const effectiveKind = authoritativeRuntimeKind || RUNTIME_KIND;
+  const effectiveTargetPath = authoritativeTargetProjectPath || TARGET_PROJECT_PATH;
   const visibleRecentProjects = recentProjects.filter((project) => (
     !(
-      RUNTIME_KIND !== "controller"
-      && TARGET_PROJECT_PATH
-      && project.path === TARGET_PROJECT_PATH
+      effectiveKind !== "controller"
+      && effectiveTargetPath
+      && project.path === effectiveTargetPath
     )
   ));
 

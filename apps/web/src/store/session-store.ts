@@ -142,6 +142,11 @@ export interface ControllerRuntimeInfo {
   runtimeLayout: string | null;
   acpxBridgeAvailable: boolean;
   installedAt: string | null;
+  runtimeKind: "controller" | "mirror" | "dev" | null;
+  targetProjectPath: string | null;
+  allowProfileRestore: boolean | null;
+  allowLocalTargetRestore: boolean | null;
+  allowSelfMirrorLaunch: boolean | null;
 }
 
 interface SessionStore {
@@ -183,6 +188,18 @@ interface SessionStore {
   controllerRuntimeLayout: string | null;
   controllerAcpxBridgeAvailable: boolean;
   controllerInstalledAt: string | null;
+  /** Authoritative runtime kind from backend /api/runtime-info. Null until loaded. */
+  authoritativeRuntimeKind: "controller" | "mirror" | "dev" | null;
+  /** Authoritative target project path from backend. */
+  authoritativeTargetProjectPath: string | null;
+  /** Whether the backend allows profile restore (only true for controller). */
+  allowProfileRestore: boolean;
+  /** Whether the backend allows restoring local-target tabs on startup. */
+  allowLocalTargetRestore: boolean;
+  /** Whether the backend allows launching self-mirror runtimes. */
+  allowSelfMirrorLaunch: boolean;
+  /** True once the authoritative runtime identity has been fetched from the backend. */
+  runtimeKindLoaded: boolean;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   pendingPreviewUpdate: PixelForgePendingPreviewUpdate | null;
   dismissedControllerUpdateId: string | null;
@@ -1068,6 +1085,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   controllerRuntimeLayout: null,
   controllerAcpxBridgeAvailable: false,
   controllerInstalledAt: null,
+  authoritativeRuntimeKind: null,
+  authoritativeTargetProjectPath: null,
+  allowProfileRestore: RUNTIME_KIND === "controller",
+  allowLocalTargetRestore: RUNTIME_KIND === "controller",
+  allowSelfMirrorLaunch: RUNTIME_KIND === "controller",
+  runtimeKindLoaded: false,
   pendingControllerUpdate: null,
   pendingPreviewUpdate: null,
   dismissedControllerUpdateId: null,
@@ -1154,17 +1177,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     if (!trimmedPath) {
       throw new Error("Project path is required");
     }
+    const state = get();
+    const effectiveKind = state.authoritativeRuntimeKind || RUNTIME_KIND;
+    const effectiveTargetPath = state.authoritativeTargetProjectPath || TARGET_PROJECT_PATH;
     if (
-      RUNTIME_KIND !== "controller"
-      && TARGET_PROJECT_PATH
-      && trimmedPath === TARGET_PROJECT_PATH
+      effectiveKind !== "controller"
+      && effectiveTargetPath
+      && trimmedPath === effectiveTargetPath
     ) {
       throw new Error(
         "This target runtime cannot reopen the originating Pixel Forge workspace inside itself."
       );
     }
-
-    const state = get();
     const existingProject = state.recentProjects.find(
       (project) => project.path === trimmedPath
     );
@@ -1879,12 +1903,24 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   setRuntimeInfo: (runtimeInfo) => {
+    const kind = runtimeInfo.runtimeKind;
+    const hasAuthoritativeKind = kind === "controller" || kind === "mirror" || kind === "dev";
     set({
       controllerVersion: runtimeInfo.controllerVersion,
       controllerRuntimeRoot: runtimeInfo.runtimeRoot,
       controllerRuntimeLayout: runtimeInfo.runtimeLayout,
       controllerAcpxBridgeAvailable: runtimeInfo.acpxBridgeAvailable,
       controllerInstalledAt: runtimeInfo.installedAt,
+      ...(hasAuthoritativeKind ? {
+        authoritativeRuntimeKind: kind,
+        authoritativeTargetProjectPath: runtimeInfo.targetProjectPath ?? null,
+        allowProfileRestore: runtimeInfo.allowProfileRestore === true,
+        allowLocalTargetRestore: runtimeInfo.allowLocalTargetRestore === true,
+        allowSelfMirrorLaunch: runtimeInfo.allowSelfMirrorLaunch === true,
+        runtimeKindLoaded: true,
+      } : {
+        runtimeKindLoaded: true,
+      }),
     });
   },
 

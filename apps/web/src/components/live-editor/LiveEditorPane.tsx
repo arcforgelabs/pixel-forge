@@ -404,6 +404,8 @@ export function LiveEditorPane() {
     pendingPreviewUpdate,
     setPendingPreviewUpdate,
     setPreviewUrl,
+    allowSelfMirrorLaunch,
+    authoritativeRuntimeKind,
   } = useSessionStore()
 
   const targetUrlRef = useRef(previewUrl || '')
@@ -597,7 +599,8 @@ export function LiveEditorPane() {
       : null
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
-  const canLaunchSelfMirror = RUNTIME_KIND === 'controller'
+  const effectiveRuntimeKind = authoritativeRuntimeKind || RUNTIME_KIND
+  const canLaunchSelfMirror = allowSelfMirrorLaunch
   const isSelectionToolActive = activePreviewTool === 'select'
   const canGoBack = urlHistoryCursor > 0
   const canGoForward = urlHistoryCursor < urlHistory.length - 1
@@ -1157,7 +1160,7 @@ export function LiveEditorPane() {
     }
 
     try {
-      if (RUNTIME_KIND !== 'controller' && isPixelForgeTargetUrl(urlToLoad)) {
+      if (effectiveRuntimeKind !== 'controller' && isPixelForgeTargetUrl(urlToLoad)) {
         throw new Error(
           'Nested Pixel Forge previews are disabled inside target runtimes. Open an ordinary app URL or return to the controller.'
         )
@@ -1308,7 +1311,7 @@ export function LiveEditorPane() {
     }
 
     if (
-      RUNTIME_KIND !== 'controller'
+      effectiveRuntimeKind !== 'controller'
       && activePreviewTab.localTarget?.kind === 'pixel-forge'
     ) {
       return
@@ -1576,7 +1579,7 @@ export function LiveEditorPane() {
       audienceWorkspacePath?: string | null
     }
   ) => {
-    if (RUNTIME_KIND !== 'controller') {
+    if (effectiveRuntimeKind !== 'controller') {
       throw new Error(
         'Nested Pixel Forge mirror launch is disabled inside target runtimes.'
       )

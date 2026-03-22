@@ -219,6 +219,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     pendingControllerUpdate,
     dismissedControllerUpdateId,
     setDismissedControllerUpdateId,
+    authoritativeRuntimeKind,
+    authoritativeTargetProjectPath,
   } = useSessionStore();
 
   const [projectsExpanded, setProjectsExpanded] = useState(false);
@@ -237,11 +239,13 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
+  const effectiveKind = authoritativeRuntimeKind || RUNTIME_KIND;
+  const effectiveTargetPath = authoritativeTargetProjectPath || TARGET_PROJECT_PATH;
   const visibleProjects = recentProjects.filter((project) => (
     !(
-      RUNTIME_KIND !== "controller"
-      && TARGET_PROJECT_PATH
-      && project.path === TARGET_PROJECT_PATH
+      effectiveKind !== "controller"
+      && effectiveTargetPath
+      && project.path === effectiveTargetPath
     )
   ));
 

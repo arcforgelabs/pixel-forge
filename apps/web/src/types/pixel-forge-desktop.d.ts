@@ -131,6 +131,11 @@ export interface PixelForgeDesktopRuntimeInfo {
   runtimeLayout: string | null
   acpxBridgeAvailable: boolean
   installedAt: string | null
+  runtimeKind?: "controller" | "mirror" | "dev" | null
+  targetProjectPath?: string | null
+  allowProfileRestore?: boolean | null
+  allowLocalTargetRestore?: boolean | null
+  allowSelfMirrorLaunch?: boolean | null
 }
 
 export interface PixelForgeDesktopAppAPI {

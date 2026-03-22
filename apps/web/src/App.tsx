@@ -80,6 +80,8 @@ function App() {
     projectsLoaded,
     profileState,
     profileLoaded,
+    runtimeKindLoaded,
+    allowProfileRestore,
     hydrateProjects,
     setRuntimeInfo,
     setDismissedControllerUpdateId,
@@ -141,6 +143,14 @@ function App() {
           typeof runtimeInfo?.installedAt === "string"
             ? runtimeInfo.installedAt.trim() || null
             : null,
+        runtimeKind: runtimeInfo?.runtimeKind ?? null,
+        targetProjectPath:
+          typeof runtimeInfo?.targetProjectPath === "string"
+            ? runtimeInfo.targetProjectPath.trim() || null
+            : null,
+        allowProfileRestore: runtimeInfo?.allowProfileRestore ?? null,
+        allowLocalTargetRestore: runtimeInfo?.allowLocalTargetRestore ?? null,
+        allowSelfMirrorLaunch: runtimeInfo?.allowSelfMirrorLaunch ?? null,
       });
     };
 
@@ -344,13 +354,13 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!desktopBootstrapLoaded || !projectsLoaded || !profileLoaded) {
+    if (!desktopBootstrapLoaded || !projectsLoaded || !profileLoaded || !runtimeKindLoaded) {
       return;
     }
     if (desktopBootstrapState || projectPath || profileRestoreAttemptedRef.current) {
       return;
     }
-    if (RUNTIME_KIND !== "controller") {
+    if (!allowProfileRestore) {
       profileRestoreAttemptedRef.current = true;
       return;
     }
@@ -382,6 +392,8 @@ function App() {
     profileState,
     projectPath,
     projectsLoaded,
+    runtimeKindLoaded,
+    allowProfileRestore,
     setProject,
     switchMode,
   ]);
@@ -398,8 +410,11 @@ function App() {
 
   // Show project selector on first render if no project is configured
   useEffect(() => {
+    if (!runtimeKindLoaded) {
+      return;
+    }
     const hasRestorableProfileProject =
-      RUNTIME_KIND === "controller"
+      allowProfileRestore
       && !!profileState?.activeProjectPath?.trim()
       && !desktopBootstrapState;
     if (
@@ -411,7 +426,7 @@ function App() {
     ) {
       setShowProjectSelector(true);
     }
-  }, [appState, desktopBootstrapState, profileLoaded, profileState, projectPath, projectsLoaded]);
+  }, [appState, desktopBootstrapState, profileLoaded, profileState, projectPath, projectsLoaded, runtimeKindLoaded, allowProfileRestore]);
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from runtime_config import runtime_kind as _runtime_kind
 from runtime_config import source_root as runtime_source_root
 
 
@@ -121,4 +123,12 @@ def read_runtime_info() -> dict[str, str | bool | None]:
     root = runtime_source_root().expanduser().resolve()
     runtime_info = read_runtime_info_for_root(root)
     runtime_info["controllerVersion"] = read_runtime_version()
+
+    kind = _runtime_kind()
+    runtime_info["runtimeKind"] = kind
+    raw_target = (os.environ.get("PIXEL_FORGE_TARGET_PROJECT_PATH") or "").strip()
+    runtime_info["targetProjectPath"] = raw_target or None
+    runtime_info["allowProfileRestore"] = kind == "controller"
+    runtime_info["allowLocalTargetRestore"] = kind == "controller"
+    runtime_info["allowSelfMirrorLaunch"] = kind == "controller"
     return runtime_info
