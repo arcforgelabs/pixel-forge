@@ -95,6 +95,53 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
         assert session is not None
         self.assertIsNone(session.agent_deck_session_id)
 
+    async def test_append_workstation_event_marks_chat_as_typed_turn_history(self) -> None:
+        record = workstation_events.append_workstation_event(
+            str(self.project_path),
+            "thread-a",
+            agent_deck_session_id="deck-a",
+            event_type="turn_started",
+            payload={
+                "request_id": "request-1",
+                "agent_deck_session_id": "deck-a",
+                "agent_deck_session_title": "pixel-forge-thread-a",
+                "agent_deck_tool": "codex",
+                "workspace_path": str(self.workspace_path),
+            },
+        )
+
+        self.assertEqual(record.event_type, "turn_started")
+        self.assertTrue(
+            workstation_events.chat_has_typed_turn_events(
+                str(self.project_path),
+                "thread-a",
+            )
+        )
+
+    async def test_session_status_event_counts_as_primary_workstation_history(self) -> None:
+        workstation_events.append_workstation_event(
+            str(self.project_path),
+            "thread-a",
+            agent_deck_session_id="deck-a",
+            event_type="session_status",
+            payload={
+                "agent_deck_session_id": "deck-a",
+                "agent_deck_session_title": "pixel-forge-thread-a",
+                "agent_deck_tool": "codex",
+                "agent_deck_session_status": "running",
+                "workspace_path": str(self.workspace_path),
+                "binding_state": "attached",
+                "message": "Codex is working in Agent Deck...",
+            },
+        )
+
+        self.assertTrue(
+            workstation_events.chat_has_primary_workstation_events(
+                str(self.project_path),
+                "thread-a",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

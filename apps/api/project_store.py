@@ -932,6 +932,25 @@ def get_project_session_by_agent_deck_session_id(
     return records[0]
 
 
+def list_sessions_by_agent_deck_session_id(
+    agent_deck_session_id: str,
+) -> list[SessionRecord]:
+    normalized_session_id = agent_deck_session_id.strip()
+    if not normalized_session_id:
+        return []
+
+    with _connect() as conn:
+        return _fetch_session_records(
+            conn,
+            where_sql=(
+                "COALESCE("
+                "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                ") = ?"
+            ),
+            params=(normalized_session_id,),
+        )
+
+
 def detach_project_session_binding(
     project_path: str,
     thread_id: str,

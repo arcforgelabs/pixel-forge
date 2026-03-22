@@ -279,7 +279,7 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
     async def test_send_agent_deck_prompt_reliably_waits_for_ready_without_cli_wait_flag(self) -> None:
         run_command = AsyncMock(return_value=(0, "", ""))
 
-        with patch.object(agent_deck_bridge, "_run_command", run_command):
+        with patch.object(agent_deck_bridge, "_run_agent_deck_command", run_command):
             await agent_deck_bridge.send_agent_deck_prompt_reliably(
                 _session_info(),
                 project_path="/tmp/project",
@@ -288,7 +288,6 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
 
         run_command.assert_awaited_once_with(
             [
-                "agent-deck",
                 "session",
                 "send",
                 "deck-a",
@@ -301,7 +300,7 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
     async def test_send_agent_deck_prompt_reliably_surfaces_agent_deck_errors(self) -> None:
         run_command = AsyncMock(return_value=(1, "", "agent not ready after 30s"))
 
-        with patch.object(agent_deck_bridge, "_run_command", run_command):
+        with patch.object(agent_deck_bridge, "_run_agent_deck_command", run_command):
             with self.assertRaisesRegex(
                 agent_deck_bridge.AgentDeckBridgeError,
                 "agent not ready after 30s",
@@ -315,7 +314,7 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
     async def test_send_agent_deck_prompt_reliably_can_bypass_ready_wait(self) -> None:
         run_command = AsyncMock(return_value=(0, "", ""))
 
-        with patch.object(agent_deck_bridge, "_run_command", run_command):
+        with patch.object(agent_deck_bridge, "_run_agent_deck_command", run_command):
             await agent_deck_bridge.send_agent_deck_prompt_reliably(
                 _session_info(),
                 project_path="/tmp/project",
@@ -325,7 +324,6 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
 
         run_command.assert_awaited_once_with(
             [
-                "agent-deck",
                 "session",
                 "send",
                 "deck-a",
@@ -370,8 +368,44 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_claude_jsonl_mirrors_chunk_payloads_to_callback(self) -> None:
+        websocket = AsyncMock()
+        on_emit = AsyncMock()
+        wait_task = asyncio.get_running_loop().create_future()
+        wait_task.set_result(None)
+
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello from Claude"}]}}\n'
+            )
+            jsonl_path = Path(handle.name)
+
+        self.addCleanup(lambda: jsonl_path.unlink(missing_ok=True))
+
+        with (
+            patch.object(agent_deck_bridge, "STREAM_POLL_INTERVAL_SECONDS", 0.0),
+            patch.object(agent_deck_bridge, "STREAM_IDLE_AFTER_COMPLETION_SECONDS", 0.0),
+        ):
+            stats = await agent_deck_bridge.stream_claude_jsonl(
+                websocket,
+                jsonl_path,
+                0,
+                wait_task,
+                on_emit=on_emit,
+            )
+
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "chunk", "content": "Hello from Claude"}
+        )
+        on_emit.assert_awaited_once_with(
+            {"type": "chunk", "content": "Hello from Claude"}
+        )
+        self.assertTrue(stats.streamed_text)
+        self.assertEqual(stats.last_output, "Hello from Claude")
+
     async def test_stream_codex_session_output_emits_incremental_text_chunks(self) -> None:
         websocket = AsyncMock()
+        on_emit = AsyncMock()
         wait_task = asyncio.get_running_loop().create_future()
         wait_task.set_result(None)
         baseline_output = "model: gpt-5\n› "
@@ -391,9 +425,13 @@ class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
                 baseline_output=baseline_output,
                 prompt="Fix the bug",
                 wait_task=wait_task,
+                on_emit=on_emit,
             )
 
         websocket.send_json.assert_awaited_once_with(
+            {"type": "chunk", "content": "Hello from Codex"}
+        )
+        on_emit.assert_awaited_once_with(
             {"type": "chunk", "content": "Hello from Codex"}
         )
         self.assertTrue(stats.streamed_text)
@@ -401,6 +439,7 @@ class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_codex_session_output_routes_progress_only_updates_to_status(self) -> None:
         websocket = AsyncMock()
+        on_emit = AsyncMock()
         wait_task = asyncio.get_running_loop().create_future()
         wait_task.set_result(None)
         baseline_output = "model: gpt-5\n› "
@@ -420,9 +459,13 @@ class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
                 baseline_output=baseline_output,
                 prompt="Fix the bug",
                 wait_task=wait_task,
+                on_emit=on_emit,
             )
 
         websocket.send_json.assert_awaited_once_with(
+            {"type": "status", "message": "Codex: • Working"}
+        )
+        on_emit.assert_awaited_once_with(
             {"type": "status", "message": "Codex: • Working"}
         )
         self.assertFalse(stats.streamed_text)

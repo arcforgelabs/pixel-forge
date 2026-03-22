@@ -17,6 +17,18 @@ from state_db import connect as connect_state_db
 
 _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
+TURN_EVENT_TYPES = {
+    "turn_started",
+    "turn_status",
+    "turn_chunk",
+    "turn_completed",
+    "turn_failed",
+}
+SESSION_EVENT_TYPES = {
+    "session_status",
+    "session_output",
+}
+PRIMARY_EVENT_TYPES = TURN_EVENT_TYPES | SESSION_EVENT_TYPES
 
 
 @dataclass(slots=True)
@@ -78,6 +90,19 @@ def _row_to_event_record(row: sqlite3.Row) -> WorkstationEventRecord:
         payload=payload if isinstance(payload, dict) else {},
         created_at=row["created_at"],
     )
+
+
+def normalize_workstation_event_payload(
+    chat_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_chat_id = chat_id.strip()
+    normalized_payload: dict[str, Any] = {
+        "chat_id": normalized_chat_id,
+        "thread_id": normalized_chat_id,
+    }
+    normalized_payload.update(payload)
+    return normalized_payload
 
 
 def _append_event(
@@ -172,6 +197,119 @@ def list_workstation_events(
         ).fetchall()
 
     return [_row_to_event_record(row) for row in rows]
+
+
+def append_workstation_event(
+    project_path: str,
+    chat_id: str,
+    *,
+    agent_deck_session_id: str | None,
+    event_type: str,
+    payload: dict[str, Any],
+) -> WorkstationEventRecord:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    normalized_event_type = event_type.strip()
+    if not normalized_chat_id:
+        raise ValueError("chat_id is required")
+    if not normalized_event_type:
+        raise ValueError("event_type is required")
+
+    normalized_payload = normalize_workstation_event_payload(
+        normalized_chat_id,
+        payload,
+    )
+
+    with _connect() as conn:
+        record = _append_event(
+            conn,
+            project_path=normalized_project_path,
+            chat_id=normalized_chat_id,
+            agent_deck_session_id=agent_deck_session_id,
+            event_type=normalized_event_type,
+            payload=normalized_payload,
+        )
+        conn.commit()
+        return record
+
+
+def latest_workstation_event(
+    project_path: str,
+    chat_id: str,
+    *,
+    event_type: str,
+) -> WorkstationEventRecord | None:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    normalized_event_type = event_type.strip()
+    if not normalized_chat_id or not normalized_event_type:
+        return None
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, project_path, chat_id, agent_deck_session_id, event_type, payload_json, created_at
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+              AND event_type = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                normalized_project_path,
+                normalized_chat_id,
+                normalized_event_type,
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+    return _row_to_event_record(row)
+
+
+def chat_has_typed_turn_events(project_path: str, chat_id: str) -> bool:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    if not normalized_chat_id:
+        return False
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+              AND event_type LIKE 'turn_%'
+            LIMIT 1
+            """,
+            (normalized_project_path, normalized_chat_id),
+        ).fetchone()
+    return row is not None
+
+
+def chat_has_primary_workstation_events(project_path: str, chat_id: str) -> bool:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    if not normalized_chat_id:
+        return False
+
+    event_types = sorted(PRIMARY_EVENT_TYPES)
+    placeholders = ",".join("?" for _ in event_types)
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+              AND event_type IN ({placeholders})
+            LIMIT 1
+            """,
+            (normalized_project_path, normalized_chat_id, *event_types),
+        ).fetchone()
+    return row is not None
 
 
 def _is_missing_session_error(error: BaseException | str) -> bool:

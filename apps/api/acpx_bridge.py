@@ -6,6 +6,7 @@ import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Awaitable, Callable
 
 
 ACPX_VERSION = "0.3.1"
@@ -14,6 +15,7 @@ ACPX_SHELL_MARKER = "acpx_agent_shell.py"
 DEFAULT_PROMPT_TIMEOUT_SECONDS = 600
 ACPX_STREAM_LIMIT_BYTES = 8 * 1024 * 1024
 MAX_TOOL_RESULT_TEXT_CHARS = 4000
+StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -389,6 +391,7 @@ async def prompt_acpx_session(
     prompt: str,
     *,
     websocket=None,
+    on_emit: StreamPayloadCallback | None = None,
     timeout_seconds: int = DEFAULT_PROMPT_TIMEOUT_SECONDS,
 ) -> tuple[AcpxSessionInfo, str, bool]:
     prompt_args = [
@@ -454,14 +457,17 @@ async def prompt_acpx_session(
 
         session_update = str(update.get("sessionUpdate") or "").strip()
         if session_update == "tool_call":
-            if websocket is not None:
-                await websocket.send_json(
-                    {
-                        "type": "tool_use",
-                        "tool_call_id": update.get("toolCallId"),
-                        "tool": str(update.get("title") or update.get("kind") or "Tool"),
-                        "input": _summarize_tool_input(update),
-                    }
+            payload = {
+                "type": "tool_use",
+                "tool_call_id": update.get("toolCallId"),
+                "tool": str(update.get("title") or update.get("kind") or "Tool"),
+                "input": _summarize_tool_input(update),
+            }
+            if websocket is not None or on_emit is not None:
+                await _emit_stream_payload(
+                    websocket,
+                    payload,
+                    on_emit=on_emit,
                 )
             continue
         if session_update == "tool_call_update":
@@ -469,14 +475,17 @@ async def prompt_acpx_session(
             if status not in {"completed", "failed", "cancelled"}:
                 continue
             output_text, is_error = _summarize_tool_output(update)
-            if websocket is not None:
-                await websocket.send_json(
-                    {
-                        "type": "tool_result",
-                        "tool_call_id": update.get("toolCallId"),
-                        "content": output_text,
-                        "is_error": is_error,
-                    }
+            payload = {
+                "type": "tool_result",
+                "tool_call_id": update.get("toolCallId"),
+                "content": output_text,
+                "is_error": is_error,
+            }
+            if websocket is not None or on_emit is not None:
+                await _emit_stream_payload(
+                    websocket,
+                    payload,
+                    on_emit=on_emit,
                 )
             continue
         if session_update != "agent_message_chunk":
@@ -489,8 +498,12 @@ async def prompt_acpx_session(
 
         text_fragments.append(text)
         streamed_text = True
-        if websocket is not None:
-            await websocket.send_json({"type": "chunk", "content": text})
+        if websocket is not None or on_emit is not None:
+            await _emit_stream_payload(
+                websocket,
+                {"type": "chunk", "content": text},
+                on_emit=on_emit,
+            )
 
     stderr_output = (await proc.stderr.read()).decode().strip()
     await proc.wait()
@@ -511,6 +524,18 @@ async def prompt_acpx_session(
             text_output = _extract_last_agent_text(payload)
 
     return session_info, text_output, streamed_text
+
+
+async def _emit_stream_payload(
+    websocket,
+    payload: dict[str, object],
+    *,
+    on_emit: StreamPayloadCallback | None = None,
+) -> None:
+    if websocket is not None:
+        await websocket.send_json(payload)
+    if on_emit is not None:
+        await on_emit(payload)
 
 
 async def close_acpx_session(agent: str, project_path: str, session_name: str) -> None:

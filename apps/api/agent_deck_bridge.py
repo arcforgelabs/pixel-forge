@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Awaitable, Callable
 from uuid import uuid4
 
 from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
@@ -18,6 +19,7 @@ STREAM_IDLE_AFTER_COMPLETION_SECONDS = 1.0
 STREAM_POLL_INTERVAL_SECONDS = 0.2
 CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
+StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -80,6 +82,7 @@ class AgentDeckDeleteAssessment:
 @dataclass(slots=True)
 class ClaudeStreamStats:
     streamed_text: bool = False
+    last_output: str = ""
 
 
 @dataclass(slots=True)
@@ -1187,6 +1190,8 @@ async def _emit_claude_jsonl_record(
     websocket,
     record: dict[str, object],
     stats: ClaudeStreamStats,
+    *,
+    on_emit: StreamPayloadCallback | None = None,
 ) -> None:
     record_type = record.get("type")
 
@@ -1209,14 +1214,21 @@ async def _emit_claude_jsonl_record(
                 text = block.get("text")
                 if isinstance(text, str) and text:
                     stats.streamed_text = True
-                    await websocket.send_json({"type": "chunk", "content": text})
+                    stats.last_output += text
+                    await _emit_stream_payload(
+                        websocket,
+                        {"type": "chunk", "content": text},
+                        on_emit=on_emit,
+                    )
             elif block_type == "tool_use":
-                await websocket.send_json(
+                await _emit_stream_payload(
+                    websocket,
                     {
                         "type": "tool_use",
                         "tool": block.get("name", ""),
                         "input": block.get("input", {}),
-                    }
+                    },
+                    on_emit=on_emit,
                 )
         return
 
@@ -1237,13 +1249,26 @@ async def _emit_claude_jsonl_record(
         if block.get("type") != "tool_result":
             continue
 
-        await websocket.send_json(
+        await _emit_stream_payload(
+            websocket,
             {
                 "type": "tool_result",
                 "content": _flatten_tool_content(block.get("content")),
                 "is_error": bool(block.get("is_error")),
-            }
+            },
+            on_emit=on_emit,
         )
+
+
+async def _emit_stream_payload(
+    websocket,
+    payload: dict[str, object],
+    *,
+    on_emit: StreamPayloadCallback | None = None,
+) -> None:
+    await websocket.send_json(payload)
+    if on_emit is not None:
+        await on_emit(payload)
 
 
 async def stream_claude_jsonl(
@@ -1251,6 +1276,8 @@ async def stream_claude_jsonl(
     jsonl_path: Path,
     start_offset: int,
     wait_task: asyncio.Task[object],
+    *,
+    on_emit: StreamPayloadCallback | None = None,
 ) -> ClaudeStreamStats:
     stats = ClaudeStreamStats()
     offset = start_offset
@@ -1279,7 +1306,12 @@ async def stream_claude_jsonl(
                             continue
                         seen_uuids.add(record_uuid)
 
-                    await _emit_claude_jsonl_record(websocket, record, stats)
+                    await _emit_claude_jsonl_record(
+                        websocket,
+                        record,
+                        stats,
+                        on_emit=on_emit,
+                    )
 
         if wait_task.done():
             idle_for = asyncio.get_running_loop().time() - last_activity
@@ -1542,6 +1574,7 @@ async def stream_codex_session_output(
     baseline_output: str,
     prompt: str,
     wait_task: asyncio.Task[object],
+    on_emit: StreamPayloadCallback | None = None,
 ) -> SessionOutputStreamStats:
     stats = SessionOutputStreamStats()
     last_output = baseline_output
@@ -1565,12 +1598,20 @@ async def stream_codex_session_output(
                     prompt,
                 )
                 last_activity = asyncio.get_running_loop().time()
-                await websocket.send_json({"type": "chunk", "content": streamable_delta})
+                await _emit_stream_payload(
+                    websocket,
+                    {"type": "chunk", "content": streamable_delta},
+                    on_emit=on_emit,
+                )
             else:
                 status_message = _codex_progress_status(current_output)
                 if status_message and status_message != last_status_message:
                     last_status_message = status_message
-                    await websocket.send_json({"type": "status", "message": status_message})
+                    await _emit_stream_payload(
+                        websocket,
+                        {"type": "status", "message": status_message},
+                        on_emit=on_emit,
+                    )
             last_output = current_output
 
         if wait_task.done():

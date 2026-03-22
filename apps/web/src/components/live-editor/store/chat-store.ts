@@ -92,7 +92,57 @@ interface ObservedAgentDeckActivity {
 
 interface ObservedAgentDeckActivityEvent extends ObservedAgentDeckActivity {
   id: number
-  event_type: string
+  event_type: 'activity'
+}
+
+interface ObservedAgentDeckSessionStatusEvent {
+  id: number
+  event_type: 'session_status'
+  chat_id?: string | null
+  thread_id: string | null
+  agent_deck_session_id: string | null
+  agent_deck_session_title: string | null
+  agent_deck_tool: string | null
+  agent_deck_session_status: string | null
+  workspace_path: string | null
+  binding_state: 'attached' | 'detached'
+  message?: string
+}
+
+interface ObservedAgentDeckSessionOutputEvent {
+  id: number
+  event_type: 'session_output'
+  chat_id?: string | null
+  thread_id: string | null
+  agent_deck_session_id: string | null
+  agent_deck_session_title: string | null
+  agent_deck_tool: string | null
+  agent_deck_session_status: string | null
+  workspace_path: string | null
+  binding_state: 'attached' | 'detached'
+  output: string
+}
+
+type ObservedAgentDeckTurnEventType =
+  | 'turn_started'
+  | 'turn_status'
+  | 'turn_chunk'
+  | 'turn_completed'
+  | 'turn_failed'
+
+interface ObservedAgentDeckTurnEvent {
+  id: number
+  event_type: ObservedAgentDeckTurnEventType
+  chat_id?: string | null
+  thread_id: string | null
+  request_id: string | null
+  agent_deck_session_id: string | null
+  agent_deck_session_title?: string | null
+  agent_deck_tool?: string | null
+  workspace_path?: string | null
+  message?: string
+  content?: string
+  assistant_output?: string | null
 }
 
 export type LiveEditorPanelTab = 'chat' | 'elements'
@@ -767,6 +817,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   const threadPersistenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let observedThreadKey: string | null = null
   let observedThreadEventSource: EventSource | null = null
+  const observedThreadHasPrimaryEvents = new Set<string>()
 
   const resolveThreadSession = (threadKey: string | null | undefined) => {
     if (!threadKey) {
@@ -825,19 +876,48 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     })
   }
 
+  const canHydrateObservedThread = (threadState: ThreadChatState) => {
+    const currentHasNonObservedMessages = threadState.messages.some(
+      (message) => !message.observedSessionId
+    )
+    return !currentHasNonObservedMessages && !threadState.isStreaming && !threadState.currentRequestId
+  }
+
+  const upsertObservedMessage = (
+    messages: ChatMessage[],
+    nextMessage: ChatMessage
+  ): ChatMessage[] => {
+    const nextMessages = [...messages]
+    const existingIndex = nextMessages.findIndex((message) => message.id === nextMessage.id)
+    if (existingIndex === -1) {
+      nextMessages.push(nextMessage)
+    } else {
+      nextMessages[existingIndex] = nextMessage
+    }
+    return nextMessages
+  }
+
+  const removeObservedMessage = (messages: ChatMessage[], messageId: string): ChatMessage[] =>
+    messages.filter((message) => message.id !== messageId)
+
+  const observedSnapshotMessageId = (agentDeckSessionId: string) =>
+    `observed:snapshot:${agentDeckSessionId}`
+
+  const observedSessionStatusMessageId = (agentDeckSessionId: string) =>
+    `observed:session-status:${agentDeckSessionId}`
+
+  const observedTurnMessageId = (requestId: string) => `observed:turn:${requestId}`
+
+  const observedTurnStatusMessageId = (requestId: string) => `observed:status:${requestId}`
+
+  const observedTurnFailureMessageId = (requestId: string) => `observed:error:${requestId}`
+
   const applyObservedAgentDeckActivity = (
     threadKey: string,
     activity: ObservedAgentDeckActivity
   ) => {
     updateThreadState(threadKey, (currentState) => {
-      const currentHasNonObservedMessages = currentState.messages.some(
-        (message) => !message.observedSessionId
-      )
-      if (
-        currentHasNonObservedMessages
-        || currentState.isStreaming
-        || currentState.currentRequestId
-      ) {
+      if (!canHydrateObservedThread(currentState) || observedThreadHasPrimaryEvents.has(threadKey)) {
         return currentState
       }
 
@@ -849,7 +929,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         }
       }
 
-      const observedMessageId = `observed:${agentDeckSessionId}`
+      const observedMessageId = observedSnapshotMessageId(agentDeckSessionId)
       const nextMessages = currentState.messages.filter(
         (message) => message.observedSessionId === agentDeckSessionId || !message.observedSessionId
       )
@@ -900,7 +980,231 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     })
   }
 
+  const applyObservedSessionStatusEvent = (
+    threadKey: string,
+    event: ObservedAgentDeckSessionStatusEvent
+  ) => {
+    observedThreadHasPrimaryEvents.add(threadKey)
+    updateThreadState(threadKey, (currentState) => {
+      if (!canHydrateObservedThread(currentState)) {
+        return currentState
+      }
+
+      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
+      if (!agentDeckSessionId) {
+        return currentState
+      }
+
+      const statusMessageId = observedSessionStatusMessageId(agentDeckSessionId)
+      const snapshotMessageId = observedSnapshotMessageId(agentDeckSessionId)
+      const normalizedStatus = event.agent_deck_session_status?.trim().toLowerCase() || ''
+      const hasObservedOutput = currentState.messages.some(
+        (message) => message.id === snapshotMessageId
+      )
+      const content =
+        event.message?.trim()
+        || (
+          normalizedStatus === 'error'
+            ? `Agent Deck session \`${event.agent_deck_session_title?.trim() || agentDeckSessionId}\` entered an error state.`
+            : normalizedStatus && !hasObservedOutput && !['idle', 'waiting'].includes(normalizedStatus)
+              ? `Attached to Agent Deck session \`${event.agent_deck_session_title?.trim() || agentDeckSessionId}\` (${normalizedStatus}).`
+              : ''
+        )
+
+      let nextMessages = currentState.messages
+      if (!content || (hasObservedOutput && ['idle', 'waiting'].includes(normalizedStatus))) {
+        nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+      } else {
+        nextMessages = upsertObservedMessage(nextMessages, {
+          id: statusMessageId,
+          role: normalizedStatus === 'error' ? 'system' : 'system',
+          content,
+          timestamp: new Date(),
+          systemTone: normalizedStatus === 'error' ? 'error' : 'info',
+          observedSessionId: agentDeckSessionId,
+        })
+      }
+
+      return {
+        ...currentState,
+        messages: nextMessages,
+      }
+    })
+  }
+
+  const applyObservedSessionOutputEvent = (
+    threadKey: string,
+    event: ObservedAgentDeckSessionOutputEvent
+  ) => {
+    observedThreadHasPrimaryEvents.add(threadKey)
+    updateThreadState(threadKey, (currentState) => {
+      if (!canHydrateObservedThread(currentState)) {
+        return currentState
+      }
+
+      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
+      if (!agentDeckSessionId) {
+        return currentState
+      }
+
+      const output = event.output?.trim() || ''
+      const snapshotMessageId = observedSnapshotMessageId(agentDeckSessionId)
+      const statusMessageId = observedSessionStatusMessageId(agentDeckSessionId)
+      let nextMessages = currentState.messages
+      if (!output) {
+        nextMessages = removeObservedMessage(nextMessages, snapshotMessageId)
+      } else {
+        nextMessages = upsertObservedMessage(nextMessages, {
+          id: snapshotMessageId,
+          role: 'assistant',
+          content: output,
+          timestamp: new Date(),
+          observedSessionId: agentDeckSessionId,
+        })
+        if (['idle', 'waiting'].includes(event.agent_deck_session_status?.trim().toLowerCase() || '')) {
+          nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+        }
+      }
+
+      return {
+        ...currentState,
+        messages: nextMessages,
+      }
+    })
+  }
+
+  const applyObservedTurnEvent = (
+    threadKey: string,
+    event: ObservedAgentDeckTurnEvent
+  ) => {
+    observedThreadHasPrimaryEvents.add(threadKey)
+    updateThreadState(threadKey, (currentState) => {
+      if (!canHydrateObservedThread(currentState)) {
+        return currentState
+      }
+
+      const requestId = event.request_id?.trim() || `event-${event.id}`
+      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
+      const assistantMessageId = observedTurnMessageId(requestId)
+      const statusMessageId = observedTurnStatusMessageId(requestId)
+      const failureMessageId = observedTurnFailureMessageId(requestId)
+      const sessionLabel =
+        event.agent_deck_session_title?.trim()
+        || agentDeckSessionId
+        || 'Agent Deck session'
+
+      let nextMessages = currentState.messages
+      if (agentDeckSessionId) {
+        nextMessages = removeObservedMessage(
+          nextMessages,
+          observedSnapshotMessageId(agentDeckSessionId)
+        )
+        nextMessages = removeObservedMessage(
+          nextMessages,
+          observedSessionStatusMessageId(agentDeckSessionId)
+        )
+      }
+
+      switch (event.event_type) {
+        case 'turn_started': {
+          nextMessages = removeObservedMessage(nextMessages, failureMessageId)
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: statusMessageId,
+              role: 'system',
+              content: `Attached to Agent Deck session \`${sessionLabel}\`. Waiting for output...`,
+              timestamp: new Date(),
+              systemTone: 'info',
+              observedSessionId: agentDeckSessionId,
+            }),
+          }
+        }
+
+        case 'turn_status': {
+          const statusText = event.message?.trim()
+          if (!statusText) {
+            return currentState
+          }
+          nextMessages = removeObservedMessage(nextMessages, failureMessageId)
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: statusMessageId,
+              role: 'system',
+              content: statusText,
+              timestamp: new Date(),
+              systemTone: 'info',
+              observedSessionId: agentDeckSessionId,
+            }),
+          }
+        }
+
+        case 'turn_chunk': {
+          const chunk = event.content ?? ''
+          if (!chunk) {
+            return currentState
+          }
+          const existingMessage = nextMessages.find((message) => message.id === assistantMessageId)
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: assistantMessageId,
+              role: 'assistant',
+              content: `${existingMessage?.content ?? ''}${chunk}`,
+              timestamp: new Date(),
+              observedSessionId: agentDeckSessionId,
+            }),
+          }
+        }
+
+        case 'turn_completed': {
+          nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+          nextMessages = removeObservedMessage(nextMessages, failureMessageId)
+          const hasAssistantMessage = nextMessages.some(
+            (message) => message.id === assistantMessageId
+          )
+          const assistantOutput = event.assistant_output?.trim() || ''
+          if (!hasAssistantMessage && assistantOutput) {
+            nextMessages = upsertObservedMessage(nextMessages, {
+              id: assistantMessageId,
+              role: 'assistant',
+              content: assistantOutput,
+              timestamp: new Date(),
+              observedSessionId: agentDeckSessionId,
+            })
+          }
+          return {
+            ...currentState,
+            messages: nextMessages,
+          }
+        }
+
+        case 'turn_failed': {
+          const failureText = event.message?.trim() || 'Observed Agent Deck turn failed.'
+          nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: failureMessageId,
+              role: 'system',
+              content: failureText,
+              timestamp: new Date(),
+              systemTone: 'error',
+              observedSessionId: agentDeckSessionId,
+            }),
+          }
+        }
+      }
+
+      return currentState
+    })
+  }
+
   const stopObservedThreadStreaming = () => {
+    if (observedThreadKey) {
+      observedThreadHasPrimaryEvents.delete(observedThreadKey)
+    }
     observedThreadKey = null
     if (observedThreadEventSource) {
       observedThreadEventSource.close()
@@ -937,6 +1241,20 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     }
 
     stopObservedThreadStreaming()
+    observedThreadHasPrimaryEvents.delete(threadKey)
+    updateThreadState(threadKey, (currentState) => {
+      if (!canHydrateObservedThread(currentState)) {
+        return currentState
+      }
+      const nextMessages = currentState.messages.filter((message) => !message.observedSessionId)
+      if (nextMessages.length === currentState.messages.length) {
+        return currentState
+      }
+      return {
+        ...currentState,
+        messages: nextMessages,
+      }
+    })
     observedThreadKey = threadKey
 
     const eventSource = new EventSource(
@@ -945,17 +1263,50 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     )
     observedThreadEventSource = eventSource
 
-    eventSource.onmessage = (event) => {
+    const handleObservedEvent = (event: Event) => {
       if (observedThreadKey !== threadKey) {
         return
       }
 
       try {
-        const payload = JSON.parse(event.data) as ObservedAgentDeckActivityEvent
-        applyObservedAgentDeckActivity(threadKey, payload)
+        const messageEvent = event as MessageEvent<string>
+        if (typeof messageEvent.data !== 'string') {
+          return
+        }
+        const payload = JSON.parse(messageEvent.data) as
+          | ObservedAgentDeckActivityEvent
+          | ObservedAgentDeckSessionStatusEvent
+          | ObservedAgentDeckSessionOutputEvent
+          | ObservedAgentDeckTurnEvent
+        if (payload.event_type === 'activity') {
+          applyObservedAgentDeckActivity(threadKey, payload)
+          return
+        }
+        if (payload.event_type === 'session_status') {
+          applyObservedSessionStatusEvent(threadKey, payload)
+          return
+        }
+        if (payload.event_type === 'session_output') {
+          applyObservedSessionOutputEvent(threadKey, payload)
+          return
+        }
+        applyObservedTurnEvent(threadKey, payload as ObservedAgentDeckTurnEvent)
       } catch (error) {
         console.error('[live-editor] Failed to parse workstation event:', error)
       }
+    }
+
+    for (const eventType of [
+      'activity',
+      'session_status',
+      'session_output',
+      'turn_started',
+      'turn_status',
+      'turn_chunk',
+      'turn_completed',
+      'turn_failed',
+    ]) {
+      eventSource.addEventListener(eventType, handleObservedEvent as EventListener)
     }
 
     eventSource.onerror = (error) => {

@@ -88,12 +88,12 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-alpha agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
 - Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is only a one-way migration fallback when present and should be retired after successful alpha verification.
-- The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only activity records in `workstation_events`.
+- The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only typed turn/activity records in `workstation_events`.
 - Persisted `sessions.thread_id` remains the stable chat-id compatibility surface in this lane. Agent Deck session ids are binding metadata and lookup keys, not the primary user-facing category.
 - Embedded preview input ownership is explicit controller state: visible tab, focused surface, and armed tool are separate facts. Showing a preview or arming a tool does not by itself focus the preview.
 - Live Editor writes request packs into the bound workspace and dispatches into a persistent native Agent Deck endpoint session.
 - The Projects sidebar and advanced Settings retarget control now render one reconciled Pixel Forge chat model per project. Persisted lanes remain authoritative, visible Agent Deck sessions are reconciliation inputs, unmatched live sessions are adopted into chat rows before they appear, and fresh chats are created through that same chat-facing surface as draft lanes instead of a raw-session picker.
-- Pixel Forge now observes attached or adopted chat activity primarily through `/api/projects/{project}/chats/{chat}/events`, which streams the shared workstation activity log over SSE into the Live Editor store.
+- Pixel Forge now observes attached or adopted chat activity primarily through `/api/projects/{project}/chats/{chat}/events`, which streams the shared workstation event log over named SSE events into the Live Editor store.
 - Fresh Live Editor chats now start as unbound drafts. They carry only intended agent state until the first real bind, and that first bind creates the isolated Agent Deck clone workspace under the project `.agents/` tree while the canonical repo root remains the project identity.
 - One Live Editor thread owns one Agent Deck lane, one default writable workspace root, and one thread-scoped editor surface: preview tabs, active target URL, viewport/tool state, selection/history state, and chat state all move together. The default self-edit mirror source follows that same bound workspace.
 - The shared session store persists the durable subset of that thread editor surface, including tab descriptors and restore metadata, and the UI reacquires runtime-only browser handles when a lane is reopened instead of pretending old handles survived a restart.
@@ -121,7 +121,7 @@ Use these identities consistently:
 - `isolated session`: the clone-backed working copy under `.agents/<name>`
 - `chat id`: the persisted user-facing lane identity; today this is the existing `sessions.thread_id` compatibility surface
 - `binding`: the current chat-to-live-Agent-Deck mapping stored separately from the durable chat row
-- `workstation event`: one append-only activity record in `workstation_events` for a chat
+- `workstation event`: one append-only shared-kernel event record in `workstation_events` for a chat
 - `lane`: the thread-owned editor/chat state plus its eventual Agent Deck session and writable-workspace binding; draft lanes keep intended agent state before the real bind exists
 - `mirror`: a runnable Pixel Forge preview built from one source root or frozen clone snapshot
 - `staged update`: the frozen controller-install candidate
@@ -150,10 +150,12 @@ The important boundary is:
 
 - `sessions` holds the durable Pixel Forge chat lanes and still owns the stable chat id.
 - `chat_session_bindings` maps one chat to its current live Agent Deck session, workspace path, title, and tool. Detaching a dead session clears the binding without deleting the chat.
-- `workstation_events` is the first shared event log. Right now it records deduped `activity` snapshots for one chat/session pair instead of raw token events.
+- `workstation_events` is the first shared event log. It now records typed Pixel Forge-managed turn events (`turn_started`, `turn_status`, `turn_chunk`, `turn_completed`, `turn_failed`), native adopted/manual-session events (`session_status`, `session_output`), and deduped compatibility `activity` snapshots only for chats that still lack any primary workstation history.
 - Pixel Forge consumes that event log through SSE for observed attached/adopted chats, so the frontend no longer depends on a chat-item polling loop as the primary truth.
 - The integrated Agent Deck surface reads the same control-plane DB through `PIXEL_FORGE_DB_PATH` and overlays `chatId` plus `chatTitle` onto matching Agent Deck session rows, so the second shell can show the same shared chat identity instead of only raw Agent Deck titles.
-- The send path is still legacy for now: live dispatch enters through `/ws/live-editor`, and the event producer currently derives activity through the existing Agent Deck activity adapter instead of a native Agent Deck event tap.
+- The send path still enters through `/ws/live-editor`, and that path appends typed turn events directly into `workstation_events` as the real send/stream flow runs.
+- Native Agent Deck-originated activity outside that managed path now also enters the same kernel through the foundation `events/*.json` stream, which Pixel Forge ingests into primary `session_status` plus `session_output` events for bound chats.
+- The remaining gap is fidelity, not absence: manual/off-path sessions are now visible without snapshot synthesis, but they still arrive at session granularity rather than full turn/chunk/tool event granularity.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -168,7 +170,7 @@ The important boundary is:
 - Streaming comes from the native agent transcript path (`claude_session_id` + JSONL today for Claude).
 - Codex/native non-JSONL sessions now adapt the best truthful stream surface available from Agent Deck session output: real text deltas become assistant chunks, progress-only lines become status updates, and completion still follows the actual Agent Deck settle state.
 - When a native session still cannot provide a truthful token-like stream surface, Pixel Forge keeps using Agent Deck's ready-gated send path, polls completion itself, and emits status heartbeats instead of treating the CLI's completion timeout as the UI truth.
-- Observed attached or adopted chats now hydrate through the shared workstation event stream first; the older activity polling path remains only as compatibility glue where a chat id does not exist yet.
+- Observed attached or adopted chats now hydrate through the shared workstation event stream first; the older activity polling path remains only as compatibility glue for chats that still lack any primary workstation event history.
 
 #### Integrated Agent Deck Surface Lane
 
@@ -251,13 +253,14 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: send/transcript truth still lives across a mixed shared-kernel plus legacy-adapter path even though both shells now exist.
+The next target release should attack the new current limiting factor from `SPECS.md`: native Agent Deck-originated activity now lands on the shared event plane, but only at session granularity.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
-- move from snapshot activity sync toward native Agent Deck lifecycle and transcript event ingestion
-- move the send/settle path onto the same shared workstation event plane instead of split websocket plus adapter polling
+- keep the typed Pixel Forge-managed turn path as the shared truth while preserving the new primary session-event tap for adopted/manual/off-path activity
+- extend one native off-path tool lane from `session_status`/`session_output` into turn-scoped lifecycle plus assistant-output delta ingest
+- keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
 - keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists
 

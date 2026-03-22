@@ -16,7 +16,7 @@ import re
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -39,6 +39,7 @@ from agent_deck_bridge import (
     stream_codex_session_output,
     wait_for_agent_deck_turn_completion,
 )
+from agent_deck_event_ingest import AgentDeckNativeEventIngestor
 from agent_deck_surface import (
     ensure_agent_deck_surface_started,
     read_agent_deck_surface_status,
@@ -100,6 +101,8 @@ from published_update_state import (
 )
 from runtime_version import read_runtime_info
 from workstation_events import (
+    append_workstation_event,
+    chat_has_primary_workstation_events,
     get_chat_activity_snapshot,
     list_workstation_events,
     sync_chat_activity_event,
@@ -124,6 +127,10 @@ GRID_COLS = 4  # 4 columns in the frame grid
 FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
 LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS = 60 * 60
 LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS = 20.0
+AGENT_DECK_NATIVE_EVENT_INGESTOR = AgentDeckNativeEventIngestor()
+AGENT_DECK_NATIVE_EVENT_TASK: asyncio.Task[None] | None = None
+LiveEditorStatusCallback = Callable[[str], Awaitable[None]]
+LiveEditorStreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 INFORMATIONAL_REQUEST_HINTS = (
     "what is",
     "what's",
@@ -175,6 +182,7 @@ async def _emit_live_editor_wait_heartbeat(
     tool: str,
     wait_task: asyncio.Task[None],
     interval_seconds: float = LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS,
+    on_status: LiveEditorStatusCallback | None = None,
 ) -> None:
     loop = asyncio.get_running_loop()
     started_at = loop.time()
@@ -185,15 +193,18 @@ async def _emit_live_editor_wait_heartbeat(
         if wait_task.done():
             return
         try:
+            status_message = (
+                f"{tool_label} is still working in Agent Deck... "
+                f"{_format_elapsed_duration(loop.time() - started_at)} elapsed."
+            )
             await websocket.send_json(
                 {
                     "type": "status",
-                    "message": (
-                        f"{tool_label} is still working in Agent Deck... "
-                        f"{_format_elapsed_duration(loop.time() - started_at)} elapsed."
-                    ),
+                    "message": status_message,
                 }
             )
+            if on_status is not None:
+                await on_status(status_message)
         except Exception:
             return
 
@@ -1296,25 +1307,34 @@ async def stream_project_chat_events(
             if await request.is_disconnected():
                 break
 
-            try:
-                await sync_chat_activity_event(
-                    normalized_project_path,
-                    normalized_chat_id,
-                )
-            except ValueError:
-                yield "event: error\ndata: {\"detail\":\"chat not found\"}\n\n"
-                break
-            except AgentDeckBridgeError as exc:
-                payload = json.dumps({"detail": str(exc)})
-                yield f"event: error\ndata: {payload}\n\n"
-                await asyncio.sleep(1.0)
-                continue
-
             events = list_workstation_events(
                 normalized_project_path,
                 normalized_chat_id,
                 after_id=last_event_id,
             )
+            if not events and not chat_has_primary_workstation_events(
+                normalized_project_path,
+                normalized_chat_id,
+            ):
+                try:
+                    await sync_chat_activity_event(
+                        normalized_project_path,
+                        normalized_chat_id,
+                    )
+                except ValueError:
+                    yield "event: error\ndata: {\"detail\":\"chat not found\"}\n\n"
+                    break
+                except AgentDeckBridgeError as exc:
+                    payload = json.dumps({"detail": str(exc)})
+                    yield f"event: error\ndata: {payload}\n\n"
+                    await asyncio.sleep(1.0)
+                    continue
+
+                events = list_workstation_events(
+                    normalized_project_path,
+                    normalized_chat_id,
+                    after_id=last_event_id,
+                )
             if not events:
                 yield ": keepalive\n\n"
                 await asyncio.sleep(1.0)
@@ -1800,10 +1820,21 @@ async def live_preview_websocket(websocket: WebSocket):
 @app.on_event("startup")
 async def initialize_shared_state_store():
     ensure_state_store_initialized()
+    global AGENT_DECK_NATIVE_EVENT_TASK
+    if AGENT_DECK_NATIVE_EVENT_TASK is None or AGENT_DECK_NATIVE_EVENT_TASK.done():
+        AGENT_DECK_NATIVE_EVENT_TASK = asyncio.create_task(
+            AGENT_DECK_NATIVE_EVENT_INGESTOR.run()
+        )
 
 
 @app.on_event("shutdown")
 async def shutdown_managed_browser_preview():
+    global AGENT_DECK_NATIVE_EVENT_TASK
+    if AGENT_DECK_NATIVE_EVENT_TASK is not None:
+        AGENT_DECK_NATIVE_EVENT_TASK.cancel()
+        with suppress(asyncio.CancelledError):
+            await AGENT_DECK_NATIVE_EVENT_TASK
+        AGENT_DECK_NATIVE_EVENT_TASK = None
     await MANAGED_BROWSER_PREVIEW.shutdown()
 
 
@@ -2303,6 +2334,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
     session_info,
     websocket: WebSocket,
     dispatch_prompt: str,
+    on_status: LiveEditorStatusCallback | None = None,
 ) -> tuple[str, asyncio.Task[object], asyncio.Task[object] | None]:
     baseline_output = ""
     normalized_session_status = (session_info.status or "").strip().lower()
@@ -2338,6 +2370,8 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
             "message": status_message,
         }
     )
+    if on_status is not None:
+        await on_status(status_message)
 
     turn_wait_task = asyncio.create_task(
         wait_for_agent_deck_turn_completion(
@@ -2352,6 +2386,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
                 websocket,
                 tool=session_info.tool,
                 wait_task=turn_wait_task,
+                on_status=on_status,
             )
         )
 
@@ -3051,6 +3086,8 @@ async def live_editor_chat(websocket: WebSocket):
 
             turn_wait_task: asyncio.Task[None] | None = None
             status_heartbeat_task: asyncio.Task[None] | None = None
+            turn_event_base: dict[str, object] | None = None
+            turn_terminal_event_written = False
 
             try:
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
@@ -3171,6 +3208,62 @@ async def live_editor_chat(websocket: WebSocket):
                     thread.thread_id,
                     last_request_id=request_pack.request_id,
                 )
+                turn_event_base = {
+                    "request_id": request_pack.request_id,
+                    "agent_deck_session_id": session_info.agent_deck_session_id,
+                    "agent_deck_session_title": session_info.agent_deck_session_title,
+                    "agent_deck_tool": session_info.tool,
+                    "workspace_path": session_info.workspace_path,
+                    "request_relative_directory": request_pack.relative_directory,
+                    "request_relative_file": request_pack.relative_request_file,
+                }
+
+                async def append_turn_event(
+                    event_type: str,
+                    payload: dict[str, object],
+                ) -> None:
+                    nonlocal turn_terminal_event_written
+                    if turn_event_base is None:
+                        return
+                    append_workstation_event(
+                        normalized_project_path,
+                        thread.thread_id,
+                        agent_deck_session_id=session_info.agent_deck_session_id,
+                        event_type=event_type,
+                        payload={
+                            **turn_event_base,
+                            **payload,
+                        },
+                    )
+                    if event_type in {"turn_completed", "turn_failed"}:
+                        turn_terminal_event_written = True
+
+                async def emit_turn_status(message: str) -> None:
+                    if message.strip():
+                        await append_turn_event("turn_status", {"message": message})
+
+                async def mirror_stream_payload(payload: dict[str, object]) -> None:
+                    payload_type = str(payload.get("type") or "").strip().lower()
+                    if payload_type == "chunk":
+                        content = payload.get("content")
+                        if isinstance(content, str) and content:
+                            await append_turn_event("turn_chunk", {"content": content})
+                    elif payload_type == "status":
+                        message = payload.get("message")
+                        if isinstance(message, str) and message:
+                            await emit_turn_status(message)
+
+                await append_turn_event(
+                    "turn_started",
+                    {
+                        "selection_count": selection_count,
+                        "continuation_mode": continuation_mode,
+                        "informational_only": informational_only,
+                        "self_edit_safe_mode": self_edit_safe_mode,
+                        "self_edit_scope": self_edit_scope,
+                        "preview_url": preview_url or None,
+                    },
+                )
 
                 await websocket.send_json(
                     {
@@ -3191,16 +3284,18 @@ async def live_editor_chat(websocket: WebSocket):
                         "self_edit_scope": self_edit_scope,
                     }
                 )
+                dispatch_status_message = (
+                    f"Sending Pixel Forge continuation {request_pack.relative_directory} into existing Agent Deck session..."
+                    if continuation_mode == "attached-session"
+                    else f"Dispatching request pack {request_pack.relative_directory} to Agent Deck..."
+                )
                 await websocket.send_json(
                     {
                         "type": "status",
-                        "message": (
-                            f"Sending Pixel Forge continuation {request_pack.relative_directory} into existing Agent Deck session..."
-                            if continuation_mode == "attached-session"
-                            else f"Dispatching request pack {request_pack.relative_directory} to Agent Deck..."
-                        ),
+                        "message": dispatch_status_message,
                     }
                 )
+                await emit_turn_status(dispatch_status_message)
 
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
@@ -3223,6 +3318,7 @@ async def live_editor_chat(websocket: WebSocket):
                     informational_only=informational_only,
                     requested_skills=requested_skills,
                 )
+                assistant_output = ""
                 if session_info.acpx_agent and session_info.acpx_session_name:
                     refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(
                         session_info.acpx_agent,
@@ -3230,6 +3326,7 @@ async def live_editor_chat(websocket: WebSocket):
                         session_info.acpx_session_name,
                         dispatch_prompt,
                         websocket=websocket,
+                        on_emit=mirror_stream_payload,
                     )
                     thread = update_live_editor_thread(
                         thread.thread_id,
@@ -3238,6 +3335,7 @@ async def live_editor_chat(websocket: WebSocket):
                         acpx_record_id=refreshed_acpx_session.acpx_record_id or "",
                         acp_session_id=refreshed_acpx_session.acp_session_id or "",
                     )
+                    assistant_output = fallback_output
                     if fallback_output and not streamed_text:
                         await websocket.send_json(
                             {
@@ -3245,6 +3343,7 @@ async def live_editor_chat(websocket: WebSocket):
                                 "content": fallback_output,
                             }
                         )
+                        await append_turn_event("turn_chunk", {"content": fallback_output})
                 else:
                     jsonl_path = session_info.jsonl_path
                     start_offset = (
@@ -3260,6 +3359,7 @@ async def live_editor_chat(websocket: WebSocket):
                         session_info=session_info,
                         websocket=websocket,
                         dispatch_prompt=dispatch_prompt,
+                        on_status=emit_turn_status,
                     )
                     send_task = turn_wait_task
 
@@ -3270,6 +3370,7 @@ async def live_editor_chat(websocket: WebSocket):
                             jsonl_path,
                             start_offset,
                             send_task,
+                            on_emit=mirror_stream_payload,
                         )
                     elif session_info.tool == "codex":
                         stream_stats = await stream_codex_session_output(
@@ -3278,9 +3379,11 @@ async def live_editor_chat(websocket: WebSocket):
                             baseline_output=baseline_output,
                             prompt=dispatch_prompt,
                             wait_task=send_task,
+                            on_emit=mirror_stream_payload,
                         )
 
                     await turn_wait_task
+                    assistant_output = getattr(stream_stats, "last_output", "")
 
                     if not stream_stats or not stream_stats.streamed_text:
                         fallback_output = getattr(stream_stats, "last_output", "")
@@ -3295,6 +3398,8 @@ async def live_editor_chat(websocket: WebSocket):
                                     "content": fallback_output,
                                 }
                             )
+                            await append_turn_event("turn_chunk", {"content": fallback_output})
+                            assistant_output = fallback_output
 
                 refreshed_session = await ensure_agent_deck_session(
                     normalized_project_path,
@@ -3332,6 +3437,22 @@ async def live_editor_chat(websocket: WebSocket):
                     if self_edit_safe_mode
                     else None
                 )
+                is_remote_target = _is_remote_preview(preview_url or None)
+
+                await append_turn_event(
+                    "turn_completed",
+                    {
+                        "agent_deck_session_id": refreshed_session.agent_deck_session_id,
+                        "agent_deck_session_title": refreshed_session.agent_deck_session_title,
+                        "agent_deck_tool": refreshed_session.tool,
+                        "workspace_path": refreshed_session.workspace_path,
+                        "selection_count": selection_count,
+                        "self_edit_safe_mode": self_edit_safe_mode,
+                        "self_edit_scope": refreshed_self_edit_scope,
+                        "is_remote_target": is_remote_target,
+                        "assistant_output": assistant_output,
+                    },
+                )
 
                 await websocket.send_json(
                     {
@@ -3350,11 +3471,18 @@ async def live_editor_chat(websocket: WebSocket):
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,
                         "self_edit_scope": refreshed_self_edit_scope,
-                        "is_remote_target": _is_remote_preview(preview_url or None),
+                        "is_remote_target": is_remote_target,
                     }
                 )
 
             except (AgentDeckBridgeError, AcpxBridgeError, ValueError) as e:
+                if turn_event_base is not None and not turn_terminal_event_written:
+                    await append_turn_event(
+                        "turn_failed",
+                        {
+                            "message": str(e),
+                        },
+                    )
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -3366,6 +3494,13 @@ async def live_editor_chat(websocket: WebSocket):
                     turn_wait_task.cancel()
                 if status_heartbeat_task and not status_heartbeat_task.done():
                     status_heartbeat_task.cancel()
+                if turn_event_base is not None and not turn_terminal_event_written:
+                    await append_turn_event(
+                        "turn_failed",
+                        {
+                            "message": str(e),
+                        },
+                    )
                 await websocket.send_json(
                     {
                         "type": "error",

@@ -69,8 +69,14 @@ class MockEventSource extends EventTarget {
     MockEventSource.instances.push(this)
   }
 
-  emitMessage(payload: unknown) {
-    this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent)
+  emitEvent(eventType: string, payload: unknown) {
+    const event = new MessageEvent(eventType, {
+      data: JSON.stringify(payload),
+    })
+    if (eventType === 'message') {
+      this.onmessage?.(event)
+    }
+    this.dispatchEvent(event)
   }
 }
 
@@ -418,7 +424,7 @@ describe('live editor selection history', () => {
     ).toBeNull()
   })
 
-  it('hydrates attached Agent Deck output into an otherwise blank adopted chat lane', async () => {
+  it('hydrates attached Agent Deck snapshot output into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
       targetAgentDeckSessionId: 'deck-session-a',
     })
@@ -426,7 +432,7 @@ describe('live editor selection history', () => {
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
     const stream = MockEventSource.instances.at(-1)
     expect(stream).toBeTruthy()
-    stream?.emitMessage({
+    stream?.emitEvent('activity', {
       id: 1,
       event_type: 'activity',
       chat_id: useLiveEditorStore.getState().activeThreadKey,
@@ -438,6 +444,123 @@ describe('live editor selection history', () => {
       workspace_path: '/tmp/example-project',
       binding_state: 'attached',
       output: 'Continuing existing Agent Deck work...',
+    })
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          role: 'assistant',
+          content: 'Continuing existing Agent Deck work...',
+          observedSessionId: 'deck-session-a',
+        },
+      ])
+    })
+  })
+
+  it('hydrates native Agent Deck session events into an otherwise blank adopted chat lane', async () => {
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+    })
+
+    useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+    const threadId = useLiveEditorStore.getState().activeThreadKey
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+
+    stream?.emitEvent('session_status', {
+      id: 1,
+      event_type: 'session_status',
+      chat_id: threadId,
+      thread_id: threadId,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      agent_deck_session_status: 'running',
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      message: 'Codex is working in Agent Deck...',
+    })
+    stream?.emitEvent('session_output', {
+      id: 2,
+      event_type: 'session_output',
+      chat_id: threadId,
+      thread_id: threadId,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      agent_deck_session_status: 'idle',
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      output: 'Continuing existing Agent Deck work...',
+    })
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          role: 'assistant',
+          content: 'Continuing existing Agent Deck work...',
+          observedSessionId: 'deck-session-a',
+        },
+      ])
+    })
+  })
+
+  it('hydrates typed workstation turn events into an otherwise blank adopted chat lane', async () => {
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+    })
+
+    useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+    const threadId = useLiveEditorStore.getState().activeThreadKey
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+
+    stream?.emitEvent('turn_started', {
+      id: 1,
+      event_type: 'turn_started',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      workspace_path: '/tmp/example-project',
+    })
+    stream?.emitEvent('turn_status', {
+      id: 2,
+      event_type: 'turn_status',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      workspace_path: '/tmp/example-project',
+      message: 'Codex is still working in Agent Deck... 20s elapsed.',
+    })
+    stream?.emitEvent('turn_chunk', {
+      id: 3,
+      event_type: 'turn_chunk',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      workspace_path: '/tmp/example-project',
+      content: 'Continuing existing Agent Deck work...',
+    })
+    stream?.emitEvent('turn_completed', {
+      id: 4,
+      event_type: 'turn_completed',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'former multi-chat',
+      agent_deck_tool: 'codex',
+      workspace_path: '/tmp/example-project',
+      assistant_output: 'Continuing existing Agent Deck work...',
     })
 
     await vi.waitFor(() => {
