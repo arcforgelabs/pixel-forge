@@ -618,11 +618,18 @@ def create_request_pack(
                 "",
                 f"- Read `{relative_live_preview_context_path}` for the live-preview handoff metadata captured from the already-running Pixel Forge preview tab.",
                 "- Prefer that live context for current page state when it is available, and use the selection tunnel plus attachments as the durable frozen evidence for this turn.",
-                "- If the live context says attach is unavailable, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
+                "- If the live context already includes controller-captured DOM state, use that fast path first.",
+                "- If you still need deeper live inspection of DOM behavior, console, or network and the context includes attach hints, use those exact CDP hints instead of replaying auth or navigation.",
+                "- If neither controller-captured live state nor attach hints are available, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
             ]
         )
         attach_hints = (
             live_preview_context.get("attach_hints")
+            if isinstance(live_preview_context, dict)
+            else None
+        )
+        live_inspection_mode = (
+            live_preview_context.get("live_inspection_mode")
             if isinstance(live_preview_context, dict)
             else None
         )
@@ -632,11 +639,22 @@ def create_request_pack(
                     "",
                     "## Live Attach Proof",
                     "",
-                    "- If you attach to the already-running managed browser, record that proof for this request.",
-                    f"- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note \"connecting to managed browser via chrome-devtools-mcp\"`",
+                    "- If you attach to the already-running warm preview target over CDP, record that proof for this request.",
+                    f"- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note \"connecting to warm preview via chrome-devtools-mcp\"`",
                     f"- On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
                     f"- On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
                     "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
+                ]
+            )
+        elif live_inspection_mode == "controller-browserview":
+            request_sections.extend(
+                [
+                    "",
+                    "## Live Preview Proof",
+                    "",
+                    "- This request already includes controller-captured live DOM state from the running Pixel Forge BrowserView preview tab.",
+                    f"- If that live context gives you the decisive fact for this request, record it with: `pixel-forge attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence \"<one fact only visible in the captured live BrowserView DOM>\"`",
+                    "- Do not claim that a deeper live attach happened unless you actually used emitted attach hints.",
                 ]
             )
     if relative_context_patch_path:

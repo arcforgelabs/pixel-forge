@@ -6,6 +6,114 @@ export interface PixelForgeBrowserPreviewResponse {
   snapshot_data_url: string | null
 }
 
+export interface PixelForgeDesktopLivePreviewInteractive {
+  tag_name: string
+  role: string | null
+  text: string | null
+  aria_label: string | null
+  xpath: string
+  bounding_box: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
+
+export interface PixelForgeDesktopLivePreviewSelectionMatch {
+  selection_id: string | null
+  found: boolean
+  visible: boolean
+  selector_kind?: string
+  surface_kind?: string
+  tag_name?: string
+  xpath?: string
+  text_excerpt?: string | null
+  bounding_box?: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  first_state_attribute?: {
+    name: string
+    value: string | boolean
+  } | null
+  closest_container?: {
+    tag_name: string
+    xpath: string
+    text_excerpt: string | null
+    bounding_box: {
+      x: number
+      y: number
+      width: number
+      height: number
+    }
+    interactive_descendant_count: number
+    interactive_descendants: PixelForgeDesktopLivePreviewInteractive[]
+    first_state_attribute?: {
+      name: string
+      value: string | boolean
+    } | null
+  } | null
+}
+
+export interface PixelForgeDesktopLivePreviewInspection {
+  live_inspection_available: boolean
+  live_inspection_mode: 'controller-browserview'
+  current_url: string
+  current_title: string
+  ready_state: string
+  viewport: {
+    width: number
+    height: number
+    scroll_x: number
+    scroll_y: number
+  }
+  visible_interactives: PixelForgeDesktopLivePreviewInteractive[]
+  selection_matches: PixelForgeDesktopLivePreviewSelectionMatch[]
+  devtools_browser_url?: string | null
+  devtools_target_id?: string | null
+  devtools_target_type?: string | null
+  devtools_target_url?: string | null
+  devtools_target_title?: string | null
+  devtools_page_websocket_url?: string | null
+  devtools_frontend_url?: string | null
+}
+
+export interface PixelForgeBrowserPreviewInspectionResponse extends PixelForgeBrowserPreviewResponse {
+  inspection: PixelForgeDesktopLivePreviewInspection | null
+}
+
+export interface PixelForgeDesktopLivePreviewSelectionHint {
+  id: string
+  globalIndex?: number
+  selectorKind: 'dom' | 'region'
+  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'unknown'
+  pageKey?: string
+  tagName?: string
+  elementId?: string | null
+  classList?: string[]
+  textContent?: string
+  xpath?: string
+  rootXPath?: string | null
+  rootTagName?: string | null
+  rootElementId?: string | null
+  rootClassList?: string[]
+  region?: {
+    x: number
+    y: number
+    width: number
+    height: number
+    normalizedX: number
+    normalizedY: number
+    normalizedWidth: number
+    normalizedHeight: number
+    anchorX: number
+    anchorY: number
+  } | null
+}
+
 export type PixelForgeDesktopFocusedSurface = 'shell' | 'preview' | 'overlay'
 export type PixelForgeDesktopPreviewTool = 'select' | null
 
@@ -51,6 +159,10 @@ export interface PixelForgeDesktopPreviewAPI {
   activate(tabId: string): Promise<{ ok: true }>
   focus(tabId: string): Promise<{ ok: true }>
   refresh(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
+  inspect(
+    tabId: string,
+    payload?: { selectionHints?: PixelForgeDesktopLivePreviewSelectionHint[] }
+  ): Promise<PixelForgeBrowserPreviewInspectionResponse>
   close(tabId: string): Promise<{ ok: true }>
   setTool(tabId: string, tool: PixelForgeDesktopPreviewTool): Promise<PixelForgeBrowserPreviewResponse>
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>

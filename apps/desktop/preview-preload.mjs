@@ -59,6 +59,10 @@ if (shouldExposeDesktopBridge()) {
   })
 }
 
+contextBridge.exposeInMainWorld('__pixelForgePreviewBridge', {
+  inspectLiveContext: (payload) => bridge.inspectLiveContext(payload),
+})
+
 ipcRenderer.on('pixel-forge-preview:command', async (_event, command) => {
   if (command.type === 'set-tool') {
     bridge.setTool(command.tool ?? null)

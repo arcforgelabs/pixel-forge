@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
     activate: (tabId) => ipcRenderer.invoke('pixel-forge-preview:activate', { tabId }),
     focus: (tabId) => ipcRenderer.invoke('pixel-forge-preview:focus', { tabId }),
     refresh: (tabId) => ipcRenderer.invoke('pixel-forge-preview:refresh', { tabId }),
+    inspect: (tabId, payload) => ipcRenderer.invoke('pixel-forge-preview:inspect', { tabId, ...payload }),
     close: (tabId) => ipcRenderer.invoke('pixel-forge-preview:close', { tabId }),
     setTool: (tabId, tool) =>
       ipcRenderer.invoke('pixel-forge-preview:set-tool', { tabId, tool }),

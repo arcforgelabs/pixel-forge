@@ -11,6 +11,12 @@ const INSTANCE_SLUG = process.env.PIXEL_FORGE_INSTANCE_SLUG || 'pixel-forge'
 const SHELL_HOST = process.env.PIXEL_FORGE_URL_HOST || `${INSTANCE_SLUG}.localhost`
 const SHELL_PORT = process.env.PIXEL_FORGE_API_PORT || process.env.PIXEL_FORGE_PORT || '7001'
 const SHELL_URL = process.env.PIXEL_FORGE_SHELL_URL || `http://${SHELL_HOST}:${SHELL_PORT}`
+const DEFAULT_CONTROLLER_CDP_PORT = (() => {
+  const numericShellPort = Number.parseInt(String(SHELL_PORT), 10)
+  return Number.isFinite(numericShellPort) ? String(numericShellPort + 100) : '9223'
+})()
+const CONTROLLER_CDP_HOST = process.env.PIXEL_FORGE_CONTROLLER_CDP_HOST || '127.0.0.1'
+const CONTROLLER_CDP_PORT = process.env.PIXEL_FORGE_CONTROLLER_CDP_PORT || DEFAULT_CONTROLLER_CDP_PORT
 const PREVIEW_PARTITION = process.env.PIXEL_FORGE_PREVIEW_PARTITION || `persist:${INSTANCE_SLUG}-preview`
 const APP_STATE_DIR = path.resolve(
   process.env.PIXEL_FORGE_STATE_DIR
@@ -31,6 +37,8 @@ const BOOTSTRAP_STATE_PATH = path.join(APP_STATE_DIR, 'controller-bootstrap-stat
 const IS_UPDATER_UI_MODE = process.argv.includes('--pixel-forge-updater-ui')
 
 app.setName(process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge')
+app.commandLine.appendSwitch('remote-debugging-address', CONTROLLER_CDP_HOST)
+app.commandLine.appendSwitch('remote-debugging-port', CONTROLLER_CDP_PORT)
 
 let mainWindow = null
 let agentDeckSurfaceWindow = null
@@ -120,6 +128,33 @@ function normalizeText(value) {
   }
   const trimmed = value.trim()
   return trimmed || null
+}
+
+function controllerDevtoolsBrowserUrl() {
+  const port = normalizeText(CONTROLLER_CDP_PORT)
+  if (!port) {
+    return null
+  }
+  return `http://${CONTROLLER_CDP_HOST}:${port}`
+}
+
+async function readControllerDevtoolsTargets() {
+  const browserUrl = controllerDevtoolsBrowserUrl()
+  if (!browserUrl) {
+    return []
+  }
+
+  try {
+    const response = await fetch(new URL('/json/list', browserUrl), { cache: 'no-store' })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    const payload = await response.json()
+    return Array.isArray(payload) ? payload : []
+  } catch (error) {
+    console.warn('[desktop] Failed to read controller DevTools targets:', error)
+    return []
+  }
 }
 
 function getContextWebContents(ownerContextId) {
@@ -1268,6 +1303,123 @@ function sendPreviewCommand(ownerContextId, tabId, command) {
   }
 }
 
+async function inspectPreviewDevtoolsTarget(view) {
+  if (!view || view.webContents.isDestroyed()) {
+    return {}
+  }
+
+  const browserUrl = controllerDevtoolsBrowserUrl()
+  if (!browserUrl) {
+    return {}
+  }
+
+  let targetInfo = null
+  let attachedHere = false
+  try {
+    const debuggerApi = view.webContents.debugger
+    if (!debuggerApi.isAttached()) {
+      debuggerApi.attach('1.3')
+      attachedHere = true
+    }
+    const payload = await debuggerApi.sendCommand('Target.getTargetInfo')
+    targetInfo = payload?.targetInfo && typeof payload.targetInfo === 'object'
+      ? payload.targetInfo
+      : null
+  } catch (error) {
+    console.warn('[desktop] Failed to inspect preview DevTools target:', error)
+  } finally {
+    if (attachedHere) {
+      try {
+        view.webContents.debugger.detach()
+      } catch {
+        // Ignore detach failures.
+      }
+    }
+  }
+
+  const targetId = normalizeText(targetInfo?.targetId)
+  if (!targetId) {
+    return {}
+  }
+
+  const targets = await readControllerDevtoolsTargets()
+  const matchedTarget = targets.find(
+    (entry) => entry && typeof entry === 'object' && entry.id === targetId
+  ) || null
+
+  return {
+    devtools_browser_url: browserUrl,
+    devtools_target_id: targetId,
+    devtools_target_type: normalizeText(targetInfo?.type),
+    devtools_target_url:
+      typeof matchedTarget?.url === 'string'
+        ? matchedTarget.url
+        : normalizeText(targetInfo?.url),
+    devtools_target_title:
+      typeof matchedTarget?.title === 'string'
+        ? matchedTarget.title
+        : normalizeText(targetInfo?.title),
+    devtools_page_websocket_url:
+      typeof matchedTarget?.webSocketDebuggerUrl === 'string'
+        ? matchedTarget.webSocketDebuggerUrl
+        : null,
+    devtools_frontend_url:
+      typeof matchedTarget?.devtoolsFrontendUrl === 'string'
+        ? matchedTarget.devtoolsFrontendUrl
+        : null,
+  }
+}
+
+async function inspectPreviewView(ownerContextId, tabId, selectionHints = []) {
+  const previewRecord = getPreviewRecord(ownerContextId, tabId)
+  if (!previewRecord) {
+    throw new Error(`Unknown preview tab: ${tabId}`)
+  }
+
+  const view = previewRecord.view
+  let inspection = null
+  try {
+    const rawInspection = await view.webContents.executeJavaScript(
+      `window.__pixelForgePreviewBridge?.inspectLiveContext(${JSON.stringify({
+        selectionHints: Array.isArray(selectionHints) ? selectionHints : [],
+      })}) ?? null`,
+      true,
+    )
+    inspection = rawInspection && typeof rawInspection === 'object' ? rawInspection : null
+  } catch (error) {
+    console.warn('[desktop] Failed to inspect preview BrowserView DOM:', error)
+  }
+
+  const devtoolsInspection = await inspectPreviewDevtoolsTarget(view)
+  return {
+    mode: 'browser',
+    browser_tab_id: tabId,
+    target_url: view.webContents.getURL(),
+    title: view.webContents.getTitle() || view.webContents.getURL(),
+    snapshot_data_url: null,
+    inspection: inspection
+      ? {
+          ...inspection,
+          ...devtoolsInspection,
+        }
+      : (
+          Object.keys(devtoolsInspection).length > 0
+            ? {
+                live_inspection_available: false,
+                live_inspection_mode: 'controller-browserview',
+                current_url: view.webContents.getURL(),
+                current_title: view.webContents.getTitle() || view.webContents.getURL(),
+                ready_state: null,
+                viewport: null,
+                visible_interactives: [],
+                selection_matches: [],
+                ...devtoolsInspection,
+              }
+            : null
+        ),
+  }
+}
+
 async function capturePreviewRegion(tabId, rect) {
   const previewKey = previewKeyByWebContentsId.get(tabId)
   const previewRecord = previewKey ? previewViews.get(previewKey) : null
@@ -1580,6 +1732,14 @@ app.whenReady().then(() => {
       title: view.webContents.getTitle() || view.webContents.getURL(),
       snapshot_data_url: null,
     }
+  })
+
+  ipcMain.handle('pixel-forge-preview:inspect', async (event, payload) => {
+    return inspectPreviewView(
+      event.sender.id,
+      String(payload?.tabId || ''),
+      Array.isArray(payload?.selectionHints) ? payload.selectionHints : [],
+    )
   })
 
   ipcMain.handle('pixel-forge-preview:set-bounds', async (event, bounds) => {

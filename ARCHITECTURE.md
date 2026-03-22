@@ -157,10 +157,10 @@ The important boundary is:
 - Native Agent Deck-originated activity outside that managed path now also enters the same kernel through the foundation `events/*.json` stream, which Pixel Forge ingests into primary `session_status` plus `session_output` events for bound chats.
 - Off-path Claude sessions go further: Agent Deck `hooks/*.json` plus Claude JSONL transcript deltas now promote native manual Claude activity into `turn_started`, `turn_chunk`, and `turn_completed` events on the same kernel instead of leaving it as snapshot-only session state.
 - Off-path Codex sessions now do the same through `codex-notify` hook files plus Codex `response_item` JSONL deltas from `~/.codex/sessions/...`, including sticky session-anchor recovery when completion hooks omit `session_id`.
-- Managed browser preview tabs now also expose a live-preview context lane: request packs persist `live-preview-context.json`, `/api/live-editor/live-preview-context` refreshes current URL/title/snapshot/selection probes from the warm tab, `context-patch.json` carries the compact continuation delta for warm sessions, and `pixel-forge preview-context` gives agents a canonical CLI path to that same live state.
-- That lane now also emits exact managed-browser attach hints: DevTools browser URL, target metadata, and a canonical `chrome-devtools-mcp --browserUrl ... --slim --no-usage-statistics` command for the current warm tab.
-- Pixel Forge now also owns a canonical live attach proof lane: when attach hints exist, request packs and dispatch prompts give the agent exact `pixel-forge attach-proof` commands, which write `attach-proof.json` into the request pack and mirror the same receipt into `workstation_events`.
-- The remaining gap is now real attach validation, not missing proof plumbing: direct agent-native reuse of that already-running managed browser still needs one re-proven Claude operator run on a real authenticated tab.
+- Warm preview targets now expose a live-preview context lane: request packs persist `live-preview-context.json`, `/api/live-editor/live-preview-context` exposes the same lane through the canonical CLI, `context-patch.json` carries the compact continuation delta for warm sessions, and the captured payload now prefers rich structured live DOM state from the running preview before falling back to frozen artifacts.
+- That lane now also emits exact CDP attach hints whenever the warm preview substrate exposes them: DevTools browser URL, target metadata, and a canonical `chrome-devtools-mcp --browserUrl ... --slim --no-usage-statistics` command for the current warm tab. Controller BrowserView previews now contribute controller-captured DOM state first and CDP metadata for the same warm session when the Electron substrate exposes it.
+- Pixel Forge now also owns a canonical live attach proof lane: when live attach hints exist, request packs and dispatch prompts give the agent exact `pixel-forge attach-proof` commands, which write `attach-proof.json` into the request pack and mirror the same receipt into `workstation_events`. Controller-captured live DOM facts can use that same receipt lane with `--via controller-browserview`.
+- The remaining gap is now operator proof, not missing plumbing: direct agent-native reuse of that already-running warm preview still needs one re-proven Claude operator run on a real authenticated tab.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -200,7 +200,7 @@ The important boundary is:
 
 | Layer | Useful | Not Enough Yet | What Unlocks Deeper Integration |
 |---|---|---|---|
-| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, stable session brief, per-turn `context-patch.json`, warm-tab inspection path, exact managed-browser attach hints, and durable attach receipts | Direct browser reuse is still not yet re-proven on a real authenticated Claude run | Proven attach/reuse flow, richer artifact references, less prompt mediation |
+| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, stable session brief, per-turn `context-patch.json`, rich controller-captured live DOM context, CDP attach hints for the same warm session when available, and durable attach receipts | Direct browser reuse is still not yet re-proven on a real authenticated Claude run | Proven attach/reuse flow, richer artifact references, less prompt mediation |
 | Agent Deck native sessions | Real operator control, real takeover of Claude/Codex, session visibility | Mostly terminal/transcript surface, limited structured context injection | Better session metadata hooks, stronger transcript/event surfaces |
 | ACPX 0.3.1 | Structured prompting, queueing, cancel, typed tool events, persistent ACP-owned sessions, pinned upstream foundation for future sidecar work | No proven attach/load path for an already-running native Agent Deck Claude/Codex session | Attach/import existing native agent session, context update primitives, session metadata sync |
 | Pixel Forge skill/CLI | Stable agent-facing way to read frozen and live captured state | Still operator-invoked pull path instead of ambient session context | Direct artifact/context item transport on top of the same truthful capture model |
@@ -258,15 +258,15 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel, per-turn context patches, managed-browser attach hints, and attach receipts, but the warm-session browser attach itself is still not re-proven end to end on a real authenticated Claude lane.
+The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel, per-turn context patches, rich warm-preview context, CDP attach hints for the same session when available, and attach receipts, but the warm-session browser reuse itself is still not re-proven end to end on a real authenticated Claude lane.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
 - keep the typed Pixel Forge-managed turn path and the new off-path Claude/Codex turn paths as the shared truth
-- keep the managed-browser live-preview context lane as the first real warm-preview handoff path and the selection tunnel as durable frozen evidence
+- keep the warm-preview live-preview context lane as the first real handoff path, with controller-captured live DOM state as the fast path and the selection tunnel as durable frozen evidence
 - keep `context-patch.json` as the compact per-turn continuity lane for already-running sessions
-- keep `pixel-forge attach-proof` as the canonical receipt path for live attach attempts
+- keep `pixel-forge attach-proof` as the canonical receipt path for live attach attempts and controller-browserview live-proof receipts
 - prove one Claude lane can actually reuse the same warm preview through the emitted attach hints without replaying auth or navigation
 - keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
 - keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth

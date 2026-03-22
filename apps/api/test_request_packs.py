@@ -165,3 +165,32 @@ do not treat /tmp/workspace as a skill.
             )
             self.assertEqual(context_patch_payload["continuation_mode"], "delta")
             self.assertEqual(context_patch_payload["agent_session"]["id"], "deck-1")
+
+    def test_request_pack_writes_controller_browserview_live_preview_proof_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Inspect the live BrowserView state before editing.",
+                "<selected-elements />",
+                [],
+                live_preview_context={
+                    "mode": "browser",
+                    "preview_tab_id": "tab-1",
+                    "browser_tab_id": "preview-1",
+                    "preview_url": "https://example.com/app",
+                    "preview_title": "Example App",
+                    "live_inspection_available": True,
+                    "live_inspection_mode": "controller-browserview",
+                    "current_url": "https://example.com/app",
+                    "current_title": "Example App",
+                    "selection_matches": [],
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+
+            self.assertIn("## Live Preview Context", request_body)
+            self.assertIn("controller-captured DOM state", request_body)
+            self.assertIn("## Live Preview Proof", request_body)
+            self.assertIn("--via controller-browserview --status succeeded", request_body)

@@ -57,6 +57,7 @@ def normalize_live_preview_reference(raw_value: object | None) -> dict[str, Any]
     preview_title = _normalize_text(raw_value.get("title"))
     browser_tab_id = _normalize_text(raw_value.get("browser_tab_id"))
     proxy_session_id = _normalize_text(raw_value.get("proxy_session_id"))
+    inspection = raw_value.get("inspection") if isinstance(raw_value.get("inspection"), dict) else None
 
     if mode is None and preview_url is None and browser_tab_id is None and proxy_session_id is None:
         return None
@@ -68,6 +69,7 @@ def normalize_live_preview_reference(raw_value: object | None) -> dict[str, Any]
         "preview_title": preview_title,
         "browser_tab_id": browser_tab_id,
         "proxy_session_id": proxy_session_id,
+        "inspection": inspection,
     }
 
 
@@ -164,13 +166,39 @@ async def capture_live_preview_context(
         "selection_hints": selection_hints,
     }
 
+    captured_inspection = reference.get("inspection")
+    if isinstance(captured_inspection, dict):
+        payload.update(captured_inspection)
+        payload["live_inspection_available"] = bool(
+            captured_inspection.get("live_inspection_available")
+            or captured_inspection.get("current_url")
+            or captured_inspection.get("devtools_browser_url")
+        )
+        payload["live_inspection_mode"] = (
+            _normalize_text(captured_inspection.get("live_inspection_mode"))
+            or "captured-preview"
+        )
+        attach_hints = _attach_hints_for_payload(payload)
+        if attach_hints is not None:
+            payload["attach_hints"] = attach_hints
+            payload["live_attach_available"] = True
+            payload["live_attach_mode"] = payload["live_inspection_mode"]
+        else:
+            payload["live_attach_available"] = False
+            payload["live_attach_mode"] = None
+            payload["live_attach_unavailable_reason"] = (
+                "This warm preview includes controller-captured live context, "
+                "but the preview substrate did not expose native CDP attach hints."
+            )
+        return payload
+
     if reference.get("mode") != "browser" or not reference.get("browser_tab_id"):
         payload.update(
             {
                 "live_attach_available": False,
                 "live_attach_mode": None,
                 "live_attach_unavailable_reason": (
-                    "Live preview attach is only available for managed browser tabs right now."
+                    "Direct live preview attach is only available when the warm preview substrate exposes CDP hints."
                 ),
             }
         )
@@ -195,6 +223,8 @@ async def capture_live_preview_context(
         {
             "live_attach_available": True,
             "live_attach_mode": "managed-browser",
+            "live_inspection_available": True,
+            "live_inspection_mode": "managed-browser",
             **inspection,
         }
     )
@@ -214,6 +244,14 @@ async def refresh_live_preview_context(
 
     mode = _normalize_text(payload.get("mode"))
     browser_tab_id = _normalize_text(payload.get("browser_tab_id"))
+    if _normalize_text(payload.get("live_inspection_mode")) == "controller-browserview":
+        payload["live_context_fresh"] = False
+        attach_hints = _attach_hints_for_payload(payload)
+        if attach_hints is not None:
+            payload["attach_hints"] = attach_hints
+            payload["live_attach_available"] = True
+            payload["live_attach_mode"] = "controller-browserview"
+        return payload
     if mode != "browser" or not browser_tab_id:
         payload["live_context_fresh"] = False
         return payload
@@ -242,6 +280,8 @@ async def refresh_live_preview_context(
         {
             "live_attach_available": True,
             "live_attach_mode": "managed-browser",
+            "live_inspection_available": True,
+            "live_inspection_mode": "managed-browser",
             "live_context_fresh": True,
             **inspection,
         }

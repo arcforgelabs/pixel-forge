@@ -778,6 +778,263 @@ export function installSelectionBridge({ emit, captureRegion }) {
     return false
   }
 
+  function isElementVisibleInViewport(element) {
+    if (!(element instanceof Element) || !isElementVisiblyRenderable(element)) {
+      return false
+    }
+
+    const rect = element.getBoundingClientRect()
+    return rect.bottom > 0
+      && rect.right > 0
+      && rect.top < window.innerHeight
+      && rect.left < window.innerWidth
+  }
+
+  function isElementInteractive(element) {
+    if (!(element instanceof Element)) {
+      return false
+    }
+
+    const tagName = element.tagName.toLowerCase()
+    if (['button', 'summary', 'select', 'textarea'].includes(tagName)) {
+      return true
+    }
+    if (tagName === 'a' && element.hasAttribute('href')) {
+      return true
+    }
+    if (tagName === 'input') {
+      const inputType = String(element.getAttribute('type') || '').toLowerCase()
+      return inputType !== 'hidden'
+    }
+
+    const role = String(element.getAttribute('role') || '').toLowerCase()
+    if (
+      ['button', 'link', 'menuitem', 'option', 'switch', 'tab', 'checkbox', 'radio'].includes(role)
+    ) {
+      return true
+    }
+
+    const tabIndex = Number(element.getAttribute('tabindex'))
+    return Number.isFinite(tabIndex) && tabIndex >= 0
+  }
+
+  function getElementTextCandidates(element) {
+    if (!(element instanceof Element)) {
+      return []
+    }
+
+    return [
+      normalizeText(element.getAttribute('aria-label')),
+      normalizeText(element.getAttribute('aria-labelledby')
+        ? document.getElementById(String(element.getAttribute('aria-labelledby') || ''))?.textContent
+        : ''),
+      normalizeText(element.innerText, 200),
+      normalizeText(element.textContent, 200),
+      normalizeText(element.getAttribute('value')),
+      normalizeText(element.getAttribute('placeholder')),
+      normalizeText(element.getAttribute('title')),
+      normalizeText(element.getAttribute('alt')),
+    ].filter(Boolean)
+  }
+
+  function getInteractiveLabel(element) {
+    return getElementTextCandidates(element)[0] || ''
+  }
+
+  function buildBoundingBox(rect) {
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    }
+  }
+
+  function getFirstPresentStateAttribute(element) {
+    if (!(element instanceof Element)) {
+      return null
+    }
+
+    const orderedAttributes = [
+      'aria-selected',
+      'aria-expanded',
+      'aria-checked',
+      'data-state',
+      'value',
+      'checked',
+    ]
+    for (const name of orderedAttributes) {
+      if (name === 'checked' && 'checked' in element) {
+        return {
+          name,
+          value: Boolean(element.checked),
+        }
+      }
+      const attributeValue = element.getAttribute(name)
+      if (attributeValue !== null) {
+        return {
+          name,
+          value: attributeValue,
+        }
+      }
+    }
+    return null
+  }
+
+  function collectVisibleInteractiveElements(root, limit = 10) {
+    if (!(root instanceof Element) || limit <= 0) {
+      return []
+    }
+
+    const results = []
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
+    while (results.length < limit) {
+      const nextNode = walker.nextNode()
+      if (!(nextNode instanceof Element)) {
+        break
+      }
+      if (!isElementInteractive(nextNode) || !isElementVisibleInViewport(nextNode)) {
+        continue
+      }
+      results.push(nextNode)
+    }
+    return results
+  }
+
+  function buildInteractiveDescriptor(element) {
+    if (!(element instanceof Element)) {
+      return null
+    }
+
+    return {
+      tag_name: element.tagName.toLowerCase(),
+      role: normalizeText(element.getAttribute('role')),
+      text: getInteractiveLabel(element) || null,
+      aria_label: normalizeText(element.getAttribute('aria-label')),
+      xpath: getXPath(element),
+      bounding_box: buildBoundingBox(element.getBoundingClientRect()),
+    }
+  }
+
+  function countVisibleInteractiveDescendants(root, limit = 200) {
+    return collectVisibleInteractiveElements(root, limit).length
+  }
+
+  function findMeaningfulContainer(element) {
+    let current = element instanceof Element ? element : null
+    while (current instanceof Element) {
+      if (isElementVisibleInViewport(current)) {
+        const interactiveCount = countVisibleInteractiveDescendants(current, 200)
+        if (interactiveCount >= 2) {
+          return current
+        }
+      }
+      current = getElementParent(current)
+    }
+    return element instanceof Element ? element : null
+  }
+
+  function buildElementSummary(element) {
+    if (!(element instanceof Element)) {
+      return null
+    }
+
+    const container = findMeaningfulContainer(element)
+    const containerInteractives = container instanceof Element
+      ? collectVisibleInteractiveElements(container, 12)
+      : []
+    return {
+      tag_name: element.tagName.toLowerCase(),
+      xpath: getXPath(element),
+      text_excerpt: normalizeText(element.textContent, 200) || null,
+      bounding_box: buildBoundingBox(element.getBoundingClientRect()),
+      first_state_attribute: getFirstPresentStateAttribute(element),
+      closest_container: container instanceof Element
+        ? {
+            tag_name: container.tagName.toLowerCase(),
+            xpath: getXPath(container),
+            text_excerpt: normalizeText(container.textContent, 200) || null,
+            bounding_box: buildBoundingBox(container.getBoundingClientRect()),
+            interactive_descendant_count: countVisibleInteractiveDescendants(container, 200),
+            interactive_descendants: containerInteractives
+              .map((candidate) => buildInteractiveDescriptor(candidate))
+              .filter(Boolean)
+              .slice(0, 6),
+            first_state_attribute: getFirstPresentStateAttribute(container),
+          }
+        : null,
+    }
+  }
+
+  function inspectSelectionHints(selectionHints) {
+    const normalizedHints = normalizeAppliedSelections(
+      Array.isArray(selectionHints)
+        ? selectionHints.map((hint) => ({
+            id: hint?.id,
+            selectorKind: hint?.selectorKind,
+            surfaceKind: hint?.surfaceKind,
+            pageKey: hint?.pageKey,
+            xpath: hint?.xpath,
+            globalIndex: hint?.globalIndex,
+            tagName: hint?.tagName,
+            elementId: hint?.elementId,
+            classList: hint?.classList,
+            textSample: hint?.textContent,
+            rootXPath: hint?.rootXPath,
+            rootTagName: hint?.rootTagName,
+            rootElementId: hint?.rootElementId,
+            rootClassList: hint?.rootClassList,
+            region: hint?.region,
+          }))
+        : []
+    )
+
+    return normalizedHints.map((selection) => {
+      const resolved = resolveSelection(selection)
+      if (!resolved) {
+        return {
+          selection_id: selection.id || null,
+          found: false,
+          visible: false,
+        }
+      }
+
+      return {
+        selection_id: selection.id || null,
+        found: true,
+        visible: isElementVisibleInViewport(resolved.element),
+        selector_kind: selection.selectorKind,
+        surface_kind: selection.surfaceKind,
+        ...buildElementSummary(resolved.element),
+      }
+    })
+  }
+
+  async function inspectLiveContext(payload = {}) {
+    const selectionHints = Array.isArray(payload?.selectionHints)
+      ? payload.selectionHints
+      : []
+    const visibleInteractives = collectVisibleInteractiveElements(document.body, 8)
+      .map((element) => buildInteractiveDescriptor(element))
+      .filter(Boolean)
+
+    return {
+      live_inspection_available: true,
+      live_inspection_mode: 'controller-browserview',
+      current_url: window.location.href,
+      current_title: document.title || window.location.href,
+      ready_state: document.readyState,
+      viewport: {
+        width: Math.round(window.innerWidth),
+        height: Math.round(window.innerHeight),
+        scroll_x: Math.round(window.scrollX),
+        scroll_y: Math.round(window.scrollY),
+      },
+      visible_interactives: visibleInteractives,
+      selection_matches: inspectSelectionHints(selectionHints),
+    }
+  }
+
   function findRegionSurface(element) {
     let current = element
     while (current instanceof Element && current !== document.body) {
@@ -1419,6 +1676,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   return {
+    inspectLiveContext,
     setTool,
     setSelectMode(enabled) {
       setTool(Boolean(enabled) ? 'select' : null)

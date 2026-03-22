@@ -660,12 +660,12 @@ def _command_preview_context(args: argparse.Namespace) -> int:
 def _attach_proof_message(status: str, via: str, *, evidence: str | None, note: str | None) -> str:
     if status == "attempted":
         suffix = f" {note}" if note else ""
-        return f"Live browser attach attempt recorded via {via}.{suffix}".strip()
+        return f"Live preview attach attempt recorded via {via}.{suffix}".strip()
     if status == "succeeded":
         detail = evidence or note or "No live evidence summary provided."
-        return f"Live browser attach succeeded via {via}. Evidence: {detail}"
+        return f"Live preview attach succeeded via {via}. Evidence: {detail}"
     detail = note or evidence or "No failure detail provided."
-    return f"Live browser attach failed via {via}. Detail: {detail}"
+    return f"Live preview attach failed via {via}. Detail: {detail}"
 
 
 def _command_attach_proof(args: argparse.Namespace) -> int:

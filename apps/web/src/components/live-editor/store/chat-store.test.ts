@@ -834,6 +834,81 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('includes controller preview inspection data in outbound live-edit payloads when available', async () => {
+    ;(globalThis as typeof globalThis & { pixelForgeDesktop?: unknown }).pixelForgeDesktop = {
+      preview: {
+        inspect: vi.fn(async () => ({
+          mode: 'browser',
+          browser_tab_id: 'browser-tab-123',
+          target_url: 'https://claude.ai/new',
+          title: 'Claude',
+          snapshot_data_url: null,
+          inspection: {
+            live_inspection_available: true,
+            live_inspection_mode: 'controller-browserview',
+            current_url: 'https://claude.ai/new',
+            current_title: 'Claude',
+            ready_state: 'complete',
+            viewport: {
+              width: 1440,
+              height: 900,
+              scroll_x: 0,
+              scroll_y: 120,
+            },
+            visible_interactives: [],
+            selection_matches: [],
+            devtools_browser_url: 'http://127.0.0.1:7301',
+            devtools_target_id: 'controller-target-1',
+            devtools_target_url: 'https://claude.ai/new',
+          },
+        })),
+      },
+    }
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-browser',
+        url: 'https://claude.ai/new',
+        title: 'Claude',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: 'browser-tab-123',
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-browser')
+    useLiveEditorStore.getState().setTargetUrl('https://claude.ai/new')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Inspect the warm preview state')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Inspect the warm preview state',
+      preview_url: 'https://claude.ai/new',
+      live_preview: {
+        preview_tab_id: 'tab-browser',
+        mode: 'browser',
+        title: 'Claude',
+        url: 'https://claude.ai/new',
+        browser_tab_id: 'browser-tab-123',
+        proxy_session_id: null,
+        inspection: {
+          live_inspection_mode: 'controller-browserview',
+          devtools_browser_url: 'http://127.0.0.1:7301',
+          devtools_target_id: 'controller-target-1',
+        },
+      },
+    })
+  })
+
   it('uses the bound session tool for outbound live-edit payloads', () => {
     useSessionStore.setState({
       liveEditorSession: {

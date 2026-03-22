@@ -2205,57 +2205,99 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
-      const payload: Record<string, unknown> = {
-        message: trimmedContent,
-        project_path: projectPath,
-        element_context: elementContext,
-        preview_url: previewUrl || '',
-        agent_type: agentType,
-      }
+      void (async () => {
+        let livePreviewPayload: Record<string, unknown> | null = null
+        if (activePreviewTab) {
+          livePreviewPayload = {
+            preview_tab_id: activePreviewTab.id,
+            mode: activePreviewTab.mode,
+            title: activePreviewTab.title,
+            url: activePreviewTab.url,
+            browser_tab_id: activePreviewTab.browserTabId,
+            proxy_session_id: activePreviewTab.proxySessionId,
+          }
 
-      if (activePreviewTab) {
-        payload.live_preview = {
-          preview_tab_id: activePreviewTab.id,
-          mode: activePreviewTab.mode,
-          title: activePreviewTab.title,
-          url: activePreviewTab.url,
-          browser_tab_id: activePreviewTab.browserTabId,
-          proxy_session_id: activePreviewTab.proxySessionId,
+          const desktopPreview = (
+            globalThis as typeof globalThis & {
+              pixelForgeDesktop?: Window['pixelForgeDesktop']
+            }
+          ).pixelForgeDesktop?.preview
+          if (
+            activePreviewTab.mode === 'browser'
+            && activePreviewTab.browserTabId
+            && desktopPreview?.inspect
+          ) {
+            try {
+              const inspectionResponse = await desktopPreview.inspect(
+                activePreviewTab.browserTabId,
+                {
+                  selectionHints: selectionTunnel.selections,
+                }
+              )
+              if (inspectionResponse.inspection) {
+                livePreviewPayload.inspection = inspectionResponse.inspection
+              }
+              if (inspectionResponse.target_url?.trim()) {
+                livePreviewPayload.url = inspectionResponse.target_url
+              }
+              if (inspectionResponse.title?.trim()) {
+                livePreviewPayload.title = inspectionResponse.title
+              }
+            } catch (error) {
+              console.warn('[pixel-forge] Failed to inspect desktop preview before send', error)
+            }
+          }
         }
-      }
 
-      if (requestAttachments.length > 0) {
-        payload.attachments = requestAttachments.map((attachment) => ({
-          name: attachment.name,
-          mime_type: attachment.mimeType,
-          data_url: attachment.dataUrl,
-          kind: attachment.kind,
-        }))
-      }
+        const payload: Record<string, unknown> = {
+          message: trimmedContent,
+          project_path: projectPath,
+          element_context: elementContext,
+          preview_url: previewUrl || '',
+          agent_type: agentType,
+        }
 
-      if (selectionTunnel.selections.length > 0) {
-        payload.selection_tunnel = selectionTunnel
-      }
+        if (livePreviewPayload) {
+          payload.live_preview = livePreviewPayload
+        }
 
-      if (boundSession?.threadId) {
-        payload.thread_id = boundSession.threadId
-      }
+        if (requestAttachments.length > 0) {
+          payload.attachments = requestAttachments.map((attachment) => ({
+            name: attachment.name,
+            mime_type: attachment.mimeType,
+            data_url: attachment.dataUrl,
+            kind: attachment.kind,
+          }))
+        }
 
-      if (targetAgentDeckSessionId) {
-        payload.target_agent_deck_session_id = targetAgentDeckSessionId
-      }
+        if (selectionTunnel.selections.length > 0) {
+          payload.selection_tunnel = selectionTunnel
+        }
 
-      if (!activeThreadState.ws || activeThreadState.ws.readyState !== WebSocket.OPEN) {
-        updateThreadState(activeThreadKey, (threadState) => ({
-          ...threadState,
-          queuedMessages: [...threadState.queuedMessages, { payload }],
-          currentStatusMessage: 'Reconnecting Live Editor… request queued.',
-        }))
-        connectThread(activeThreadKey)
-        return
-      }
+        if (boundSession?.threadId) {
+          payload.thread_id = boundSession.threadId
+        }
 
-      activeThreadState.ws.send(JSON.stringify(payload))
+        if (targetAgentDeckSessionId) {
+          payload.target_agent_deck_session_id = targetAgentDeckSessionId
+        }
+
+        const latestThreadState = getThreadStateSnapshot(
+          get().threadStates,
+          activeThreadKey
+        )
+        if (!latestThreadState.ws || latestThreadState.ws.readyState !== WebSocket.OPEN) {
+          updateThreadState(activeThreadKey, (threadState) => ({
+            ...threadState,
+            queuedMessages: [...threadState.queuedMessages, { payload }],
+            currentStatusMessage: 'Reconnecting Live Editor… request queued.',
+          }))
+          connectThread(activeThreadKey)
+          return
+        }
+
+        latestThreadState.ws.send(JSON.stringify(payload))
+      })()
     },
 
     clearMessages: () => {

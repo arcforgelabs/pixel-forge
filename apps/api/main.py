@@ -2209,6 +2209,8 @@ def _summarize_live_preview_context(
         "preview_title": live_preview_context.get("preview_title"),
         "browser_tab_id": live_preview_context.get("browser_tab_id"),
         "proxy_session_id": live_preview_context.get("proxy_session_id"),
+        "live_inspection_available": bool(live_preview_context.get("live_inspection_available")),
+        "live_inspection_mode": live_preview_context.get("live_inspection_mode"),
         "live_attach_available": bool(live_preview_context.get("live_attach_available")),
         "live_attach_mode": live_preview_context.get("live_attach_mode"),
         "current_url": live_preview_context.get("current_url"),
@@ -2391,7 +2393,9 @@ If you need the frozen selection state for this turn, use `{selection_tunnel_url
 If you need the current warm preview state for this turn, call `{live_preview_context_url}`, run `pixel-forge preview-context --project . --request <request-id>` if available, or read the `live-preview-context.json` file referenced by the request pack.
 Use that live-preview context to inspect the already-running Pixel Forge preview tab in place instead of replaying login, navigation, or view reconstruction.
 Prefer the live-preview context for current page state and the selection tunnel plus attachments for durable frozen evidence.
-If the live-preview context says attach is unavailable, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
+If the live-preview context already includes controller-captured DOM state, use that fast path first.
+If the task still needs deeper live inspection of DOM behavior, console, or network and attach hints exist, use those exact CDP hints instead of recreating auth or navigation.
+If neither controller-captured live state nor attach hints are available, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
 
     if context_patch and continuation_mode != "bootstrap":
         base += f"""
@@ -2404,20 +2408,29 @@ Treat this as the smallest current-turn continuity delta for the warm session. U
 
         live_preview_patch = context_patch.get("live_preview") if isinstance(context_patch, dict) else None
         if isinstance(live_preview_patch, dict):
+            live_inspection_mode = live_preview_patch.get("live_inspection_mode")
             attach_hints = live_preview_patch.get("attach_hints")
             if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
                 base += """
 
-This context patch includes direct attach hints for the already-running managed browser tab.
-If you need authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
+This context patch includes direct CDP attach hints for the already-running warm preview target.
+Use the structured live-preview context first. If you still need deeper authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
                 if request_id:
                     base += f"""
 
 If you attempt live attach for this request, record it explicitly:
-- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note "connecting to managed browser via chrome-devtools-mcp"`
+- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note "connecting to warm preview via chrome-devtools-mcp"`
 - On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
 - On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
 Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact."""
+            elif live_inspection_mode == "controller-browserview" and request_id:
+                base += f"""
+
+This context patch includes controller-captured live DOM state for the already-running preview tab.
+Use that structured live context first before escalating to any browser attach path or replaying navigation.
+If that live context gives you the decisive fact for this request, record the proof explicitly:
+- `pixel-forge attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence "<one fact only visible in the captured live BrowserView DOM>"`
+Do not claim that a deeper live attach happened unless you actually used the emitted attach hints."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:

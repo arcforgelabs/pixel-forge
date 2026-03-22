@@ -138,6 +138,26 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded", prompt)
         self.assertIn("Do not claim a successful live attach unless", prompt)
 
+    def test_build_dispatch_prompt_mentions_controller_browserview_live_context(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            request_id="abcd",
+            continuation_mode="delta",
+            context_patch={
+                "source": "pixel-forge",
+                "thread_id": "thread-a",
+                "continuation_mode": "delta",
+                "live_preview": {
+                    "live_inspection_mode": "controller-browserview",
+                    "current_url": "https://field.example.com/app",
+                },
+            },
+        )
+
+        self.assertIn("controller-captured live DOM state", prompt)
+        self.assertIn("--via controller-browserview --status succeeded", prompt)
+        self.assertIn("Do not claim that a deeper live attach happened", prompt)
+
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",
