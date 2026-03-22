@@ -118,6 +118,7 @@ from local_targets import (
     start_pixel_forge_target,
 )
 from runtime_config import api_port as runtime_api_port
+from runtime_config import cli_name as runtime_cli_name
 from runtime_config import url_host as runtime_url_host
 
 from session_manager import (
@@ -2306,6 +2307,7 @@ def build_live_editor_dispatch_prompt(
     informational_only: bool = False,
 ) -> str:
     normalized_requested_skills = normalize_requested_skills(requested_skills)
+    pixel_forge_cli = runtime_cli_name()
 
     if informational_only:
         if continuation_mode == "bootstrap":
@@ -2378,7 +2380,7 @@ Treat the request pack, selected-elements artifact, selection tunnel, and attach
         elif continuation_mode == "bootstrap":
             base += f"""
 
-If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `pixel-forge tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
+If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `{pixel_forge_cli} tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
             base += """
 
 Treat the request pack, selected-elements artifact, and selection tunnel as authoritative evidence for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge already captured the relevant state. If the frozen tunnel is still insufficient to verify a claim, say that explicitly instead of guessing."""
@@ -2390,7 +2392,7 @@ If you need the frozen selection state for this turn, use `{selection_tunnel_url
     if live_preview_context_url:
         base += f"""
 
-If you need the current warm preview state for this turn, call `{live_preview_context_url}`, run `pixel-forge preview-context --project . --request <request-id>` if available, or read the `live-preview-context.json` file referenced by the request pack.
+If you need the current warm preview state for this turn, call `{live_preview_context_url}`, run `{pixel_forge_cli} preview-context --project . --request <request-id>` if available, or read the `live-preview-context.json` file referenced by the request pack.
 Use that live-preview context to inspect the already-running Pixel Forge preview tab in place instead of replaying login, navigation, or view reconstruction.
 Prefer the live-preview context for current page state and the selection tunnel plus attachments for durable frozen evidence.
 If the live-preview context already includes controller-captured DOM state, use that fast path first.
@@ -2419,9 +2421,9 @@ Use the structured live-preview context first. If you still need deeper authenti
                     base += f"""
 
 If you attempt live attach for this request, record it explicitly:
-- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note "connecting to warm preview via chrome-devtools-mcp"`
-- On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
-- On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
+- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --note "connecting to warm preview via chrome-devtools-mcp"`
+- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
+- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
 Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact."""
             elif live_inspection_mode == "controller-browserview" and request_id:
                 base += f"""
@@ -2429,7 +2431,7 @@ Do not claim a successful live attach unless you have recorded the success proof
 This context patch includes controller-captured live DOM state for the already-running preview tab.
 Use that structured live context first before escalating to any browser attach path or replaying navigation.
 If that live context gives you the decisive fact for this request, record the proof explicitly:
-- `pixel-forge attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence "<one fact only visible in the captured live BrowserView DOM>"`
+- `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence "<one fact only visible in the captured live BrowserView DOM>"`
 Do not claim that a deeper live attach happened unless you actually used the emitted attach hints."""
 
     selection_sources = _selection_source_summary(selection_tunnel)

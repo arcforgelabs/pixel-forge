@@ -58,6 +58,13 @@ def shell_url() -> str:
     return f"http://{url_host()}:{api_port()}"
 
 
+def cli_name() -> str:
+    explicit = (os.environ.get("PIXEL_FORGE_CLI_NAME") or "").strip()
+    if explicit:
+        return explicit
+    return instance_slug()
+
+
 def agent_deck_surface_host() -> str:
     return os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_HOST") or DEFAULT_AGENT_DECK_SURFACE_HOST
 

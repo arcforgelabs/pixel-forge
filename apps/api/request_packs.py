@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from runtime_config import cli_name
+
 
 REQUEST_RETENTION_COUNT = 80
 REQUEST_RETENTION_SECONDS = 7 * 24 * 60 * 60
@@ -347,6 +349,7 @@ def create_request_pack(
     turn_working_rules: list[str] | None = None,
     requested_skills: list[str] | None = None,
 ) -> RequestPack:
+    pixel_forge_cli = cli_name()
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
     pack_dir = request_root / request_id
@@ -640,9 +643,9 @@ def create_request_pack(
                     "## Live Attach Proof",
                     "",
                     "- If you attach to the already-running warm preview target over CDP, record that proof for this request.",
-                    f"- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note \"connecting to warm preview via chrome-devtools-mcp\"`",
-                    f"- On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
-                    f"- On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
+                    f"- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --note \"connecting to warm preview via chrome-devtools-mcp\"`",
+                    f"- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
+                    f"- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
                     "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
                 ]
             )
@@ -653,7 +656,7 @@ def create_request_pack(
                     "## Live Preview Proof",
                     "",
                     "- This request already includes controller-captured live DOM state from the running Pixel Forge BrowserView preview tab.",
-                    f"- If that live context gives you the decisive fact for this request, record it with: `pixel-forge attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence \"<one fact only visible in the captured live BrowserView DOM>\"`",
+                    f"- If that live context gives you the decisive fact for this request, record it with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence \"<one fact only visible in the captured live BrowserView DOM>\"`",
                     "- Do not claim that a deeper live attach happened unless you actually used emitted attach hints.",
                 ]
             )
