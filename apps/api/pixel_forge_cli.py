@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Sequence
@@ -28,6 +29,7 @@ from agent_deck_surface import (
 from runtime_config import shared_state_dir
 from runtime_config import agent_deck_home_dir, shared_db_path
 from runtime_version import read_runtime_info_for_root
+from live_preview_context import read_live_preview_context_artifact
 from selection_tunnel_cli import selection_tunnel_path
 
 
@@ -618,6 +620,38 @@ def _command_tunnel(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_preview_context(args: argparse.Namespace) -> int:
+    try:
+        payload = read_live_preview_context_artifact(args.project, args.request)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if not args.stored_only:
+        query = urllib.parse.urlencode(
+            {
+                "project_path": args.project,
+                "request_id": args.request,
+            }
+        )
+        try:
+            with urllib.request.urlopen(
+                f"{shell_url()}/api/live-editor/live-preview-context?{query}",
+                timeout=4,
+            ) as response:
+                if response.status == 200:
+                    live_payload = json.loads(response.read().decode("utf-8"))
+                    if isinstance(live_payload, dict):
+                        payload = live_payload
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            pass
+
+    if args.compact:
+        print(json.dumps(payload, separators=(",", ":")))
+    else:
+        print(json.dumps(payload, indent=2))
+    return 0
+
+
 def _controller_update_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "projectPath": args.project_path,
@@ -911,6 +945,20 @@ def build_parser() -> argparse.ArgumentParser:
     tunnel.add_argument("--selection", help="Optional selection id to print a single selection")
     tunnel.add_argument("--compact", action="store_true", help="Print compact JSON")
     tunnel.set_defaults(handler=_command_tunnel)
+
+    preview_context = subparsers.add_parser(
+        "preview-context",
+        help="Read a Pixel Forge live preview context artifact",
+    )
+    preview_context.add_argument("--project", required=True, help="Workspace path that owns the request pack")
+    preview_context.add_argument("--request", required=True, help="Pixel Forge request id")
+    preview_context.add_argument(
+        "--stored-only",
+        action="store_true",
+        help="Read the stored artifact only and skip live refresh",
+    )
+    preview_context.add_argument("--compact", action="store_true", help="Print compact JSON")
+    preview_context.set_defaults(handler=_command_preview_context)
 
     controller_update = subparsers.add_parser(
         "controller-update",

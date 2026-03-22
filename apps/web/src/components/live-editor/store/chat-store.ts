@@ -2192,6 +2192,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       stopObservedThreadStreaming()
 
       const previewUrl = getThreadPreviewUrl(activeThreadKey)
+      const activePreviewTab = activeThreadState.previewTabs.find(
+        (tab) => tab.id === activeThreadState.activePreviewTabId
+      ) ?? activeThreadState.previewTabs[0] ?? null
       const selectedTarget =
         sessionState.agentDeckTargets.find(
           (target) => target.id === targetAgentDeckSessionId
@@ -2208,6 +2211,17 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         element_context: elementContext,
         preview_url: previewUrl || '',
         agent_type: agentType,
+      }
+
+      if (activePreviewTab) {
+        payload.live_preview = {
+          preview_tab_id: activePreviewTab.id,
+          mode: activePreviewTab.mode,
+          title: activePreviewTab.title,
+          url: activePreviewTab.url,
+          browser_tab_id: activePreviewTab.browserTabId,
+          proxy_session_id: activePreviewTab.proxySessionId,
+        }
       }
 
       if (requestAttachments.length > 0) {

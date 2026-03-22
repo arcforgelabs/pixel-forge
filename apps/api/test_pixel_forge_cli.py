@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -80,6 +84,35 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], "/tmp/alpha-home")
         self.assertEqual(env["AGENTDECK_DIR"], "/tmp/alpha-home")
         self.assertEqual(env["AGENT_DECK_DIR"], "/tmp/alpha-home")
+
+    def test_preview_context_command_reads_stored_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_dir = Path(tmpdir) / ".pixel-forge" / "requests" / "request-1"
+            request_dir.mkdir(parents=True, exist_ok=True)
+            (request_dir / "live-preview-context.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "browser",
+                        "browser_tab_id": "browser-tab-1",
+                        "live_attach_available": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                exit_code = pixel_forge_cli._command_preview_context(
+                    argparse.Namespace(
+                        project=tmpdir,
+                        request="request-1",
+                        stored_only=True,
+                        compact=False,
+                    )
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"browser_tab_id": "browser-tab-1"', stdout.getvalue())
 
 
 if __name__ == "__main__":

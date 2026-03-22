@@ -795,6 +795,45 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('includes active live preview identity in outbound live-edit payloads', () => {
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-browser',
+        url: 'https://claude.ai/new',
+        title: 'Claude',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: 'browser-tab-123',
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-browser')
+    useLiveEditorStore.getState().setTargetUrl('https://claude.ai/new')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Inspect the warm preview state')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Inspect the warm preview state',
+      preview_url: 'https://claude.ai/new',
+      live_preview: {
+        preview_tab_id: 'tab-browser',
+        mode: 'browser',
+        title: 'Claude',
+        url: 'https://claude.ai/new',
+        browser_tab_id: 'browser-tab-123',
+        proxy_session_id: null,
+      },
+    })
+  })
+
   it('uses the bound session tool for outbound live-edit payloads', () => {
     useSessionStore.setState({
       liveEditorSession: {

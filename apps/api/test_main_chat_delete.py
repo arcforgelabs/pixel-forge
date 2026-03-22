@@ -99,6 +99,17 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         delete_thread.assert_called_once_with("thread-a")
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
+    def test_build_dispatch_prompt_mentions_live_preview_context(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            selection_tunnel_url="http://pixel-forge.test/api/live-editor/selection-tunnel?request_id=abcd",
+            live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
+        )
+
+        self.assertIn("live-preview-context", prompt)
+        self.assertIn("pixel-forge preview-context --project . --request <request-id>", prompt)
+        self.assertIn("already-running Pixel Forge preview tab", prompt)
+
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",

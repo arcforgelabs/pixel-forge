@@ -157,7 +157,8 @@ The important boundary is:
 - Native Agent Deck-originated activity outside that managed path now also enters the same kernel through the foundation `events/*.json` stream, which Pixel Forge ingests into primary `session_status` plus `session_output` events for bound chats.
 - Off-path Claude sessions go further: Agent Deck `hooks/*.json` plus Claude JSONL transcript deltas now promote native manual Claude activity into `turn_started`, `turn_chunk`, and `turn_completed` events on the same kernel instead of leaving it as snapshot-only session state.
 - Off-path Codex sessions now do the same through `codex-notify` hook files plus Codex `response_item` JSONL deltas from `~/.codex/sessions/...`, including sticky session-anchor recovery when completion hooks omit `session_id`.
-- The remaining gap is now tool parity: off-path Claude and Codex have native turn-granular lifecycle and assistant-output ingest, but off-path Gemini, OpenCode, and other remaining lanes still arrive only at session granularity.
+- Managed browser preview tabs now also expose a live-preview context lane: request packs persist `live-preview-context.json`, `/api/live-editor/live-preview-context` refreshes current URL/title/snapshot/selection probes from the warm tab, and `pixel-forge preview-context` gives agents a canonical CLI path to that same live state.
+- The remaining gap is now handoff depth, not raw Claude/Codex tool parity: the new lane is still pull-based managed-browser inspection, while direct agent-native attach and turn-to-turn structured context patching into the already-running Claude/Codex session are not yet proven.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -197,10 +198,10 @@ The important boundary is:
 
 | Layer | Useful | Not Enough Yet | What Unlocks Deeper Integration |
 |---|---|---|---|
-| Pixel Forge request packs + selection tunnel | Truthful frozen context, inspectable disk artifacts, good delta payload carrier, stable session brief plus per-turn request delta | Still file-first and indirect once a native session is already warm | Richer artifact references, structured context updates, eventual live attach |
+| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, warm-tab inspection path, stable session brief plus per-turn request delta | Still pull-based and prompt-driven once a native session is already warm | Session-native context patches, direct attach, richer artifact references |
 | Agent Deck native sessions | Real operator control, real takeover of Claude/Codex, session visibility | Mostly terminal/transcript surface, limited structured context injection | Better session metadata hooks, stronger transcript/event surfaces |
 | ACPX 0.3.1 | Structured prompting, queueing, cancel, typed tool events, persistent ACP-owned sessions, pinned upstream foundation for future sidecar work | No proven attach/load path for an already-running native Agent Deck Claude/Codex session | Attach/import existing native agent session, context update primitives, session metadata sync |
-| Pixel Forge skill/CLI | Stable agent-facing way to read captured state | Still file-oriented and indirect | Direct artifact/context item transport on top of the same truthful capture model |
+| Pixel Forge skill/CLI | Stable agent-facing way to read frozen and live captured state | Still operator-invoked pull path instead of ambient session context | Direct artifact/context item transport on top of the same truthful capture model |
 
 ### Upstream Capability Gap
 
@@ -211,7 +212,7 @@ The specific upstream capabilities that would unlock that fuller architecture ar
 - attach or import an already-running native agent session instead of only resuming ACP-created sessions
 - stable mapping between ACP session id and native agent session id that can be adopted after the native session already exists
 - structured prompt/update or context-patch calls that let Pixel Forge send new per-turn context without replaying the full bootstrap framing
-- first-class artifact/context-item references for things like selection tunnel files, screenshots, and preview metadata
+- first-class artifact/context-item references for things like selection tunnel files, live-preview context, screenshots, and preview metadata
 - session-side memory or note primitives so stable Pixel Forge setup context can be written once and reused naturally across turns
 - transcript/event surfaces that stay aligned with the native visible endpoint session instead of a separate hidden sidecar conversation
 
@@ -255,13 +256,15 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: off-path Claude and Codex now have real turn truth on the shared kernel, but the remaining off-path lanes still land there only at session granularity.
+The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel and managed-browser live-preview context, but the warm-session handoff is still pull-based instead of a proven direct attach or structured context-patch flow.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
-- keep the typed Pixel Forge-managed turn path and the new off-path Claude/Codex turn paths as the shared truth while preserving the primary session-event tap for adopted/manual/off-path fallback
-- extend one remaining off-path tool lane, with Gemini first, from `session_status`/`session_output` into turn-scoped lifecycle plus assistant-output delta ingest
+- keep the typed Pixel Forge-managed turn path and the new off-path Claude/Codex turn paths as the shared truth
+- keep the managed-browser live-preview context lane as the first real warm-preview handoff path and the selection tunnel as durable frozen evidence
+- prove one Claude/Codex lane can reuse the same warm preview across multiple turns without replaying the full bootstrap
+- promote the pull-based live-preview context lane into a first-class structured context update path for the already-running session
 - keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
 - keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists

@@ -87,6 +87,11 @@ from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
 from request_packs import create_request_pack, extract_requested_skills, normalize_requested_skills
+from live_preview_context import (
+    capture_live_preview_context,
+    read_live_preview_context_artifact,
+    refresh_live_preview_context,
+)
 from skill_registry import load_skill_registry_snapshot
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
 from controller_update_state import (
@@ -1803,6 +1808,22 @@ async def read_selection_tunnel(
     return payload
 
 
+@app.get("/api/live-editor/live-preview-context")
+async def read_live_preview_context(
+    project_path: str,
+    request_id: str,
+):
+    try:
+        stored_payload = read_live_preview_context_artifact(project_path, request_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return await refresh_live_preview_context(
+        stored_payload,
+        preview_manager=MANAGED_BROWSER_PREVIEW,
+    )
+
+
 @app.websocket("/ws/live-preview")
 async def live_preview_websocket(websocket: WebSocket):
     await websocket.accept()
@@ -2182,6 +2203,7 @@ def build_live_editor_dispatch_prompt(
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
+    live_preview_context_url: str | None = None,
     requested_skills: list[str] | None = None,
     self_edit_safe_mode: bool = False,
     self_edit_scope: Literal["controller", "preview"] | None = None,
@@ -2269,6 +2291,14 @@ Treat the request pack, selected-elements artifact, and selection tunnel as auth
             base += f"""
 
 If you need the frozen selection state for this turn, use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack."""
+
+    if live_preview_context_url:
+        base += f"""
+
+If you need the current warm preview state for this turn, call `{live_preview_context_url}`, run `pixel-forge preview-context --project . --request <request-id>` if available, or read the `live-preview-context.json` file referenced by the request pack.
+Use that live-preview context to inspect the already-running Pixel Forge preview tab in place instead of replaying login, navigation, or view reconstruction.
+Prefer the live-preview context for current page state and the selection tunnel plus attachments for durable frozen evidence.
+If the live-preview context says attach is unavailable, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:
@@ -3047,6 +3077,7 @@ async def live_editor_chat(websocket: WebSocket):
             thread_id = data.get("thread_id") or data.get("session_id")
             project_path = data.get("project_path", "")
             preview_url = data.get("preview_url", "")
+            live_preview = data.get("live_preview")
             agent_type = data.get("agent_type", "claude")
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
 
@@ -3163,6 +3194,11 @@ async def live_editor_chat(websocket: WebSocket):
                     if self_edit_safe_mode
                     else None
                 )
+                live_preview_context = await capture_live_preview_context(
+                    live_preview,
+                    selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
+                    preview_manager=MANAGED_BROWSER_PREVIEW,
+                )
                 if previous_request_id:
                     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "delta"
                 elif (
@@ -3187,6 +3223,7 @@ async def live_editor_chat(websocket: WebSocket):
                     acp_session_id=session_info.acp_session_id,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
+                    live_preview_context=live_preview_context,
                     continuation_mode=continuation_mode,
                     informational_only=informational_only,
                     requested_skills=requested_skills,
@@ -3310,6 +3347,17 @@ async def live_editor_chat(websocket: WebSocket):
                             }
                         )
                         if request_pack.relative_selection_tunnel_file
+                        else None
+                    ),
+                    live_preview_context_url=(
+                        f"http://{runtime_url_host()}:{runtime_api_port()}/api/live-editor/live-preview-context?"
+                        + urlencode(
+                            {
+                                "project_path": session_info.workspace_path,
+                                "request_id": request_pack.request_id,
+                            }
+                        )
+                        if request_pack.relative_live_preview_context_file
                         else None
                     ),
                     self_edit_safe_mode=self_edit_safe_mode,

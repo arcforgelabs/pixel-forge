@@ -84,3 +84,39 @@ do not treat /tmp/workspace as a skill.
                     }
                 ],
             )
+
+    def test_request_pack_writes_live_preview_context_section_and_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Inspect the already-running preview state before editing.",
+                "<selected-elements />",
+                [],
+                live_preview_context={
+                    "mode": "browser",
+                    "preview_tab_id": "tab-1",
+                    "browser_tab_id": "browser-tab-1",
+                    "preview_url": "https://example.com/app",
+                    "preview_title": "Example App",
+                    "live_attach_available": True,
+                    "live_attach_mode": "managed-browser",
+                    "current_url": "https://example.com/app",
+                    "current_title": "Example App",
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+            live_preview_payload = json.loads(
+                request_pack.live_preview_context_file.read_text(encoding="utf-8")
+            )
+
+            self.assertIn("## Live Preview Context", request_body)
+            self.assertIn("live-preview-context.json", request_body)
+            self.assertEqual(
+                manifest["live_preview_context_file"],
+                request_pack.relative_live_preview_context_file,
+            )
+            self.assertEqual(live_preview_payload["browser_tab_id"], "browser-tab-1")
+            self.assertTrue(live_preview_payload["live_attach_available"])

@@ -964,6 +964,37 @@ class ManagedBrowserPreviewManager:
         tab = self._get_tab(browser_tab_id)
         return self._serialize_tab(tab)
 
+    async def inspect_tab(
+        self,
+        browser_tab_id: str,
+        *,
+        selection_hints: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        tab = self._get_tab(browser_tab_id)
+        current_url = tab.page.url or tab.url
+        current_title = await self._safe_page_title(tab.page, fallback=tab.title or current_url)
+        tab.url = current_url
+        tab.title = current_title
+
+        page_state = await self._inspect_page_state(tab.page)
+        snapshot_data_url = await self._capture_snapshot_data_url(tab)
+        if snapshot_data_url:
+            tab.last_snapshot_data_url = snapshot_data_url
+
+        selection_matches = await self._inspect_selection_hints(
+            tab.page,
+            selection_hints or [],
+        )
+        return {
+            "current_url": current_url,
+            "current_title": current_title,
+            "snapshot_data_url": tab.last_snapshot_data_url,
+            "ready_state": page_state.get("readyState"),
+            "viewport": page_state.get("viewport"),
+            "selection_matches": selection_matches,
+            "devtools_browser_url": self._devtools_browser_url(),
+        }
+
     def _serialize_tab(self, tab: ManagedBrowserTab) -> dict[str, Any]:
         return {
             "browser_tab_id": tab.id,
@@ -1102,20 +1133,11 @@ class ManagedBrowserPreviewManager:
             return
 
         async def runner() -> None:
-            try:
-                screenshot = await tab.page.screenshot(
-                    type="jpeg",
-                    quality=SNAPSHOT_QUALITY,
-                    scale="css",
-                    timeout=15_000,
-                )
-            except (PlaywrightError, PlaywrightTimeoutError):
+            snapshot_data_url = await self._capture_snapshot_data_url(tab)
+            if not snapshot_data_url:
                 return
 
-            tab.last_snapshot_data_url = (
-                "data:image/jpeg;base64,"
-                + base64.b64encode(screenshot).decode("ascii")
-            )
+            tab.last_snapshot_data_url = snapshot_data_url
             await self.broadcast(
                 {
                     "type": "browser-tab-snapshot",
@@ -1191,6 +1213,133 @@ class ManagedBrowserPreviewManager:
                     "data": event_data,
                 }
             )
+
+    def _devtools_browser_url(self) -> str | None:
+        if self._cdp_port is None:
+            return None
+        return f"http://127.0.0.1:{self._cdp_port}"
+
+    async def _capture_snapshot_data_url(self, tab: ManagedBrowserTab) -> str | None:
+        try:
+            screenshot = await tab.page.screenshot(
+                type="jpeg",
+                quality=SNAPSHOT_QUALITY,
+                scale="css",
+                timeout=15_000,
+            )
+        except (PlaywrightError, PlaywrightTimeoutError):
+            return tab.last_snapshot_data_url
+
+        return "data:image/jpeg;base64," + base64.b64encode(screenshot).decode("ascii")
+
+    async def _inspect_page_state(self, page: Page) -> dict[str, Any]:
+        try:
+            payload = await page.evaluate(
+                """() => ({
+                    url: window.location.href,
+                    title: document.title,
+                    readyState: document.readyState,
+                    viewport: {
+                        width: window.innerWidth,
+                        height: window.innerHeight,
+                    },
+                })"""
+            )
+        except PlaywrightError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    async def _inspect_selection_hints(
+        self,
+        page: Page,
+        selection_hints: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not selection_hints:
+            return []
+
+        try:
+            payload = await page.evaluate(
+                """(selectionHints) => {
+                    const locateElement = (selection) => {
+                        const candidates = [selection.xpath, selection.root_xpath].filter(Boolean);
+                        for (const xpath of candidates) {
+                            try {
+                                const result = document.evaluate(
+                                    xpath,
+                                    document,
+                                    null,
+                                    XPathResult.FIRST_ORDERED_NODE_TYPE,
+                                    null
+                                );
+                                const element = result.singleNodeValue;
+                                if (element instanceof Element) {
+                                    return { element, xpath };
+                                }
+                            } catch (error) {
+                                // Ignore invalid XPath and keep searching.
+                            }
+                        }
+                        return { element: null, xpath: candidates[0] || null };
+                    };
+
+                    return (selectionHints || []).map((selection) => {
+                        const located = locateElement(selection);
+                        const element = located.element;
+                        if (!(element instanceof Element)) {
+                            return {
+                                selection_id: selection.id || null,
+                                selector_kind: selection.selector_kind || 'dom',
+                                surface_kind: selection.surface_kind || 'dom',
+                                xpath: located.xpath,
+                                found: false,
+                                visible: false,
+                                tag_name: null,
+                                element_id: null,
+                                class_list: [],
+                                text_excerpt: null,
+                                current_outer_html_excerpt: null,
+                                bounds: null,
+                            };
+                        }
+
+                        const rect = element.getBoundingClientRect();
+                        const style = window.getComputedStyle(element);
+                        const textContent = (element.innerText || element.textContent || '')
+                            .replace(/\\s+/g, ' ')
+                            .trim()
+                            .slice(0, 240);
+
+                        return {
+                            selection_id: selection.id || null,
+                            selector_kind: selection.selector_kind || 'dom',
+                            surface_kind: selection.surface_kind || 'dom',
+                            xpath: located.xpath,
+                            found: true,
+                            visible:
+                                rect.width > 0
+                                && rect.height > 0
+                                && style.display !== 'none'
+                                && style.visibility !== 'hidden',
+                            tag_name: element.tagName.toLowerCase(),
+                            element_id: element.id || null,
+                            class_list: Array.from(element.classList || []).slice(0, 8),
+                            text_excerpt: textContent || null,
+                            current_outer_html_excerpt: (element.outerHTML || '').slice(0, 1200) || null,
+                            bounds: {
+                                x: rect.x,
+                                y: rect.y,
+                                width: rect.width,
+                                height: rect.height,
+                            },
+                        };
+                    });
+                }""",
+                selection_hints,
+            )
+        except PlaywrightError:
+            return []
+
+        return payload if isinstance(payload, list) else []
 
     async def _handle_page_close(self, browser_tab_id: str) -> None:
         tab = self._tabs.pop(browser_tab_id, None)

@@ -38,6 +38,8 @@ class RequestPack:
     relative_selected_elements_file: str | None
     selection_tunnel_file: Path | None
     relative_selection_tunnel_file: str | None
+    live_preview_context_file: Path | None
+    relative_live_preview_context_file: str | None
     attachment_paths: list[Path]
     relative_attachment_paths: list[str]
     requested_skills: list[str]
@@ -294,6 +296,7 @@ def create_request_pack(
     acp_session_id: str | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
+    live_preview_context: dict[str, object] | None = None,
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
     session_working_rules: list[str] | None = None,
@@ -334,6 +337,18 @@ def create_request_pack(
         )
         relative_selection_tunnel_path = str(
             selection_tunnel_path.relative_to(Path(project_path).resolve())
+        )
+
+    live_preview_context_path: Path | None = None
+    relative_live_preview_context_path: str | None = None
+    if live_preview_context:
+        live_preview_context_path = pack_dir / "live-preview-context.json"
+        live_preview_context_path.write_text(
+            json.dumps(live_preview_context, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        relative_live_preview_context_path = str(
+            live_preview_context_path.relative_to(Path(project_path).resolve())
         )
 
     attachment_paths: list[Path] = []
@@ -539,6 +554,17 @@ def create_request_pack(
                 "- Use it as authoritative evidence for the selected target context instead of replaying login, navigation, or view reconstruction unless the request explicitly requires that.",
             ]
         )
+    if relative_live_preview_context_path:
+        request_sections.extend(
+            [
+                "",
+                "## Live Preview Context",
+                "",
+                f"- Read `{relative_live_preview_context_path}` for the live-preview handoff metadata captured from the already-running Pixel Forge preview tab.",
+                "- Prefer that live context for current page state when it is available, and use the selection tunnel plus attachments as the durable frozen evidence for this turn.",
+                "- If the live context says attach is unavailable, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
+            ]
+        )
     if relative_attachment_paths:
         request_sections.extend(
             [
@@ -589,6 +615,7 @@ def create_request_pack(
                 "request_file": relative_request_file,
                 "selected_elements_file": relative_selected_path,
                 "selection_tunnel_file": relative_selection_tunnel_path,
+                "live_preview_context_file": relative_live_preview_context_path,
                 "attachments": attachment_manifest,
                 "created_at": pack_dir.stat().st_mtime,
             },
@@ -614,6 +641,8 @@ def create_request_pack(
         relative_selected_elements_file=relative_selected_path,
         selection_tunnel_file=selection_tunnel_path,
         relative_selection_tunnel_file=relative_selection_tunnel_path,
+        live_preview_context_file=live_preview_context_path,
+        relative_live_preview_context_file=relative_live_preview_context_path,
         attachment_paths=attachment_paths,
         relative_attachment_paths=relative_attachment_paths,
         requested_skills=normalized_requested_skills,
