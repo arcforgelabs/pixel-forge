@@ -80,6 +80,55 @@ class WorkspacePreviewLaunchPlanTest(unittest.TestCase):
         self.assertEqual(plan.env["PIXEL_FORGE_REQUESTED_PATH"], "/admin/control-room")
         self.assertEqual(plan.ready_path, "/admin/control-room")
 
+    def test_prefers_explicit_adapter_id_when_restoring_sandbox_url(self) -> None:
+        adapter_path = self.workspace_root / local_targets.WORKSPACE_PREVIEW_ADAPTER_FILENAME
+        adapter_path.write_text(
+            json.dumps(
+                {
+                    "workspacePreviewAdapters": [
+                        {
+                            "id": "control-room-adapter",
+                            "label": "Control Room Adapter",
+                            "mode": "managed-process",
+                            "cwd": "apps/control-room",
+                            "command": ["pnpm", "run", "dev"],
+                            "match": {
+                                "hosts": ["localhost", "127.0.0.1"],
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        plan = local_targets._resolve_workspace_preview_launch_plan(
+            project_path=str(self.workspace_root),
+            workspace_path=str(self.workspace_root),
+            requested_url="http://workspace-preview-target.localhost:3102/admin/control-room",
+            port=3102,
+            web_host="workspace-preview.localhost",
+            adapter_id="control-room-adapter",
+        )
+
+        self.assertEqual(plan.resolution_kind, "adapter")
+        self.assertEqual(plan.adapter_id, "control-room-adapter")
+        self.assertEqual(plan.launch_cwd, self.workspace_root / "apps" / "control-room")
+
+    def test_workspace_preview_launch_keys_split_multiple_adapters(self) -> None:
+        first_slug = local_targets._slug_for_workspace(
+            str(self.workspace_root),
+            str(self.workspace_root),
+            local_targets._workspace_preview_launch_key("control-room-adapter"),
+        )
+        second_slug = local_targets._slug_for_workspace(
+            str(self.workspace_root),
+            str(self.workspace_root),
+            local_targets._workspace_preview_launch_key("marketing-site-adapter"),
+        )
+
+        self.assertNotEqual(first_slug, second_slug)
+
     def test_falls_back_to_workspace_stack_script_when_no_adapter_matches(self) -> None:
         script_path = self.workspace_root / "scripts" / "control-room-stack.sh"
         script_path.parent.mkdir(parents=True)

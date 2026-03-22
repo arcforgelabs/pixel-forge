@@ -67,6 +67,9 @@ def _session_has_meaningful_editor_state(session: SessionRecord) -> bool:
     if str(editor_state.get("targetUrl") or "").strip():
         return True
 
+    if str(editor_state.get("targetPreviewTabId") or "").strip():
+        return True
+
     if editor_state.get("activePreviewTool") == "select":
         return True
 

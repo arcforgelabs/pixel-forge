@@ -102,6 +102,9 @@ export interface LocalTargetMeta {
   audienceWorkspacePath?: string | null
   buildLabel: string
   createdAt: string | null
+  adapterId?: string | null
+  resolutionKind?: 'adapter' | 'heuristic' | null
+  requestedUrl?: string | null
 }
 
 export interface PreviewTab {
@@ -125,6 +128,7 @@ export interface ThreadEditorState {
   draftAgentType: string
   activePreviewTool: PixelForgeDesktopPreviewTool
   targetUrl: string
+  targetPreviewTabId: string | null
   activeTab: LiveEditorPanelTab
   viewportMode: ViewportMode
   authIssue: PreviewAuthIssue | null
@@ -156,6 +160,7 @@ export interface ThreadChatState {
   selectionRedoStack: SelectedElement[][]
   activePreviewTool: PixelForgeDesktopPreviewTool
   targetUrl: string
+  targetPreviewTabId: string | null
   activeTab: LiveEditorPanelTab
   viewportMode: ViewportMode
   authIssue: PreviewAuthIssue | null
@@ -186,6 +191,7 @@ interface ActiveThreadViewState {
   selectionRedoStack: SelectedElement[][]
   activePreviewTool: PixelForgeDesktopPreviewTool
   targetUrl: string
+  targetPreviewTabId: string | null
   activeTab: LiveEditorPanelTab
   viewportMode: ViewportMode
   authIssue: PreviewAuthIssue | null
@@ -232,6 +238,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   ) => string | null
   setActivePreviewTool: (tool: PixelForgeDesktopPreviewTool) => void
   setTargetUrl: (url: string) => void
+  setTargetPreviewTabId: (tabId: string | null) => void
   setActiveTab: (tab: LiveEditorPanelTab) => void
   setViewportMode: (mode: ViewportMode) => void
   setAuthIssue: (issue: PreviewAuthIssue | null) => void
@@ -318,6 +325,7 @@ function createEmptyThreadEditorState(
     draftAgentType: normalizeDraftAgentType(draftAgentType),
     activePreviewTool: null,
     targetUrl: '',
+    targetPreviewTabId: null,
     activeTab: 'chat',
     viewportMode: 'fluid',
     authIssue: null,
@@ -435,6 +443,12 @@ function createThreadEditorStateFromPersisted(
   const activePreviewTabId = restoredTabs.some((tab) => tab.id === editorState.activePreviewTabId)
     ? editorState.activePreviewTabId
     : restoredTabs[0]?.id ?? null
+  const requestedTargetPreviewTabId = editorState.targetPreviewTabId?.trim() || null
+  const targetPreviewTabId = restoredTabs.some(
+    (tab) => tab.id === requestedTargetPreviewTabId
+  )
+    ? requestedTargetPreviewTabId
+    : null
   const targetUrl =
     editorState.targetUrl.trim()
     || restoredTabs.find((tab) => tab.id === activePreviewTabId)?.url?.trim()
@@ -450,6 +464,7 @@ function createThreadEditorStateFromPersisted(
     ),
     activePreviewTool: editorState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl,
+    targetPreviewTabId,
     activeTab: editorState.activeTab === 'elements' ? 'elements' : 'chat',
     viewportMode:
       editorState.viewportMode === 'desktop' || editorState.viewportMode === 'phone'
@@ -471,6 +486,7 @@ function buildPersistedEditorState(
     draftAgentType: normalizeDraftAgentType(threadState.draftAgentType),
     activePreviewTool: threadState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl: threadState.targetUrl.trim(),
+    targetPreviewTabId: threadState.targetPreviewTabId,
     activeTab: threadState.activeTab,
     viewportMode: threadState.viewportMode,
     showUrlHistory: threadState.showUrlHistory,
@@ -505,6 +521,10 @@ function shouldPersistThreadState(
   }
 
   if (threadState.targetUrl.trim()) {
+    return true
+  }
+
+  if (threadState.targetPreviewTabId) {
     return true
   }
 
@@ -553,6 +573,7 @@ function buildActiveThreadViewState(
     selectionRedoStack: threadState.selectionRedoStack,
     activePreviewTool: threadState.activePreviewTool,
     targetUrl: threadState.targetUrl,
+    targetPreviewTabId: threadState.targetPreviewTabId,
     activeTab: threadState.activeTab,
     viewportMode: threadState.viewportMode,
     authIssue: threadState.authIssue,
@@ -835,14 +856,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const getThreadPreviewUrl = (threadKey: string | null | undefined): string | null => {
     const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const targetedPreviewTab = threadState.targetPreviewTabId
+      ? threadState.previewTabs.find((tab) => tab.id === threadState.targetPreviewTabId) ?? null
+      : null
     const activePreviewTab = threadState.previewTabs.find(
       (tab) => tab.id === threadState.activePreviewTabId
     ) ?? threadState.previewTabs[0] ?? null
-    const normalizedTargetUrl = threadState.targetUrl.trim()
-    if (normalizedTargetUrl) {
-      return normalizedTargetUrl
-    }
-    const normalizedTabUrl = activePreviewTab?.url?.trim() || ''
+    const normalizedTabUrl = targetedPreviewTab?.url?.trim() || activePreviewTab?.url?.trim() || ''
     return normalizedTabUrl || null
   }
 
@@ -2096,6 +2116,20 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       scheduleThreadPersistence(activeThreadKey)
     },
 
+    setTargetPreviewTabId: (tabId) => {
+      const activeThreadKey = get().activeThreadKey
+      const normalizedTabId = tabId?.trim() || null
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        targetPreviewTabId:
+          normalizedTabId
+          && threadState.previewTabs.some((tab) => tab.id === normalizedTabId)
+            ? normalizedTabId
+            : null,
+      }))
+      scheduleThreadPersistence(activeThreadKey)
+    },
+
     setActiveTab: (tab) => {
       const activeThreadKey = get().activeThreadKey
       updateThreadState(activeThreadKey, (threadState) => ({
@@ -2132,10 +2166,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
     setPreviewTabs: (next) => {
       const activeThreadKey = get().activeThreadKey
-      updateThreadState(activeThreadKey, (threadState) => ({
-        ...threadState,
-        previewTabs: resolveStateSetterValue(next, threadState.previewTabs),
-      }))
+      updateThreadState(activeThreadKey, (threadState) => {
+        const previewTabs = resolveStateSetterValue(next, threadState.previewTabs)
+        const targetPreviewTabId =
+          threadState.targetPreviewTabId
+          && previewTabs.some((tab) => tab.id === threadState.targetPreviewTabId)
+            ? threadState.targetPreviewTabId
+            : null
+        return {
+          ...threadState,
+          previewTabs,
+          targetPreviewTabId,
+        }
+      })
       scheduleThreadPersistence(activeThreadKey)
     },
 

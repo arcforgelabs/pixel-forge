@@ -492,6 +492,7 @@ class WorkspacePreviewTargetStartRequest(BaseModel):
     project_path: str
     workspace_path: str
     requested_url: str | None = None
+    adapter_id: str | None = None
     force_restart: bool = False
 
 
@@ -1320,6 +1321,7 @@ async def start_local_workspace_preview_target(payload: WorkspacePreviewTargetSt
             payload.project_path,
             payload.workspace_path,
             requested_url=payload.requested_url,
+            adapter_id=payload.adapter_id,
             force_restart=payload.force_restart,
         )
     except ValueError as exc:

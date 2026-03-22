@@ -97,6 +97,8 @@ interface LocalPixelForgeTargetResponse {
   target_mode: boolean
   already_running: boolean
   created_at: string | null
+  adapter_id?: string | null
+  resolution_kind?: 'adapter' | 'heuristic' | null
 }
 
 interface BrowserPreviewEvent {
@@ -138,6 +140,9 @@ interface AppliedSelection {
 function toLocalTargetMeta(
   record: LocalPixelForgeTargetResponse,
   audienceWorkspacePath?: string | null,
+  options?: {
+    requestedUrl?: string | null
+  },
 ): LocalTargetMeta {
   return {
     kind: record.kind,
@@ -148,6 +153,9 @@ function toLocalTargetMeta(
     audienceWorkspacePath: audienceWorkspacePath?.trim() || null,
     buildLabel: record.build_label,
     createdAt: record.created_at,
+    adapterId: record.adapter_id?.trim() || null,
+    resolutionKind: record.resolution_kind ?? null,
+    requestedUrl: options?.requestedUrl?.trim() || null,
   }
 }
 
@@ -412,6 +420,7 @@ export function LiveEditorPane() {
   const targetUrlRef = useRef(previewUrl || '')
   const previewTabsRef = useRef<PreviewTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
+  const targetPreviewTabIdRef = useRef<string | null>(null)
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
   const lastLiveEditorProjectPathRef = useRef<string | null | undefined>(undefined)
   const internalPreviewUrlRef = useRef<string | null>(null)
@@ -502,6 +511,7 @@ export function LiveEditorPane() {
     draftAgentType,
     activePreviewTool,
     targetUrl,
+    targetPreviewTabId,
     activeTab,
     viewportMode,
     authIssue,
@@ -513,6 +523,7 @@ export function LiveEditorPane() {
     setActivePreviewTool,
     setTargetAgentDeckSessionId,
     setTargetUrl,
+    setTargetPreviewTabId,
     setActiveTab,
     setViewportMode,
     setAuthIssue,
@@ -654,6 +665,10 @@ export function LiveEditorPane() {
   }, [activePreviewTabId])
 
   useEffect(() => {
+    targetPreviewTabIdRef.current = targetPreviewTabId
+  }, [targetPreviewTabId])
+
+  useEffect(() => {
     if (!activePreviewTabId && previewTabs[0]) {
       setActivePreviewTabId(previewTabs[0].id)
     }
@@ -746,6 +761,17 @@ export function LiveEditorPane() {
     return previewTabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null
   }, [])
 
+  const getExplicitTargetPreviewTab = useCallback(() => {
+    if (!targetPreviewTabIdRef.current) {
+      return null
+    }
+    return previewTabsRef.current.find((tab) => tab.id === targetPreviewTabIdRef.current) ?? null
+  }, [])
+
+  const getEffectiveTargetPreviewTab = useCallback(() => {
+    return getExplicitTargetPreviewTab() ?? getActivePreviewTab() ?? previewTabsRef.current[0] ?? null
+  }, [getActivePreviewTab, getExplicitTargetPreviewTab])
+
   const getPreviewTabById = useCallback((tabId: string) => {
     return previewTabsRef.current.find((tab) => tab.id === tabId) ?? null
   }, [])
@@ -824,9 +850,14 @@ export function LiveEditorPane() {
   const attachLocalTargetToTab = useCallback((
     tabId: string,
     record: LocalPixelForgeTargetResponse,
-    options?: { audienceWorkspacePath?: string | null }
+    options?: {
+      audienceWorkspacePath?: string | null
+      requestedUrl?: string | null
+    }
   ) => {
-    const meta = toLocalTargetMeta(record, options?.audienceWorkspacePath)
+    const meta = toLocalTargetMeta(record, options?.audienceWorkspacePath, {
+      requestedUrl: options?.requestedUrl,
+    })
     setPreviewTabs((currentTabs) =>
       currentTabs.map((entry) =>
         entry.id === tabId
@@ -1109,7 +1140,9 @@ export function LiveEditorPane() {
       }
     )
 
-    const localTarget = toLocalTargetMeta(record, currentChatWorkspacePath)
+    const localTarget = toLocalTargetMeta(record, currentChatWorkspacePath, {
+      requestedUrl: urlToLoad,
+    })
 
     return {
       url: mergePreviewBaseUrl(record.web_url, urlToLoad),
@@ -1256,6 +1289,11 @@ export function LiveEditorPane() {
       return false
     }
 
+    const workspacePreviewRequestedUrl =
+      tab.localTarget.kind === 'workspace-preview'
+        ? tab.localTarget.requestedUrl?.trim() || tab.url
+        : null
+    const resolvedWorkspacePreviewRequestedUrl = workspacePreviewRequestedUrl || tab.url
     const record =
       tab.localTarget.kind === 'pixel-forge'
         ? await requestPreviewJson<LocalPixelForgeTargetResponse>(
@@ -1277,7 +1315,8 @@ export function LiveEditorPane() {
               body: JSON.stringify({
                 project_path: projectPath,
                 workspace_path: tab.localTarget.sourceRoot,
-                requested_url: tab.url,
+                requested_url: resolvedWorkspacePreviewRequestedUrl,
+                adapter_id: tab.localTarget.adapterId || undefined,
                 force_restart: false,
               }),
             }
@@ -1285,10 +1324,11 @@ export function LiveEditorPane() {
 
     attachLocalTargetToTab(tab.id, record, {
       audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
+      requestedUrl: resolvedWorkspacePreviewRequestedUrl,
     })
     const restoredUrl =
       tab.localTarget.kind === 'workspace-preview'
-        ? mergePreviewBaseUrl(record.web_url, tab.url)
+        ? mergePreviewBaseUrl(record.web_url, resolvedWorkspacePreviewRequestedUrl)
         : record.web_url
     await loadApp(restoredUrl, {
       tabId: tab.id,
@@ -1389,7 +1429,7 @@ export function LiveEditorPane() {
       toast.error('Applying controller updates requires the Pixel Forge desktop shell.')
       return
     }
-    const activePreviewUrl = getActivePreviewTab()?.url || targetUrl || previewUrl
+    const activePreviewUrl = getEffectiveTargetPreviewTab()?.url || previewUrl
 
     const toastId = toast.loading('Loading updated Pixel Forge build...')
     try {
@@ -1426,7 +1466,7 @@ export function LiveEditorPane() {
           : 'Failed to load updated Pixel Forge build'
       )
     }
-  }, [activeMode, getActivePreviewTab, previewUrl, projectPath, targetUrl])
+  }, [activeMode, getEffectiveTargetPreviewTab, previewUrl, projectPath])
 
   const activatePreviewTab = useCallback(async (tabId: string) => {
     const tab = previewTabsRef.current.find((entry) => entry.id === tabId)
@@ -1465,6 +1505,23 @@ export function LiveEditorPane() {
     syncStorePreviewUrl,
     updateEmbeddedPreviewBounds,
   ])
+
+  const toggleActivePreviewTarget = useCallback(() => {
+    const activePreviewTab = getActivePreviewTab()
+    if (!activePreviewTab?.url.trim()) {
+      toast.error('Load a preview before targeting it.')
+      return
+    }
+
+    if (targetPreviewTabId === activePreviewTab.id) {
+      setTargetPreviewTabId(null)
+      toast.success('This chat now follows the active tab.')
+      return
+    }
+
+    setTargetPreviewTabId(activePreviewTab.id)
+    toast.success('This chat now targets the active preview tab.')
+  }, [getActivePreviewTab, setTargetPreviewTabId, targetPreviewTabId])
 
   const openUrlInPreviewTab = useCallback(async (
     url: string,
@@ -1758,7 +1815,8 @@ export function LiveEditorPane() {
       const reusableMirrorTabId = findReusableMirrorTabId({
         previewTabs: previewTabsRef.current,
         audienceWorkspacePath: update.workspacePath,
-        activeTabId: activeTabIdRef.current,
+        activeTabId: targetPreviewTabIdRef.current || activeTabIdRef.current,
+        preferActiveTab: true,
       })
       await startPixelForgeMirror({
         sourceRoot: update.snapshotPath,
@@ -1898,6 +1956,7 @@ export function LiveEditorPane() {
       activeTabIdRef.current = blankTab.id
       setPreviewTabs([blankTab])
       setActivePreviewTabId(blankTab.id)
+      setTargetPreviewTabId(null)
       setTargetUrl('')
       setAuthIssue(null)
       await syncStorePreviewUrl(null)
@@ -1906,6 +1965,10 @@ export function LiveEditorPane() {
 
     previewTabsRef.current = remainingTabs
     setPreviewTabs(remainingTabs)
+
+    if (targetPreviewTabIdRef.current === tabId) {
+      setTargetPreviewTabId(null)
+    }
 
     if (activeTabIdRef.current !== tabId) {
       return
@@ -1941,30 +2004,43 @@ export function LiveEditorPane() {
     setAuthIssue,
     setPreviewTabs,
     setShowUrlHistory,
+    setTargetPreviewTabId,
     setTargetUrl,
     syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     updateEmbeddedPreviewBounds,
   ])
 
-  const refreshApp = useCallback(async () => {
-    const activePreviewTab = getActivePreviewTab()
-    if (!activePreviewTab) {
+  const refreshPreviewTab = useCallback(async (
+    tabId?: string | null,
+    options?: {
+      announceSuccess?: boolean
+    }
+  ) => {
+    const resolvedPreviewTab =
+      (tabId ? getPreviewTabById(tabId) : null)
+      || getActivePreviewTab()
+    if (!resolvedPreviewTab) {
       return
     }
 
-    if (activePreviewTab.mode === 'browser' && activePreviewTab.browserTabId) {
-      await sendBrowserCommand(activePreviewTab.browserTabId, 'refresh')
-      if (desktopPreviewRef.current) {
+    if (resolvedPreviewTab.mode === 'browser' && resolvedPreviewTab.browserTabId) {
+      await sendBrowserCommand(resolvedPreviewTab.browserTabId, 'refresh')
+      if (desktopPreviewRef.current && resolvedPreviewTab.id === activeTabIdRef.current) {
         window.setTimeout(() => {
           void updateEmbeddedPreviewBounds()
         }, 120)
       }
-      toast.success(hasEmbeddedBrowserPreview ? 'Preview refreshed' : 'Browser refreshed', { duration: 1000 })
+      if (options?.announceSuccess !== false) {
+        toast.success(
+          hasEmbeddedBrowserPreview ? 'Preview refreshed' : 'Browser refreshed',
+          { duration: 1000 }
+        )
+      }
       return
     }
 
-    const iframe = iframeRefs.current[activePreviewTab.id]
+    const iframe = iframeRefs.current[resolvedPreviewTab.id]
     if (!iframe || iframe.src === 'about:blank') {
       return
     }
@@ -1976,22 +2052,37 @@ export function LiveEditorPane() {
       iframe.src = nextFrameSrc
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry) =>
-          entry.id === activePreviewTab.id
+          entry.id === resolvedPreviewTab.id
             ? { ...entry, frameSrc: nextFrameSrc }
             : entry
         )
       )
-      toast.success('Refreshed', { duration: 1000 })
+      if (options?.announceSuccess !== false) {
+        toast.success('Refreshed', { duration: 1000 })
+      }
     } catch (error) {
       console.error('[live-editor] Failed to refresh active preview tab:', error)
     }
   }, [
     getActivePreviewTab,
+    getPreviewTabById,
     hasEmbeddedBrowserPreview,
     sendBrowserCommand,
     setPreviewTabs,
     updateEmbeddedPreviewBounds,
   ])
+
+  const refreshApp = useCallback(async () => {
+    await refreshPreviewTab(activeTabIdRef.current, { announceSuccess: true })
+  }, [refreshPreviewTab])
+
+  const refreshTargetPreview = useCallback(async () => {
+    const targetPreviewTab = getEffectiveTargetPreviewTab()
+    if (!targetPreviewTab) {
+      return
+    }
+    await refreshPreviewTab(targetPreviewTab.id, { announceSuccess: true })
+  }, [getEffectiveTargetPreviewTab, refreshPreviewTab])
 
   useEffect(() => {
     if (lastProjectPathRef.current === projectPath) {
@@ -2525,7 +2616,13 @@ export function LiveEditorPane() {
   ]
 
   const activePreviewTab = getActivePreviewTab()
+  const explicitTargetPreviewTab = targetPreviewTabId
+    ? previewTabs.find((tab) => tab.id === targetPreviewTabId) ?? null
+    : null
   const activeMirrorTarget = activePreviewTab?.localTarget
+  const activeTabIsExplicitTarget = Boolean(
+    activePreviewTab?.id && activePreviewTab.id === targetPreviewTabId
+  )
   const hasPendingPreviewUpdate = canLaunchSelfMirror && Boolean(
     relevantPendingPreviewUpdate?.snapshotPath
     && activeMirrorTarget?.sourceRoot !== relevantPendingPreviewUpdate.snapshotPath
@@ -2561,13 +2658,22 @@ export function LiveEditorPane() {
                     <div className="truncate text-[11px] opacity-80">
                       {tab.url || 'Blank tab'}
                     </div>
-                    {tab.mode && (
-                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] opacity-70">
-                        {tab.mode === 'browser'
-                          ? hasEmbeddedBrowserPreview
-                            ? 'Chromium'
-                            : 'Chrome'
-                          : 'Proxy'}
+                    {(tab.mode || tab.id === targetPreviewTabId) && (
+                      <div className="mt-0.5 flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] opacity-70">
+                        {tab.mode && (
+                          <span>
+                            {tab.mode === 'browser'
+                              ? hasEmbeddedBrowserPreview
+                                ? 'Chromium'
+                                : 'Chrome'
+                              : 'Proxy'}
+                          </span>
+                        )}
+                        {tab.id === targetPreviewTabId && (
+                          <span className="rounded bg-primary/15 px-1 py-0.5 text-primary opacity-100">
+                            Target
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2736,6 +2842,20 @@ export function LiveEditorPane() {
               <RefreshCw className="h-3 w-3" />
             </Button>
             <Button
+              variant={activeTabIsExplicitTarget ? 'default' : 'outline'}
+              size="sm"
+              onClick={toggleActivePreviewTarget}
+              disabled={!activePreviewTab?.url.trim()}
+              className="h-7 px-2.5 text-xs"
+              title={
+                activeTabIsExplicitTarget
+                  ? 'Clear the explicit preview target so this chat follows the active tab.'
+                  : 'Make the active tab the explicit preview target for this chat.'
+              }
+            >
+              {activeTabIsExplicitTarget ? 'Clear' : 'Target'}
+            </Button>
+            <Button
               variant={isSelectionToolActive ? 'default' : 'outline'}
               size="sm"
               onClick={toggleSelectionTool}
@@ -2751,6 +2871,11 @@ export function LiveEditorPane() {
             </Button>
 
               <div className="ml-auto flex items-center gap-1.5">
+                {explicitTargetPreviewTab && !activeTabIsExplicitTarget && (
+                  <div className="hidden max-w-[15rem] truncate text-[11px] text-muted-foreground lg:block">
+                    Target: {explicitTargetPreviewTab.title || explicitTargetPreviewTab.url}
+                  </div>
+                )}
                 <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
                   {viewportModes.map(({ mode, label, title, icon: Icon }) => (
                     <Button
@@ -2871,7 +2996,7 @@ export function LiveEditorPane() {
             >
               <div className="flex h-full flex-col overflow-hidden">
                 <ChatMessages
-                  onRefreshPreview={() => void refreshApp()}
+                  onRefreshPreview={() => void refreshTargetPreview()}
                   onLoadPreviewUpdate={() => void loadUpdatedPixelForgePreview()}
                   onApplyControllerUpdate={() => void applyControllerUpdate()}
                 />

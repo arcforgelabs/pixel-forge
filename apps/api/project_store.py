@@ -535,6 +535,9 @@ def _normalize_local_target(value: object) -> dict[str, Any] | None:
         return None
 
     created_at = value.get("createdAt")
+    adapter_id = str(value.get("adapterId") or "").strip()
+    resolution_kind = str(value.get("resolutionKind") or "").strip()
+    requested_url = str(value.get("requestedUrl") or "").strip()
     return {
         "kind": kind,
         "runtimeKind": runtime_kind,
@@ -544,6 +547,9 @@ def _normalize_local_target(value: object) -> dict[str, Any] | None:
         "audienceWorkspacePath": audience_workspace_path or None,
         "buildLabel": str(value.get("buildLabel") or "").strip(),
         "createdAt": created_at if isinstance(created_at, str) and created_at.strip() else None,
+        "adapterId": adapter_id or None,
+        "resolutionKind": resolution_kind if resolution_kind in {"adapter", "heuristic"} else None,
+        "requestedUrl": requested_url or None,
     }
 
 
@@ -596,6 +602,12 @@ def normalize_session_editor_state(editor_state: object | None) -> dict[str, Any
     if active_preview_tab_id is None:
         active_preview_tab_id = normalized_tabs[0]["id"]
 
+    target_preview_tab_id = str(editor_state.get("targetPreviewTabId") or "").strip() or None
+    if target_preview_tab_id and not any(
+        tab["id"] == target_preview_tab_id for tab in normalized_tabs
+    ):
+        target_preview_tab_id = None
+
     url_history = [
         entry.strip()
         for entry in editor_state.get("urlHistory") or []
@@ -620,6 +632,7 @@ def normalize_session_editor_state(editor_state: object | None) -> dict[str, Any
             editor_state.get("activePreviewTool")
         ),
         "targetUrl": str(editor_state.get("targetUrl") or "").strip(),
+        "targetPreviewTabId": target_preview_tab_id,
         "activeTab": _normalize_active_panel_tab(editor_state.get("activeTab")),
         "viewportMode": _normalize_viewport_mode(editor_state.get("viewportMode")),
         "showUrlHistory": bool(editor_state.get("showUrlHistory")),

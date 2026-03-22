@@ -30,6 +30,8 @@ export interface MirrorTabLocalTargetRef {
   runtimeKind: 'mirror' | 'dev'
   sourceRoot: string
   audienceWorkspacePath?: string | null | undefined
+  adapterId?: string | null | undefined
+  requestedUrl?: string | null | undefined
 }
 
 export interface MirrorPreviewTabRef {

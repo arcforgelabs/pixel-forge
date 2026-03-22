@@ -22,6 +22,9 @@ export interface PersistedLocalTargetMeta {
   audienceWorkspacePath?: string | null;
   buildLabel: string;
   createdAt: string | null;
+  adapterId?: string | null;
+  resolutionKind?: "adapter" | "heuristic" | null;
+  requestedUrl?: string | null;
 }
 
 export interface PersistedPreviewTab {
@@ -36,6 +39,7 @@ export interface PersistedThreadEditorState {
   draftAgentType?: string;
   activePreviewTool: "select" | null;
   targetUrl: string;
+  targetPreviewTabId?: string | null;
   activeTab: PersistedLiveEditorPanelTab;
   viewportMode: PersistedLiveEditorViewportMode;
   showUrlHistory: boolean;

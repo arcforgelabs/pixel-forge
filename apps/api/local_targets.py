@@ -57,6 +57,8 @@ class LocalTargetRecord:
     target_mode: bool
     already_running: bool
     created_at: str | None
+    adapter_id: str | None = None
+    resolution_kind: Literal["adapter", "heuristic"] | None = None
 
 
 def _normalize_project_path(project_path: str) -> str:
@@ -298,9 +300,26 @@ def _select_workspace_preview_adapter(
     adapters: list[WorkspacePreviewAdapter],
     *,
     requested_url: str | None,
+    preferred_adapter_id: str | None = None,
 ) -> WorkspacePreviewAdapter | None:
     if not adapters:
         return None
+
+    normalized_preferred_adapter_id = str(preferred_adapter_id or "").strip()
+    if normalized_preferred_adapter_id:
+        explicit_match = next(
+            (
+                adapter
+                for adapter in adapters
+                if adapter.adapter_id == normalized_preferred_adapter_id
+            ),
+            None,
+        )
+        if explicit_match is None:
+            raise ValueError(
+                f"Workspace preview adapter '{normalized_preferred_adapter_id}' is not declared"
+            )
+        return explicit_match
 
     requested_origin = ""
     requested_host = ""
@@ -593,12 +612,14 @@ def _resolve_workspace_preview_launch_plan(
     requested_url: str | None,
     port: int,
     web_host: str,
+    adapter_id: str | None = None,
 ) -> WorkspacePreviewLaunchPlan:
     workspace_root = Path(workspace_path).expanduser().resolve()
     adapters = _load_workspace_preview_adapters(workspace_root)
     adapter = _select_workspace_preview_adapter(
         adapters,
         requested_url=requested_url,
+        preferred_adapter_id=adapter_id,
     )
     if adapter is not None:
         return _build_workspace_preview_launch_plan_from_adapter(
@@ -662,12 +683,23 @@ def _label_for_workspace(workspace_path: str, project_path: str) -> str:
     return normalized_workspace.name or str(normalized_workspace)
 
 
-def _slug_for_workspace(project_path: str, workspace_path: str) -> str:
+def _workspace_preview_launch_key(adapter_id: str | None) -> str:
+    normalized_adapter_id = str(adapter_id or "").strip()
+    if normalized_adapter_id:
+        return f"adapter:{normalized_adapter_id}"
+    return "heuristic:default"
+
+
+def _slug_for_workspace(
+    project_path: str,
+    workspace_path: str,
+    launch_key: str = "heuristic:default",
+) -> str:
     normalized_project_path = _normalize_project_path(project_path)
     normalized_workspace_path = _normalize_project_path(workspace_path)
     basename = re.sub(r"[^a-z0-9-]+", "-", Path(normalized_workspace_path).name.lower()).strip("-")
     digest = hashlib.sha1(
-        f"{normalized_project_path}::{normalized_workspace_path}".encode("utf-8")
+        f"{normalized_project_path}::{normalized_workspace_path}::{launch_key}".encode("utf-8")
     ).hexdigest()[:8]
     return f"{basename or 'workspace'}-preview-target-{digest}"
 
@@ -767,6 +799,10 @@ def _validate_pixel_forge_project(project_path: str) -> None:
 
 def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) -> LocalTargetRecord:
     runtime_kind = _normalize_runtime_kind(str(metadata.get("runtime_kind") or DEFAULT_RUNTIME_KIND))
+    resolution_kind_value = str(metadata.get("resolution_kind") or "").strip().lower()
+    resolution_kind: Literal["adapter", "heuristic"] | None = None
+    if resolution_kind_value in {"adapter", "heuristic"}:
+        resolution_kind = resolution_kind_value  # type: ignore[assignment]
     return LocalTargetRecord(
         kind=str(metadata.get("kind") or PIXEL_FORGE_TARGET_KIND),
         runtime_kind=runtime_kind,
@@ -786,7 +822,83 @@ def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) ->
         target_mode=runtime_kind == "dev",
         already_running=already_running,
         created_at=str(metadata["created_at"]) if metadata.get("created_at") else None,
+        adapter_id=str(metadata["adapter_id"]) if metadata.get("adapter_id") else None,
+        resolution_kind=resolution_kind,
     )
+
+
+def _iter_workspace_preview_metadata(
+    project_path: str,
+    workspace_path: str,
+) -> list[dict[str, Any]]:
+    normalized_project_path = _normalize_project_path(project_path)
+    normalized_workspace_path = _normalize_project_path(workspace_path)
+    records: list[dict[str, Any]] = []
+    instances_root = runtime_shared_state_dir() / "instances"
+    if not instances_root.exists():
+        return records
+
+    for metadata_path in instances_root.glob("*/runtime.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("kind") or "") != WORKSPACE_PREVIEW_TARGET_KIND:
+            continue
+        if _normalize_project_path(str(metadata.get("project_path") or "")) != normalized_project_path:
+            continue
+        if _normalize_project_path(str(metadata.get("workspace_path") or "")) != normalized_workspace_path:
+            continue
+        records.append(metadata)
+
+    return records
+
+
+def _recover_workspace_preview_adapter_id_from_requested_url(
+    project_path: str,
+    workspace_path: str,
+    requested_url: str | None,
+) -> str | None:
+    normalized_requested_url = str(requested_url or "").strip()
+    if not normalized_requested_url:
+        return None
+
+    try:
+        parsed_requested_url = urlparse(normalized_requested_url)
+    except ValueError:
+        return None
+
+    requested_origin = (
+        f"{parsed_requested_url.scheme}://{parsed_requested_url.netloc}".rstrip("/")
+        if parsed_requested_url.scheme and parsed_requested_url.netloc
+        else ""
+    )
+    requested_host = (parsed_requested_url.hostname or "").strip().lower()
+    if not requested_origin and not requested_host:
+        return None
+
+    for metadata in _iter_workspace_preview_metadata(project_path, workspace_path):
+        metadata_web_url = str(metadata.get("web_url") or "").strip()
+        metadata_web_host = str(metadata.get("web_host") or "").strip().lower()
+        metadata_origin = ""
+        if metadata_web_url:
+            with suppress(ValueError):
+                parsed_metadata_web_url = urlparse(metadata_web_url)
+                if parsed_metadata_web_url.scheme and parsed_metadata_web_url.netloc:
+                    metadata_origin = (
+                        f"{parsed_metadata_web_url.scheme}://{parsed_metadata_web_url.netloc}".rstrip("/")
+                    )
+
+        if requested_origin and metadata_origin and requested_origin == metadata_origin:
+            adapter_id = str(metadata.get("adapter_id") or "").strip()
+            return adapter_id or None
+        if requested_host and metadata_web_host and requested_host == metadata_web_host:
+            adapter_id = str(metadata.get("adapter_id") or "").strip()
+            return adapter_id or None
+
+    return None
 
 
 def _process_alive(pid: int | None) -> bool:
@@ -1295,10 +1407,29 @@ def start_workspace_preview_target(
     *,
     requested_url: str | None = None,
     force_restart: bool = False,
+    adapter_id: str | None = None,
 ) -> LocalTargetRecord:
     normalized_project_path = _normalize_project_path(project_path)
     normalized_workspace_path = _normalize_project_path(workspace_path)
-    instance_slug = _slug_for_workspace(normalized_project_path, normalized_workspace_path)
+    normalized_requested_url = str(requested_url or "").strip() or None
+    normalized_adapter_id = str(adapter_id or "").strip() or None
+    recovered_adapter_id = normalized_adapter_id or _recover_workspace_preview_adapter_id_from_requested_url(
+        normalized_project_path,
+        normalized_workspace_path,
+        normalized_requested_url,
+    )
+    workspace_root = Path(normalized_workspace_path).expanduser().resolve()
+    adapters = _load_workspace_preview_adapters(workspace_root)
+    selected_adapter = _select_workspace_preview_adapter(
+        adapters,
+        requested_url=normalized_requested_url,
+        preferred_adapter_id=recovered_adapter_id,
+    )
+    instance_slug = _slug_for_workspace(
+        normalized_project_path,
+        normalized_workspace_path,
+        _workspace_preview_launch_key(selected_adapter.adapter_id if selected_adapter else None),
+    )
     state_dir = _target_state_dir(instance_slug)
     metadata = _load_metadata(instance_slug)
 
@@ -1329,19 +1460,13 @@ def start_workspace_preview_target(
         else:
             _terminate_process_group(int(metadata["pid"]) if metadata.get("pid") else None)
 
-    workspace_root = Path(normalized_workspace_path).expanduser().resolve()
-    adapters = _load_workspace_preview_adapters(workspace_root)
-    selected_adapter = _select_workspace_preview_adapter(
-        adapters,
-        requested_url=requested_url,
-    )
     preferred_web_port = (
         int(metadata["web_port"])
         if metadata and metadata.get("web_port")
         else (
             selected_adapter.preferred_port
             if selected_adapter and selected_adapter.preferred_port
-            else _preferred_port_from_url(requested_url, DEFAULT_WORKSPACE_WEB_PORT)
+            else _preferred_port_from_url(normalized_requested_url, DEFAULT_WORKSPACE_WEB_PORT)
         )
     )
     web_port = _find_available_port(preferred_web_port)
@@ -1356,7 +1481,7 @@ def start_workspace_preview_target(
             adapter=selected_adapter,
             project_path=normalized_project_path,
             workspace_path=normalized_workspace_path,
-            requested_url=requested_url,
+            requested_url=normalized_requested_url,
             port=web_port,
             web_host=web_host,
         )
@@ -1364,7 +1489,7 @@ def start_workspace_preview_target(
         else _detect_workspace_preview_launch_plan(
             project_path=normalized_project_path,
             workspace_path=normalized_workspace_path,
-            requested_url=requested_url,
+            requested_url=normalized_requested_url,
             port=web_port,
         )
     )

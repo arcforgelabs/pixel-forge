@@ -39,6 +39,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             editor_state={
                 "activePreviewTool": "select",
                 "targetUrl": "https://claude.ai/new",
+                "targetPreviewTabId": "tab-a",
                 "activeTab": "elements",
                 "viewportMode": "desktop",
                 "showUrlHistory": True,
@@ -58,6 +59,9 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
                             "audienceWorkspacePath": str(workspace_path),
                             "buildLabel": "thread-a",
                             "createdAt": "2026-03-20T00:00:00Z",
+                            "adapterId": "mirror-adapter",
+                            "resolutionKind": "adapter",
+                            "requestedUrl": "http://localhost:3002/admin/control-room",
                         },
                     }
                 ],
@@ -70,6 +74,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNotNone(saved.editor_state)
         assert saved.editor_state is not None
         self.assertEqual(saved.editor_state["targetUrl"], "https://claude.ai/new")
+        self.assertEqual(saved.editor_state["targetPreviewTabId"], "tab-a")
         self.assertEqual(saved.editor_state["activeTab"], "elements")
         self.assertEqual(saved.editor_state["viewportMode"], "desktop")
         self.assertEqual(saved.editor_state["activePreviewTool"], "select")
@@ -83,6 +88,18 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(
             saved.editor_state["previewTabs"][0]["localTarget"]["audienceWorkspacePath"],
             str(workspace_path),
+        )
+        self.assertEqual(
+            saved.editor_state["previewTabs"][0]["localTarget"]["adapterId"],
+            "mirror-adapter",
+        )
+        self.assertEqual(
+            saved.editor_state["previewTabs"][0]["localTarget"]["resolutionKind"],
+            "adapter",
+        )
+        self.assertEqual(
+            saved.editor_state["previewTabs"][0]["localTarget"]["requestedUrl"],
+            "http://localhost:3002/admin/control-room",
         )
 
     def test_upsert_session_preserves_existing_editor_state_when_not_reprovided(self) -> None:
@@ -99,6 +116,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             agent_deck_session_id="deck-a",
             editor_state={
                 "targetUrl": "https://www.google.com/",
+                "targetPreviewTabId": "tab-a",
                 "activeTab": "chat",
                 "viewportMode": "fluid",
                 "showUrlHistory": False,
@@ -129,6 +147,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNotNone(saved.editor_state)
         assert saved.editor_state is not None
         self.assertEqual(saved.editor_state["targetUrl"], "https://www.google.com/")
+        self.assertEqual(saved.editor_state["targetPreviewTabId"], "tab-a")
         self.assertEqual(saved.editor_state["previewTabs"][0]["title"], "Google")
 
     def test_detach_missing_agent_deck_session_binding_preserves_lane_state(self) -> None:
@@ -147,6 +166,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             agent_deck_tool="codex",
             editor_state={
                 "targetUrl": "https://claude.ai/new",
+                "targetPreviewTabId": "tab-a",
                 "previewTabs": [
                     {
                         "id": "tab-a",
@@ -173,6 +193,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNotNone(sessions[0].editor_state)
         assert sessions[0].editor_state is not None
         self.assertEqual(sessions[0].editor_state["targetUrl"], "https://claude.ai/new")
+        self.assertEqual(sessions[0].editor_state["targetPreviewTabId"], "tab-a")
         self.assertEqual(sessions[0].workspace_path, str(workspace_path))
 
     def test_default_profile_state_is_initialized_and_round_trips(self) -> None:

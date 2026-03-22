@@ -91,6 +91,7 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       selectionRedoStack: nextThreadState.selectionRedoStack,
       activePreviewTool: nextThreadState.activePreviewTool,
       targetUrl: nextThreadState.targetUrl,
+      targetPreviewTabId: nextThreadState.targetPreviewTabId,
       activeTab: nextThreadState.activeTab,
       viewportMode: nextThreadState.viewportMode,
       authIssue: nextThreadState.authIssue,
@@ -323,6 +324,7 @@ describe('live editor selection history', () => {
           editorState: {
             activePreviewTool: null,
             targetUrl: 'https://claude.ai/new',
+            targetPreviewTabId: 'tab-a',
             activeTab: 'elements',
             viewportMode: 'desktop',
             showUrlHistory: false,
@@ -363,6 +365,7 @@ describe('live editor selection history', () => {
 
     expect(useLiveEditorStore.getState().activeThreadKey).toBe('thread-a')
     expect(useLiveEditorStore.getState().targetUrl).toBe('https://claude.ai/new')
+    expect(useLiveEditorStore.getState().targetPreviewTabId).toBe('tab-a')
     expect(useLiveEditorStore.getState().activeTab).toBe('elements')
     expect(useLiveEditorStore.getState().viewportMode).toBe('desktop')
     expect(useLiveEditorStore.getState().activePreviewTabId).toBe('tab-a')
@@ -456,6 +459,7 @@ describe('live editor selection history', () => {
         editor_state: {
           activePreviewTool: null,
           targetUrl: 'https://claude.ai/new',
+          targetPreviewTabId: 'tab-a',
           activeTab: 'chat',
           viewportMode: 'desktop',
           showUrlHistory: false,
@@ -508,6 +512,7 @@ describe('live editor selection history', () => {
       },
     ])
     useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
+    useLiveEditorStore.getState().setTargetPreviewTabId('tab-a')
     useLiveEditorStore.getState().setUrlHistory(['https://claude.ai/new'])
     useLiveEditorStore.getState().setUrlHistoryCursor(0)
 
@@ -526,6 +531,7 @@ describe('live editor selection history', () => {
       agent_deck_tool: 'codex',
       editor_state: {
         targetUrl: 'https://claude.ai/new',
+        targetPreviewTabId: 'tab-a',
         viewportMode: 'desktop',
         activePreviewTabId: 'tab-a',
         previewTabs: [
@@ -560,6 +566,20 @@ describe('live editor selection history', () => {
     })
     useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-a',
+        url: 'http://example.localhost:3000',
+        title: 'Example',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: null,
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
     expect(ws).not.toBeNull()
@@ -606,6 +626,20 @@ describe('live editor selection history', () => {
     })
     useLiveEditorStore.getState().activateThread('thread-1')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-a',
+        url: 'http://example.localhost:3000',
+        title: 'Example',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: null,
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
     expect(ws).not.toBeNull()
@@ -628,6 +662,20 @@ describe('live editor selection history', () => {
     })
     useLiveEditorStore.getState().setDraftAgentType('codex')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-a',
+        url: 'http://example.localhost:3000',
+        title: 'Example',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: null,
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
     expect(ws).not.toBeNull()
@@ -644,6 +692,48 @@ describe('live editor selection history', () => {
     expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty(
       'target_agent_deck_session_id'
     )
+  })
+
+  it('uses the explicit target preview tab instead of the active tab in outbound live-edit payloads', () => {
+    useLiveEditorStore.getState().setPreviewTabs([
+      {
+        id: 'tab-a',
+        url: 'http://admin.localhost:3000',
+        title: 'Admin',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: null,
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+      {
+        id: 'tab-b',
+        url: 'http://marketing.localhost:3001',
+        title: 'Marketing',
+        mode: 'browser',
+        proxySessionId: null,
+        browserTabId: null,
+        frameSrc: 'about:blank',
+        snapshotDataUrl: null,
+        localTarget: null,
+      },
+    ])
+    useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
+    useLiveEditorStore.getState().setTargetUrl('http://admin.localhost:3000')
+    useLiveEditorStore.getState().setTargetPreviewTabId('tab-b')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Target the marketing preview')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      preview_url: 'http://marketing.localhost:3001',
+    })
   })
 
   it('keeps observing an attached Agent Deck session when the websocket closes mid-turn', async () => {
