@@ -19,6 +19,7 @@ STREAM_IDLE_AFTER_COMPLETION_SECONDS = 1.0
 STREAM_POLL_INTERVAL_SECONDS = 0.2
 CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
+EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 
 
@@ -237,6 +238,18 @@ def _decode_json_output(stdout: str, args: list[str]) -> object:
         ) from exc
 
 
+def _decode_agent_deck_json_output(stdout: str, args: list[str]) -> object:
+    trimmed = stdout.strip()
+    if (
+        args
+        and args[0] in {"ls", "list"}
+        and "-json" in args
+        and EMPTY_SESSION_LIST_RE.fullmatch(trimmed)
+    ):
+        return []
+    return _decode_json_output(stdout, _agent_deck_args(*args))
+
+
 async def _run_json_command(args: list[str], cwd: str | None = None) -> object:
     code, stdout, stderr = await _run_command(args, cwd=cwd)
     if code != 0:
@@ -269,7 +282,7 @@ async def _run_agent_deck_json_command(args: list[str], cwd: str | None = None) 
     if code != 0:
         error_output = stderr.strip() or stdout.strip() or "Unknown error"
         raise AgentDeckBridgeError(error_output)
-    return _decode_json_output(stdout, _agent_deck_args(*args))
+    return _decode_agent_deck_json_output(stdout, args)
 
 
 async def _run_agent_deck_json_object_command(

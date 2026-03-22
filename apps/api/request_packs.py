@@ -10,7 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 
@@ -96,6 +96,47 @@ def _request_root(project_path: str) -> Path:
     request_root.mkdir(parents=True, exist_ok=True)
     _ensure_project_exclude(project_root)
     return request_root
+
+
+def request_pack_directory(project_path: str, request_id: str) -> Path:
+    project_root = Path(project_path).resolve()
+    request_root = (project_root / ".pixel-forge" / "requests").resolve()
+    pack_dir = (request_root / request_id).resolve()
+    if os.path.commonpath([str(request_root), str(pack_dir)]) != str(request_root):
+        raise FileNotFoundError("Invalid request id")
+    if not pack_dir.is_dir():
+        raise FileNotFoundError(f"Request pack not found: {pack_dir}")
+    return pack_dir
+
+
+def request_pack_manifest_path(project_path: str, request_id: str) -> Path:
+    manifest_path = request_pack_directory(project_path, request_id) / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Request manifest not found: {manifest_path}")
+    return manifest_path
+
+
+def read_request_pack_manifest(project_path: str, request_id: str) -> dict[str, Any]:
+    payload = json.loads(
+        request_pack_manifest_path(project_path, request_id).read_text(encoding="utf-8")
+    )
+    if not isinstance(payload, dict):
+        raise FileNotFoundError("Request manifest is malformed")
+    return payload
+
+
+def attach_proof_path(project_path: str, request_id: str) -> Path:
+    return request_pack_directory(project_path, request_id) / "attach-proof.json"
+
+
+def write_attach_proof_artifact(
+    project_path: str,
+    request_id: str,
+    payload: dict[str, Any],
+) -> Path:
+    proof_path = attach_proof_path(project_path, request_id)
+    proof_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return proof_path
 
 
 def _thread_root(project_path: str, thread_id: str) -> Path:
@@ -580,6 +621,24 @@ def create_request_pack(
                 "- If the live context says attach is unavailable, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
             ]
         )
+        attach_hints = (
+            live_preview_context.get("attach_hints")
+            if isinstance(live_preview_context, dict)
+            else None
+        )
+        if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
+            request_sections.extend(
+                [
+                    "",
+                    "## Live Attach Proof",
+                    "",
+                    "- If you attach to the already-running managed browser, record that proof for this request.",
+                    f"- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note \"connecting to managed browser via chrome-devtools-mcp\"`",
+                    f"- On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
+                    f"- On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
+                    "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
+                ]
+            )
     if relative_context_patch_path:
         request_sections.extend(
             [

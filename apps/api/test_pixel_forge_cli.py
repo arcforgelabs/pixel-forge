@@ -114,6 +114,62 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn('"browser_tab_id": "browser-tab-1"', stdout.getvalue())
 
+    def test_attach_proof_command_writes_artifact_and_appends_turn_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_dir = Path(tmpdir) / ".pixel-forge" / "requests" / "request-1"
+            request_dir.mkdir(parents=True, exist_ok=True)
+            (request_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "thread_id": "thread-1",
+                        "agent_deck_session_id": "deck-1",
+                        "agent_deck_session_title": "Chat thread-1",
+                        "continuation_mode": "delta",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (request_dir / "live-preview-context.json").write_text(
+                json.dumps(
+                    {
+                        "attach_hints": {
+                            "browser_url": "http://127.0.0.1:9222",
+                            "target_id": "target-1",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with (
+                patch("sys.stdout", stdout),
+                patch("pixel_forge_cli.append_workstation_event") as append_event,
+            ):
+                exit_code = pixel_forge_cli._command_attach_proof(
+                    argparse.Namespace(
+                        project=tmpdir,
+                        request="request-1",
+                        status="succeeded",
+                        via="chrome-devtools-mcp",
+                        note=None,
+                        evidence="The open dropdown shows 7 visible items and the first item reads Billing.",
+                    )
+                )
+
+            payload = json.loads((request_dir / "attach-proof.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["attach_hints"]["target_id"], "target-1")
+        append_event.assert_called_once()
+        self.assertEqual(append_event.call_args.kwargs["event_type"], "turn_status")
+        self.assertEqual(
+            append_event.call_args.kwargs["payload"]["attach_proof"]["status"],
+            "succeeded",
+        )
+        self.assertIn('"proofFile": ".pixel-forge/requests/request-1/attach-proof.json"', stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

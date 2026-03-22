@@ -20,6 +20,7 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
+from workstation_events import append_workstation_event
 from agent_deck_runtime import agent_deck_command, agent_deck_env, agent_deck_profile
 from agent_deck_surface import (
     ensure_agent_deck_surface_started,
@@ -30,6 +31,10 @@ from runtime_config import shared_state_dir
 from runtime_config import agent_deck_home_dir, shared_db_path
 from runtime_version import read_runtime_info_for_root
 from live_preview_context import read_live_preview_context_artifact
+from request_packs import (
+    read_request_pack_manifest,
+    write_attach_proof_artifact,
+)
 from selection_tunnel_cli import selection_tunnel_path
 
 
@@ -652,6 +657,97 @@ def _command_preview_context(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attach_proof_message(status: str, via: str, *, evidence: str | None, note: str | None) -> str:
+    if status == "attempted":
+        suffix = f" {note}" if note else ""
+        return f"Live browser attach attempt recorded via {via}.{suffix}".strip()
+    if status == "succeeded":
+        detail = evidence or note or "No live evidence summary provided."
+        return f"Live browser attach succeeded via {via}. Evidence: {detail}"
+    detail = note or evidence or "No failure detail provided."
+    return f"Live browser attach failed via {via}. Detail: {detail}"
+
+
+def _command_attach_proof(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_request_pack_manifest(args.project, args.request)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    try:
+        live_preview_context = read_live_preview_context_artifact(args.project, args.request)
+    except FileNotFoundError:
+        live_preview_context = {}
+
+    thread_id = _normalize_text(manifest.get("thread_id"))
+    agent_deck_session_id = _normalize_text(manifest.get("agent_deck_session_id"))
+    agent_deck_session_title = _normalize_text(manifest.get("agent_deck_session_title"))
+    continuation_mode = _normalize_text(manifest.get("continuation_mode"))
+    proof_status = args.status
+    via = _normalize_text(args.via) or "chrome-devtools-mcp"
+    note = _normalize_text(args.note)
+    evidence = _normalize_text(args.evidence)
+    if proof_status == "succeeded" and not evidence:
+        raise SystemExit("--evidence is required when --status succeeded")
+    attach_hints = (
+        live_preview_context.get("attach_hints")
+        if isinstance(live_preview_context, dict)
+        else None
+    )
+
+    proof_payload = {
+        "request_id": args.request,
+        "thread_id": thread_id,
+        "status": proof_status,
+        "via": via,
+        "recorded_at": int(time.time()),
+        "note": note,
+        "evidence": evidence,
+        "attach_hints": attach_hints if isinstance(attach_hints, dict) else None,
+    }
+    proof_path = write_attach_proof_artifact(args.project, args.request, proof_payload)
+    message = _attach_proof_message(proof_status, via, evidence=evidence, note=note)
+
+    if thread_id:
+        append_workstation_event(
+            args.project,
+            thread_id,
+            agent_deck_session_id=agent_deck_session_id,
+            event_type="turn_status",
+            payload={
+                "request_id": args.request,
+                "agent_deck_session_id": agent_deck_session_id,
+                "agent_deck_session_title": agent_deck_session_title,
+                "workspace_path": str(Path(args.project).resolve()),
+                "continuation_mode": continuation_mode,
+                "message": message,
+                "attach_proof": {
+                    "status": proof_status,
+                    "via": via,
+                    "note": note,
+                    "evidence": evidence,
+                    "proof_file": str(proof_path.relative_to(Path(args.project).resolve())),
+                },
+            },
+        )
+
+    response = {
+        "ok": True,
+        "requestId": args.request,
+        "threadId": thread_id,
+        "status": proof_status,
+        "via": via,
+        "proofFile": str(proof_path.relative_to(Path(args.project).resolve())),
+        "message": message,
+    }
+    if evidence:
+        response["evidence"] = evidence
+    if note:
+        response["note"] = note
+    print(json.dumps(response, indent=2))
+    return 0
+
+
 def _controller_update_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "projectPath": args.project_path,
@@ -959,6 +1055,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preview_context.add_argument("--compact", action="store_true", help="Print compact JSON")
     preview_context.set_defaults(handler=_command_preview_context)
+
+    attach_proof = subparsers.add_parser(
+        "attach-proof",
+        help="Record live browser attach proof for a Pixel Forge request",
+    )
+    attach_proof.add_argument("--project", required=True, help="Workspace path that owns the request pack")
+    attach_proof.add_argument("--request", required=True, help="Pixel Forge request id")
+    attach_proof.add_argument(
+        "--status",
+        required=True,
+        choices=["attempted", "succeeded", "failed"],
+        help="Attach proof status to record",
+    )
+    attach_proof.add_argument(
+        "--via",
+        default="chrome-devtools-mcp",
+        help="Attach mechanism used for the live browser session",
+    )
+    attach_proof.add_argument(
+        "--note",
+        help="Short note for the attach attempt or failure",
+    )
+    attach_proof.add_argument(
+        "--evidence",
+        help="One live-only fact observed after successful attach",
+    )
+    attach_proof.set_defaults(handler=_command_attach_proof)
 
     controller_update = subparsers.add_parser(
         "controller-update",

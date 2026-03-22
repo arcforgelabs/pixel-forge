@@ -103,6 +103,9 @@ do not treat /tmp/workspace as a skill.
                     "live_attach_mode": "managed-browser",
                     "current_url": "https://example.com/app",
                     "current_title": "Example App",
+                    "attach_hints": {
+                        "browser_url": "http://127.0.0.1:9222",
+                    },
                 },
             )
 
@@ -113,7 +116,9 @@ do not treat /tmp/workspace as a skill.
             )
 
             self.assertIn("## Live Preview Context", request_body)
+            self.assertIn("## Live Attach Proof", request_body)
             self.assertIn("live-preview-context.json", request_body)
+            self.assertIn("pixel-forge attach-proof --project . --request", request_body)
             self.assertEqual(
                 manifest["live_preview_context_file"],
                 request_pack.relative_live_preview_context_file,

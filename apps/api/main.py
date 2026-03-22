@@ -2291,6 +2291,7 @@ def build_live_editor_context_patch(
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
+    request_id: str | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
@@ -2409,6 +2410,14 @@ Treat this as the smallest current-turn continuity delta for the warm session. U
 
 This context patch includes direct attach hints for the already-running managed browser tab.
 If you need authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
+                if request_id:
+                    base += f"""
+
+If you attempt live attach for this request, record it explicitly:
+- Before attach: `pixel-forge attach-proof --project . --request {request_id} --status attempted --note "connecting to managed browser via chrome-devtools-mcp"`
+- On success: `pixel-forge attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
+- On failure: `pixel-forge attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
+Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:
@@ -3461,6 +3470,7 @@ async def live_editor_chat(websocket: WebSocket):
 
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
+                    request_id=request_pack.request_id,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     selection_tunnel_url=(

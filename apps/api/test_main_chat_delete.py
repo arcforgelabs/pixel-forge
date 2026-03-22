@@ -113,6 +113,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
     def test_build_dispatch_prompt_mentions_context_patch_and_attach_hints(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
+            request_id="abcd",
             continuation_mode="delta",
             context_patch={
                 "source": "pixel-forge",
@@ -133,6 +134,9 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
         self.assertIn("using-chrome-devtools-mcp", prompt)
         self.assertIn("instead of replaying login or navigation", prompt)
+        self.assertIn("pixel-forge attach-proof --project . --request abcd --status attempted", prompt)
+        self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded", prompt)
+        self.assertIn("Do not claim a successful live attach unless", prompt)
 
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(

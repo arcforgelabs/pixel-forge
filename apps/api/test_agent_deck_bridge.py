@@ -367,6 +367,18 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity.output, "")
 
 
+class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_list_project_sessions_treats_empty_profile_message_as_empty_json_list(self) -> None:
+        with patch.object(
+            agent_deck_bridge,
+            "_run_agent_deck_command",
+            AsyncMock(return_value=(0, "No sessions found in profile 'alpha'.\n", "")),
+        ):
+            sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual(sessions, [])
+
+
 class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_stream_claude_jsonl_mirrors_chunk_payloads_to_callback(self) -> None:
         websocket = AsyncMock()
