@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from controller_update_state import canonical_project_root
 from runtime_config import cli_name
 
 
@@ -346,11 +347,15 @@ def create_request_pack(
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
     explicit_live_attach_required: bool = False,
+    canonical_project_path: str | None = None,
     session_working_rules: list[str] | None = None,
     turn_working_rules: list[str] | None = None,
     requested_skills: list[str] | None = None,
 ) -> RequestPack:
     pixel_forge_cli = cli_name()
+    normalized_canonical_project_path = str(
+        canonical_project_root(canonical_project_path or project_path)
+    )
     request_root = _request_root(project_path)
     request_id = f"{uuid4().hex[:8]}-{uuid4().hex[:8]}"
     pack_dir = request_root / request_id
@@ -649,14 +654,16 @@ def create_request_pack(
                         if explicit_live_attach_required
                         else None
                     ),
-                    f"- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --note \"connecting to warm preview via chrome-devtools-mcp\"`",
-                    f"- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
-                    f"- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
+                    f"- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --via chrome-devtools-mcp --note \"connecting to warm preview via chrome-devtools-mcp\"`",
+                    f"- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --via chrome-devtools-mcp --evidence \"<one fact only visible in the current live DOM>\"`",
+                    f"- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via chrome-devtools-mcp --note \"<short failure reason>\"`",
+                    "- If you use a different attach mechanism, replace the `--via` value with the actual mechanism you used, for example `raw-cdp`.",
                     (
                         "- If live attach fails, record the failure proof and stop instead of substituting a controller-browserview success receipt."
                         if explicit_live_attach_required
                         else None
                     ),
+                    "- Unless the request explicitly asks for interaction, keep the proof read-only: do not click, type, submit, or navigate the live preview while collecting the receipt.",
                     "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
                 ]
             )
@@ -680,7 +687,7 @@ def create_request_pack(
                     "",
                     "- This request explicitly asks for a real live attach proof, but this request pack only includes controller-captured BrowserView DOM state and no attach hints.",
                     "- Do not record a controller-browserview success proof in place of a real attach proof for this request.",
-                    f"- Record a failed attach proof with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note \"attach hints unavailable for explicit live-attach proof request\"`",
+                    f"- Record a failed attach proof with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via no-live-attach-hints --note \"attach hints unavailable for explicit live-attach proof request\"`",
                 ]
             )
     if relative_context_patch_path:
@@ -725,6 +732,7 @@ def create_request_pack(
                 "acpx_record_id": acpx_record_id,
                 "acp_session_id": acp_session_id,
                 "preview_url": preview_url,
+                "canonical_project_path": normalized_canonical_project_path,
                 "continuation_mode": continuation_mode,
                 "bootstrap": continuation_mode == "bootstrap",
                 "informational_only": informational_only,

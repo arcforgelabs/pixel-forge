@@ -2458,10 +2458,12 @@ This turn explicitly requires real warm-session attach proof. Because attach hin
                     base += f"""
 
 If you attempt live attach for this request, record it explicitly:
-- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --note "connecting to warm preview via chrome-devtools-mcp"`
-- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
-- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
-Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact."""
+- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --via chrome-devtools-mcp --note "connecting to warm preview via chrome-devtools-mcp"`
+- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --via chrome-devtools-mcp --evidence "<one fact only visible in the current live DOM>"`
+- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via chrome-devtools-mcp --note "<short failure reason>"`
+If you use a different attach mechanism, replace the `--via` value with the actual mechanism you used, for example `raw-cdp`.
+Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact.
+Unless the request explicitly asks for interaction, keep the proof read-only: do not click, type, submit, or navigate the live preview while collecting the receipt."""
             elif live_inspection_mode == "controller-browserview" and request_id and not explicit_live_attach_required:
                 base += f"""
 
@@ -2475,7 +2477,7 @@ Do not claim that a deeper live attach happened unless you actually used the emi
 
 This context patch includes controller-captured live DOM state, but this turn explicitly requires real live-attach proof and no attach hints are available here.
 Use the captured state only to explain the limitation.
-- Record failure instead of a controller-browserview success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note "attach hints unavailable for explicit live-attach proof request"`"""
+- Record failure instead of a controller-browserview success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via no-live-attach-hints --note "attach hints unavailable for explicit live-attach proof request"`"""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:
@@ -3420,6 +3422,7 @@ async def live_editor_chat(websocket: WebSocket):
                     continuation_mode=continuation_mode,
                     informational_only=informational_only,
                     explicit_live_attach_required=explicit_live_attach_required,
+                    canonical_project_path=normalized_project_path,
                     requested_skills=requested_skills,
                     session_working_rules=(
                         [

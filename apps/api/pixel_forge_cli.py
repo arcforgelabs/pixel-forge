@@ -696,8 +696,16 @@ def _command_attach_proof(args: argparse.Namespace) -> int:
     agent_deck_session_id = _normalize_text(manifest.get("agent_deck_session_id"))
     agent_deck_session_title = _normalize_text(manifest.get("agent_deck_session_title"))
     continuation_mode = _normalize_text(manifest.get("continuation_mode"))
+    workspace_project_path = str(Path(args.project).expanduser().resolve())
+    canonical_project_path = str(
+        canonical_project_root(
+            _normalize_text(manifest.get("canonical_project_path")) or workspace_project_path
+        )
+    )
     proof_status = args.status
-    via = _normalize_text(args.via) or "chrome-devtools-mcp"
+    via = _normalize_text(args.via)
+    if not via:
+        raise SystemExit("--via is required")
     note = _normalize_text(args.note)
     evidence = _normalize_text(args.evidence)
     if proof_status == "succeeded" and not evidence:
@@ -714,6 +722,8 @@ def _command_attach_proof(args: argparse.Namespace) -> int:
         "status": proof_status,
         "via": via,
         "recorded_at": int(time.time()),
+        "workspace_project_path": workspace_project_path,
+        "canonical_project_path": canonical_project_path,
         "note": note,
         "evidence": evidence,
         "attach_hints": attach_hints if isinstance(attach_hints, dict) else None,
@@ -723,7 +733,7 @@ def _command_attach_proof(args: argparse.Namespace) -> int:
 
     if thread_id:
         append_workstation_event(
-            args.project,
+            canonical_project_path,
             thread_id,
             agent_deck_session_id=agent_deck_session_id,
             event_type="turn_status",
@@ -731,7 +741,8 @@ def _command_attach_proof(args: argparse.Namespace) -> int:
                 "request_id": args.request,
                 "agent_deck_session_id": agent_deck_session_id,
                 "agent_deck_session_title": agent_deck_session_title,
-                "workspace_path": str(Path(args.project).resolve()),
+                "workspace_path": workspace_project_path,
+                "canonical_project_path": canonical_project_path,
                 "continuation_mode": continuation_mode,
                 "message": message,
                 "attach_proof": {
@@ -750,6 +761,7 @@ def _command_attach_proof(args: argparse.Namespace) -> int:
         "threadId": thread_id,
         "status": proof_status,
         "via": via,
+        "canonicalProjectPath": canonical_project_path,
         "proofFile": str(proof_path.relative_to(Path(args.project).resolve())),
         "message": message,
     }
@@ -1083,8 +1095,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     attach_proof.add_argument(
         "--via",
-        default="chrome-devtools-mcp",
-        help="Attach mechanism used for the live browser session",
+        required=True,
+        help="Attach mechanism actually used for the live browser session",
     )
     attach_proof.add_argument(
         "--note",

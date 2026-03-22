@@ -120,12 +120,17 @@ do not treat /tmp/workspace as a skill.
             self.assertIn("## Live Attach Proof", request_body)
             self.assertIn("live-preview-context.json", request_body)
             self.assertIn("pixel-forge attach-proof --project . --request", request_body)
+            self.assertIn("--status attempted --via chrome-devtools-mcp", request_body)
+            self.assertIn("--status succeeded --via chrome-devtools-mcp", request_body)
+            self.assertIn("--status failed --via chrome-devtools-mcp", request_body)
+            self.assertIn("replace the `--via` value with the actual mechanism you used", request_body)
             self.assertEqual(
                 manifest["live_preview_context_file"],
                 request_pack.relative_live_preview_context_file,
             )
             self.assertEqual(live_preview_payload["browser_tab_id"], "browser-tab-1")
             self.assertTrue(live_preview_payload["live_attach_available"])
+            self.assertEqual(manifest["canonical_project_path"], str(Path(tmpdir).resolve()))
 
     def test_request_pack_uses_runtime_cli_name_for_live_attach_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -162,6 +167,7 @@ do not treat /tmp/workspace as a skill.
             request_body = request_pack.request_file.read_text(encoding="utf-8")
 
             self.assertIn("pixel-forge-alpha attach-proof --project . --request", request_body)
+            self.assertIn("--via chrome-devtools-mcp", request_body)
 
     def test_request_pack_requires_real_attach_for_explicit_attach_proof_requests(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -193,6 +199,7 @@ do not treat /tmp/workspace as a skill.
 
             self.assertIn("explicitly requires a real CDP attach", request_body)
             self.assertIn("record the failure proof and stop", request_body)
+            self.assertIn("keep the proof read-only", request_body)
             self.assertNotIn("--via controller-browserview --status succeeded", request_body)
 
     def test_request_pack_writes_context_patch_section_and_manifest(self) -> None:
@@ -291,5 +298,22 @@ do not treat /tmp/workspace as a skill.
 
             self.assertIn("## Live Attach Limitation", request_body)
             self.assertIn("Do not record a controller-browserview success proof", request_body)
-            self.assertIn('--status failed --note "attach hints unavailable for explicit live-attach proof request"', request_body)
+            self.assertIn('--status failed --via no-live-attach-hints --note "attach hints unavailable for explicit live-attach proof request"', request_body)
             self.assertNotIn("--via controller-browserview --status succeeded", request_body)
+
+    def test_request_pack_records_explicit_canonical_project_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_path = Path(tmpdir) / ".agents" / "chat-a"
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            request_pack = create_request_pack(
+                str(workspace_path),
+                "thread-1",
+                "Inspect the live preview context.",
+                "<selected-elements />",
+                [],
+                canonical_project_path=tmpdir,
+            )
+
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+
+            self.assertEqual(manifest["canonical_project_path"], str(Path(tmpdir).resolve()))

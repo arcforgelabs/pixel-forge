@@ -134,8 +134,9 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
         self.assertIn("using-chrome-devtools-mcp", prompt)
         self.assertIn("instead of replaying login or navigation", prompt)
-        self.assertIn("pixel-forge attach-proof --project . --request abcd --status attempted", prompt)
-        self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded", prompt)
+        self.assertIn("pixel-forge attach-proof --project . --request abcd --status attempted --via chrome-devtools-mcp", prompt)
+        self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded --via chrome-devtools-mcp", prompt)
+        self.assertIn("replace the `--via` value with the actual mechanism you used", prompt)
         self.assertIn("Do not claim a successful live attach unless", prompt)
 
     def test_build_dispatch_prompt_requires_real_attach_for_explicit_attach_proof(self) -> None:
@@ -162,6 +163,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("explicitly requests real live-attach proof", prompt)
         self.assertIn("it is not sufficient to satisfy this request on its own", prompt)
         self.assertIn("explicitly requires real warm-session attach proof", prompt)
+        self.assertIn("keep the proof read-only", prompt)
         self.assertNotIn("--via controller-browserview --status succeeded", prompt)
 
     def test_build_dispatch_prompt_mentions_controller_browserview_live_context(self) -> None:
@@ -203,6 +205,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("explicitly requires real live-attach proof", prompt)
         self.assertIn("Record failure instead of a controller-browserview success", prompt)
+        self.assertIn("--via no-live-attach-hints", prompt)
         self.assertNotIn("--via controller-browserview --status succeeded", prompt)
 
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
