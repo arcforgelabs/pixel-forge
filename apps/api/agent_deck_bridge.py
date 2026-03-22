@@ -307,6 +307,13 @@ def _claude_config_dir() -> Path:
     return Path.home() / ".claude"
 
 
+def _codex_home_dir() -> Path:
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home)
+    return Path.home() / ".codex"
+
+
 def claude_jsonl_path(project_path: str, claude_session_id: str | None) -> Path | None:
     if not claude_session_id:
         return None
@@ -325,6 +332,30 @@ def claude_jsonl_path(project_path: str, claude_session_id: str | None) -> Path 
     if session_path.exists():
         return session_path
     return session_path
+
+
+def codex_jsonl_path(codex_session_id: str | None) -> Path | None:
+    if not codex_session_id:
+        return None
+
+    sessions_root = _codex_home_dir() / "sessions"
+    if not sessions_root.exists():
+        return None
+
+    suffix = f"{codex_session_id}.jsonl"
+    latest_match: Path | None = None
+    latest_mtime = -1
+    for path in sessions_root.rglob("*.jsonl"):
+        if not path.name.endswith(suffix):
+            continue
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        if latest_match is None or mtime > latest_mtime:
+            latest_match = path
+            latest_mtime = mtime
+    return latest_match
 
 
 async def session_show(agent_deck_session_id: str) -> dict[str, object]:
@@ -1285,6 +1316,70 @@ def read_claude_jsonl_payloads(
             payloads.extend(claude_jsonl_payloads_for_record(record))
 
     return offset, payloads
+
+
+def codex_jsonl_text_chunks_for_record(record: dict[str, object]) -> list[str]:
+    if record.get("type") != "response_item":
+        return []
+
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return []
+    if payload.get("type") != "message" or payload.get("role") != "assistant":
+        return []
+
+    content_blocks = payload.get("content")
+    if not isinstance(content_blocks, list):
+        return []
+
+    chunks: list[str] = []
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "output_text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            chunks.append(text)
+    return chunks
+
+
+def read_codex_jsonl_text_chunks(
+    jsonl_path: Path,
+    start_offset: int,
+) -> tuple[int, list[str]]:
+    offset = start_offset
+    chunks: list[str] = []
+
+    if not jsonl_path.exists():
+        return offset, chunks
+
+    try:
+        file_size = jsonl_path.stat().st_size
+    except OSError:
+        return offset, chunks
+    if offset > file_size:
+        offset = 0
+
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        handle.seek(offset)
+        while True:
+            line = handle.readline()
+            if not line:
+                break
+            offset = handle.tell()
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(record, dict):
+                continue
+
+            chunks.extend(codex_jsonl_text_chunks_for_record(record))
+
+    return offset, chunks
 
 
 async def _emit_claude_jsonl_record(

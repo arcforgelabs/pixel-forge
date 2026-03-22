@@ -10,8 +10,10 @@ from agent_deck_bridge import (
     AgentDeckBridgeError,
     _session_output_has_meaningful_activity,
     claude_jsonl_path,
+    codex_jsonl_path,
     get_last_output,
     read_claude_jsonl_payloads,
+    read_codex_jsonl_text_chunks,
 )
 from project_store import SessionRecord, list_sessions_by_agent_deck_session_id
 from runtime_config import agent_deck_home_dir
@@ -70,6 +72,20 @@ class ClaudeTurnState:
     assistant_output: str = ""
 
 
+@dataclass(slots=True)
+class CodexJSONLCursor:
+    codex_session_id: str
+    jsonl_path: Path | None
+    offset: int = 0
+
+
+@dataclass(slots=True)
+class CodexTurnState:
+    request_id: str
+    codex_session_id: str
+    assistant_output: str = ""
+
+
 def _normalized_text(value: object | None) -> str | None:
     if not isinstance(value, str):
         return None
@@ -79,6 +95,42 @@ def _normalized_text(value: object | None) -> str | None:
 
 def _is_claude_tool(tool: str | None) -> bool:
     return (tool or "").strip().lower() == "claude"
+
+
+def _is_codex_tool(tool: str | None) -> bool:
+    return (tool or "").strip().lower() == "codex"
+
+
+def _canonical_hook_event(event_name: str | None) -> str:
+    return (event_name or "").strip().lower().replace(".", "/").replace("-", "/").replace("_", "/")
+
+
+def _is_codex_turn_started_event(event_name: str | None) -> bool:
+    return _canonical_hook_event(event_name) == "turn/started"
+
+
+def _is_codex_turn_failed_event(event_name: str | None) -> bool:
+    canonical = _canonical_hook_event(event_name)
+    return canonical in {
+        "turn/failed",
+        "turn/aborted",
+        "turn/cancelled",
+        "turn/canceled",
+    }
+
+
+def _is_codex_turn_terminal_event(event_name: str | None) -> bool:
+    canonical = _canonical_hook_event(event_name)
+    return canonical in {
+        "agent/turn/complete",
+        "agent/turn/completed",
+        "turn/complete",
+        "turn/completed",
+        "turn/failed",
+        "turn/aborted",
+        "turn/cancelled",
+        "turn/canceled",
+    }
 
 
 def _status_message(
@@ -124,6 +176,8 @@ class AgentDeckNativeEventIngestor:
         self._latest_hook_events: dict[str, AgentDeckNativeHookEvent] = {}
         self._claude_jsonl_cursors: dict[str, ClaudeJSONLCursor] = {}
         self._active_claude_turns: dict[str, ClaudeTurnState] = {}
+        self._codex_jsonl_cursors: dict[str, CodexJSONLCursor] = {}
+        self._active_codex_turns: dict[str, CodexTurnState] = {}
 
     def events_dir(self) -> Path:
         path = agent_deck_home_dir() / "events"
@@ -144,6 +198,7 @@ class AgentDeckNativeEventIngestor:
         await self._poll_status_events()
         await self._poll_hook_events()
         await self._poll_active_claude_turns()
+        await self._poll_active_codex_turns()
 
     async def _poll_status_events(self) -> None:
         await self._poll_json_files(
@@ -285,70 +340,120 @@ class AgentDeckNativeEventIngestor:
 
     async def _ingest_hook_event(self, event: AgentDeckNativeHookEvent) -> None:
         self._latest_hook_events[event.agent_deck_session_id] = event
-        bound_sessions = self._bound_claude_sessions(event.agent_deck_session_id)
-        if not bound_sessions:
+        claude_sessions = self._bound_claude_sessions(event.agent_deck_session_id)
+        codex_sessions = self._bound_codex_sessions(event.agent_deck_session_id)
+        if not claude_sessions and not codex_sessions:
             self._active_claude_turns.pop(event.agent_deck_session_id, None)
+            self._active_codex_turns.pop(event.agent_deck_session_id, None)
             return
 
-        if event.upstream_session_id:
+        if event.upstream_session_id and claude_sessions:
             self._ensure_claude_cursor(
                 event.agent_deck_session_id,
-                bound_sessions,
+                claude_sessions,
                 event.upstream_session_id,
                 anchor_to_end=(event.event or "") != "UserPromptSubmit",
             )
 
         normalized_event = (event.event or "").strip()
-        if normalized_event == "UserPromptSubmit":
+        if normalized_event == "UserPromptSubmit" and claude_sessions:
             if event.upstream_session_id:
                 self._ensure_claude_cursor(
                     event.agent_deck_session_id,
-                    bound_sessions,
+                    claude_sessions,
                     event.upstream_session_id,
                     anchor_to_end=True,
                 )
                 self._ensure_active_claude_turn(
                     event.agent_deck_session_id,
-                    bound_sessions,
+                    claude_sessions,
                     event.upstream_session_id,
                     event.timestamp,
                 )
             return
 
-        if normalized_event in {"PermissionRequest", "Notification"}:
+        if normalized_event in {"PermissionRequest", "Notification"} and claude_sessions:
             turn_state = self._active_claude_turns.get(event.agent_deck_session_id)
             status_message = _hook_status_message(normalized_event)
             if turn_state is not None and status_message:
                 self._append_turn_status_if_changed(
-                    bound_sessions,
+                    claude_sessions,
                     request_id=turn_state.request_id,
                     message=status_message,
                 )
             return
 
-        if normalized_event == "Stop":
+        if normalized_event == "Stop" and claude_sessions:
             await self._sync_claude_turn_output(
                 event.agent_deck_session_id,
-                bound_sessions,
+                claude_sessions,
                 allow_backfill_start=True,
             )
             self._complete_claude_turn(
                 event.agent_deck_session_id,
-                bound_sessions,
+                claude_sessions,
             )
             return
 
-        if normalized_event == "SessionEnd":
+        if normalized_event == "SessionEnd" and claude_sessions:
             await self._sync_claude_turn_output(
                 event.agent_deck_session_id,
-                bound_sessions,
+                claude_sessions,
                 allow_backfill_start=False,
             )
             self._fail_claude_turn(
                 event.agent_deck_session_id,
-                bound_sessions,
+                claude_sessions,
                 message="Claude session ended during the observed turn.",
             )
+            return
+
+        if not codex_sessions:
+            return
+
+        codex_session_id = self._resolve_codex_session_id(
+            event.agent_deck_session_id,
+            event=event,
+        )
+        if codex_session_id:
+            self._ensure_codex_cursor(
+                event.agent_deck_session_id,
+                codex_session_id,
+                anchor_to_end=not _is_codex_turn_started_event(normalized_event),
+            )
+
+        if _is_codex_turn_started_event(normalized_event):
+            if codex_session_id:
+                self._ensure_codex_cursor(
+                    event.agent_deck_session_id,
+                    codex_session_id,
+                    anchor_to_end=True,
+                )
+                self._ensure_active_codex_turn(
+                    event.agent_deck_session_id,
+                    codex_sessions,
+                    codex_session_id,
+                    event.timestamp,
+                )
+            return
+
+        if _is_codex_turn_terminal_event(normalized_event):
+            await self._sync_codex_turn_output(
+                event.agent_deck_session_id,
+                codex_sessions,
+                allow_backfill_start=True,
+            )
+            if _is_codex_turn_failed_event(normalized_event):
+                self._fail_codex_turn(
+                    event.agent_deck_session_id,
+                    codex_sessions,
+                    message="Codex turn ended unsuccessfully in Agent Deck.",
+                )
+            else:
+                self._complete_codex_turn(
+                    event.agent_deck_session_id,
+                    codex_sessions,
+                )
 
     async def _poll_active_claude_turns(self) -> None:
         for agent_deck_session_id in list(self._active_claude_turns):
@@ -362,12 +467,39 @@ class AgentDeckNativeEventIngestor:
                 allow_backfill_start=False,
             )
 
+    async def _poll_active_codex_turns(self) -> None:
+        for agent_deck_session_id in list(self._active_codex_turns):
+            bound_sessions = self._bound_codex_sessions(agent_deck_session_id)
+            if not bound_sessions:
+                self._active_codex_turns.pop(agent_deck_session_id, None)
+                continue
+            await self._sync_codex_turn_output(
+                agent_deck_session_id,
+                bound_sessions,
+                allow_backfill_start=False,
+            )
+
     def _bound_claude_sessions(self, agent_deck_session_id: str) -> list[SessionRecord]:
         return [
             session
             for session in list_sessions_by_agent_deck_session_id(agent_deck_session_id)
             if _is_claude_tool(session.agent_deck_tool)
         ]
+
+    def _bound_codex_sessions(self, agent_deck_session_id: str) -> list[SessionRecord]:
+        return [
+            session
+            for session in list_sessions_by_agent_deck_session_id(agent_deck_session_id)
+            if _is_codex_tool(session.agent_deck_tool)
+        ]
+
+    def _read_hook_session_anchor(self, agent_deck_session_id: str) -> str | None:
+        path = self.hooks_dir() / f"{agent_deck_session_id}.sid"
+        try:
+            anchor = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return anchor or None
 
     def _resolve_claude_jsonl_path(
         self,
@@ -383,6 +515,25 @@ class AgentDeckNativeEventIngestor:
             return project_candidate
 
         return workspace_candidate or project_candidate
+
+    def _resolve_codex_session_id(
+        self,
+        agent_deck_session_id: str,
+        *,
+        event: AgentDeckNativeHookEvent | None = None,
+    ) -> str | None:
+        if event is not None and event.upstream_session_id:
+            return event.upstream_session_id
+
+        turn_state = self._active_codex_turns.get(agent_deck_session_id)
+        if turn_state is not None:
+            return turn_state.codex_session_id
+
+        cursor = self._codex_jsonl_cursors.get(agent_deck_session_id)
+        if cursor is not None:
+            return cursor.codex_session_id
+
+        return self._read_hook_session_anchor(agent_deck_session_id)
 
     def _ensure_claude_cursor(
         self,
@@ -522,6 +673,129 @@ class AgentDeckNativeEventIngestor:
                     },
                 )
 
+    def _ensure_codex_cursor(
+        self,
+        agent_deck_session_id: str,
+        codex_session_id: str,
+        *,
+        anchor_to_end: bool,
+    ) -> CodexJSONLCursor:
+        path = codex_jsonl_path(codex_session_id)
+        cursor = self._codex_jsonl_cursors.get(agent_deck_session_id)
+        if cursor is not None and cursor.codex_session_id == codex_session_id:
+            cursor.jsonl_path = path
+            return cursor
+
+        offset = 0
+        if anchor_to_end and path is not None and path.exists():
+            try:
+                offset = path.stat().st_size
+            except OSError:
+                offset = 0
+
+        cursor = CodexJSONLCursor(
+            codex_session_id=codex_session_id,
+            jsonl_path=path,
+            offset=offset,
+        )
+        self._codex_jsonl_cursors[agent_deck_session_id] = cursor
+        return cursor
+
+    def _ensure_active_codex_turn(
+        self,
+        agent_deck_session_id: str,
+        sessions: list[SessionRecord],
+        codex_session_id: str,
+        timestamp: int,
+    ) -> CodexTurnState:
+        existing = self._active_codex_turns.get(agent_deck_session_id)
+        if existing is not None and existing.codex_session_id == codex_session_id:
+            return existing
+
+        request_id = f"offpath-codex-{agent_deck_session_id}-{timestamp or int(time.time())}"
+        state = CodexTurnState(
+            request_id=request_id,
+            codex_session_id=codex_session_id,
+        )
+        self._active_codex_turns[agent_deck_session_id] = state
+
+        for session in sessions:
+            append_workstation_event(
+                session.project_path,
+                session.thread_id,
+                agent_deck_session_id=session.agent_deck_session_id,
+                event_type="turn_started",
+                payload={
+                    "request_id": request_id,
+                    "agent_deck_session_id": session.agent_deck_session_id,
+                    "agent_deck_session_title": session.agent_deck_session_title,
+                    "agent_deck_tool": session.agent_deck_tool,
+                    "workspace_path": session.workspace_path,
+                },
+            )
+
+        return state
+
+    async def _sync_codex_turn_output(
+        self,
+        agent_deck_session_id: str,
+        sessions: list[SessionRecord],
+        *,
+        allow_backfill_start: bool,
+    ) -> None:
+        hook_event = self._latest_hook_events.get(agent_deck_session_id)
+        turn_state = self._active_codex_turns.get(agent_deck_session_id)
+        codex_session_id = self._resolve_codex_session_id(
+            agent_deck_session_id,
+            event=hook_event,
+        )
+        if not codex_session_id:
+            return
+
+        cursor = self._ensure_codex_cursor(
+            agent_deck_session_id,
+            codex_session_id,
+            anchor_to_end=(turn_state is None and not allow_backfill_start),
+        )
+        if cursor.jsonl_path is None:
+            return
+
+        next_offset, text_chunks = read_codex_jsonl_text_chunks(
+            cursor.jsonl_path,
+            cursor.offset,
+        )
+        cursor.offset = next_offset
+        if not text_chunks:
+            return
+
+        if turn_state is None:
+            turn_state = self._ensure_active_codex_turn(
+                agent_deck_session_id,
+                sessions,
+                codex_session_id,
+                hook_event.timestamp if hook_event is not None else int(time.time()),
+            )
+
+        for chunk in text_chunks:
+            if not chunk:
+                continue
+            turn_state.assistant_output += chunk
+            for session in sessions:
+                append_workstation_event(
+                    session.project_path,
+                    session.thread_id,
+                    agent_deck_session_id=session.agent_deck_session_id,
+                    event_type="turn_chunk",
+                    payload={
+                        "request_id": turn_state.request_id,
+                        "agent_deck_session_id": session.agent_deck_session_id,
+                        "agent_deck_session_title": session.agent_deck_session_title,
+                        "agent_deck_tool": session.agent_deck_tool,
+                        "workspace_path": session.workspace_path,
+                        "content": chunk,
+                    },
+                )
+
     def _append_turn_status_if_changed(
         self,
         sessions: list[SessionRecord],
@@ -582,6 +856,31 @@ class AgentDeckNativeEventIngestor:
                 },
             )
 
+    def _complete_codex_turn(
+        self,
+        agent_deck_session_id: str,
+        sessions: list[SessionRecord],
+    ) -> None:
+        turn_state = self._active_codex_turns.pop(agent_deck_session_id, None)
+        if turn_state is None:
+            return
+
+        for session in sessions:
+            append_workstation_event(
+                session.project_path,
+                session.thread_id,
+                agent_deck_session_id=session.agent_deck_session_id,
+                event_type="turn_completed",
+                payload={
+                    "request_id": turn_state.request_id,
+                    "agent_deck_session_id": session.agent_deck_session_id,
+                    "agent_deck_session_title": session.agent_deck_session_title,
+                    "agent_deck_tool": session.agent_deck_tool,
+                    "workspace_path": session.workspace_path,
+                    "assistant_output": turn_state.assistant_output,
+                },
+            )
+
     def _fail_claude_turn(
         self,
         agent_deck_session_id: str,
@@ -590,6 +889,33 @@ class AgentDeckNativeEventIngestor:
         message: str,
     ) -> None:
         turn_state = self._active_claude_turns.pop(agent_deck_session_id, None)
+        if turn_state is None:
+            return
+
+        for session in sessions:
+            append_workstation_event(
+                session.project_path,
+                session.thread_id,
+                agent_deck_session_id=session.agent_deck_session_id,
+                event_type="turn_failed",
+                payload={
+                    "request_id": turn_state.request_id,
+                    "agent_deck_session_id": session.agent_deck_session_id,
+                    "agent_deck_session_title": session.agent_deck_session_title,
+                    "agent_deck_tool": session.agent_deck_tool,
+                    "workspace_path": session.workspace_path,
+                    "message": message,
+                },
+            )
+
+    def _fail_codex_turn(
+        self,
+        agent_deck_session_id: str,
+        sessions: list[SessionRecord],
+        *,
+        message: str,
+    ) -> None:
+        turn_state = self._active_codex_turns.pop(agent_deck_session_id, None)
         if turn_state is None:
             return
 

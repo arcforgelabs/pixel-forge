@@ -19,8 +19,10 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.original_shared_state_dir = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
         self.original_claude_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+        self.original_codex_home = os.environ.get("CODEX_HOME")
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
         os.environ["CLAUDE_CONFIG_DIR"] = str(Path(self.tempdir.name) / "claude-config")
+        os.environ["CODEX_HOME"] = str(Path(self.tempdir.name) / "codex-home")
         project_store._DB_INITIALIZED = False
         workstation_events._DB_INITIALIZED = False
 
@@ -52,6 +54,10 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
         else:
             os.environ["CLAUDE_CONFIG_DIR"] = self.original_claude_config_dir
+        if self.original_codex_home is None:
+            os.environ.pop("CODEX_HOME", None)
+        else:
+            os.environ["CODEX_HOME"] = self.original_codex_home
 
     def _write_status_event(
         self,
@@ -93,6 +99,24 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             ),
             encoding="utf-8",
         )
+
+    def _write_codex_session_file(
+        self,
+        *,
+        session_id: str,
+        lines: list[str],
+    ) -> Path:
+        sessions_dir = (
+            Path(os.environ["CODEX_HOME"])
+            / "sessions"
+            / "2026"
+            / "03"
+            / "22"
+        )
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        path = sessions_dir / f"rollout-2026-03-22T00-00-00-{session_id}.jsonl"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
 
     async def test_poll_once_records_primary_session_events_for_bound_chat(self) -> None:
         self._write_status_event(status="idle", prev_status="running")
@@ -217,6 +241,89 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[2].payload["request_id"], request_id)
         self.assertEqual(events[2].payload["assistant_output"], "Hello from Claude")
+
+    async def test_poll_once_emits_codex_turn_events_from_hooks_and_jsonl(self) -> None:
+        codex_session_id = "11111111-1111-4111-8111-111111111111"
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        self._write_hook_event(
+            instance_id="deck-a",
+            session_id=codex_session_id,
+            status="running",
+            event="turn/started",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-a",
+        )
+        self.assertEqual([event.event_type for event in events], ["turn_started"])
+        request_id = events[0].payload["request_id"]
+
+        self._write_codex_session_file(
+            session_id=codex_session_id,
+            lines=[
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-22T00:00:00.000Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": codex_session_id,
+                            "cwd": str(self.workspace_path),
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-22T00:00:01.000Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "phase": "commentary",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Hello from Codex",
+                                }
+                            ],
+                        },
+                    }
+                ),
+            ],
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-a",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_started", "turn_chunk"],
+        )
+        self.assertEqual(events[1].payload["content"], "Hello from Codex")
+        self.assertEqual(events[1].payload["request_id"], request_id)
+
+        self._write_hook_event(
+            instance_id="deck-a",
+            session_id="",
+            status="waiting",
+            event="turn/completed",
+            timestamp=1711111112,
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-a",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(events[2].payload["request_id"], request_id)
+        self.assertEqual(events[2].payload["assistant_output"], "Hello from Codex")
 
 
 if __name__ == "__main__":
