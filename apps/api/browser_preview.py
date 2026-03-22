@@ -985,6 +985,7 @@ class ManagedBrowserPreviewManager:
             tab.page,
             selection_hints or [],
         )
+        devtools_target = await self._inspect_devtools_target(tab.page)
         return {
             "current_url": current_url,
             "current_title": current_title,
@@ -993,6 +994,7 @@ class ManagedBrowserPreviewManager:
             "viewport": page_state.get("viewport"),
             "selection_matches": selection_matches,
             "devtools_browser_url": self._devtools_browser_url(),
+            **devtools_target,
         }
 
     def _serialize_tab(self, tab: ManagedBrowserTab) -> dict[str, Any]:
@@ -1218,6 +1220,82 @@ class ManagedBrowserPreviewManager:
         if self._cdp_port is None:
             return None
         return f"http://127.0.0.1:{self._cdp_port}"
+
+    def _read_devtools_targets(self) -> list[dict[str, Any]]:
+        browser_url = self._devtools_browser_url()
+        if not browser_url:
+            return []
+
+        with urlopen(f"{browser_url}/json/list", timeout=2) as response:
+            payload = json.load(response)
+        return payload if isinstance(payload, list) else []
+
+    async def _inspect_devtools_target(self, page: Page) -> dict[str, Any]:
+        if self._context is None:
+            return {}
+
+        try:
+            cdp_session = await self._context.new_cdp_session(page)
+        except PlaywrightError:
+            return {}
+
+        try:
+            payload = await cdp_session.send("Target.getTargetInfo")
+        except PlaywrightError:
+            return {}
+        finally:
+            detach = getattr(cdp_session, "detach", None)
+            if callable(detach):
+                try:
+                    await detach()
+                except Exception:
+                    pass
+
+        target_info = payload.get("targetInfo") if isinstance(payload, dict) else None
+        if not isinstance(target_info, dict):
+            return {}
+
+        target_id = target_info.get("targetId")
+        if not isinstance(target_id, str) or not target_id:
+            return {}
+
+        try:
+            targets = await asyncio.to_thread(self._read_devtools_targets)
+        except Exception:
+            targets = []
+
+        matched_target = next(
+            (
+                entry
+                for entry in targets
+                if isinstance(entry, dict) and entry.get("id") == target_id
+            ),
+            None,
+        )
+        return {
+            "devtools_target_id": target_id,
+            "devtools_target_type": target_info.get("type"),
+            "devtools_target_url": (
+                matched_target.get("url")
+                if isinstance(matched_target, dict) and isinstance(matched_target.get("url"), str)
+                else target_info.get("url")
+            ),
+            "devtools_target_title": (
+                matched_target.get("title")
+                if isinstance(matched_target, dict) and isinstance(matched_target.get("title"), str)
+                else target_info.get("title")
+            ),
+            "devtools_page_websocket_url": (
+                matched_target.get("webSocketDebuggerUrl")
+                if isinstance(matched_target, dict)
+                else None
+            ),
+            "devtools_frontend_url": (
+                matched_target.get("devtoolsFrontendUrl")
+                if isinstance(matched_target, dict)
+                else None
+            ),
+        }
 
     async def _capture_snapshot_data_url(self, tab: ManagedBrowserTab) -> str | None:
         try:

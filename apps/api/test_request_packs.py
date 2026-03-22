@@ -120,3 +120,43 @@ do not treat /tmp/workspace as a skill.
             )
             self.assertEqual(live_preview_payload["browser_tab_id"], "browser-tab-1")
             self.assertTrue(live_preview_payload["live_attach_available"])
+
+    def test_request_pack_writes_context_patch_section_and_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Use the already-running session instead of rebooting context.",
+                "<selected-elements />",
+                [],
+                continuation_mode="delta",
+                turn_context_patch={
+                    "source": "pixel-forge",
+                    "thread_id": "thread-1",
+                    "continuation_mode": "delta",
+                    "agent_session": {
+                        "id": "deck-1",
+                        "tool": "codex",
+                    },
+                    "live_preview": {
+                        "attach_hints": {
+                            "browser_url": "http://127.0.0.1:9222",
+                        }
+                    },
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+            context_patch_payload = json.loads(
+                request_pack.context_patch_file.read_text(encoding="utf-8")
+            )
+
+            self.assertIn("## Session Context Patch", request_body)
+            self.assertIn("context-patch.json", request_body)
+            self.assertEqual(
+                manifest["context_patch_file"],
+                request_pack.relative_context_patch_file,
+            )
+            self.assertEqual(context_patch_payload["continuation_mode"], "delta")
+            self.assertEqual(context_patch_payload["agent_session"]["id"], "deck-1")

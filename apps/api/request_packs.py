@@ -40,6 +40,8 @@ class RequestPack:
     relative_selection_tunnel_file: str | None
     live_preview_context_file: Path | None
     relative_live_preview_context_file: str | None
+    context_patch_file: Path | None
+    relative_context_patch_file: str | None
     attachment_paths: list[Path]
     relative_attachment_paths: list[str]
     requested_skills: list[str]
@@ -297,6 +299,7 @@ def create_request_pack(
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     live_preview_context: dict[str, object] | None = None,
+    turn_context_patch: dict[str, object] | None = None,
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
     session_working_rules: list[str] | None = None,
@@ -349,6 +352,18 @@ def create_request_pack(
         )
         relative_live_preview_context_path = str(
             live_preview_context_path.relative_to(Path(project_path).resolve())
+        )
+
+    context_patch_path: Path | None = None
+    relative_context_patch_path: str | None = None
+    if turn_context_patch:
+        context_patch_path = pack_dir / "context-patch.json"
+        context_patch_path.write_text(
+            json.dumps(turn_context_patch, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        relative_context_patch_path = str(
+            context_patch_path.relative_to(Path(project_path).resolve())
         )
 
     attachment_paths: list[Path] = []
@@ -565,6 +580,16 @@ def create_request_pack(
                 "- If the live context says attach is unavailable, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
             ]
         )
+    if relative_context_patch_path:
+        request_sections.extend(
+            [
+                "",
+                "## Session Context Patch",
+                "",
+                f"- Read `{relative_context_patch_path}` for the compact turn-to-turn context patch Pixel Forge prepared for this same warm session.",
+                "- Treat it as the smallest current-turn continuity delta for the already-running Claude/Codex session, not as a replacement for the durable request-pack evidence.",
+            ]
+        )
     if relative_attachment_paths:
         request_sections.extend(
             [
@@ -616,6 +641,7 @@ def create_request_pack(
                 "selected_elements_file": relative_selected_path,
                 "selection_tunnel_file": relative_selection_tunnel_path,
                 "live_preview_context_file": relative_live_preview_context_path,
+                "context_patch_file": relative_context_patch_path,
                 "attachments": attachment_manifest,
                 "created_at": pack_dir.stat().st_mtime,
             },
@@ -643,6 +669,8 @@ def create_request_pack(
         relative_selection_tunnel_file=relative_selection_tunnel_path,
         live_preview_context_file=live_preview_context_path,
         relative_live_preview_context_file=relative_live_preview_context_path,
+        context_patch_file=context_patch_path,
+        relative_context_patch_file=relative_context_patch_path,
         attachment_paths=attachment_paths,
         relative_attachment_paths=relative_attachment_paths,
         requested_skills=normalized_requested_skills,

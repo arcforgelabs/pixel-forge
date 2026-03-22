@@ -157,8 +157,9 @@ The important boundary is:
 - Native Agent Deck-originated activity outside that managed path now also enters the same kernel through the foundation `events/*.json` stream, which Pixel Forge ingests into primary `session_status` plus `session_output` events for bound chats.
 - Off-path Claude sessions go further: Agent Deck `hooks/*.json` plus Claude JSONL transcript deltas now promote native manual Claude activity into `turn_started`, `turn_chunk`, and `turn_completed` events on the same kernel instead of leaving it as snapshot-only session state.
 - Off-path Codex sessions now do the same through `codex-notify` hook files plus Codex `response_item` JSONL deltas from `~/.codex/sessions/...`, including sticky session-anchor recovery when completion hooks omit `session_id`.
-- Managed browser preview tabs now also expose a live-preview context lane: request packs persist `live-preview-context.json`, `/api/live-editor/live-preview-context` refreshes current URL/title/snapshot/selection probes from the warm tab, and `pixel-forge preview-context` gives agents a canonical CLI path to that same live state.
-- The remaining gap is now handoff depth, not raw Claude/Codex tool parity: the new lane is still pull-based managed-browser inspection, while direct agent-native attach and turn-to-turn structured context patching into the already-running Claude/Codex session are not yet proven.
+- Managed browser preview tabs now also expose a live-preview context lane: request packs persist `live-preview-context.json`, `/api/live-editor/live-preview-context` refreshes current URL/title/snapshot/selection probes from the warm tab, `context-patch.json` carries the compact continuation delta for warm sessions, and `pixel-forge preview-context` gives agents a canonical CLI path to that same live state.
+- That lane now also emits exact managed-browser attach hints: DevTools browser URL, target metadata, and a canonical `chrome-devtools-mcp --browserUrl ... --slim --no-usage-statistics` command for the current warm tab.
+- The remaining gap is now attach proof, not raw Claude/Codex tool parity or missing context deltas: direct agent-native reuse of that already-running managed browser is still guided by prompt/skill hints rather than re-proven end to end as a normal operator path.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -198,7 +199,7 @@ The important boundary is:
 
 | Layer | Useful | Not Enough Yet | What Unlocks Deeper Integration |
 |---|---|---|---|
-| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, warm-tab inspection path, stable session brief plus per-turn request delta | Still pull-based and prompt-driven once a native session is already warm | Session-native context patches, direct attach, richer artifact references |
+| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, stable session brief, per-turn `context-patch.json`, warm-tab inspection path, exact managed-browser attach hints | Direct browser reuse is still prompt/skill mediated and not yet re-proven as a normal live attach path | Proven attach/reuse flow, richer artifact references, less prompt mediation |
 | Agent Deck native sessions | Real operator control, real takeover of Claude/Codex, session visibility | Mostly terminal/transcript surface, limited structured context injection | Better session metadata hooks, stronger transcript/event surfaces |
 | ACPX 0.3.1 | Structured prompting, queueing, cancel, typed tool events, persistent ACP-owned sessions, pinned upstream foundation for future sidecar work | No proven attach/load path for an already-running native Agent Deck Claude/Codex session | Attach/import existing native agent session, context update primitives, session metadata sync |
 | Pixel Forge skill/CLI | Stable agent-facing way to read frozen and live captured state | Still operator-invoked pull path instead of ambient session context | Direct artifact/context item transport on top of the same truthful capture model |
@@ -256,15 +257,15 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel and managed-browser live-preview context, but the warm-session handoff is still pull-based instead of a proven direct attach or structured context-patch flow.
+The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel, per-turn context patches, and managed-browser attach hints, but the warm-session browser attach itself is still not re-proven end to end.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
 - keep the typed Pixel Forge-managed turn path and the new off-path Claude/Codex turn paths as the shared truth
 - keep the managed-browser live-preview context lane as the first real warm-preview handoff path and the selection tunnel as durable frozen evidence
-- prove one Claude/Codex lane can reuse the same warm preview across multiple turns without replaying the full bootstrap
-- promote the pull-based live-preview context lane into a first-class structured context update path for the already-running session
+- keep `context-patch.json` as the compact per-turn continuity lane for already-running sessions
+- prove one Claude/Codex lane can actually reuse the same warm preview through the emitted attach hints without replaying auth or navigation
 - keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
 - keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists

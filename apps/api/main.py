@@ -2197,6 +2197,97 @@ def _assert_agent_deck_lane_available(
         )
 
 
+def _summarize_live_preview_context(
+    live_preview_context: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(live_preview_context, dict):
+        return None
+
+    summary: dict[str, object] = {
+        "mode": live_preview_context.get("mode"),
+        "preview_url": live_preview_context.get("preview_url"),
+        "preview_title": live_preview_context.get("preview_title"),
+        "browser_tab_id": live_preview_context.get("browser_tab_id"),
+        "proxy_session_id": live_preview_context.get("proxy_session_id"),
+        "live_attach_available": bool(live_preview_context.get("live_attach_available")),
+        "live_attach_mode": live_preview_context.get("live_attach_mode"),
+        "current_url": live_preview_context.get("current_url"),
+        "current_title": live_preview_context.get("current_title"),
+        "ready_state": live_preview_context.get("ready_state"),
+        "viewport": live_preview_context.get("viewport"),
+        "attach_hints": live_preview_context.get("attach_hints"),
+    }
+
+    raw_matches = live_preview_context.get("selection_matches")
+    if isinstance(raw_matches, list):
+        summary["selection_matches"] = [
+            {
+                "selection_id": entry.get("selection_id"),
+                "found": entry.get("found"),
+                "visible": entry.get("visible"),
+                "xpath": entry.get("xpath"),
+                "tag_name": entry.get("tag_name"),
+                "text_excerpt": entry.get("text_excerpt"),
+            }
+            for entry in raw_matches[:4]
+            if isinstance(entry, dict)
+        ]
+
+    return {key: value for key, value in summary.items() if value not in (None, [], {})}
+
+
+def build_live_editor_context_patch(
+    *,
+    thread_id: str,
+    agent_deck_session_id: str | None,
+    agent_deck_session_title: str | None,
+    agent_deck_tool: str | None,
+    workspace_path: str | None,
+    preview_url: str | None,
+    selection_tunnel: dict[str, object] | None,
+    selection_count: int,
+    continuation_mode: Literal["bootstrap", "attached-session", "delta"],
+    informational_only: bool,
+    live_preview_context: dict[str, object] | None,
+) -> dict[str, object]:
+    patch: dict[str, object] = {
+        "source": "pixel-forge",
+        "thread_id": thread_id,
+        "continuation_mode": continuation_mode,
+        "informational_only": informational_only,
+        "selection_count": selection_count,
+        "selection_sources": [
+            {
+                "label": label,
+                "url": url,
+                "count": count,
+            }
+            for label, url, count in _selection_source_summary(selection_tunnel)
+        ],
+    }
+
+    if workspace_path:
+        patch["workspace_path"] = workspace_path
+    if preview_url:
+        patch["preview_url"] = preview_url
+    if agent_deck_session_id or agent_deck_session_title or agent_deck_tool:
+        patch["agent_session"] = {
+            key: value
+            for key, value in {
+                "id": agent_deck_session_id,
+                "title": agent_deck_session_title,
+                "tool": agent_deck_tool,
+            }.items()
+            if value
+        }
+
+    live_preview_summary = _summarize_live_preview_context(live_preview_context)
+    if live_preview_summary is not None:
+        patch["live_preview"] = live_preview_summary
+
+    return patch
+
+
 def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
@@ -2204,6 +2295,7 @@ def build_live_editor_dispatch_prompt(
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
     live_preview_context_url: str | None = None,
+    context_patch: dict[str, object] | None = None,
     requested_skills: list[str] | None = None,
     self_edit_safe_mode: bool = False,
     self_edit_scope: Literal["controller", "preview"] | None = None,
@@ -2299,6 +2391,24 @@ If you need the current warm preview state for this turn, call `{live_preview_co
 Use that live-preview context to inspect the already-running Pixel Forge preview tab in place instead of replaying login, navigation, or view reconstruction.
 Prefer the live-preview context for current page state and the selection tunnel plus attachments for durable frozen evidence.
 If the live-preview context says attach is unavailable, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
+
+    if context_patch and continuation_mode != "bootstrap":
+        base += f"""
+
+Session context patch for this already-running Agent Deck session:
+```json
+{json.dumps(context_patch, indent=2)}
+```
+Treat this as the smallest current-turn continuity delta for the warm session. Use it before re-reading older bootstrap framing or reconstructing browser/session state from scratch."""
+
+        live_preview_patch = context_patch.get("live_preview") if isinstance(context_patch, dict) else None
+        if isinstance(live_preview_patch, dict):
+            attach_hints = live_preview_patch.get("attach_hints")
+            if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
+                base += """
+
+This context patch includes direct attach hints for the already-running managed browser tab.
+If you need authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:
@@ -3209,6 +3319,20 @@ async def live_editor_chat(websocket: WebSocket):
                 else:
                     continuation_mode = "bootstrap"
 
+                context_patch = build_live_editor_context_patch(
+                    thread_id=thread.thread_id,
+                    agent_deck_session_id=session_info.agent_deck_session_id,
+                    agent_deck_session_title=session_info.agent_deck_session_title,
+                    agent_deck_tool=session_info.tool,
+                    workspace_path=session_info.workspace_path,
+                    preview_url=preview_url or None,
+                    selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
+                    selection_count=selection_count,
+                    continuation_mode=continuation_mode,
+                    informational_only=informational_only,
+                    live_preview_context=live_preview_context,
+                )
+
                 request_pack = create_request_pack(
                     session_info.workspace_path,
                     thread.thread_id,
@@ -3224,6 +3348,7 @@ async def live_editor_chat(websocket: WebSocket):
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     live_preview_context=live_preview_context,
+                    turn_context_patch=context_patch if continuation_mode != "bootstrap" else None,
                     continuation_mode=continuation_mode,
                     informational_only=informational_only,
                     requested_skills=requested_skills,
@@ -3360,6 +3485,7 @@ async def live_editor_chat(websocket: WebSocket):
                         if request_pack.relative_live_preview_context_file
                         else None
                     ),
+                    context_patch=context_patch if continuation_mode != "bootstrap" else None,
                     self_edit_safe_mode=self_edit_safe_mode,
                     self_edit_scope=self_edit_scope,
                     continuation_mode=continuation_mode,

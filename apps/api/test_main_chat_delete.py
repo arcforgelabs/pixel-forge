@@ -110,6 +110,30 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pixel-forge preview-context --project . --request <request-id>", prompt)
         self.assertIn("already-running Pixel Forge preview tab", prompt)
 
+    def test_build_dispatch_prompt_mentions_context_patch_and_attach_hints(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            continuation_mode="delta",
+            context_patch={
+                "source": "pixel-forge",
+                "thread_id": "thread-a",
+                "continuation_mode": "delta",
+                "live_preview": {
+                    "current_url": "https://example.com/app",
+                    "attach_hints": {
+                        "browser_url": "http://127.0.0.1:9222",
+                        "target_id": "target-1",
+                    },
+                },
+            },
+        )
+
+        self.assertIn("Session context patch for this already-running Agent Deck session", prompt)
+        self.assertIn('"thread_id": "thread-a"', prompt)
+        self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
+        self.assertIn("using-chrome-devtools-mcp", prompt)
+        self.assertIn("instead of replaying login or navigation", prompt)
+
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",
@@ -176,5 +200,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIsNone(status_heartbeat_task)
         self.assertEqual(len(create_task_calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

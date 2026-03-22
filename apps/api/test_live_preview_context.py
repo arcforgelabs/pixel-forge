@@ -43,6 +43,9 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ],
                 "devtools_browser_url": "http://127.0.0.1:9222",
+                "devtools_target_id": "target-1",
+                "devtools_target_url": "https://example.com/app",
+                "devtools_page_websocket_url": "ws://127.0.0.1:9222/devtools/page/target-1",
             }
         )
 
@@ -86,6 +89,14 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["live_attach_available"])
         self.assertEqual(payload["live_attach_mode"], "managed-browser")
         self.assertEqual(payload["devtools_browser_url"], "http://127.0.0.1:9222")
+        self.assertEqual(payload["attach_hints"]["skill"], "using-chrome-devtools-mcp")
+        self.assertEqual(payload["attach_hints"]["browser_url"], "http://127.0.0.1:9222")
+        self.assertEqual(payload["attach_hints"]["target_id"], "target-1")
+        self.assertEqual(
+            payload["attach_hints"]["page_websocket_url"],
+            "ws://127.0.0.1:9222/devtools/page/target-1",
+        )
+        self.assertIn("--browserUrl http://127.0.0.1:9222", payload["attach_hints"]["recommended_command"])
 
     async def test_capture_live_preview_context_marks_proxy_tabs_as_frozen_only(self) -> None:
         preview_manager = Mock()
@@ -117,6 +128,8 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                 "snapshot_data_url": "data:image/jpeg;base64,BBB=",
                 "selection_matches": [{"selection_id": "selection-1", "found": True}],
                 "devtools_browser_url": "http://127.0.0.1:9222",
+                "devtools_target_id": "target-1",
+                "devtools_target_url": "https://example.com/app",
             }
         )
 
@@ -135,6 +148,7 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(payload["live_context_fresh"])
         self.assertTrue(payload["live_attach_available"])
+        self.assertEqual(payload["attach_hints"]["target_id"], "target-1")
 
 
 if __name__ == "__main__":
