@@ -113,6 +113,7 @@ class WorkspacePreviewLaunchPlan:
     env: dict[str, str]
     ready_path: str
     build_label: str
+    launch_key: str
     stop_command: list[str] | None = None
     resolution_kind: Literal["adapter", "heuristic"] = "heuristic"
     adapter_id: str | None = None
@@ -466,6 +467,7 @@ def _build_workspace_preview_launch_plan_from_adapter(
         env=env,
         ready_path=ready_path,
         build_label=adapter.label,
+        launch_key=_workspace_preview_launch_key(adapter.adapter_id),
         resolution_kind="adapter",
         adapter_id=adapter.adapter_id,
     )
@@ -487,10 +489,56 @@ def _package_manager_command(package_dir: Path, workspace_root: Path) -> list[st
     return ["npm", "run"]
 
 
+def _workspace_preview_request_tokens(requested_url: str | None) -> set[str]:
+    if not requested_url:
+        return set()
+
+    try:
+        parsed = urlparse(requested_url)
+    except ValueError:
+        return set()
+
+    tokens: set[str] = set()
+    for segment in parsed.path.split("/"):
+        normalized_segment = segment.strip().lower()
+        if normalized_segment:
+            tokens.add(normalized_segment)
+    for host_part in (parsed.hostname or "").split("."):
+        normalized_host_part = host_part.strip().lower()
+        if normalized_host_part:
+            tokens.add(normalized_host_part)
+    return tokens
+
+
+def _workspace_preview_relative_label(workspace_root: Path, target_path: Path) -> str:
+    try:
+        relative = target_path.relative_to(workspace_root)
+    except ValueError:
+        return target_path.name or str(target_path)
+    return relative.as_posix() or "."
+
+
+def _workspace_preview_heuristic_launch_key(
+    *,
+    workspace_root: Path,
+    strategy: Literal["stack", "package"],
+    target_path: Path,
+    script_name: str | None = None,
+) -> str:
+    relative_label = _workspace_preview_relative_label(workspace_root, target_path)
+    heuristic_hint = f"{strategy}:{relative_label}"
+    if script_name:
+        heuristic_hint = f"{heuristic_hint}:{script_name}"
+    return _workspace_preview_launch_key(None, heuristic_hint)
+
+
 def _pick_workspace_package_candidate(
     workspace_root: Path,
+    requested_url: str | None = None,
 ) -> tuple[Path, dict[str, Any]] | None:
-    ranked: list[tuple[int, int, Path, dict[str, Any]]] = []
+    ranked: list[tuple[int, int, int, Path, dict[str, Any]]] = []
+    request_tokens = _workspace_preview_request_tokens(requested_url)
+    generic_parts = {"app", "apps", "package", "packages", "service", "services", "src"}
 
     for package_json_path in _iter_package_json_candidates(workspace_root):
         try:
@@ -506,13 +554,23 @@ def _pick_workspace_package_candidate(
         package_dir = package_json_path.parent
         depth = len(package_dir.relative_to(workspace_root).parts)
         name_penalty = 1 if package_dir.name.lower() in {"client", "frontend", "web"} else 0
-        ranked.append((depth, name_penalty, package_json_path, payload))
+        relative_parts = [
+            part.strip().lower()
+            for part in package_dir.relative_to(workspace_root).parts
+            if part.strip()
+        ]
+        match_score = sum(
+            1
+            for part in relative_parts
+            if part in request_tokens and part not in generic_parts
+        )
+        ranked.append((-match_score, depth, name_penalty, package_json_path, payload))
 
     if not ranked:
         return None
 
-    ranked.sort(key=lambda entry: (entry[0], entry[1], str(entry[2])))
-    _, _, package_json_path, payload = ranked[0]
+    ranked.sort(key=lambda entry: (entry[0], entry[1], entry[2], str(entry[3])))
+    _, _, _, package_json_path, payload = ranked[0]
     return package_json_path.parent, payload
 
 
@@ -576,9 +634,17 @@ def _detect_workspace_preview_launch_plan(
             env=env,
             ready_path=_normalize_local_preview_path(requested_url),
             build_label=_label_for_workspace(workspace_path, project_path),
+            launch_key=_workspace_preview_heuristic_launch_key(
+                workspace_root=workspace_root,
+                strategy="stack",
+                target_path=control_room_stack,
+            ),
         )
 
-    package_candidate = _pick_workspace_package_candidate(workspace_root)
+    package_candidate = _pick_workspace_package_candidate(
+        workspace_root,
+        requested_url=requested_url,
+    )
     if package_candidate is None:
         raise ValueError(
             "Workspace does not expose a launchable local preview path yet. "
@@ -586,6 +652,8 @@ def _detect_workspace_preview_launch_plan(
         )
 
     package_dir, package_payload = package_candidate
+    scripts = package_payload.get("scripts") if isinstance(package_payload, dict) else {}
+    script_name = "dev" if isinstance(scripts, dict) and "dev" in scripts else "start"
     command, env = _build_workspace_dev_command(
         workspace_root,
         package_dir,
@@ -600,6 +668,12 @@ def _detect_workspace_preview_launch_plan(
         env=env,
         ready_path=_normalize_local_preview_path(requested_url),
         build_label=_label_for_workspace(workspace_path, project_path),
+        launch_key=_workspace_preview_heuristic_launch_key(
+            workspace_root=workspace_root,
+            strategy="package",
+            target_path=package_dir,
+            script_name=script_name,
+        ),
         resolution_kind="heuristic",
         adapter_id=None,
     )
@@ -636,6 +710,51 @@ def _resolve_workspace_preview_launch_plan(
         workspace_path=workspace_path,
         requested_url=requested_url,
         port=port,
+    )
+
+
+def _resolve_workspace_preview_launch_key(
+    *,
+    workspace_path: str,
+    requested_url: str | None,
+    adapter_id: str | None = None,
+) -> str:
+    workspace_root = Path(workspace_path).expanduser().resolve()
+    adapters = _load_workspace_preview_adapters(workspace_root)
+    adapter = _select_workspace_preview_adapter(
+        adapters,
+        requested_url=requested_url,
+        preferred_adapter_id=adapter_id,
+    )
+    if adapter is not None:
+        return _workspace_preview_launch_key(adapter.adapter_id)
+
+    control_room_stack = workspace_root / "scripts" / "control-room-stack.sh"
+    if control_room_stack.is_file():
+        return _workspace_preview_heuristic_launch_key(
+            workspace_root=workspace_root,
+            strategy="stack",
+            target_path=control_room_stack,
+        )
+
+    package_candidate = _pick_workspace_package_candidate(
+        workspace_root,
+        requested_url=requested_url,
+    )
+    if package_candidate is None:
+        raise ValueError(
+            "Workspace does not expose a launchable local preview path yet. "
+            "Expected a repo-native stack script or a package.json with a dev/start script."
+        )
+
+    package_dir, package_payload = package_candidate
+    scripts = package_payload.get("scripts") if isinstance(package_payload, dict) else {}
+    script_name = "dev" if isinstance(scripts, dict) and "dev" in scripts else "start"
+    return _workspace_preview_heuristic_launch_key(
+        workspace_root=workspace_root,
+        strategy="package",
+        target_path=package_dir,
+        script_name=script_name,
     )
 
 
@@ -683,10 +802,16 @@ def _label_for_workspace(workspace_path: str, project_path: str) -> str:
     return normalized_workspace.name or str(normalized_workspace)
 
 
-def _workspace_preview_launch_key(adapter_id: str | None) -> str:
+def _workspace_preview_launch_key(
+    adapter_id: str | None,
+    heuristic_hint: str | None = None,
+) -> str:
     normalized_adapter_id = str(adapter_id or "").strip()
     if normalized_adapter_id:
         return f"adapter:{normalized_adapter_id}"
+    normalized_heuristic_hint = str(heuristic_hint or "").strip()
+    if normalized_heuristic_hint:
+        return f"heuristic:{normalized_heuristic_hint}"
     return "heuristic:default"
 
 
@@ -856,11 +981,11 @@ def _iter_workspace_preview_metadata(
     return records
 
 
-def _recover_workspace_preview_adapter_id_from_requested_url(
+def _find_workspace_preview_metadata_for_requested_url(
     project_path: str,
     workspace_path: str,
     requested_url: str | None,
-) -> str | None:
+) -> dict[str, Any] | None:
     normalized_requested_url = str(requested_url or "").strip()
     if not normalized_requested_url:
         return None
@@ -892,13 +1017,28 @@ def _recover_workspace_preview_adapter_id_from_requested_url(
                     )
 
         if requested_origin and metadata_origin and requested_origin == metadata_origin:
-            adapter_id = str(metadata.get("adapter_id") or "").strip()
-            return adapter_id or None
+            return metadata
         if requested_host and metadata_web_host and requested_host == metadata_web_host:
-            adapter_id = str(metadata.get("adapter_id") or "").strip()
-            return adapter_id or None
+            return metadata
 
     return None
+
+
+def _recover_workspace_preview_adapter_id_from_requested_url(
+    project_path: str,
+    workspace_path: str,
+    requested_url: str | None,
+) -> str | None:
+    metadata = _find_workspace_preview_metadata_for_requested_url(
+        project_path,
+        workspace_path,
+        requested_url,
+    )
+    if not metadata:
+        return None
+
+    adapter_id = str(metadata.get("adapter_id") or "").strip()
+    return adapter_id or None
 
 
 def _process_alive(pid: int | None) -> bool:
@@ -1413,6 +1553,21 @@ def start_workspace_preview_target(
     normalized_workspace_path = _normalize_project_path(workspace_path)
     normalized_requested_url = str(requested_url or "").strip() or None
     normalized_adapter_id = str(adapter_id or "").strip() or None
+    matching_metadata = _find_workspace_preview_metadata_for_requested_url(
+        normalized_project_path,
+        normalized_workspace_path,
+        normalized_requested_url,
+    )
+    if (
+        matching_metadata
+        and matching_metadata.get("kind") == WORKSPACE_PREVIEW_TARGET_KIND
+        and matching_metadata.get("web_url")
+        and matching_metadata.get("workspace_path") == normalized_workspace_path
+        and _is_http_ready(str(matching_metadata["web_url"]))
+        and not force_restart
+    ):
+        return _record_from_metadata(matching_metadata, already_running=True)
+
     recovered_adapter_id = normalized_adapter_id or _recover_workspace_preview_adapter_id_from_requested_url(
         normalized_project_path,
         normalized_workspace_path,
@@ -1420,6 +1575,11 @@ def start_workspace_preview_target(
     )
     workspace_root = Path(normalized_workspace_path).expanduser().resolve()
     adapters = _load_workspace_preview_adapters(workspace_root)
+    launch_key = _resolve_workspace_preview_launch_key(
+        workspace_path=normalized_workspace_path,
+        requested_url=normalized_requested_url,
+        adapter_id=recovered_adapter_id,
+    )
     selected_adapter = _select_workspace_preview_adapter(
         adapters,
         requested_url=normalized_requested_url,
@@ -1428,7 +1588,7 @@ def start_workspace_preview_target(
     instance_slug = _slug_for_workspace(
         normalized_project_path,
         normalized_workspace_path,
-        _workspace_preview_launch_key(selected_adapter.adapter_id if selected_adapter else None),
+        launch_key,
     )
     state_dir = _target_state_dir(instance_slug)
     metadata = _load_metadata(instance_slug)
@@ -1554,6 +1714,7 @@ def start_workspace_preview_target(
             "mode": plan.mode,
             "adapter_id": plan.adapter_id,
             "resolution_kind": plan.resolution_kind,
+            "launch_key": plan.launch_key,
         }
         _write_metadata(instance_slug, payload)
         return _record_from_metadata(payload, already_running=False)
@@ -1596,6 +1757,7 @@ def start_workspace_preview_target(
                 "mode": plan.mode,
                 "adapter_id": plan.adapter_id,
                 "resolution_kind": plan.resolution_kind,
+                "launch_key": plan.launch_key,
             }
             _write_metadata(instance_slug, payload)
             return _record_from_metadata(payload, already_running=False)
