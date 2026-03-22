@@ -150,12 +150,13 @@ The important boundary is:
 
 - `sessions` holds the durable Pixel Forge chat lanes and still owns the stable chat id.
 - `chat_session_bindings` maps one chat to its current live Agent Deck session, workspace path, title, and tool. Detaching a dead session clears the binding without deleting the chat.
-- `workstation_events` is the first shared event log. It now records typed Pixel Forge-managed turn events (`turn_started`, `turn_status`, `turn_chunk`, `turn_completed`, `turn_failed`), native adopted/manual-session events (`session_status`, `session_output`), and deduped compatibility `activity` snapshots only for chats that still lack any primary workstation history.
+- `workstation_events` is the first shared event log. It now records typed Pixel Forge-managed turn events (`turn_started`, `turn_status`, `turn_chunk`, `turn_completed`, `turn_failed`), native off-path Claude turn events on that same schema, native adopted/manual-session events (`session_status`, `session_output`) for lanes that still lack turn-granular parity, and deduped compatibility `activity` snapshots only for chats that still lack any native primary workstation history.
 - Pixel Forge consumes that event log through SSE for observed attached/adopted chats, so the frontend no longer depends on a chat-item polling loop as the primary truth.
 - The integrated Agent Deck surface reads the same control-plane DB through `PIXEL_FORGE_DB_PATH` and overlays `chatId` plus `chatTitle` onto matching Agent Deck session rows, so the second shell can show the same shared chat identity instead of only raw Agent Deck titles.
 - The send path still enters through `/ws/live-editor`, and that path appends typed turn events directly into `workstation_events` as the real send/stream flow runs.
 - Native Agent Deck-originated activity outside that managed path now also enters the same kernel through the foundation `events/*.json` stream, which Pixel Forge ingests into primary `session_status` plus `session_output` events for bound chats.
-- The remaining gap is fidelity, not absence: manual/off-path sessions are now visible without snapshot synthesis, but they still arrive at session granularity rather than full turn/chunk/tool event granularity.
+- Off-path Claude sessions go further: Agent Deck `hooks/*.json` plus Claude JSONL transcript deltas now promote native manual Claude activity into `turn_started`, `turn_chunk`, and `turn_completed` events on the same kernel instead of leaving it as snapshot-only session state.
+- The remaining gap is now tool parity: off-path Claude has native turn-granular lifecycle and assistant-output ingest, but off-path Codex and other non-Claude lanes still arrive only at session granularity.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -253,13 +254,13 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: native Agent Deck-originated activity now lands on the shared event plane, but only at session granularity.
+The next target release should attack the new current limiting factor from `SPECS.md`: off-path Claude now has real turn truth on the shared kernel, but the remaining off-path non-Claude lanes still land there only at session granularity.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
-- keep the typed Pixel Forge-managed turn path as the shared truth while preserving the new primary session-event tap for adopted/manual/off-path activity
-- extend one native off-path tool lane from `session_status`/`session_output` into turn-scoped lifecycle plus assistant-output delta ingest
+- keep the typed Pixel Forge-managed turn path and the new off-path Claude turn path as the shared truth while preserving the primary session-event tap for adopted/manual/off-path fallback
+- extend one remaining non-Claude off-path tool lane, with Codex first, from `session_status`/`session_output` into turn-scoped lifecycle plus assistant-output delta ingest
 - keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
 - keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth
 - keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists

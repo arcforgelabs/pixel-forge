@@ -18,7 +18,9 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.original_shared_state_dir = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        self.original_claude_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        os.environ["CLAUDE_CONFIG_DIR"] = str(Path(self.tempdir.name) / "claude-config")
         project_store._DB_INITIALIZED = False
         workstation_events._DB_INITIALIZED = False
 
@@ -38,12 +40,18 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         )
         self.events_dir = Path(self.tempdir.name) / "agent-deck" / "events"
         self.events_dir.mkdir(parents=True)
+        self.hooks_dir = Path(self.tempdir.name) / "agent-deck" / "hooks"
+        self.hooks_dir.mkdir(parents=True)
 
     def tearDown(self) -> None:
         if self.original_shared_state_dir is None:
             os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
         else:
             os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        if self.original_claude_config_dir is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = self.original_claude_config_dir
 
     def _write_status_event(
         self,
@@ -60,6 +68,27 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
                     "status": status,
                     "prev_status": prev_status,
                     "ts": 1711111111,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_hook_event(
+        self,
+        *,
+        instance_id: str,
+        session_id: str,
+        status: str,
+        event: str,
+        timestamp: int = 1711111111,
+    ) -> None:
+        (self.hooks_dir / f"{instance_id}.json").write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "session_id": session_id,
+                    "event": event,
+                    "ts": timestamp,
                 }
             ),
             encoding="utf-8",
@@ -102,7 +131,7 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             await ingestor.poll_once()
 
         self._write_status_event(status="idle", prev_status="running")
-        ingestor._file_fingerprints.clear()
+        ingestor._event_file_fingerprints.clear()
         with patch.object(
             agent_deck_event_ingest,
             "get_last_output",
@@ -115,6 +144,79 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             "thread-a",
         )
         self.assertEqual([event.event_type for event in events], ["session_status", "session_output"])
+
+    async def test_poll_once_emits_claude_turn_events_from_hooks_and_jsonl(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-claude",
+            agent_deck_session_title="manual claude",
+            agent_deck_tool="claude",
+        )
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        self._write_hook_event(
+            instance_id="deck-claude",
+            session_id="claude-session-1",
+            status="running",
+            event="UserPromptSubmit",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-claude",
+        )
+        self.assertEqual([event.event_type for event in events], ["turn_started"])
+        request_id = events[0].payload["request_id"]
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            "claude-session-1",
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text(
+            '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hello from Claude"}]}}\n',
+            encoding="utf-8",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_started", "turn_chunk"],
+        )
+        self.assertEqual(events[1].payload["content"], "Hello from Claude")
+        self.assertEqual(events[1].payload["request_id"], request_id)
+
+        self._write_hook_event(
+            instance_id="deck-claude",
+            session_id="claude-session-1",
+            status="waiting",
+            event="Stop",
+            timestamp=1711111112,
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(events[2].payload["request_id"], request_id)
+        self.assertEqual(events[2].payload["assistant_output"], "Hello from Claude")
 
 
 if __name__ == "__main__":

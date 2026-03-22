@@ -574,6 +574,90 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('does not duplicate turn-scoped observed Claude output with later session snapshots', async () => {
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+    })
+
+    useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+    const threadId = useLiveEditorStore.getState().activeThreadKey
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+
+    stream?.emitEvent('turn_started', {
+      id: 1,
+      event_type: 'turn_started',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-claude-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+    })
+    stream?.emitEvent('turn_chunk', {
+      id: 2,
+      event_type: 'turn_chunk',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-claude-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+      content: 'Hello from Claude',
+    })
+    stream?.emitEvent('turn_completed', {
+      id: 3,
+      event_type: 'turn_completed',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-claude-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+      assistant_output: 'Hello from Claude',
+    })
+    stream?.emitEvent('session_output', {
+      id: 4,
+      event_type: 'session_output',
+      chat_id: threadId,
+      thread_id: threadId,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      agent_deck_session_status: 'idle',
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      output: 'Hello from Claude',
+    })
+    stream?.emitEvent('session_status', {
+      id: 5,
+      event_type: 'session_status',
+      chat_id: threadId,
+      thread_id: threadId,
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      agent_deck_session_status: 'waiting',
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      message: 'Attached to Agent Deck session `manual claude`. Waiting for output...',
+    })
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          role: 'assistant',
+          content: 'Hello from Claude',
+          observedSessionId: 'deck-session-a',
+        },
+      ])
+      expect(useLiveEditorStore.getState().messages).toHaveLength(1)
+    })
+  })
+
   it('persists sanitized editor state through the shared session API', async () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementationOnce(async () =>

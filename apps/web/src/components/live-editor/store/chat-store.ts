@@ -996,10 +996,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }
 
       const statusMessageId = observedSessionStatusMessageId(agentDeckSessionId)
-      const snapshotMessageId = observedSnapshotMessageId(agentDeckSessionId)
       const normalizedStatus = event.agent_deck_session_status?.trim().toLowerCase() || ''
       const hasObservedOutput = currentState.messages.some(
-        (message) => message.id === snapshotMessageId
+        (message) =>
+          message.role === 'assistant'
+          && message.observedSessionId === agentDeckSessionId
       )
       const content =
         event.message?.trim()
@@ -1054,6 +1055,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       if (!output) {
         nextMessages = removeObservedMessage(nextMessages, snapshotMessageId)
       } else {
+        const hasTurnScopedObservedOutput = nextMessages.some(
+          (message) =>
+            message.role === 'assistant'
+            && message.observedSessionId === agentDeckSessionId
+            && message.id !== snapshotMessageId
+        )
+        if (hasTurnScopedObservedOutput) {
+          nextMessages = removeObservedMessage(nextMessages, snapshotMessageId)
+          if (['idle', 'waiting'].includes(event.agent_deck_session_status?.trim().toLowerCase() || '')) {
+            nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+          }
+          return {
+            ...currentState,
+            messages: nextMessages,
+          }
+        }
         nextMessages = upsertObservedMessage(nextMessages, {
           id: snapshotMessageId,
           role: 'assistant',

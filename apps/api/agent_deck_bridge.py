@@ -1186,25 +1186,20 @@ def _flatten_tool_content(value: object) -> str:
     return str(value)
 
 
-async def _emit_claude_jsonl_record(
-    websocket,
-    record: dict[str, object],
-    stats: ClaudeStreamStats,
-    *,
-    on_emit: StreamPayloadCallback | None = None,
-) -> None:
+def claude_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
     record_type = record.get("type")
 
     if record_type == "assistant":
         message = record.get("message")
         if not isinstance(message, dict):
-            return
+            return payloads
         if message.get("role") != "assistant":
-            return
+            return payloads
 
         content_blocks = message.get("content")
         if not isinstance(content_blocks, list):
-            return
+            return payloads
 
         for block in content_blocks:
             if not isinstance(block, dict):
@@ -1213,35 +1208,27 @@ async def _emit_claude_jsonl_record(
             if block_type == "text":
                 text = block.get("text")
                 if isinstance(text, str) and text:
-                    stats.streamed_text = True
-                    stats.last_output += text
-                    await _emit_stream_payload(
-                        websocket,
-                        {"type": "chunk", "content": text},
-                        on_emit=on_emit,
-                    )
+                    payloads.append({"type": "chunk", "content": text})
             elif block_type == "tool_use":
-                await _emit_stream_payload(
-                    websocket,
+                payloads.append(
                     {
                         "type": "tool_use",
                         "tool": block.get("name", ""),
                         "input": block.get("input", {}),
-                    },
-                    on_emit=on_emit,
+                    }
                 )
-        return
+        return payloads
 
     if record_type != "user":
-        return
+        return payloads
 
     message = record.get("message")
     if not isinstance(message, dict):
-        return
+        return payloads
 
     content_blocks = message.get("content")
     if not isinstance(content_blocks, list):
-        return
+        return payloads
 
     for block in content_blocks:
         if not isinstance(block, dict):
@@ -1249,13 +1236,73 @@ async def _emit_claude_jsonl_record(
         if block.get("type") != "tool_result":
             continue
 
-        await _emit_stream_payload(
-            websocket,
+        payloads.append(
             {
                 "type": "tool_result",
                 "content": _flatten_tool_content(block.get("content")),
                 "is_error": bool(block.get("is_error")),
-            },
+            }
+        )
+
+    return payloads
+
+
+def read_claude_jsonl_payloads(
+    jsonl_path: Path,
+    start_offset: int,
+    *,
+    seen_uuids: set[str] | None = None,
+) -> tuple[int, list[dict[str, object]]]:
+    offset = start_offset
+    payloads: list[dict[str, object]] = []
+    normalized_seen_uuids = seen_uuids if seen_uuids is not None else set()
+
+    if not jsonl_path.exists():
+        return offset, payloads
+
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        handle.seek(offset)
+        while True:
+            line = handle.readline()
+            if not line:
+                break
+            offset = handle.tell()
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(record, dict):
+                continue
+
+            record_uuid = record.get("uuid")
+            if isinstance(record_uuid, str) and record_uuid:
+                if record_uuid in normalized_seen_uuids:
+                    continue
+                normalized_seen_uuids.add(record_uuid)
+
+            payloads.extend(claude_jsonl_payloads_for_record(record))
+
+    return offset, payloads
+
+
+async def _emit_claude_jsonl_record(
+    websocket,
+    record: dict[str, object],
+    stats: ClaudeStreamStats,
+    *,
+    on_emit: StreamPayloadCallback | None = None,
+) -> None:
+    for payload in claude_jsonl_payloads_for_record(record):
+        if payload.get("type") == "chunk":
+            content = payload.get("content")
+            if isinstance(content, str) and content:
+                stats.streamed_text = True
+                stats.last_output += content
+        await _emit_stream_payload(
+            websocket,
+            payload,
             on_emit=on_emit,
         )
 
