@@ -82,6 +82,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 ## Current System Shape
 
 - This clone is the dedicated alpha R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-alpha`, `pixel-forge-alpha-shell`, `pixel-forge-alpha.localhost`, and `~/.pixel-forge-alpha`.
+- Hidden install/runtime metadata for that lane now needs to derive from the same lane identity root instead of per-surface hardcoding: service names, CLI names, URL hosts, state roots, preview partitions, and agent-facing request-pack commands should all flow from the active runtime identity config.
 - The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-alpha.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=alpha` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The alpha lane now ships two separate Agent Deck operator surfaces over the same alpha-owned runtime: a dedicated terminal app launcher for the real TUI and a separate web surface for browser/shell embedding.

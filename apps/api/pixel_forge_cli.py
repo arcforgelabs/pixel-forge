@@ -27,8 +27,13 @@ from agent_deck_surface import (
     read_agent_deck_surface_status,
     stop_agent_deck_surface,
 )
-from runtime_config import shared_state_dir
-from runtime_config import agent_deck_home_dir, shared_db_path
+from runtime_config import (
+    agent_deck_home_dir,
+    cli_name as runtime_cli_name,
+    shared_db_path,
+    shared_state_dir,
+    url_host as runtime_url_host,
+)
 from runtime_version import read_runtime_info_for_root
 from live_preview_context import read_live_preview_context_artifact
 from request_packs import (
@@ -55,6 +60,14 @@ def _normalize_text(value: Any) -> str | None:
 
 def install_name() -> str:
     return os.environ.get("PIXEL_FORGE_INSTALL_NAME", DEFAULT_INSTALL_NAME)
+
+
+def cli_name() -> str:
+    return (
+        _normalize_text(os.environ.get("PIXEL_FORGE_CLI_NAME"))
+        or _normalize_text(os.environ.get("PIXEL_FORGE_INSTALL_NAME"))
+        or runtime_cli_name()
+    )
 
 
 def install_dir() -> Path:
@@ -105,11 +118,11 @@ def agent_deck_tui_wm_class() -> str:
 
 
 def port() -> str:
-    return os.environ.get("PIXEL_FORGE_PORT", "7001")
+    return os.environ.get("PIXEL_FORGE_API_PORT") or os.environ.get("PIXEL_FORGE_PORT", "7001")
 
 
 def url_host() -> str:
-    return os.environ.get("PIXEL_FORGE_URL_HOST", "pixel-forge.localhost")
+    return _normalize_text(os.environ.get("PIXEL_FORGE_URL_HOST")) or runtime_url_host()
 
 
 def shell_url() -> str:
@@ -984,7 +997,7 @@ def _command_clone_promote(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pixel-forge",
+        prog=cli_name(),
         description="Operate the Pixel Forge controller, update lane, and clone-promotion workflow.",
     )
     subparsers = parser.add_subparsers(dest="command")

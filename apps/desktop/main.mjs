@@ -8,7 +8,7 @@ import { readControllerVersion, readProjectVersion } from './version.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const INSTANCE_SLUG = process.env.PIXEL_FORGE_INSTANCE_SLUG || 'pixel-forge'
-const SHELL_HOST = process.env.PIXEL_FORGE_URL_HOST || `${INSTANCE_SLUG}.localhost`
+const SHELL_HOST = process.env.PIXEL_FORGE_URL_HOST || process.env.PIXEL_FORGE_WEB_HOST || `${INSTANCE_SLUG}.localhost`
 const SHELL_PORT = process.env.PIXEL_FORGE_API_PORT || process.env.PIXEL_FORGE_PORT || '7001'
 const SHELL_URL = process.env.PIXEL_FORGE_SHELL_URL || `http://${SHELL_HOST}:${SHELL_PORT}`
 const DEFAULT_CONTROLLER_CDP_PORT = (() => {
@@ -21,7 +21,7 @@ const PREVIEW_PARTITION = process.env.PIXEL_FORGE_PREVIEW_PARTITION || `persist:
 const APP_STATE_DIR = path.resolve(
   process.env.PIXEL_FORGE_STATE_DIR
   || process.env.PIXEL_FORGE_SHARED_STATE_DIR
-  || path.join(os.homedir(), '.pixel-forge-alpha'),
+  || path.join(os.homedir(), `.${INSTANCE_SLUG}`),
 )
 const CONTROLLER_UPDATE_SNAPSHOTS_DIR = path.join(APP_STATE_DIR, 'controller-updates')
 const PENDING_CONTROLLER_UPDATE_PATH = path.join(APP_STATE_DIR, 'pending-controller-update.json')

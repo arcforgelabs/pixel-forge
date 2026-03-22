@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from request_packs import create_request_pack, extract_requested_skills
@@ -125,6 +126,42 @@ do not treat /tmp/workspace as a skill.
             )
             self.assertEqual(live_preview_payload["browser_tab_id"], "browser-tab-1")
             self.assertTrue(live_preview_payload["live_attach_available"])
+
+    def test_request_pack_uses_runtime_cli_name_for_live_attach_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(
+                "os.environ",
+                {
+                    "PIXEL_FORGE_CLI_NAME": "pixel-forge-alpha",
+                    "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+                },
+                clear=False,
+            ):
+                request_pack = create_request_pack(
+                    tmpdir,
+                    "thread-1",
+                    "Inspect the already-running preview state before editing.",
+                    "<selected-elements />",
+                    [],
+                    live_preview_context={
+                        "mode": "browser",
+                        "preview_tab_id": "tab-1",
+                        "browser_tab_id": "browser-tab-1",
+                        "preview_url": "https://example.com/app",
+                        "preview_title": "Example App",
+                        "live_attach_available": True,
+                        "live_attach_mode": "managed-browser",
+                        "current_url": "https://example.com/app",
+                        "current_title": "Example App",
+                        "attach_hints": {
+                            "browser_url": "http://127.0.0.1:9222",
+                        },
+                    },
+                )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+
+            self.assertIn("pixel-forge-alpha attach-proof --project . --request", request_body)
 
     def test_request_pack_writes_context_patch_section_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

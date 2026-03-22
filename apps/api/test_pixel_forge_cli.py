@@ -14,6 +14,29 @@ import pixel_forge_cli
 
 
 class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
+    def test_url_host_falls_back_to_instance_slug_host(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+            },
+            clear=True,
+        ):
+            self.assertEqual(pixel_forge_cli.url_host(), "pixel-forge-alpha.localhost")
+            self.assertEqual(pixel_forge_cli.shell_url(), "http://pixel-forge-alpha.localhost:7001")
+
+    def test_build_parser_uses_runtime_cli_name(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+            },
+            clear=True,
+        ):
+            parser = pixel_forge_cli.build_parser()
+
+        self.assertEqual(parser.prog, "pixel-forge-alpha")
+
     def test_prefers_ghostty_when_available(self) -> None:
         with patch("pixel_forge_cli.shutil.which") as mock_which:
             mock_which.side_effect = lambda binary: "/usr/bin/ghostty" if binary == "ghostty" else None
