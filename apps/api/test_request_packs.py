@@ -163,6 +163,38 @@ do not treat /tmp/workspace as a skill.
 
             self.assertIn("pixel-forge-alpha attach-proof --project . --request", request_body)
 
+    def test_request_pack_requires_real_attach_for_explicit_attach_proof_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "This is a live-attach proof exercise. Use CDP attach if hints exist.",
+                "<selected-elements />",
+                [],
+                explicit_live_attach_required=True,
+                live_preview_context={
+                    "mode": "browser",
+                    "preview_tab_id": "tab-1",
+                    "browser_tab_id": "browser-tab-1",
+                    "preview_url": "https://example.com/app",
+                    "preview_title": "Example App",
+                    "live_attach_available": True,
+                    "live_attach_mode": "controller-browserview",
+                    "current_url": "https://example.com/app",
+                    "current_title": "Example App",
+                    "attach_hints": {
+                        "browser_url": "http://127.0.0.1:9222",
+                    },
+                    "live_inspection_mode": "controller-browserview",
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+
+            self.assertIn("explicitly requires a real CDP attach", request_body)
+            self.assertIn("record the failure proof and stop", request_body)
+            self.assertNotIn("--via controller-browserview --status succeeded", request_body)
+
     def test_request_pack_writes_context_patch_section_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             request_pack = create_request_pack(
@@ -231,3 +263,33 @@ do not treat /tmp/workspace as a skill.
             self.assertIn("controller-captured DOM state", request_body)
             self.assertIn("## Live Preview Proof", request_body)
             self.assertIn("--via controller-browserview --status succeeded", request_body)
+
+    def test_request_pack_records_failed_attach_when_explicit_attach_has_no_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "This is a live-attach proof exercise.",
+                "<selected-elements />",
+                [],
+                explicit_live_attach_required=True,
+                live_preview_context={
+                    "mode": "browser",
+                    "preview_tab_id": "tab-1",
+                    "browser_tab_id": "preview-1",
+                    "preview_url": "https://example.com/app",
+                    "preview_title": "Example App",
+                    "live_inspection_available": True,
+                    "live_inspection_mode": "controller-browserview",
+                    "current_url": "https://example.com/app",
+                    "current_title": "Example App",
+                    "selection_matches": [],
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+
+            self.assertIn("## Live Attach Limitation", request_body)
+            self.assertIn("Do not record a controller-browserview success proof", request_body)
+            self.assertIn('--status failed --note "attach hints unavailable for explicit live-attach proof request"', request_body)
+            self.assertNotIn("--via controller-browserview --status succeeded", request_body)

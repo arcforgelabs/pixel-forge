@@ -138,6 +138,32 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded", prompt)
         self.assertIn("Do not claim a successful live attach unless", prompt)
 
+    def test_build_dispatch_prompt_requires_real_attach_for_explicit_attach_proof(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            request_id="abcd",
+            continuation_mode="delta",
+            explicit_live_attach_required=True,
+            live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
+            context_patch={
+                "source": "pixel-forge",
+                "thread_id": "thread-a",
+                "continuation_mode": "delta",
+                "live_preview": {
+                    "current_url": "https://example.com/app",
+                    "attach_hints": {
+                        "browser_url": "http://127.0.0.1:9222",
+                        "target_id": "target-1",
+                    },
+                },
+            },
+        )
+
+        self.assertIn("explicitly requests real live-attach proof", prompt)
+        self.assertIn("it is not sufficient to satisfy this request on its own", prompt)
+        self.assertIn("explicitly requires real warm-session attach proof", prompt)
+        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
+
     def test_build_dispatch_prompt_mentions_controller_browserview_live_context(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
@@ -157,6 +183,27 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("controller-captured live DOM state", prompt)
         self.assertIn("--via controller-browserview --status succeeded", prompt)
         self.assertIn("Do not claim that a deeper live attach happened", prompt)
+
+    def test_build_dispatch_prompt_requires_failed_proof_when_explicit_attach_has_no_hints(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            request_id="abcd",
+            continuation_mode="delta",
+            explicit_live_attach_required=True,
+            context_patch={
+                "source": "pixel-forge",
+                "thread_id": "thread-a",
+                "continuation_mode": "delta",
+                "live_preview": {
+                    "live_inspection_mode": "controller-browserview",
+                    "current_url": "https://field.example.com/app",
+                },
+            },
+        )
+
+        self.assertIn("explicitly requires real live-attach proof", prompt)
+        self.assertIn("Record failure instead of a controller-browserview success", prompt)
+        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
 
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(

@@ -345,6 +345,7 @@ def create_request_pack(
     turn_context_patch: dict[str, object] | None = None,
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
+    explicit_live_attach_required: bool = False,
     session_working_rules: list[str] | None = None,
     turn_working_rules: list[str] | None = None,
     requested_skills: list[str] | None = None,
@@ -643,13 +644,24 @@ def create_request_pack(
                     "## Live Attach Proof",
                     "",
                     "- If you attach to the already-running warm preview target over CDP, record that proof for this request.",
+                    (
+                        "- This request explicitly requires a real CDP attach when attach hints are present. Controller-captured BrowserView DOM state may help orient you, but it is not sufficient to satisfy this proof on its own."
+                        if explicit_live_attach_required
+                        else None
+                    ),
                     f"- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --note \"connecting to warm preview via chrome-devtools-mcp\"`",
                     f"- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence \"<one fact only visible in the current live DOM>\"`",
                     f"- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note \"<short failure reason>\"`",
+                    (
+                        "- If live attach fails, record the failure proof and stop instead of substituting a controller-browserview success receipt."
+                        if explicit_live_attach_required
+                        else None
+                    ),
                     "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
                 ]
             )
-        elif live_inspection_mode == "controller-browserview":
+            request_sections = [section for section in request_sections if section is not None]
+        elif live_inspection_mode == "controller-browserview" and not explicit_live_attach_required:
             request_sections.extend(
                 [
                     "",
@@ -658,6 +670,17 @@ def create_request_pack(
                     "- This request already includes controller-captured live DOM state from the running Pixel Forge BrowserView preview tab.",
                     f"- If that live context gives you the decisive fact for this request, record it with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence \"<one fact only visible in the captured live BrowserView DOM>\"`",
                     "- Do not claim that a deeper live attach happened unless you actually used emitted attach hints.",
+                ]
+            )
+        elif live_inspection_mode == "controller-browserview":
+            request_sections.extend(
+                [
+                    "",
+                    "## Live Attach Limitation",
+                    "",
+                    "- This request explicitly asks for a real live attach proof, but this request pack only includes controller-captured BrowserView DOM state and no attach hints.",
+                    "- Do not record a controller-browserview success proof in place of a real attach proof for this request.",
+                    f"- Record a failed attach proof with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note \"attach hints unavailable for explicit live-attach proof request\"`",
                 ]
             )
     if relative_context_patch_path:

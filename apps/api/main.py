@@ -2160,6 +2160,34 @@ def _is_informational_live_editor_request(message: str) -> bool:
     return any(hint in normalized for hint in INFORMATIONAL_REQUEST_HINTS)
 
 
+def _requires_explicit_live_attach(message: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (message or "").strip().lower())
+    if not normalized:
+        return False
+
+    attach_hints = (
+        "live attach",
+        "live-attach",
+        "cdp attach",
+        "attach proof",
+        "attach-proof",
+        "chrome-devtools-mcp",
+        "browser url",
+        "browserurl",
+    )
+    proof_hints = (
+        "proof",
+        "exercise",
+        "must attach",
+        "require attach",
+        "real attach",
+        "warm session",
+    )
+    return any(hint in normalized for hint in attach_hints) and any(
+        hint in normalized for hint in proof_hints
+    )
+
+
 def _resolve_self_edit_scope(
     project_path: str | None,
     workspace_path: str | None,
@@ -2305,6 +2333,7 @@ def build_live_editor_dispatch_prompt(
     self_edit_scope: Literal["controller", "preview"] | None = None,
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
+    explicit_live_attach_required: bool = False,
 ) -> str:
     normalized_requested_skills = normalize_requested_skills(requested_skills)
     pixel_forge_cli = runtime_cli_name()
@@ -2398,6 +2427,10 @@ Prefer the live-preview context for current page state and the selection tunnel 
 If the live-preview context already includes controller-captured DOM state, use that fast path first.
 If the task still needs deeper live inspection of DOM behavior, console, or network and attach hints exist, use those exact CDP hints instead of recreating auth or navigation.
 If neither controller-captured live state nor attach hints are available, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
+        if explicit_live_attach_required:
+            base += """
+
+This turn explicitly requests real live-attach proof. If attach hints exist, you must attempt CDP attach to the warm preview session. Controller-browserview state may help orient you, but it is not sufficient to satisfy this request on its own."""
 
     if context_patch and continuation_mode != "bootstrap":
         base += f"""
@@ -2417,6 +2450,10 @@ Treat this as the smallest current-turn continuity delta for the warm session. U
 
 This context patch includes direct CDP attach hints for the already-running warm preview target.
 Use the structured live-preview context first. If you still need deeper authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
+                if explicit_live_attach_required:
+                    base += """
+
+This turn explicitly requires real warm-session attach proof. Because attach hints exist, do not treat controller-browserview live context as a successful substitute. Attempt CDP attach, then either record success from the attached session or record failure and stop."""
                 if request_id:
                     base += f"""
 
@@ -2425,7 +2462,7 @@ If you attempt live attach for this request, record it explicitly:
 - On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --evidence "<one fact only visible in the current live DOM>"`
 - On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note "<short failure reason>"`
 Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact."""
-            elif live_inspection_mode == "controller-browserview" and request_id:
+            elif live_inspection_mode == "controller-browserview" and request_id and not explicit_live_attach_required:
                 base += f"""
 
 This context patch includes controller-captured live DOM state for the already-running preview tab.
@@ -2433,6 +2470,12 @@ Use that structured live context first before escalating to any browser attach p
 If that live context gives you the decisive fact for this request, record the proof explicitly:
 - `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence "<one fact only visible in the captured live BrowserView DOM>"`
 Do not claim that a deeper live attach happened unless you actually used the emitted attach hints."""
+            elif live_inspection_mode == "controller-browserview" and request_id:
+                base += f"""
+
+This context patch includes controller-captured live DOM state, but this turn explicitly requires real live-attach proof and no attach hints are available here.
+Use the captured state only to explain the limitation.
+- Record failure instead of a controller-browserview success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --note "attach hints unavailable for explicit live-attach proof request"`"""
 
     selection_sources = _selection_source_summary(selection_tunnel)
     if continuation_mode != "delta" and len(selection_sources) > 1:
@@ -3258,6 +3301,7 @@ async def live_editor_chat(websocket: WebSocket):
                 request_message = message.strip() or "Use the attached reference files as context for this live edit."
                 requested_skills = extract_requested_skills(request_message)
                 informational_only = _is_informational_live_editor_request(request_message)
+                explicit_live_attach_required = _requires_explicit_live_attach(request_message)
                 self_edit_safe_mode = _is_pixel_forge_workspace(normalized_project_path)
                 selection_count = 0
                 if isinstance(selection_tunnel, dict):
@@ -3375,6 +3419,7 @@ async def live_editor_chat(websocket: WebSocket):
                     turn_context_patch=context_patch if continuation_mode != "bootstrap" else None,
                     continuation_mode=continuation_mode,
                     informational_only=informational_only,
+                    explicit_live_attach_required=explicit_live_attach_required,
                     requested_skills=requested_skills,
                     session_working_rules=(
                         [
@@ -3515,6 +3560,7 @@ async def live_editor_chat(websocket: WebSocket):
                     self_edit_scope=self_edit_scope,
                     continuation_mode=continuation_mode,
                     informational_only=informational_only,
+                    explicit_live_attach_required=explicit_live_attach_required,
                     requested_skills=requested_skills,
                 )
                 assistant_output = ""

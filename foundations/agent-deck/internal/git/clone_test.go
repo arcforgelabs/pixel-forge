@@ -889,6 +889,46 @@ func TestArchiveCloneStateIfNeeded_PreservesBranchAndDirtyState(t *testing.T) {
 	}
 }
 
+func TestArchiveCloneStateIfNeeded_AllowsMissingLocalTargetBranchInClone(t *testing.T) {
+	repoDir := setupTestRepo(t)
+
+	clonePath, err := ReferenceClone(repoDir, "archive-missing-target", "", false)
+	if err != nil {
+		t.Fatalf("ReferenceClone() failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(clonePath, "feature.txt"), []byte("feature"), 0o644); err != nil {
+		t.Fatalf("WriteFile(feature.txt) failed: %v", err)
+	}
+	for _, args := range [][]string{
+		{"git", "-C", clonePath, "add", "."},
+		{"git", "-C", clonePath, "commit", "-m", "archive branch commit"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, output)
+		}
+	}
+
+	targetBranch, err := GetDefaultBranch(repoDir)
+	if err != nil {
+		t.Fatalf("GetDefaultBranch() failed: %v", err)
+	}
+
+	deleteTargetBranch := exec.Command("git", "-C", clonePath, "branch", "-D", targetBranch)
+	if output, err := deleteTargetBranch.CombinedOutput(); err != nil {
+		t.Fatalf("failed to delete clone-local target branch %s: %v\n%s", targetBranch, err, output)
+	}
+
+	result, err := ArchiveCloneStateIfNeeded(repoDir, clonePath)
+	if err != nil {
+		t.Fatalf("ArchiveCloneStateIfNeeded() failed: %v", err)
+	}
+	if result.BranchRef == "" {
+		t.Fatal("expected branch archive ref when target branch is missing locally in clone")
+	}
+}
+
 func TestRetainCloneBranchLocally(t *testing.T) {
 	repoDir := setupTestRepo(t)
 

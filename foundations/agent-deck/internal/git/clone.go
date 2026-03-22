@@ -573,11 +573,16 @@ func ArchiveCloneStateIfNeeded(repoRoot, clonePath string) (CloneArchiveResult, 
 
 	needsBranchArchive := false
 	if cloneBranch != "" && status.TargetBranch != "" && cloneBranch != status.TargetBranch {
-		mergedIntoTarget, err := IsAncestor(clonePath, cloneBranch, status.TargetBranch)
-		if err != nil {
-			return result, err
+		targetRef, fetchErr := fetchCloneTargetRef(repoRoot, clonePath, status.TargetBranch)
+		if fetchErr != nil {
+			needsBranchArchive = true
+		} else {
+			mergedIntoTarget, err := IsAncestor(clonePath, cloneBranch, targetRef)
+			if err != nil {
+				return result, err
+			}
+			needsBranchArchive = !mergedIntoTarget
 		}
-		needsBranchArchive = !mergedIntoTarget
 	}
 
 	if !status.Dirty && !needsBranchArchive {
