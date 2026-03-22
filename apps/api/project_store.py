@@ -57,6 +57,7 @@ class ProfileStateRecord:
     active_mode: str
     active_live_editor_thread_id: str | None
     default_agent_type: str
+    developer_mode: bool
     updated_at: str
 
 
@@ -334,6 +335,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
                 default_agent_type TEXT NOT NULL DEFAULT 'claude',
+                developer_mode INTEGER NOT NULL DEFAULT 1,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -387,6 +389,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             if "updated_at" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                )
+            if "developer_mode" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN developer_mode INTEGER NOT NULL DEFAULT 1"
                 )
         conn.execute(
             """
@@ -676,6 +682,7 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
             else None
         ),
         default_agent_type=_normalize_agent_type(row["default_agent_type"]),
+        developer_mode=bool(row["developer_mode"]) if "developer_mode" in row.keys() else True,
         updated_at=row["updated_at"],
     )
 
@@ -907,7 +914,7 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, updated_at
+                   default_agent_type, developer_mode, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,
@@ -927,6 +934,7 @@ def upsert_profile_state(
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
     default_agent_type: str = "claude",
+    developer_mode: bool = True,
 ) -> ProfileStateRecord:
     normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_project_path = (
@@ -949,8 +957,9 @@ def upsert_profile_state(
                 active_project_path,
                 active_mode,
                 active_live_editor_thread_id,
-                default_agent_type
-            ) VALUES (?, ?, ?, ?, ?)
+                default_agent_type,
+                developer_mode
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 active_mode = excluded.active_mode,
@@ -959,6 +968,7 @@ def upsert_profile_state(
                     ELSE excluded.active_live_editor_thread_id
                 END,
                 default_agent_type = excluded.default_agent_type,
+                developer_mode = excluded.developer_mode,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -967,13 +977,14 @@ def upsert_profile_state(
                 _normalize_active_mode(active_mode),
                 normalized_thread_id,
                 normalized_default_agent_type,
+                1 if developer_mode else 0,
             ),
         )
         conn.commit()
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, updated_at
+                   default_agent_type, developer_mode, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,

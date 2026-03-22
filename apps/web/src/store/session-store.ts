@@ -126,6 +126,7 @@ export interface ProfileStateRecord {
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  developerMode: boolean;
   updatedAt: string;
 }
 
@@ -214,8 +215,10 @@ interface SessionStore {
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
+      | "developerMode"
     >>
   ) => Promise<ProfileStateRecord | null>;
+  setDeveloperMode: (enabled: boolean) => void;
   setProject: (options: {
     path: string;
     previewUrl?: string;
@@ -321,6 +324,7 @@ interface ApiProfileState {
   active_mode: ActiveMode;
   active_live_editor_thread_id: string | null;
   default_agent_type: string;
+  developer_mode?: boolean;
   updated_at: string;
 }
 
@@ -413,6 +417,7 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
       profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
     defaultAgentType: normalizeAgentType(profileState.default_agent_type),
+    developerMode: profileState.developer_mode !== false,
     updatedAt: profileState.updated_at,
   };
 }
@@ -913,6 +918,7 @@ async function upsertProfileStateToApi(options: {
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  developerMode: boolean;
 }): Promise<ProfileStateRecord> {
   const payload = await requestJson<ApiProfileState>("/api/profile-state", {
     method: "POST",
@@ -922,6 +928,7 @@ async function upsertProfileStateToApi(options: {
       active_mode: options.activeMode,
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
       default_agent_type: normalizeAgentType(options.defaultAgentType),
+      developer_mode: options.developerMode,
     }),
   });
   return normalizeProfileState(payload);
@@ -1014,6 +1021,7 @@ function buildNextProfileState(
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
+      | "developerMode"
     >
   >
 ): {
@@ -1022,6 +1030,7 @@ function buildNextProfileState(
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  developerMode: boolean;
 } {
   return {
     profileId: currentState.profileState?.profileId ?? "default",
@@ -1043,6 +1052,10 @@ function buildNextProfileState(
         : normalizeAgentType(
             currentState.profileState?.defaultAgentType ?? currentState.defaultAgentType
           ),
+    developerMode:
+      overrides?.developerMode !== undefined
+        ? overrides.developerMode
+        : currentState.profileState?.developerMode !== false,
   };
 }
 
@@ -1105,6 +1118,13 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Agent selection
   defaultAgentType: "claude",
+  setDeveloperMode: (enabled: boolean) => {
+    void get()
+      .persistProfileState({ developerMode: enabled })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist developer mode:", error);
+      });
+  },
   setDefaultAgentType: (agentType: string) => {
     const normalizedAgentType = normalizeAgentType(agentType);
     set({ defaultAgentType: normalizedAgentType });

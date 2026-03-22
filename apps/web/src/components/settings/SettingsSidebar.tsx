@@ -221,6 +221,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     setDismissedControllerUpdateId,
     authoritativeRuntimeKind,
     authoritativeTargetProjectPath,
+    profileState,
+    setDeveloperMode,
   } = useSessionStore();
 
   const [projectsExpanded, setProjectsExpanded] = useState(false);
@@ -1883,6 +1885,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               </div>
               <p className="text-xs text-muted-foreground">
                 New chats start on this agent until the first send binds a real backend lane.
+              </p>
+
+              <div className="flex items-center justify-between">
+                <Label htmlFor="dialog-developer-mode" className="text-sm">
+                  Developer Mode
+                </Label>
+                <Switch
+                  id="dialog-developer-mode"
+                  checked={profileState?.developerMode !== false}
+                  onCheckedChange={(checked) => setDeveloperMode(checked)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Enables advanced features like self-edit mirror launch in Live Editor.
               </p>
 
               <div className="flex items-center justify-between">

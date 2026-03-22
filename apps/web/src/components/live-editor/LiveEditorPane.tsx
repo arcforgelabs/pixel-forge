@@ -406,6 +406,7 @@ export function LiveEditorPane() {
     setPreviewUrl,
     allowSelfMirrorLaunch,
     authoritativeRuntimeKind,
+    profileState,
   } = useSessionStore()
 
   const targetUrlRef = useRef(previewUrl || '')
@@ -600,7 +601,8 @@ export function LiveEditorPane() {
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
   const effectiveRuntimeKind = authoritativeRuntimeKind || RUNTIME_KIND
-  const canLaunchSelfMirror = allowSelfMirrorLaunch
+  const developerMode = profileState?.developerMode !== false
+  const canLaunchSelfMirror = allowSelfMirrorLaunch && developerMode
   const isSelectionToolActive = activePreviewTool === 'select'
   const canGoBack = urlHistoryCursor > 0
   const canGoForward = urlHistoryCursor < urlHistory.length - 1
