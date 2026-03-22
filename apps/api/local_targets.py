@@ -136,6 +136,91 @@ class WorkspacePreviewAdapter:
     is_default: bool = False
 
 
+@dataclass(slots=True)
+class WorkspacePreviewHeuristicCandidate:
+    package_dir: Path
+    package_payload: dict[str, Any]
+    script_name: str
+    script_body: str
+    match_score: int
+    depth: int
+    name_penalty: int
+
+
+def _starter_adapter_id_from_label(label: str) -> str:
+    normalized = re.sub(r"[^a-z0-9-]+", "-", label.lower()).strip("-")
+    return normalized or "preview-adapter"
+
+
+def _build_workspace_preview_adapter_starter(
+    workspace_root: Path,
+    candidates: list[WorkspacePreviewHeuristicCandidate],
+) -> str:
+    adapters: list[dict[str, Any]] = []
+    for candidate in candidates:
+        relative_label = _workspace_preview_relative_label(workspace_root, candidate.package_dir)
+        command = [
+            *_package_manager_command(candidate.package_dir, workspace_root),
+            candidate.script_name,
+        ]
+        if "vite" in candidate.script_body:
+            command.extend(["--", "--host", "{host}", "--port", "{port}"])
+
+        adapters.append(
+            {
+                "id": _starter_adapter_id_from_label(relative_label),
+                "label": relative_label,
+                "mode": "managed-process",
+                "cwd": relative_label,
+                "command": command,
+            }
+        )
+
+    return json.dumps({"workspacePreviewAdapters": adapters}, indent=2)
+
+
+class WorkspacePreviewInferenceAmbiguityError(ValueError):
+    def __init__(
+        self,
+        *,
+        workspace_root: Path,
+        requested_url: str | None,
+        candidates: list[WorkspacePreviewHeuristicCandidate],
+    ) -> None:
+        self.workspace_root = workspace_root
+        self.requested_url = requested_url
+        self.candidates = candidates
+        self.adapter_path = _workspace_preview_adapter_path(workspace_root)
+        self.starter_config = _build_workspace_preview_adapter_starter(workspace_root, candidates)
+
+        requested_label = requested_url or "the requested preview"
+        candidate_labels = ", ".join(
+            f"{_workspace_preview_relative_label(workspace_root, candidate.package_dir)} ({candidate.script_name})"
+            for candidate in candidates
+        )
+        super().__init__(
+            "Workspace preview launch is ambiguous for an undeclared repo. "
+            f"Multiple local preview packages tie for {requested_label}: {candidate_labels}. "
+            f"Declare preview adapters in {self.adapter_path} instead of relying on heuristics."
+        )
+
+    def to_detail(self) -> dict[str, Any]:
+        return {
+            "code": "workspace_preview_ambiguous",
+            "message": str(self),
+            "requestedUrl": self.requested_url,
+            "adapterPath": str(self.adapter_path),
+            "starterConfig": self.starter_config,
+            "candidates": [
+                {
+                    "cwd": _workspace_preview_relative_label(self.workspace_root, candidate.package_dir),
+                    "scriptName": candidate.script_name,
+                }
+                for candidate in self.candidates
+            ],
+        }
+
+
 def _build_base_env() -> dict[str, str]:
     env = os.environ.copy()
     path_entries = env.get("PATH", "").split(":") if env.get("PATH") else []
@@ -532,11 +617,11 @@ def _workspace_preview_heuristic_launch_key(
     return _workspace_preview_launch_key(None, heuristic_hint)
 
 
-def _pick_workspace_package_candidate(
+def _rank_workspace_package_candidates(
     workspace_root: Path,
     requested_url: str | None = None,
-) -> tuple[Path, dict[str, Any]] | None:
-    ranked: list[tuple[int, int, int, Path, dict[str, Any]]] = []
+) -> list[WorkspacePreviewHeuristicCandidate]:
+    ranked: list[WorkspacePreviewHeuristicCandidate] = []
     request_tokens = _workspace_preview_request_tokens(requested_url)
     generic_parts = {"app", "apps", "package", "packages", "service", "services", "src"}
 
@@ -564,14 +649,57 @@ def _pick_workspace_package_candidate(
             for part in relative_parts
             if part in request_tokens and part not in generic_parts
         )
-        ranked.append((-match_score, depth, name_penalty, package_json_path, payload))
+        script_name = "dev" if "dev" in scripts else "start"
+        ranked.append(
+            WorkspacePreviewHeuristicCandidate(
+                package_dir=package_dir,
+                package_payload=payload,
+                script_name=script_name,
+                script_body=str(scripts.get(script_name) or ""),
+                match_score=match_score,
+                depth=depth,
+                name_penalty=name_penalty,
+            )
+        )
 
+    ranked.sort(
+        key=lambda candidate: (
+            -candidate.match_score,
+            candidate.depth,
+            candidate.name_penalty,
+            str(candidate.package_dir),
+        )
+    )
+    return ranked
+
+
+def _pick_workspace_package_candidate(
+    workspace_root: Path,
+    requested_url: str | None = None,
+) -> tuple[Path, dict[str, Any]] | None:
+    ranked = _rank_workspace_package_candidates(
+        workspace_root,
+        requested_url=requested_url,
+    )
     if not ranked:
         return None
 
-    ranked.sort(key=lambda entry: (entry[0], entry[1], entry[2], str(entry[3])))
-    _, _, _, package_json_path, payload = ranked[0]
-    return package_json_path.parent, payload
+    top_candidate = ranked[0]
+    ambiguous_candidates = [
+        candidate
+        for candidate in ranked
+        if candidate.match_score == top_candidate.match_score
+        and candidate.depth == top_candidate.depth
+        and candidate.name_penalty == top_candidate.name_penalty
+    ]
+    if len(ambiguous_candidates) > 1:
+        raise WorkspacePreviewInferenceAmbiguityError(
+            workspace_root=workspace_root,
+            requested_url=requested_url,
+            candidates=ambiguous_candidates,
+        )
+
+    return top_candidate.package_dir, top_candidate.package_payload
 
 
 def _build_workspace_dev_command(

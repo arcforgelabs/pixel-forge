@@ -27,6 +27,18 @@ export function getResponseErrorMessage(
     return (payload as { detail: string }).detail;
   }
 
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "detail" in payload &&
+    (payload as { detail?: unknown }).detail &&
+    typeof (payload as { detail: { message?: unknown } }).detail === "object" &&
+    typeof (payload as { detail: { message?: unknown } }).detail.message === "string" &&
+    (payload as { detail: { message: string } }).detail.message.trim()
+  ) {
+    return (payload as { detail: { message: string } }).detail.message;
+  }
+
   if (typeof payload === "string" && payload.trim()) {
     return payload;
   }

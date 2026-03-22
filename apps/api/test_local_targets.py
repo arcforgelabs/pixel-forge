@@ -251,6 +251,41 @@ class WorkspacePreviewLaunchPlanTest(unittest.TestCase):
         )
         self.assertNotEqual(control_room_plan.launch_key, marketing_plan.launch_key)
 
+    def test_raises_explicit_error_when_heuristic_package_choice_is_ambiguous(self) -> None:
+        control_room_dir = self.workspace_root / "apps" / "control-room"
+        marketing_dir = self.workspace_root / "apps" / "marketing"
+        control_room_dir.mkdir(parents=True)
+        marketing_dir.mkdir(parents=True)
+        (control_room_dir / "package.json").write_text(
+            '{"name":"control-room","scripts":{"dev":"vite"}}',
+            encoding="utf-8",
+        )
+        (marketing_dir / "package.json").write_text(
+            '{"name":"marketing","scripts":{"dev":"vite"}}',
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(local_targets.WorkspacePreviewInferenceAmbiguityError) as context:
+            local_targets._resolve_workspace_preview_launch_plan(
+                project_path=str(self.workspace_root),
+                workspace_path=str(self.workspace_root),
+                requested_url="http://localhost:3002/",
+                port=3104,
+                web_host="workspace-preview.localhost",
+            )
+
+        detail = context.exception.to_detail()
+        self.assertEqual(detail["code"], "workspace_preview_ambiguous")
+        self.assertEqual(detail["adapterPath"], str(
+            self.workspace_root / local_targets.WORKSPACE_PREVIEW_ADAPTER_FILENAME
+        ))
+        self.assertEqual(
+            [candidate["cwd"] for candidate in detail["candidates"]],
+            ["apps/control-room", "apps/marketing"],
+        )
+        self.assertIn("apps/control-room", detail["starterConfig"])
+        self.assertIn("apps/marketing", detail["starterConfig"])
+
     def test_reuses_running_heuristic_preview_by_requested_preview_host(self) -> None:
         instances_root = Path(os.environ["PIXEL_FORGE_SHARED_STATE_DIR"]) / "instances" / "existing-preview"
         instances_root.mkdir(parents=True)

@@ -99,6 +99,7 @@ from local_targets import (
     serialize_local_target,
     start_pixel_forge_target,
     start_workspace_preview_target,
+    WorkspacePreviewInferenceAmbiguityError,
 )
 from runtime_config import api_port as runtime_api_port
 
@@ -1324,6 +1325,8 @@ async def start_local_workspace_preview_target(payload: WorkspacePreviewTargetSt
             adapter_id=payload.adapter_id,
             force_restart=payload.force_restart,
         )
+    except WorkspacePreviewInferenceAmbiguityError as exc:
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

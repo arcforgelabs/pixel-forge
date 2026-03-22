@@ -101,6 +101,19 @@ interface LocalPixelForgeTargetResponse {
   resolution_kind?: 'adapter' | 'heuristic' | null
 }
 
+interface PreviewLaunchIssueCandidate {
+  cwd: string
+  scriptName: string
+}
+
+interface PreviewLaunchIssue {
+  code: 'workspace_preview_ambiguous'
+  message: string
+  adapterPath: string | null
+  starterConfig: string | null
+  candidates: PreviewLaunchIssueCandidate[]
+}
+
 interface BrowserPreviewEvent {
   type:
     | 'browser-location-changed'
@@ -365,6 +378,66 @@ function createPreviewTab(url = '', title?: string | null, index?: number): Prev
   }
 }
 
+class PreviewRequestError extends Error {
+  status: number
+  payload: unknown
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message)
+    this.name = 'PreviewRequestError'
+    this.status = status
+    this.payload = payload
+  }
+}
+
+function extractPreviewLaunchIssue(payload: unknown): PreviewLaunchIssue | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const detail = 'detail' in payload ? (payload as { detail?: unknown }).detail : null
+  if (!detail || typeof detail !== 'object') {
+    return null
+  }
+
+  const detailRecord = detail as Record<string, unknown>
+  if (detailRecord.code !== 'workspace_preview_ambiguous') {
+    return null
+  }
+
+  const candidates = Array.isArray(detailRecord.candidates)
+    ? detailRecord.candidates.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return []
+        }
+        const candidate = entry as Record<string, unknown>
+        const cwd = typeof candidate.cwd === 'string' ? candidate.cwd.trim() : ''
+        const scriptName = typeof candidate.scriptName === 'string' ? candidate.scriptName.trim() : ''
+        if (!cwd) {
+          return []
+        }
+        return [{ cwd, scriptName }]
+      })
+    : []
+
+  return {
+    code: 'workspace_preview_ambiguous',
+    message:
+      typeof detailRecord.message === 'string' && detailRecord.message.trim()
+        ? detailRecord.message
+        : 'Workspace preview launch is ambiguous.',
+    adapterPath:
+      typeof detailRecord.adapterPath === 'string' && detailRecord.adapterPath.trim()
+        ? detailRecord.adapterPath
+        : null,
+    starterConfig:
+      typeof detailRecord.starterConfig === 'string' && detailRecord.starterConfig.trim()
+        ? detailRecord.starterConfig
+        : null,
+    candidates,
+  }
+}
+
 async function requestPreviewJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
     credentials: 'include',
@@ -377,7 +450,11 @@ async function requestPreviewJson<T>(path: string, init?: RequestInit): Promise<
 
   if (!response.ok) {
     const payload = await readResponsePayload(response)
-    throw new Error(getResponseErrorMessage(response, payload))
+    throw new PreviewRequestError(
+      getResponseErrorMessage(response, payload),
+      response.status,
+      payload
+    )
   }
 
   return response.json() as Promise<T>
@@ -434,6 +511,7 @@ export function LiveEditorPane() {
   const desktopAppRef = useRef(getDesktopApp())
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
+  const [previewLaunchIssue, setPreviewLaunchIssue] = useState<PreviewLaunchIssue | null>(null)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
 
@@ -1170,6 +1248,7 @@ export function LiveEditorPane() {
 
     if (!urlToLoad) {
       setAuthIssue(null)
+      setPreviewLaunchIssue(null)
       setTargetUrl('')
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry, index) =>
@@ -1218,6 +1297,7 @@ export function LiveEditorPane() {
       const resolvedTargetUrl = data.target_url
 
       setAuthIssue(null)
+      setPreviewLaunchIssue(null)
       setTargetUrl(resolvedTargetUrl)
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry, index) => {
@@ -1259,6 +1339,11 @@ export function LiveEditorPane() {
         toast.success('Loaded in embedded Chromium')
       }
     } catch (error) {
+      if (error instanceof PreviewRequestError) {
+        setPreviewLaunchIssue(extractPreviewLaunchIssue(error.payload))
+      } else {
+        setPreviewLaunchIssue(null)
+      }
       console.error('[live-editor] Failed to load preview target:', error)
       if (options?.announceSuccess !== false) {
         toast.error(
@@ -2094,12 +2179,27 @@ export function LiveEditorPane() {
     iframeRefs.current = {}
     setShowUrlHistory(false)
     setAuthIssue(null)
+    setPreviewLaunchIssue(null)
   }, [
     previewUrl,
     projectPath,
     setAuthIssue,
     setShowUrlHistory,
   ])
+
+  const copyPreviewLaunchStarter = useCallback(async () => {
+    if (!previewLaunchIssue?.starterConfig) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(previewLaunchIssue.starterConfig)
+      toast.success('Copied starter preview adapter config')
+    } catch (error) {
+      console.error('[live-editor] Failed to copy starter preview config:', error)
+      toast.error('Failed to copy starter preview adapter config')
+    }
+  }, [previewLaunchIssue])
 
   useEffect(() => {
     const normalizedPreviewUrl = previewUrl?.trim() || null
@@ -2898,6 +2998,61 @@ export function LiveEditorPane() {
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto bg-background/50 p-3">
+          {previewLaunchIssue && (
+            <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+              <div className="flex flex-wrap items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-300" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">Preview contract needed</div>
+                  <p className="mt-1 break-words [overflow-wrap:anywhere]">
+                    {previewLaunchIssue.message}
+                  </p>
+                  {previewLaunchIssue.candidates.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {previewLaunchIssue.candidates.map((candidate) => (
+                        <code
+                          key={`${candidate.cwd}:${candidate.scriptName}`}
+                          className="rounded bg-black/20 px-2 py-1 text-xs"
+                        >
+                          {candidate.cwd}
+                          {candidate.scriptName ? ` · ${candidate.scriptName}` : ''}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+                  {previewLaunchIssue.adapterPath && (
+                    <p className="mt-2 text-xs text-amber-100/85">
+                      Declare adapters in{' '}
+                      <code className="break-all rounded bg-black/20 px-1 py-0.5">
+                        {previewLaunchIssue.adapterPath}
+                      </code>
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {previewLaunchIssue.starterConfig && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-amber-400/50 bg-transparent text-amber-100 hover:bg-amber-500/10"
+                      onClick={() => void copyPreviewLaunchStarter()}
+                    >
+                      Copy Starter
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-amber-100 hover:bg-amber-500/10 hover:text-amber-50"
+                    onClick={() => setPreviewLaunchIssue(null)}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {authIssue && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
               <AlertTriangle className="h-4 w-4 text-amber-300" />
