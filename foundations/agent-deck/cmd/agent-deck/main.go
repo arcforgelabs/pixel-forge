@@ -217,6 +217,8 @@ func initColorProfile() {
 }
 
 func main() {
+	session.ExportActiveAgentDeckExecutable()
+
 	// Extract global -p/--profile flag before subcommand dispatch
 	profile, args := extractProfileFlag(os.Args[1:])
 	if profile != "" {

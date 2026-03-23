@@ -1747,18 +1747,22 @@ func SetupConductor(name, profile string, heartbeatEnabled bool, clearOnCompact 
 
 // findAgentDeck looks for agent-deck in common locations
 func findAgentDeck() string {
+	if current := preferredAgentDeckExecutable(); current != "" {
+		return current
+	}
+
 	paths := []string{
 		"/usr/local/bin/agent-deck",
 		"/opt/homebrew/bin/agent-deck",
 	}
 	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
+		if executableExists(p) {
 			return p
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		p := filepath.Join(dir, "agent-deck")
-		if _, err := os.Stat(p); err == nil {
+		if executableExists(p) {
 			return p
 		}
 	}

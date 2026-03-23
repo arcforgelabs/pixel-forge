@@ -3,10 +3,12 @@ package session
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+)
+
+var (
+	findAgentDeckBinary = findAgentDeck
 )
 
 // SendSessionMessageReliable sends a message using the same queued/reliable semantics
@@ -44,17 +46,11 @@ func SendSessionMessageReliable(profile, sessionRef, message string) error {
 }
 
 func agentDeckBinaryPath() string {
-	// In production this should resolve to the installed binary.
-	if p := findAgentDeck(); p != "" {
+	if p := preferredAgentDeckExecutable(); p != "" {
 		return p
 	}
-
-	// Fall back to current executable only if it looks like the agent-deck binary.
-	if exe, err := os.Executable(); err == nil {
-		base := strings.ToLower(filepath.Base(exe))
-		if strings.HasPrefix(base, "agent-deck") {
-			return exe
-		}
+	if p := findAgentDeckBinary(); p != "" {
+		return p
 	}
 
 	return "agent-deck"
