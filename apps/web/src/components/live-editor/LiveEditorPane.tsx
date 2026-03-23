@@ -8,6 +8,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionStore } from '@/store/session-store'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   hasBlockingOverlay,
   useDesktopPreviewOverlayGuard,
 } from '@/hooks/useDesktopPreviewOverlayGuard'
@@ -30,12 +37,14 @@ import {
   ExternalLink,
   Globe2,
   Layers,
+  Loader2,
   MessageSquare,
   Monitor,
   MousePointer2,
   Play,
   Plus,
   RefreshCw,
+  Rocket,
   Smartphone,
   X,
 } from 'lucide-react'
@@ -57,6 +66,7 @@ import {
   type LocalTargetMeta,
   type PreviewTab,
   type ViewportMode,
+  type WorkspacePreviewMeta,
 } from './store/chat-store'
 import {
   type SelectionRecord,
@@ -89,10 +99,50 @@ interface LocalPixelForgeTargetResponse {
   web_host: string
   api_url: string
   web_url: string
+  stable_url: string
   state_dir: string
   log_file: string
   pid: number | null
   target_mode: boolean
+  already_running: boolean
+  created_at: string | null
+}
+
+interface WorkspacePreviewCandidateResponse {
+  candidate_id: string
+  workspace_path: string
+  workspace_root: string
+  app_path: string
+  relative_app_path: string
+  title: string
+  script_name: string
+  package_manager: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  framework: string | null
+  preferred_port: number | null
+  command_preview: string
+  recommended: boolean
+  recommendation_score: number
+}
+
+interface WorkspacePreviewResponse {
+  kind: 'workspace-preview'
+  workspace_path: string
+  workspace_root: string
+  app_path: string
+  relative_app_path: string
+  title: string
+  script_name: string
+  package_manager: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  framework: string | null
+  preferred_port: number | null
+  instance_slug: string
+  web_port: number
+  web_host: string
+  web_url: string
+  stable_url: string
+  state_dir: string
+  log_file: string
+  pid: number | null
   already_running: boolean
   created_at: string | null
 }
@@ -126,6 +176,8 @@ interface AppliedSelection {
   elementId: string | null
   classList: string[]
   textSample: string
+  pdfPage?: number | null
+  pdfTextContent?: string | null
   rootXPath: string | null
   rootTagName: string | null
   rootElementId: string | null
@@ -149,6 +201,25 @@ function toLocalTargetMeta(
   }
 }
 
+function toWorkspacePreviewMeta(
+  record: WorkspacePreviewResponse,
+): WorkspacePreviewMeta {
+  return {
+    kind: record.kind,
+    workspacePath: record.workspace_path,
+    workspaceRoot: record.workspace_root,
+    appPath: record.app_path,
+    relativeAppPath: record.relative_app_path,
+    title: record.title,
+    scriptName: record.script_name,
+    packageManager: record.package_manager,
+    framework: record.framework,
+    preferredPort: record.preferred_port,
+    instanceSlug: record.instance_slug,
+    createdAt: record.created_at,
+  }
+}
+
 function toAppliedSelection(
   element: SelectionRecord,
   globalIndex: number
@@ -164,6 +235,8 @@ function toAppliedSelection(
     elementId: element.elementId,
     classList: element.classList,
     textSample: element.textContent.replace(/\s+/g, ' ').trim().slice(0, 120),
+    pdfPage: element.pdfPage ?? null,
+    pdfTextContent: element.pdfTextContent ?? null,
     rootXPath: element.rootXPath,
     rootTagName: element.rootTagName,
     rootElementId: element.rootElementId,
@@ -230,16 +303,21 @@ function parsePreviewSelectionData(
         : 'dom'
   const xpath = typeof data.xpath === 'string' ? data.xpath : ''
   const rootXPath = typeof data.rootXPath === 'string' ? data.rootXPath : null
+  const pdfPage = Number.isFinite(Number(data.pdfPage)) ? Math.round(Number(data.pdfPage)) : null
+  const pdfTextContent =
+    typeof data.pdfTextContent === 'string'
+      ? data.pdfTextContent
+      : null
 
   if (!selectionId) {
     return null
   }
 
-  if (selectorKind === 'dom' && !xpath) {
+  if (selectorKind === 'dom' && !xpath && surfaceKind !== 'pdf') {
     return null
   }
 
-  if (selectorKind === 'region' && !rootXPath) {
+  if (selectorKind === 'region' && !rootXPath && surfaceKind !== 'pdf') {
     return null
   }
 
@@ -265,6 +343,8 @@ function parsePreviewSelectionData(
     textContent: typeof data.textContent === 'string' ? data.textContent : '',
     xpath,
     outerHTML: typeof data.outerHTML === 'string' ? data.outerHTML : '',
+    pdfPage,
+    pdfTextContent,
     rootXPath,
     rootTagName: typeof data.rootTagName === 'string' ? data.rootTagName : null,
     rootElementId: typeof data.rootElementId === 'string' ? data.rootElementId : null,
@@ -322,6 +402,7 @@ function createPreviewTab(url = '', title?: string | null, index?: number): Prev
     frameSrc: 'about:blank',
     snapshotDataUrl: null,
     localTarget: null,
+    workspacePreview: null,
   }
 }
 
@@ -389,6 +470,10 @@ export function LiveEditorPane() {
   const desktopAppRef = useRef(getDesktopApp())
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
+  const [workspacePreviewDialogOpen, setWorkspacePreviewDialogOpen] = useState(false)
+  const [workspacePreviewCandidates, setWorkspacePreviewCandidates] = useState<WorkspacePreviewCandidateResponse[]>([])
+  const [workspacePreviewCandidatesLoading, setWorkspacePreviewCandidatesLoading] = useState(false)
+  const [startingWorkspacePreviewCandidateId, setStartingWorkspacePreviewCandidateId] = useState<string | null>(null)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
 
@@ -528,6 +613,7 @@ export function LiveEditorPane() {
   const previewAudienceWorkspacePath = currentChatIsCloneBacked
     ? currentChatWorkspacePath || resolvedMirrorTarget?.workspacePath || null
     : projectPath || null
+  const workspacePreviewWorkspacePath = currentChatWorkspacePath || projectPath || null
   const previewAudienceSessionId = currentChatIsCloneBacked
     ? activeThreadTargetAgentDeckSessionId
     : null
@@ -767,6 +853,25 @@ export function LiveEditorPane() {
           ? {
               ...entry,
               localTarget: meta,
+              workspacePreview: null,
+            }
+          : entry
+      )
+    )
+  }, [setPreviewTabs])
+
+  const attachWorkspacePreviewToTab = useCallback((
+    tabId: string,
+    record: WorkspacePreviewResponse,
+  ) => {
+    const meta = toWorkspacePreviewMeta(record)
+    setPreviewTabs((currentTabs) =>
+      currentTabs.map((entry) =>
+        entry.id === tabId
+          ? {
+              ...entry,
+              localTarget: null,
+              workspacePreview: meta,
             }
           : entry
       )
@@ -847,6 +952,8 @@ export function LiveEditorPane() {
                 && Array.isArray(entry.classList)
                 && entry.classList.every((value: unknown) => typeof value === 'string')
                 && typeof entry.textSample === 'string'
+                && (entry.pdfPage === null || entry.pdfPage === undefined || Number.isFinite(entry.pdfPage))
+                && (entry.pdfTextContent === null || entry.pdfTextContent === undefined || typeof entry.pdfTextContent === 'string')
                 && (entry.rootXPath === null || typeof entry.rootXPath === 'string')
                 && (entry.rootTagName === null || typeof entry.rootTagName === 'string')
                 && (entry.rootElementId === null || typeof entry.rootElementId === 'string')
@@ -1029,6 +1136,8 @@ export function LiveEditorPane() {
                 snapshotDataUrl: null,
                 proxySessionId: null,
                 browserTabId: null,
+                localTarget: null,
+                workspacePreview: null,
               }
             : entry
         )
@@ -1076,6 +1185,8 @@ export function LiveEditorPane() {
             browserTabId: data.browser_tab_id,
             frameSrc: 'about:blank',
             snapshotDataUrl: data.snapshot_data_url,
+            localTarget: null,
+            workspacePreview: null,
           }
         })
       )
@@ -1144,13 +1255,41 @@ export function LiveEditorPane() {
     attachLocalTargetToTab(tab.id, record, {
       audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
     })
-    await loadApp(record.web_url, {
+    await loadApp(record.stable_url || record.web_url, {
       tabId: tab.id,
       persist: false,
       announceSuccess: false,
     })
     return true
   }, [attachLocalTargetToTab, loadApp, projectPath])
+
+  const restoreWorkspacePreviewInTab = useCallback(async (tab: PreviewTab) => {
+    if (!tab.workspacePreview) {
+      return false
+    }
+
+    const record = await requestPreviewJson<WorkspacePreviewResponse>(
+      '/api/workspace-previews/start',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          workspace_path: tab.workspacePreview.workspacePath,
+          relative_app_path: tab.workspacePreview.relativeAppPath,
+          script_name: tab.workspacePreview.scriptName,
+          package_manager: tab.workspacePreview.packageManager,
+          force_restart: false,
+        }),
+      }
+    )
+
+    attachWorkspacePreviewToTab(tab.id, record)
+    await loadApp(record.stable_url || record.web_url, {
+      tabId: tab.id,
+      persist: false,
+      announceSuccess: false,
+    })
+    return true
+  }, [attachWorkspacePreviewToTab, loadApp])
 
   const restoreActivePreviewTab = useCallback(async () => {
     if (activeMode !== 'live-editor' || !projectPath) {
@@ -1164,6 +1303,17 @@ export function LiveEditorPane() {
 
     if (activePreviewTab.browserTabId || activePreviewTab.proxySessionId) {
       return
+    }
+
+    if (activePreviewTab.workspacePreview?.kind === 'workspace-preview') {
+      try {
+        const restored = await restoreWorkspacePreviewInTab(activePreviewTab)
+        if (restored) {
+          return
+        }
+      } catch (error) {
+        console.error('[live-editor] Failed to restore workspace preview tab:', error)
+      }
     }
 
     if (
@@ -1195,6 +1345,7 @@ export function LiveEditorPane() {
     loadApp,
     projectPath,
     restoreLocalTargetInTab,
+    restoreWorkspacePreviewInTab,
   ])
 
   useEffect(() => {
@@ -1406,7 +1557,7 @@ export function LiveEditorPane() {
       audienceWorkspacePath?: string | null
     }
   ) => {
-    const tabId = await openUrlInPreviewTab(record.web_url, {
+    const tabId = await openUrlInPreviewTab(record.stable_url || record.web_url, {
       title:
         record.runtime_kind === 'mirror'
           ? `Pixel Forge · ${record.build_label}`
@@ -1422,6 +1573,24 @@ export function LiveEditorPane() {
     }
     return tabId
   }, [attachLocalTargetToTab, openUrlInPreviewTab, refreshMirrorBuilds])
+
+  const openWorkspacePreviewInTab = useCallback(async (
+    record: WorkspacePreviewResponse,
+    options?: {
+      announceSuccess?: boolean
+      preferredTabId?: string | null
+    }
+  ) => {
+    const tabId = await openUrlInPreviewTab(record.stable_url || record.web_url, {
+      title: `Workspace · ${record.title}`,
+      announceSuccess: options?.announceSuccess,
+      preferredTabId: options?.preferredTabId,
+    })
+    if (tabId) {
+      attachWorkspacePreviewToTab(tabId, record)
+    }
+    return tabId
+  }, [attachWorkspacePreviewToTab, openUrlInPreviewTab])
 
   const startPixelForgeMirror = useCallback(async (
     options?: {
@@ -1461,6 +1630,78 @@ export function LiveEditorPane() {
     })
     return record
   }, [openLocalTargetInPreviewTab, projectPath])
+
+  const openWorkspacePreviewLauncher = useCallback(async () => {
+    if (!workspacePreviewWorkspacePath) {
+      toast.error('Select or bind a workspace before launching a workspace preview.')
+      return
+    }
+
+    setWorkspacePreviewCandidatesLoading(true)
+    try {
+      const payload = await requestPreviewJson<{
+        workspace_path: string
+        candidates: WorkspacePreviewCandidateResponse[]
+      }>(
+        `/api/workspace-previews/candidates?workspace_path=${encodeURIComponent(workspacePreviewWorkspacePath)}`
+      )
+      setWorkspacePreviewCandidates(payload.candidates)
+      setWorkspacePreviewDialogOpen(true)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to inspect workspace preview candidates'
+      )
+    } finally {
+      setWorkspacePreviewCandidatesLoading(false)
+    }
+  }, [workspacePreviewWorkspacePath])
+
+  const launchWorkspacePreviewCandidate = useCallback(async (
+    candidate: WorkspacePreviewCandidateResponse
+  ) => {
+    setStartingWorkspacePreviewCandidateId(candidate.candidate_id)
+    try {
+      const record = await requestPreviewJson<WorkspacePreviewResponse>(
+        '/api/workspace-previews/start',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            workspace_path: candidate.workspace_path,
+            relative_app_path: candidate.relative_app_path,
+            script_name: candidate.script_name,
+            package_manager: candidate.package_manager,
+            force_restart: false,
+          }),
+        }
+      )
+      const currentActivePreviewTab = getActivePreviewTab()
+      const reusableTabId =
+        currentActivePreviewTab?.workspacePreview?.instanceSlug === record.instance_slug
+        || !currentActivePreviewTab?.url?.trim()
+          ? currentActivePreviewTab?.id ?? null
+          : null
+      await openWorkspacePreviewInTab(record, {
+        announceSuccess: false,
+        preferredTabId: reusableTabId,
+      })
+      setWorkspacePreviewDialogOpen(false)
+      toast.success(
+        record.already_running
+          ? `Attached to workspace preview · ${record.title}`
+          : `Started workspace preview · ${record.title}`
+      )
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Failed to launch the workspace preview'
+      )
+    } finally {
+      setStartingWorkspacePreviewCandidateId(null)
+    }
+  }, [getActivePreviewTab, openWorkspacePreviewInTab])
 
   const fetchLatestPendingPreviewUpdate = useCallback(async (
     workspacePath: string,
@@ -2519,6 +2760,23 @@ export function LiveEditorPane() {
               <Play className="h-3 w-3" />
               Load
             </Button>
+            {projectPath && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void openWorkspacePreviewLauncher()}
+                disabled={!hasEmbeddedBrowserPreview || workspacePreviewCandidatesLoading}
+                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
+                title="Discover and launch a workspace-bound preview from the active lane workspace"
+              >
+                {workspacePreviewCandidatesLoading ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Rocket className="h-3 w-3" />
+                )}
+                Preview
+              </Button>
+            )}
             {projectPath && canLaunchSelfMirror && (
               <Button
                 variant="outline"
@@ -2719,6 +2977,100 @@ export function LiveEditorPane() {
           <ChatInput />
         </div>
       </div>
+
+      <Dialog
+        open={workspacePreviewDialogOpen}
+        onOpenChange={(open) => {
+          setWorkspacePreviewDialogOpen(open)
+          if (!open) {
+            setStartingWorkspacePreviewCandidateId(null)
+          }
+        }}
+      >
+        <DialogContent className="w-[min(92vw,42rem)] max-h-[min(84vh,46rem)] overflow-hidden p-0 sm:max-w-none">
+          <div className="flex max-h-[min(84vh,46rem)] flex-col">
+            <DialogHeader className="border-b border-border/40 px-6 py-4 pr-12">
+              <DialogTitle>Workspace Preview</DialogTitle>
+              <DialogDescription>
+                Launch an isolated preview from the current lane workspace. The visible preview URL stays stable even if the real dev-server port has to move.
+              </DialogDescription>
+              {workspacePreviewWorkspacePath && (
+                <div className="mt-2 rounded-md border border-border/40 bg-background/50 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                  {workspacePreviewWorkspacePath}
+                </div>
+              )}
+            </DialogHeader>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+              {workspacePreviewCandidatesLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Inspecting workspace preview candidates...
+                </div>
+              ) : workspacePreviewCandidates.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
+                  No supported preview candidates were found in this workspace yet. This launcher currently targets common `package.json` app shapes with `dev`, `start`, or `serve` scripts.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {workspacePreviewCandidates.map((candidate) => {
+                    const isStarting = startingWorkspacePreviewCandidateId === candidate.candidate_id
+                    return (
+                      <button
+                        key={candidate.candidate_id}
+                        type="button"
+                        disabled={Boolean(startingWorkspacePreviewCandidateId)}
+                        onClick={() => void launchWorkspacePreviewCandidate(candidate)}
+                        className="w-full rounded-xl border border-border/60 bg-background/50 p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:cursor-wait disabled:opacity-70"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {candidate.title}
+                              </div>
+                              {candidate.recommended && (
+                                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
+                                  Recommended
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                              {candidate.relative_app_path}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+                            <div>{candidate.package_manager} · {candidate.script_name}</div>
+                            <div>{candidate.framework || 'generic'}{candidate.preferred_port ? ` · prefers ${candidate.preferred_port}` : ''}</div>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-md border border-border/40 bg-background/70 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                          {candidate.command_preview}
+                        </div>
+                        <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+                          <span>
+                            Bound to this workspace, not whatever localhost port happens to be alive.
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-foreground">
+                            {isStarting ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Starting...
+                              </>
+                            ) : (
+                              'Launch preview'
+                            )}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

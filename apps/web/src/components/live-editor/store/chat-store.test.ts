@@ -294,6 +294,7 @@ describe('live editor selection history', () => {
         frameSrc: 'about:blank',
         snapshotDataUrl: null,
         localTarget: null,
+        workspacePreview: null,
       },
     ])
     store.setActivePreviewTabId('tab-one')
@@ -316,6 +317,7 @@ describe('live editor selection history', () => {
         frameSrc: 'about:blank',
         snapshotDataUrl: null,
         localTarget: null,
+        workspacePreview: null,
       },
     ])
     useLiveEditorStore.getState().setActivePreviewTabId('tab-two')
@@ -362,6 +364,7 @@ describe('live editor selection history', () => {
                 title: 'Claude',
                 mode: 'browser',
                 localTarget: null,
+                workspacePreview: null,
               },
             ],
             activePreviewTabId: 'tab-a',
@@ -683,6 +686,7 @@ describe('live editor selection history', () => {
               title: 'Claude',
               mode: 'browser',
               localTarget: null,
+              workspacePreview: null,
             },
           ],
           activePreviewTabId: 'tab-a',
@@ -722,6 +726,7 @@ describe('live editor selection history', () => {
         frameSrc: 'about:blank',
         snapshotDataUrl: null,
         localTarget: null,
+        workspacePreview: null,
       },
     ])
     useLiveEditorStore.getState().setActivePreviewTabId('tab-a')
@@ -752,6 +757,7 @@ describe('live editor selection history', () => {
             title: 'Claude',
             mode: 'browser',
             localTarget: null,
+            workspacePreview: null,
           },
         ],
       },
@@ -807,6 +813,7 @@ describe('live editor selection history', () => {
         frameSrc: 'about:blank',
         snapshotDataUrl: null,
         localTarget: null,
+        workspacePreview: null,
       },
     ])
     useLiveEditorStore.getState().setActivePreviewTabId('tab-browser')
@@ -875,6 +882,7 @@ describe('live editor selection history', () => {
         frameSrc: 'about:blank',
         snapshotDataUrl: null,
         localTarget: null,
+        workspacePreview: null,
       },
     ])
     useLiveEditorStore.getState().setActivePreviewTabId('tab-browser')
@@ -905,6 +913,42 @@ describe('live editor selection history', () => {
           devtools_browser_url: 'http://127.0.0.1:7301',
           devtools_target_id: 'controller-target-1',
         },
+      },
+    })
+  })
+
+  it('preserves additive pdf selection metadata in outbound live-edit payloads', () => {
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().addElement(createSelection('pdf-line', {
+      surfaceKind: 'pdf',
+      pageKey: 'https://example.com/spec.pdf#page=4',
+      tagName: 'pdf-text',
+      classList: ['pdf-text'],
+      textContent: 'The controller must keep the authenticated PDF session alive.',
+      sourceUrl: 'https://example.com/spec.pdf',
+      sourceTabLabel: 'Spec',
+      pageTitle: 'Spec PDF',
+      pdfPage: 4,
+      pdfTextContent: 'The controller must keep the authenticated PDF session alive.',
+    }))
+
+    useLiveEditorStore.getState().sendMessage('Preserve the PDF selection metadata.')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      selection_tunnel: {
+        selections: [
+          {
+            surfaceKind: 'pdf',
+            pdfPage: 4,
+            pdfTextContent: 'The controller must keep the authenticated PDF session alive.',
+          },
+        ],
       },
     })
   })

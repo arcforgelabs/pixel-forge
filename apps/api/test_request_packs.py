@@ -131,6 +131,56 @@ do not treat /tmp/workspace as a skill.
             self.assertEqual(live_preview_payload["browser_tab_id"], "browser-tab-1")
             self.assertTrue(live_preview_payload["live_attach_available"])
             self.assertEqual(manifest["canonical_project_path"], str(Path(tmpdir).resolve()))
+            self.assertEqual(manifest["turn_input_file"], request_pack.relative_turn_input_file)
+
+    def test_request_pack_writes_structured_turn_input_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Please use /using-pixel-forge and update the selected card label.",
+                "<selected-elements />",
+                [
+                    {
+                        "name": "reference.png",
+                        "mime_type": "image/png",
+                        "data_url": "data:image/png;base64,ZmFrZQ==",
+                        "kind": "image",
+                    }
+                ],
+                selection_tunnel={
+                    "selections": [
+                        {
+                            "id": "selection-1",
+                            "sourceTabLabel": "Preview",
+                            "sourceUrl": "https://example.com/app",
+                            "xpath": "//*[@id='card']",
+                            "textContent": "Card label",
+                        }
+                    ]
+                },
+                live_preview_context={
+                    "current_url": "https://example.com/app",
+                    "current_title": "Example App",
+                    "live_attach_available": True,
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+            turn_input_payload = json.loads(
+                request_pack.turn_input_file.read_text(encoding="utf-8")
+            )
+
+            self.assertIn("## Structured Turn Input", request_body)
+            self.assertIn("turn-input.json", request_body)
+            self.assertEqual(manifest["turn_input_file"], request_pack.relative_turn_input_file)
+            self.assertEqual(turn_input_payload["prompt_text"], "Please use /using-pixel-forge and update the selected card label.")
+            self.assertEqual(turn_input_payload["requested_skills"], ["using-pixel-forge"])
+            self.assertEqual(turn_input_payload["selection"]["count"], 1)
+            self.assertEqual(turn_input_payload["selection"]["items"][0]["id"], "selection-1")
+            self.assertEqual(turn_input_payload["live_preview"]["current_url"], "https://example.com/app")
+            self.assertEqual(turn_input_payload["attachments"][0]["name"], "reference.png")
 
     def test_request_pack_uses_runtime_cli_name_for_live_attach_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -241,6 +291,43 @@ do not treat /tmp/workspace as a skill.
             )
             self.assertEqual(context_patch_payload["continuation_mode"], "delta")
             self.assertEqual(context_patch_payload["agent_session"]["id"], "deck-1")
+
+    def test_request_pack_preserves_additive_pdf_selection_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Preserve the PDF selection metadata in the request pack.",
+                "<selected-elements />",
+                [],
+                selection_tunnel={
+                    "selections": [
+                        {
+                            "id": "selection-pdf-1",
+                            "selectorKind": "dom",
+                            "surfaceKind": "pdf",
+                            "sourceTabId": "tab-pdf",
+                            "sourceTabLabel": "Spec",
+                            "sourceUrl": "https://example.com/spec.pdf",
+                            "pageKey": "https://example.com/spec.pdf#page=2",
+                            "pdfPage": 2,
+                            "pdfTextContent": "The warm preview session must stay intact.",
+                            "xpath": "/html/body/div[1]/div[2]/span[4]",
+                        }
+                    ]
+                },
+            )
+
+            tunnel_payload = json.loads(
+                request_pack.selection_tunnel_file.read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(tunnel_payload["selections"][0]["surfaceKind"], "pdf")
+            self.assertEqual(tunnel_payload["selections"][0]["pdfPage"], 2)
+            self.assertEqual(
+                tunnel_payload["selections"][0]["pdfTextContent"],
+                "The warm preview session must stay intact.",
+            )
 
     def test_request_pack_writes_controller_browserview_live_preview_proof_section(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,0 +1,109 @@
+.pf-pdf-preview {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.86), transparent 42%),
+    linear-gradient(180deg, #efe6d7 0%, #ddd1bf 100%);
+  color: #1e1710;
+}
+
+.pf-pdf-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(68, 43, 17, 0.14);
+  background: rgba(247, 241, 231, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.pf-pdf-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(92, 60, 31, 0.72);
+}
+
+.pf-pdf-title {
+  margin: 4px 0 0;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.pf-pdf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(77, 50, 26, 0.82);
+}
+
+.pf-pdf-scroll {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+  padding: 22px 20px 40px;
+}
+
+.pf-pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+.pf-pdf-page {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(67, 41, 18, 0.12);
+  background: #fffdf8;
+  box-shadow:
+    0 28px 50px rgba(80, 55, 29, 0.14),
+    0 3px 8px rgba(80, 55, 29, 0.08);
+}
+
+.pf-pdf-page-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 3;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(40, 31, 24, 0.82);
+  color: #f8efe3;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pf-pdf-status,
+.pf-pdf-error {
+  margin: 0 auto;
+  width: min(640px, 100%);
+  padding: 14px 16px;
+  border-radius: 14px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pf-pdf-status {
+  background: rgba(255, 255, 255, 0.84);
+  color: rgba(61, 42, 24, 0.82);
+}
+
+.pf-pdf-error {
+  background: rgba(106, 22, 22, 0.9);
+  color: #fff2ed;
+}

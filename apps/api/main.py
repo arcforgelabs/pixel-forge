@@ -94,6 +94,7 @@ from live_preview_context import (
 )
 from skill_registry import load_skill_registry_snapshot
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
+from local_target_proxy import LocalTargetAliasMiddleware
 from controller_update_state import (
     clear_pending_controller_update,
     read_pending_controller_update,
@@ -116,6 +117,12 @@ from local_targets import (
     list_pixel_forge_targets,
     serialize_local_target,
     start_pixel_forge_target,
+)
+from workspace_previews import (
+    discover_workspace_preview_candidates,
+    serialize_workspace_preview,
+    serialize_workspace_preview_candidate,
+    start_workspace_preview,
 )
 from runtime_config import api_port as runtime_api_port
 from runtime_config import cli_name as runtime_cli_name
@@ -315,6 +322,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(LocalTargetAliasMiddleware)
+
 
 # ---------------------------------------------------------------------------
 # Built frontend serving (production mode)
@@ -506,6 +515,14 @@ class LocalTargetStartRequest(BaseModel):
     runtime_kind: Literal["mirror", "dev"] = "mirror"
     force_restart: bool = True
     source_root: str | None = None
+
+
+class WorkspacePreviewStartRequest(BaseModel):
+    workspace_path: str
+    relative_app_path: str | None = None
+    script_name: str | None = None
+    package_manager: str | None = None
+    force_restart: bool = False
 
 
 class PendingControllerUpdateRequest(BaseModel):
@@ -1419,6 +1436,42 @@ async def list_local_pixel_forge_targets(
     return {"targets": [serialize_local_target(record) for record in records]}
 
 
+@app.get("/api/workspace-previews/candidates")
+async def list_workspace_preview_candidates(workspace_path: str):
+    try:
+        candidates = await asyncio.to_thread(
+            discover_workspace_preview_candidates,
+            workspace_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "workspace_path": str(Path(workspace_path).expanduser().resolve()),
+        "candidates": [
+            serialize_workspace_preview_candidate(candidate)
+            for candidate in candidates
+        ],
+    }
+
+
+@app.post("/api/workspace-previews/start")
+async def start_workspace_preview_route(payload: WorkspacePreviewStartRequest):
+    try:
+        record = await asyncio.to_thread(
+            start_workspace_preview,
+            payload.workspace_path,
+            relative_app_path=payload.relative_app_path,
+            script_name=payload.script_name,
+            package_manager=payload.package_manager,
+            force_restart=payload.force_restart,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return serialize_workspace_preview(record)
+
+
 @app.get("/api/controller-update")
 async def get_pending_controller_update():
     update = await asyncio.to_thread(read_pending_controller_update)
@@ -2244,6 +2297,9 @@ def _summarize_live_preview_context(
         "live_attach_mode": live_preview_context.get("live_attach_mode"),
         "current_url": live_preview_context.get("current_url"),
         "current_title": live_preview_context.get("current_title"),
+        "surface_kind": live_preview_context.get("surface_kind"),
+        "page_count": live_preview_context.get("page_count"),
+        "visible_page_numbers": live_preview_context.get("visible_page_numbers"),
         "ready_state": live_preview_context.get("ready_state"),
         "viewport": live_preview_context.get("viewport"),
         "attach_hints": live_preview_context.get("attach_hints"),
@@ -2256,6 +2312,8 @@ def _summarize_live_preview_context(
                 "selection_id": entry.get("selection_id"),
                 "found": entry.get("found"),
                 "visible": entry.get("visible"),
+                "surface_kind": entry.get("surface_kind"),
+                "pdf_page": entry.get("pdf_page"),
                 "xpath": entry.get("xpath"),
                 "tag_name": entry.get("tag_name"),
                 "text_excerpt": entry.get("text_excerpt"),
@@ -2323,6 +2381,7 @@ def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
     request_id: str | None = None,
+    turn_input_payload: dict[str, object] | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
     selection_tunnel_url: str | None = None,
@@ -2380,6 +2439,17 @@ Read `{request_file_path}` and any context files it references.
 Treat this request pack as the new delta for this turn, not as a full session reboot.
 Assume the earlier Pixel Forge session setup and workflow constraints for this same session still apply unless this request pack overrides them.
 Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
+
+    if turn_input_payload:
+        base += f"""
+
+Current typed Pixel Forge turn payload:
+```json
+{json.dumps(turn_input_payload, indent=2)}
+```
+Use this structured payload as the primary current-turn input for prompt text, selected items, live-preview state, requested skills, and attachment refs.
+Start with that typed payload before falling back to the disk artifacts.
+Read `{request_file_path}` and the referenced files as the durable human-readable mirror for the same turn, not as the only source of truth."""
 
     if normalized_requested_skills:
         requested_skill_list = ", ".join(
@@ -3488,6 +3558,13 @@ async def live_editor_chat(websocket: WebSocket):
                             await emit_turn_status(message)
 
                 await append_turn_event(
+                    "turn_input",
+                    {
+                        "turn_input": request_pack.turn_input_payload,
+                    },
+                )
+
+                await append_turn_event(
                     "turn_started",
                     {
                         "selection_count": selection_count,
@@ -3534,6 +3611,7 @@ async def live_editor_chat(websocket: WebSocket):
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
                     request_id=request_pack.request_id,
+                    turn_input_payload=request_pack.turn_input_payload,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     selection_tunnel_url=(

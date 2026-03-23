@@ -60,18 +60,47 @@ describe('buildSelectionArtifacts', () => {
         sourceUrl: 'https://example.com/game',
         pageTitle: 'Example Game',
       },
+      {
+        id: 'pdf-selection',
+        selectorKind: 'dom',
+        surfaceKind: 'pdf',
+        pageKey: 'https://example.com/spec.pdf#page=4',
+        tagName: 'pdf-text',
+        elementId: null,
+        classList: ['pdf-text'],
+        textContent: 'The controller must preserve the live preview session.',
+        xpath: '/html/body/div[1]/div[2]/span[5]',
+        outerHTML: '<span data-pf-pdf-text="1">The controller must preserve the live preview session.</span>',
+        rootXPath: null,
+        rootTagName: null,
+        rootElementId: null,
+        rootClassList: [],
+        region: null,
+        pdfPage: 4,
+        pdfTextContent: 'The controller must preserve the live preview session.',
+        previewDataUrl: null,
+        sourceTabId: 'tab-3',
+        sourceTabLabel: 'Spec',
+        sourceUrl: 'https://example.com/spec.pdf',
+        pageTitle: 'Spec PDF',
+      },
     ])
 
     expect(artifacts.attachments).toHaveLength(2)
     expect(artifacts.attachments[0].name).toContain('selection-01')
     expect(artifacts.attachments[1].name).toContain('canvas-region')
-    expect(artifacts.tunnel.selections).toHaveLength(2)
+    expect(artifacts.tunnel.selections).toHaveLength(3)
     expect(artifacts.tunnel.selections[1].selectorKind).toBe('region')
     expect(artifacts.tunnel.selections[1].previewAttachmentName).toBe(
       artifacts.attachments[1].name
     )
+    expect(artifacts.tunnel.selections[2].surfaceKind).toBe('pdf')
+    expect(artifacts.tunnel.selections[2].pdfPage).toBe(4)
+    expect(artifacts.tunnel.selections[2].pdfTextContent).toContain('live preview session')
     expect(artifacts.elementContext).toContain('selector="dom"')
     expect(artifacts.elementContext).toContain('selector="region"')
+    expect(artifacts.elementContext).toContain('<pdf-page>4</pdf-page>')
+    expect(artifacts.elementContext).toContain('<pdf-text>')
     expect(artifacts.elementContext).toContain('<preview-attachment>')
   })
 })

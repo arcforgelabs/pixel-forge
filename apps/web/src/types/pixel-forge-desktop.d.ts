@@ -26,6 +26,7 @@ export interface PixelForgeDesktopLivePreviewSelectionMatch {
   visible: boolean
   selector_kind?: string
   surface_kind?: string
+  pdf_page?: number | null
   tag_name?: string
   xpath?: string
   text_excerpt?: string | null
@@ -63,6 +64,9 @@ export interface PixelForgeDesktopLivePreviewInspection {
   live_inspection_mode: 'controller-browserview'
   current_url: string
   current_title: string
+  surface_kind?: string
+  page_count?: number | null
+  visible_page_numbers?: number[]
   ready_state: string
   viewport: {
     width: number
@@ -89,12 +93,14 @@ export interface PixelForgeDesktopLivePreviewSelectionHint {
   id: string
   globalIndex?: number
   selectorKind: 'dom' | 'region'
-  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'unknown'
+  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'pdf' | 'unknown'
   pageKey?: string
   tagName?: string
   elementId?: string | null
   classList?: string[]
   textContent?: string
+  pdfPage?: number | null
+  pdfTextContent?: string | null
   xpath?: string
   rootXPath?: string | null
   rootTagName?: string | null
@@ -127,7 +133,7 @@ export interface PixelForgeDesktopPreviewInputState {
 export interface PixelForgeAppliedSelection {
   id: string
   selectorKind: 'dom' | 'region'
-  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'unknown'
+  surfaceKind: 'dom' | 'svg' | 'canvas' | 'webgl' | 'video' | 'image' | 'pdf' | 'unknown'
   pageKey: string
   xpath: string
   globalIndex: number
@@ -135,6 +141,8 @@ export interface PixelForgeAppliedSelection {
   elementId: string | null
   classList: string[]
   textSample: string
+  pdfPage?: number | null
+  pdfTextContent?: string | null
   rootXPath: string | null
   rootTagName: string | null
   rootElementId: string | null
@@ -181,6 +189,19 @@ export interface PixelForgeDesktopOverlayAPI {
     width?: number
     maxHeight?: number
   }): Promise<string | null>
+}
+
+export interface PixelForgeDesktopPreviewBridge {
+  emitEvent?(type: string, data?: Record<string, unknown>): void
+  inspectLiveContext?(payload?: {
+    selectionHints?: PixelForgeDesktopLivePreviewSelectionHint[]
+  }): Promise<PixelForgeDesktopLivePreviewInspection | null>
+  readPdfPreviewSource?(): Promise<{
+    source_url: string
+    title: string | null
+    content_type: string | null
+    bytes: Uint8Array | ArrayBuffer | number[] | { data?: number[] }
+  }>
 }
 
 export interface PixelForgeDesktopBootstrapState {
@@ -279,6 +300,43 @@ declare global {
       preview: PixelForgeDesktopPreviewAPI
       overlay: PixelForgeDesktopOverlayAPI
       app: PixelForgeDesktopAppAPI
+    }
+    __pixelForgePreviewBridge?: PixelForgeDesktopPreviewBridge
+    __pixelForgePdfSelectionAdapter?: {
+      getPageContext?(): {
+        pageUrl: string
+        pageTitle: string | null
+        pageKey: string
+      }
+      getSurfaceKind?(element: Element | null): string | null
+      findRegionSurface?(element: Element | null): Element | null
+      classifySelectionTarget?(element: Element | null): {
+        selectorKind: 'dom' | 'region'
+        surfaceElement: Element | null
+        hoverRect: DOMRect | {
+          left: number
+          top: number
+          right: number
+          bottom: number
+          width: number
+          height: number
+        }
+        label: string
+      } | null
+      buildSelectionDescriptor?(element: Element | null, clientX: number | null, clientY: number | null, selectionId: string, helpers: unknown): Promise<unknown | null>
+      resolveSelection?(selection: Record<string, unknown>, helpers: unknown): {
+        element: Element
+        rect: {
+          left: number
+          top: number
+          right: number
+          bottom: number
+          width: number
+          height: number
+        }
+        summary?: Record<string, unknown>
+      } | null
+      inspectContextMetadata?(): Record<string, unknown> | null
     }
   }
 }

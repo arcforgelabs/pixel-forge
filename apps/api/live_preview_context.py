@@ -98,9 +98,17 @@ def selection_hints_for_live_preview(
                 "source_tab_id": _normalize_text(entry.get("sourceTabId")),
                 "source_url": _normalize_text(entry.get("sourceUrl")),
                 "xpath": _normalize_text(entry.get("xpath")),
+                "pdf_page": (
+                    int(entry.get("pdfPage"))
+                    if isinstance(entry.get("pdfPage"), (int, float))
+                    and int(entry.get("pdfPage")) > 0
+                    else None
+                ),
+                "pdf_text_content": _normalize_text(entry.get("pdfTextContent")),
                 "root_xpath": _normalize_text(entry.get("rootXPath")),
                 "tag_name": _normalize_text(entry.get("tagName")),
                 "text_content": _normalize_text(entry.get("textContent")),
+                "region": entry.get("region") if isinstance(entry.get("region"), dict) else None,
             }
         )
 

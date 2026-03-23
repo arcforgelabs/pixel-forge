@@ -7,6 +7,7 @@ export type SelectionSurfaceKind =
   | 'webgl'
   | 'video'
   | 'image'
+  | 'pdf'
   | 'unknown'
 
 export interface SelectionRegion {
@@ -38,6 +39,8 @@ export interface SelectionRecord {
   rootElementId: string | null
   rootClassList: string[]
   region: SelectionRegion | null
+  pdfPage?: number | null
+  pdfTextContent?: string | null
   previewDataUrl: string | null
   sourceTabId: string
   sourceTabLabel: string
@@ -73,6 +76,8 @@ export interface SelectionTunnelRecord {
   rootElementId: string | null
   rootClassList: string[]
   region: SelectionRegion | null
+  pdfPage?: number | null
+  pdfTextContent?: string | null
   previewAttachmentName: string | null
   outerHTMLExcerpt: string
 }
@@ -155,6 +160,8 @@ function buildDomElementBlock(
 ${selection.elementId ? `<id>${escapeXml(selection.elementId)}</id>` : ''}
 ${selection.classList.length > 0 ? `<classes>${escapeXml(selection.classList.join(' '))}</classes>` : ''}
 <page-key>${escapeXml(selection.pageKey)}</page-key>
+${selection.pdfPage ? `<pdf-page>${selection.pdfPage}</pdf-page>` : ''}
+${selection.pdfTextContent ? `<pdf-text>${escapeXml(selection.pdfTextContent)}</pdf-text>` : ''}
 <xpath>${escapeXml(selection.xpath)}</xpath>
 ${previewAttachmentName ? `<preview-attachment>${escapeXml(previewAttachmentName)}</preview-attachment>` : ''}
 <html>
@@ -173,6 +180,8 @@ function buildRegionElementBlock(
   return `<selected-element global-index="${globalIndex}" selector="${selection.selectorKind}" surface="${selection.surfaceKind}">
 <tag>${escapeXml(selection.tagName)}</tag>
 <page-key>${escapeXml(selection.pageKey)}</page-key>
+${selection.pdfPage ? `<pdf-page>${selection.pdfPage}</pdf-page>` : ''}
+${selection.pdfTextContent ? `<pdf-text>${escapeXml(selection.pdfTextContent)}</pdf-text>` : ''}
 ${selection.rootXPath ? `<root-xpath>${escapeXml(selection.rootXPath)}</root-xpath>` : ''}
 ${selection.rootTagName ? `<root-tag>${escapeXml(selection.rootTagName)}</root-tag>` : ''}
 ${selection.rootElementId ? `<root-id>${escapeXml(selection.rootElementId)}</root-id>` : ''}
@@ -251,6 +260,8 @@ export function buildSelectionArtifacts(selectedElements: SelectionRecord[]): Bu
       classList: selection.classList,
       textContent: normalizeText(selection.textContent, 240),
       xpath: selection.xpath,
+      pdfPage: selection.pdfPage ?? null,
+      pdfTextContent: selection.pdfTextContent ?? null,
       rootXPath: selection.rootXPath,
       rootTagName: selection.rootTagName,
       rootElementId: selection.rootElementId,

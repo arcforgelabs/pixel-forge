@@ -65,8 +65,10 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                         "sourceTabId": "tab-1",
                         "sourceUrl": "https://example.com/app",
                         "selectorKind": "dom",
-                        "surfaceKind": "dom",
+                        "surfaceKind": "pdf",
                         "xpath": "//*[@id='save']",
+                        "pdfPage": 3,
+                        "pdfTextContent": "Saved selection",
                     },
                     {
                         "id": "selection-2",
@@ -85,6 +87,12 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         inspect_call = preview_manager.inspect_tab.await_args
         self.assertEqual(inspect_call.args[0], "browser-tab-1")
         self.assertEqual(inspect_call.kwargs["selection_hints"][0]["id"], "selection-1")
+        self.assertEqual(inspect_call.kwargs["selection_hints"][0]["surface_kind"], "pdf")
+        self.assertEqual(inspect_call.kwargs["selection_hints"][0]["pdf_page"], 3)
+        self.assertEqual(
+            inspect_call.kwargs["selection_hints"][0]["pdf_text_content"],
+            "Saved selection",
+        )
         self.assertEqual(len(inspect_call.kwargs["selection_hints"]), 1)
         self.assertTrue(payload["live_attach_available"])
         self.assertEqual(payload["live_attach_mode"], "managed-browser")

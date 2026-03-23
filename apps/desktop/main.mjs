@@ -4,6 +4,13 @@ import { existsSync, promises as fsPromises, watchFile, unwatchFile } from 'node
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  buildInternalPdfViewerUrl,
+  detectPdfPreviewTarget,
+  isInternalPdfViewerUrl,
+  looksLikePdfUrl,
+  readPdfDocumentSource,
+} from './pdf-preview.mjs'
 import { readControllerVersion, readProjectVersion } from './version.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -93,6 +100,11 @@ function ensurePreviewContext(ownerContextId) {
 
 function getPreviewRecord(ownerContextId, tabId) {
   return previewViews.get(makePreviewKey(ownerContextId, tabId)) ?? null
+}
+
+function getPreviewRecordForWebContentsId(webContentsId) {
+  const previewKey = previewKeyByWebContentsId.get(webContentsId)
+  return previewKey ? previewViews.get(previewKey) ?? null : null
 }
 
 function currentView(ownerContextId) {
@@ -1009,21 +1021,37 @@ function registerViewEvents(ownerContextId, tabId, view) {
     return { action: 'deny' }
   })
 
+  view.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!looksLikePdfUrl(navigationUrl) || isInternalPdfViewerUrl(navigationUrl, SHELL_URL)) {
+      return
+    }
+    event.preventDefault()
+    void loadPreviewUrl(ownerContextId, tabId, navigationUrl)
+  })
+
   view.webContents.on('did-finish-load', () => {
+    const previewRecord = previewViews.get(previewKey)
+    if (!previewRecord) {
+      return
+    }
     sendPreviewEvent(ownerContextId, {
       type: 'browser-location-changed',
       browser_tab_id: tabId,
-      url: view.webContents.getURL(),
-      title: view.webContents.getTitle() || view.webContents.getURL(),
+      url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
+      title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
     })
   })
 
   view.webContents.on('page-title-updated', () => {
+    const previewRecord = previewViews.get(previewKey)
+    if (!previewRecord) {
+      return
+    }
     sendPreviewEvent(ownerContextId, {
       type: 'browser-location-changed',
       browser_tab_id: tabId,
-      url: view.webContents.getURL(),
-      title: view.webContents.getTitle() || view.webContents.getURL(),
+      url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
+      title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
     })
   })
 
@@ -1257,20 +1285,121 @@ function getOrCreatePreviewView(ownerContextId, tabId) {
     tabId,
     view,
     webContentsId: view.webContents.id,
+    reportedUrl: null,
+    reportedTitle: null,
+    surfaceKind: 'dom',
+    pdfContext: null,
   })
   previewKeyByWebContentsId.set(view.webContents.id, previewKey)
   registerViewEvents(ownerContextId, tabId, view)
   return view
 }
 
+function updatePreviewReportedLocation(previewRecord, url, title) {
+  if (!previewRecord) {
+    return
+  }
+
+  previewRecord.reportedUrl = normalizeText(url) || null
+  previewRecord.reportedTitle = normalizeText(title) || null
+}
+
+function currentPreviewUrl(previewRecord, fallbackUrl = '') {
+  return previewRecord?.reportedUrl
+    || previewRecord?.view?.webContents.getURL()
+    || fallbackUrl
+}
+
+function currentPreviewTitle(previewRecord, fallbackTitle = '') {
+  return previewRecord?.reportedTitle
+    || previewRecord?.view?.webContents.getTitle()
+    || currentPreviewUrl(previewRecord, fallbackTitle)
+    || fallbackTitle
+}
+
+function buildPreviewLoadResponse(previewRecord, fallbackUrl = '') {
+  const targetUrl = currentPreviewUrl(previewRecord, fallbackUrl)
+  return {
+    mode: 'browser',
+    browser_tab_id: previewRecord?.tabId || '',
+    target_url: targetUrl,
+    title: currentPreviewTitle(previewRecord, targetUrl),
+    snapshot_data_url: null,
+  }
+}
+
+function resetPreviewSurface(previewRecord) {
+  if (!previewRecord) {
+    return
+  }
+
+  previewRecord.surfaceKind = 'dom'
+  previewRecord.pdfContext = null
+  updatePreviewReportedLocation(previewRecord, null, null)
+}
+
+async function resolvePreviewTarget(previewRecord, url) {
+  if (!previewRecord) {
+    throw new Error('Preview record is required')
+  }
+
+  if (isInternalPdfViewerUrl(url, SHELL_URL)) {
+    return url
+  }
+
+  const pdfTarget = await detectPdfPreviewTarget(previewRecord.view.webContents.session, url)
+  if (!pdfTarget) {
+    resetPreviewSurface(previewRecord)
+    return url
+  }
+
+  previewRecord.surfaceKind = 'pdf'
+  previewRecord.pdfContext = {
+    sourceUrl: pdfTarget.sourceUrl,
+    title: pdfTarget.title,
+    contentType: pdfTarget.contentType,
+  }
+  updatePreviewReportedLocation(previewRecord, pdfTarget.sourceUrl, pdfTarget.title)
+  return buildInternalPdfViewerUrl(SHELL_URL, previewRecord.tabId)
+}
+
+async function readPreviewPdfDocument(previewRecord) {
+  const sourceUrl = normalizeText(previewRecord?.pdfContext?.sourceUrl)
+  if (!previewRecord || !sourceUrl) {
+    throw new Error('No PDF preview document is available for this tab')
+  }
+
+  const pdfSource = await readPdfDocumentSource({
+    previewSession: previewRecord.view.webContents.session,
+    sourceUrl,
+    title: previewRecord.pdfContext?.title,
+    contentType: previewRecord.pdfContext?.contentType,
+  })
+  previewRecord.pdfContext = {
+    sourceUrl: pdfSource.sourceUrl,
+    title: pdfSource.title,
+    contentType: pdfSource.contentType,
+  }
+  updatePreviewReportedLocation(previewRecord, pdfSource.sourceUrl, pdfSource.title)
+
+  return {
+    source_url: currentPreviewUrl(previewRecord, pdfSource.sourceUrl),
+    title: currentPreviewTitle(previewRecord, pdfSource.title || pdfSource.sourceUrl),
+    content_type: previewRecord.pdfContext?.contentType || 'application/pdf',
+    bytes: pdfSource.bytes,
+  }
+}
+
 async function loadPreviewUrl(ownerContextId, tabId, url) {
   const view = getOrCreatePreviewView(ownerContextId, tabId)
+  const previewRecord = getPreviewRecord(ownerContextId, tabId)
   const context = ensurePreviewContext(ownerContextId)
   context.activeTabId = tabId
   context.visible = true
   applyAllPreviewViews()
   try {
-    await view.webContents.loadURL(url)
+    const resolvedTargetUrl = await resolvePreviewTarget(previewRecord, url)
+    await view.webContents.loadURL(resolvedTargetUrl)
   } catch (error) {
     const message = String(error?.message || error || '')
     if (!message.includes('ERR_ABORTED (-3)')) {
@@ -1278,13 +1407,7 @@ async function loadPreviewUrl(ownerContextId, tabId, url) {
     }
     await settleAbortedNavigation(view, url)
   }
-  return {
-    mode: 'browser',
-    browser_tab_id: tabId,
-    target_url: view.webContents.getURL() || url,
-    title: view.webContents.getTitle() || url,
-    snapshot_data_url: null,
-  }
+  return buildPreviewLoadResponse(previewRecord, url)
 }
 
 function sendPreviewCommand(ownerContextId, tabId, command) {
@@ -1294,13 +1417,7 @@ function sendPreviewCommand(ownerContextId, tabId, command) {
   }
   const view = previewRecord.view
   view.webContents.send('pixel-forge-preview:command', command)
-  return {
-    mode: 'browser',
-    browser_tab_id: tabId,
-    target_url: view.webContents.getURL(),
-    title: view.webContents.getTitle() || view.webContents.getURL(),
-    snapshot_data_url: null,
-  }
+  return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
 }
 
 async function inspectPreviewDevtoolsTarget(view) {
@@ -1392,11 +1509,7 @@ async function inspectPreviewView(ownerContextId, tabId, selectionHints = []) {
 
   const devtoolsInspection = await inspectPreviewDevtoolsTarget(view)
   return {
-    mode: 'browser',
-    browser_tab_id: tabId,
-    target_url: view.webContents.getURL(),
-    title: view.webContents.getTitle() || view.webContents.getURL(),
-    snapshot_data_url: null,
+    ...buildPreviewLoadResponse(previewRecord, view.webContents.getURL()),
     inspection: inspection
       ? {
           ...inspection,
@@ -1407,8 +1520,8 @@ async function inspectPreviewView(ownerContextId, tabId, selectionHints = []) {
             ? {
                 live_inspection_available: false,
                 live_inspection_mode: 'controller-browserview',
-                current_url: view.webContents.getURL(),
-                current_title: view.webContents.getTitle() || view.webContents.getURL(),
+                current_url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
+                current_title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
                 ready_state: null,
                 viewport: null,
                 visible_interactives: [],
@@ -1725,13 +1838,7 @@ app.whenReady().then(() => {
     }
     const view = previewRecord.view
     await view.webContents.reload()
-    return {
-      mode: 'browser',
-      browser_tab_id: tabId,
-      target_url: view.webContents.getURL(),
-      title: view.webContents.getTitle() || view.webContents.getURL(),
-      snapshot_data_url: null,
-    }
+    return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
   })
 
   ipcMain.handle('pixel-forge-preview:inspect', async (event, payload) => {
@@ -1904,6 +2011,11 @@ app.whenReady().then(() => {
     return controllerUpdateApplyState
   })
 
+  ipcMain.handle('pixel-forge-preview:get-pdf-document', async (event) => {
+    const previewRecord = getPreviewRecordForWebContentsId(event.sender.id)
+    return await readPreviewPdfDocument(previewRecord)
+  })
+
   ipcMain.handle('pixel-forge-app:stage-controller-update', async (_event, payload) => {
     return stagePendingControllerUpdate(payload)
   })
@@ -1922,10 +2034,15 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('pixel-forge-preview:event', (event, payload) => {
-    const previewKey = previewKeyByWebContentsId.get(event.sender.id)
-    const previewRecord = previewKey ? previewViews.get(previewKey) : null
+    const previewRecord = getPreviewRecordForWebContentsId(event.sender.id)
     if (!previewRecord) {
       return
+    }
+    if (payload?.type === 'browser-location-changed') {
+      const locationData = payload?.data && typeof payload.data === 'object'
+        ? payload.data
+        : payload
+      updatePreviewReportedLocation(previewRecord, locationData?.url, locationData?.title)
     }
     sendPreviewEvent(previewRecord.ownerContextId, {
       ...payload,

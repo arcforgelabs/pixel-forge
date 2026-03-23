@@ -57,6 +57,37 @@ function generateSelectionId() {
   return `selection-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
 }
 
+function getSelectionAdapter() {
+  const adapter = window.__pixelForgePdfSelectionAdapter
+  if (!adapter || typeof adapter !== 'object') {
+    return null
+  }
+  return adapter
+}
+
+function currentPageContext() {
+  const adapter = getSelectionAdapter()
+  const adapterContext =
+    typeof adapter?.getPageContext === 'function'
+      ? adapter.getPageContext()
+      : null
+  const pageUrl =
+    typeof adapterContext?.pageUrl === 'string' && adapterContext.pageUrl
+      ? adapterContext.pageUrl
+      : window.location.href
+  return {
+    pageUrl,
+    pageTitle:
+      typeof adapterContext?.pageTitle === 'string'
+        ? adapterContext.pageTitle
+        : document.title || null,
+    pageKey:
+      typeof adapterContext?.pageKey === 'string' && adapterContext.pageKey
+        ? adapterContext.pageKey
+        : normalizePageKey(pageUrl),
+  }
+}
+
 export function installSelectionBridge({ emit, captureRegion }) {
   if (window.__pixelForgeSelectionBridgeLoaded) {
     return
@@ -235,7 +266,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
           id: entry,
           selectorKind: 'dom',
           surfaceKind: 'dom',
-          pageKey: normalizePageKey(),
+          pageKey: currentPageContext().pageKey,
           xpath: entry,
           globalIndex: index + 1,
           tagName: '',
@@ -259,13 +290,15 @@ export function installSelectionBridge({ emit, captureRegion }) {
         id: entry.id,
         selectorKind,
         surfaceKind: typeof entry.surfaceKind === 'string' ? entry.surfaceKind : selectorKind === 'region' ? 'unknown' : 'dom',
-        pageKey: typeof entry.pageKey === 'string' && entry.pageKey ? entry.pageKey : normalizePageKey(),
+        pageKey: typeof entry.pageKey === 'string' && entry.pageKey ? entry.pageKey : currentPageContext().pageKey,
         xpath: typeof entry.xpath === 'string' ? entry.xpath : '',
         globalIndex: normalizeGlobalIndex(entry.globalIndex, index + 1),
         tagName: typeof entry.tagName === 'string' ? entry.tagName : '',
         elementId: typeof entry.elementId === 'string' ? entry.elementId : null,
         classList: Array.isArray(entry.classList) ? entry.classList.filter((value) => typeof value === 'string') : [],
         textSample: typeof entry.textSample === 'string' ? normalizeText(entry.textSample, 120) : '',
+        pdfPage: Number.isFinite(Number(entry.pdfPage)) ? Math.round(Number(entry.pdfPage)) : null,
+        pdfTextContent: typeof entry.pdfTextContent === 'string' ? normalizeText(entry.pdfTextContent, 400) : null,
         rootXPath: typeof entry.rootXPath === 'string' ? entry.rootXPath : null,
         rootTagName: typeof entry.rootTagName === 'string' ? entry.rootTagName : null,
         rootElementId: typeof entry.rootElementId === 'string' ? entry.rootElementId : null,
@@ -431,6 +464,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function resolveSelection(selection) {
+    const adapter = getSelectionAdapter()
+    if (selection.surfaceKind === 'pdf' && typeof adapter?.resolveSelection === 'function') {
+      return adapter.resolveSelection(selection, {
+        findElementByXPath,
+        normalizeText,
+      })
+    }
+
     if (selection.selectorKind === 'region') {
       if (!selection.rootXPath || !selection.region) {
         return null
@@ -551,6 +592,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function detectSurfaceKind(element) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.getSurfaceKind === 'function') {
+      const adapterSurfaceKind = adapter.getSurfaceKind(element)
+      if (typeof adapterSurfaceKind === 'string' && adapterSurfaceKind) {
+        return adapterSurfaceKind
+      }
+    }
+
     if (element instanceof SVGElement) {
       return 'svg'
     }
@@ -980,6 +1029,8 @@ export function installSelectionBridge({ emit, captureRegion }) {
             elementId: hint?.elementId,
             classList: hint?.classList,
             textSample: hint?.textContent,
+            pdfPage: hint?.pdfPage,
+            pdfTextContent: hint?.pdfTextContent,
             rootXPath: hint?.rootXPath,
             rootTagName: hint?.rootTagName,
             rootElementId: hint?.rootElementId,
@@ -1005,24 +1056,30 @@ export function installSelectionBridge({ emit, captureRegion }) {
         visible: isElementVisibleInViewport(resolved.element),
         selector_kind: selection.selectorKind,
         surface_kind: selection.surfaceKind,
-        ...buildElementSummary(resolved.element),
+        ...(resolved.summary || buildElementSummary(resolved.element)),
       }
     })
   }
 
   async function inspectLiveContext(payload = {}) {
+    const pageContext = currentPageContext()
     const selectionHints = Array.isArray(payload?.selectionHints)
       ? payload.selectionHints
       : []
     const visibleInteractives = collectVisibleInteractiveElements(document.body, 8)
       .map((element) => buildInteractiveDescriptor(element))
       .filter(Boolean)
+    const adapter = getSelectionAdapter()
+    const adapterMetadata =
+      typeof adapter?.inspectContextMetadata === 'function'
+        ? adapter.inspectContextMetadata()
+        : null
 
     return {
       live_inspection_available: true,
       live_inspection_mode: 'controller-browserview',
-      current_url: window.location.href,
-      current_title: document.title || window.location.href,
+      current_url: pageContext.pageUrl,
+      current_title: pageContext.pageTitle || pageContext.pageUrl,
       ready_state: document.readyState,
       viewport: {
         width: Math.round(window.innerWidth),
@@ -1030,12 +1087,21 @@ export function installSelectionBridge({ emit, captureRegion }) {
         scroll_x: Math.round(window.scrollX),
         scroll_y: Math.round(window.scrollY),
       },
+      ...(adapterMetadata && typeof adapterMetadata === 'object' ? adapterMetadata : {}),
       visible_interactives: visibleInteractives,
       selection_matches: inspectSelectionHints(selectionHints),
     }
   }
 
   function findRegionSurface(element) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.findRegionSurface === 'function') {
+      const adapterSurface = adapter.findRegionSurface(element)
+      if (adapterSurface instanceof Element) {
+        return adapterSurface
+      }
+    }
+
     let current = element
     while (current instanceof Element && current !== document.body) {
       if (
@@ -1051,6 +1117,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function classifySelectionTarget(element) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.classifySelectionTarget === 'function') {
+      const adapterClassification = adapter.classifySelectionTarget(element)
+      if (adapterClassification && typeof adapterClassification === 'object') {
+        return adapterClassification
+      }
+    }
+
     const regionSurface = findRegionSurface(element)
     if (!regionSurface) {
       return {
@@ -1088,12 +1162,32 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   async function buildDomSelection(element, selectionId = generateSelectionId()) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+      const adapterSelection = await adapter.buildSelectionDescriptor(
+        element,
+        null,
+        null,
+        selectionId,
+        {
+          capturePreviewData,
+          getXPath,
+          normalizeText,
+          pageContext: currentPageContext(),
+        },
+      )
+      if (adapterSelection) {
+        return adapterSelection
+      }
+    }
+
+    const pageContext = currentPageContext()
     const rect = element.getBoundingClientRect()
     return {
       id: selectionId,
       selectorKind: 'dom',
       surfaceKind: detectSurfaceKind(element),
-      pageKey: normalizePageKey(),
+      pageKey: pageContext.pageKey,
       tagName: element.tagName.toLowerCase(),
       elementId: element.id || null,
       classList: [...element.classList],
@@ -1106,8 +1200,8 @@ export function installSelectionBridge({ emit, captureRegion }) {
       rootClassList: [],
       region: null,
       previewDataUrl: await capturePreviewData(rect),
-      pageUrl: window.location.href,
-      pageTitle: document.title || null,
+      pageUrl: pageContext.pageUrl,
+      pageTitle: pageContext.pageTitle,
       selectionId,
       __pixelForgeResolvedElement: element,
     }
@@ -1138,6 +1232,27 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   async function buildRegionSelection(surfaceElement, clientX, clientY, selectionId = generateSelectionId()) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+      const adapterSelection = await adapter.buildSelectionDescriptor(
+        surfaceElement,
+        clientX,
+        clientY,
+        selectionId,
+        {
+          buildRegionBounds,
+          capturePreviewData,
+          getXPath,
+          normalizeText,
+          pageContext: currentPageContext(),
+        },
+      )
+      if (adapterSelection) {
+        return adapterSelection
+      }
+    }
+
+    const pageContext = currentPageContext()
     const surfaceRect = surfaceElement.getBoundingClientRect()
     const regionRect = buildRegionBounds(surfaceElement, clientX, clientY)
     const region = {
@@ -1157,7 +1272,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       id: selectionId,
       selectorKind: 'region',
       surfaceKind: detectSurfaceKind(surfaceElement),
-      pageKey: normalizePageKey(),
+      pageKey: pageContext.pageKey,
       tagName: surfaceElement.tagName.toLowerCase(),
       elementId: null,
       classList: [],
@@ -1170,14 +1285,34 @@ export function installSelectionBridge({ emit, captureRegion }) {
       rootClassList: [...surfaceElement.classList],
       region,
       previewDataUrl: await capturePreviewData(regionRect),
-      pageUrl: window.location.href,
-      pageTitle: document.title || null,
+      pageUrl: pageContext.pageUrl,
+      pageTitle: pageContext.pageTitle,
       selectionId,
       __pixelForgeResolvedElement: surfaceElement,
     }
   }
 
   async function buildSelectionDescriptor(element, clientX, clientY, selectionId = generateSelectionId()) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+      const adapterSelection = await adapter.buildSelectionDescriptor(
+        element,
+        clientX,
+        clientY,
+        selectionId,
+        {
+          buildRegionBounds,
+          capturePreviewData,
+          getXPath,
+          normalizeText,
+          pageContext: currentPageContext(),
+        },
+      )
+      if (adapterSelection) {
+        return adapterSelection
+      }
+    }
+
     const classification = classifySelectionTarget(element)
     if (classification.selectorKind === 'region' && classification.surfaceElement) {
       return buildRegionSelection(classification.surfaceElement, clientX, clientY, selectionId)
@@ -1189,11 +1324,13 @@ export function installSelectionBridge({ emit, captureRegion }) {
     const xpath = getXPath(element)
     for (let index = selectedElements.length - 1; index >= 0; index -= 1) {
       const entry = selectedElements[index]
-      if (entry.selection.selectorKind === 'region') {
+      if (entry.selection.selectorKind === 'region' || entry.selection.surfaceKind === 'pdf') {
         if (entry.lastRect && rectContainsPoint(entry.lastRect, clientX, clientY)) {
           return index
         }
-        continue
+        if (entry.selection.selectorKind === 'region') {
+          continue
+        }
       }
       if (entry.xpath === xpath) {
         return index
@@ -1312,13 +1449,15 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function notifyLocationChange() {
+    const pageContext = currentPageContext()
     emit('browser-location-changed', {
-      url: window.location.href,
-      title: document.title || null,
+      url: pageContext.pageUrl,
+      title: pageContext.pageTitle,
     })
   }
 
   async function emitSelectionEvent(type, selection, extra = {}) {
+    const pageContext = currentPageContext()
     await emit(type, {
       ...extra,
       selectionId: selection.id,
@@ -1336,9 +1475,11 @@ export function installSelectionBridge({ emit, captureRegion }) {
       rootElementId: selection.rootElementId,
       rootClassList: selection.rootClassList,
       region: selection.region,
+      pdfPage: selection.pdfPage ?? null,
+      pdfTextContent: selection.pdfTextContent ?? null,
       previewDataUrl: selection.previewDataUrl,
-      pageUrl: window.location.href,
-      pageTitle: document.title || null,
+      pageUrl: selection.pageUrl || pageContext.pageUrl,
+      pageTitle: selection.pageTitle ?? pageContext.pageTitle,
     })
   }
 
@@ -1418,9 +1559,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
     selectedElements = []
     if (notifyParent) {
+      const pageContext = currentPageContext()
       await emit('browser-selection-cleared', {
-        pageUrl: window.location.href,
-        pageTitle: document.title || null,
+        pageUrl: pageContext.pageUrl,
+        pageTitle: pageContext.pageTitle,
       })
     }
   }
@@ -1541,9 +1683,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
       selectMode = false
       document.body.style.cursor = ''
       hideHoverOverlay()
+      const pageContext = currentPageContext()
       emit('browser-select-cancelled', {
-        pageUrl: window.location.href,
-        pageTitle: document.title || null,
+        pageUrl: pageContext.pageUrl,
+        pageTitle: pageContext.pageTitle,
       })
     }
   }
