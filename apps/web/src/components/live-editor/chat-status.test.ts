@@ -15,7 +15,12 @@ describe('chat-status helpers', () => {
       summarizeBackendStatus(
         'Dispatching request pack .pixel-forge/requests/abcd-1234 to Agent Deck...'
       )
-    ).toBe('Dispatching request to Agent Deck...')
+    ).toBe('Sending request to Agent Deck...')
+    expect(
+      summarizeBackendStatus(
+        'Sending Pixel Forge turn to Agent Deck...'
+      )
+    ).toBe('Sending request to Agent Deck...')
   })
 
   it('formats concise tool status', () => {

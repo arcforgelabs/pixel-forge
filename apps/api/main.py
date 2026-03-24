@@ -125,7 +125,6 @@ from workspace_previews import (
     start_workspace_preview,
 )
 from runtime_config import api_port as runtime_api_port
-from runtime_config import cli_name as runtime_cli_name
 from runtime_config import url_host as runtime_url_host
 
 from session_manager import (
@@ -2444,6 +2443,7 @@ def build_live_editor_dispatch_prompt(
     request_file_path: str,
     *,
     request_id: str | None = None,
+    turn_input_file_path: str | None = None,
     turn_input_payload: dict[str, object] | None = None,
     preview_url: str | None = None,
     selection_tunnel: dict[str, object] | None = None,
@@ -2457,218 +2457,83 @@ def build_live_editor_dispatch_prompt(
     informational_only: bool = False,
     explicit_live_attach_required: bool = False,
 ) -> str:
-    normalized_requested_skills = normalize_requested_skills(requested_skills)
-    pixel_forge_cli = runtime_cli_name()
+    prompt_text = ""
+    if isinstance(turn_input_payload, dict):
+        raw_prompt_text = turn_input_payload.get("prompt_text")
+        if isinstance(raw_prompt_text, str):
+            prompt_text = raw_prompt_text.strip()
+    if not prompt_text:
+        prompt_text = "Use the attached Pixel Forge turn context."
 
-    if informational_only:
-        if continuation_mode == "bootstrap":
-            base = f"""Read `{request_file_path}` and answer that Pixel Forge request.
-
-Start by reading the request file itself, then the referenced selected-surface artifacts.
-This is an informational inspection request. Do not edit code, rebuild, restart, deploy, or reload unless the user explicitly asks.
-Prefer answering directly from the captured Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
-Keep the reply concise and directly answer the user's question."""
-        elif continuation_mode == "attached-session":
-            base = f"""Pixel Forge continuation into an already-running Agent Deck session.
-
-Read `{request_file_path}` and the referenced artifacts for this turn.
-This is the first Pixel Forge turn for an existing Agent Deck session, not a new bootstrap.
-Keep the current Agent Deck session continuity and use the new Pixel Forge context for this turn.
-Keep the reply concise and directly answer the user's question."""
-        else:
-            base = f"""New Pixel Forge turn for this existing session.
-
-Read `{request_file_path}` and the referenced artifacts for this turn.
-This is an informational delta, not a full session reboot and not a code-change request.
-Prefer answering directly from the new Pixel Forge artifacts and attachments. Only inspect source if those artifacts are insufficient.
-Keep the reply concise and directly answer the user's question."""
-    else:
-        if continuation_mode == "bootstrap":
-            base = f"""Read `{request_file_path}` and complete that Pixel Forge live edit request.
-
-Start by reading the request file itself, then read every referenced context file before changing code.
-Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-        elif continuation_mode == "attached-session":
-            base = f"""Pixel Forge continuation into an already-running Agent Deck session.
-
-Read `{request_file_path}` and any context files it references.
-This is the first Pixel Forge turn for an existing Agent Deck session, not a full session bootstrap.
-Keep the current Agent Deck session continuity and use the new Pixel Forge context for this turn.
-Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-        else:
-            base = f"""New Pixel Forge turn for this existing session.
-
-Read `{request_file_path}` and any context files it references.
-Treat this request pack as the new delta for this turn, not as a full session reboot.
-Assume the earlier Pixel Forge session setup and workflow constraints for this same session still apply unless this request pack overrides them.
-Make the smallest correct change, avoid AskUserQuestion for this request, and finish with a brief confirmation of what changed."""
-
-    if turn_input_payload:
-        base += f"""
-
-Current typed Pixel Forge turn payload:
-```json
-{json.dumps(turn_input_payload, indent=2)}
-```
-Use this structured payload as the primary current-turn input for prompt text, selected items, live-preview state, requested skills, and attachment refs.
-Start with that typed payload before falling back to the disk artifacts.
-Read `{request_file_path}` and the referenced files as the durable human-readable mirror for the same turn, not as the only source of truth."""
-
-    if normalized_requested_skills:
-        requested_skill_list = ", ".join(
-            f"`{skill}`" for skill in normalized_requested_skills
+    normalized_requested_skills = normalize_requested_skills(
+        requested_skills
+        if requested_skills is not None
+        else (
+            turn_input_payload.get("requested_skills")
+            if isinstance(turn_input_payload, dict)
+            and isinstance(turn_input_payload.get("requested_skills"), list)
+            else None
         )
-        base += f"""
+    )
 
-This request explicitly asks for these skills: {requested_skill_list}.
-Immediately after reading `{request_file_path}`, invoke each listed skill via the Skill tool before reading source code, using repo-specific tools, or making changes. Do not treat these skill requests as optional flavor text."""
-
-    if not informational_only:
-        if continuation_mode == "bootstrap":
-            base += """
-
-If you need Pixel Forge-specific CLI or tunnel workflow help beyond what the request pack already gives you, the `using-pixel-forge` skill can help."""
-        else:
-            base += """
-
-If you need extra Pixel Forge-specific CLI or tunnel workflow help beyond this request pack and the existing session context, the `using-pixel-forge` skill can help."""
-
+    refs: dict[str, object] = {
+        "source": "pixel-forge",
+        "mode": "inspect" if informational_only else "edit",
+        "mirror": request_file_path,
+    }
+    if turn_input_file_path:
+        refs["turn"] = turn_input_file_path
+    if continuation_mode != "bootstrap":
+        refs["continuation"] = continuation_mode
+    if normalized_requested_skills:
+        refs["load_skills"] = normalized_requested_skills
+    delivery = None
+    if isinstance(turn_input_payload, dict):
+        raw_delivery = turn_input_payload.get("delivery")
+        if isinstance(raw_delivery, dict):
+            delivery = raw_delivery
+    if delivery:
+        refs["delivery"] = delivery
+    elif preview_url:
+        refs["preview_target_url"] = preview_url
     if selection_tunnel_url:
-        if informational_only:
-            base += f"""
-
-Use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack if you need the frozen structured selection state for this turn.
-Treat the request pack, selected-elements artifact, selection tunnel, and attachments as the primary truth for the selected live surface."""
-        elif continuation_mode == "bootstrap":
-            base += f"""
-
-If you need the exact frozen selection state Pixel Forge captured, call `{selection_tunnel_url}` from the workspace, run `{pixel_forge_cli} tunnel --project . --request <request-id>` if available, or read the `selection-tunnel.json` file referenced by the request pack. Do not recreate the browser path from scratch when the tunnel already gives you the selected state."""
-            base += """
-
-Treat the request pack, selected-elements artifact, and selection tunnel as authoritative evidence for the selected live surface. Do not invent runtime behavior from repo code alone when Pixel Forge already captured the relevant state. If the frozen tunnel is still insufficient to verify a claim, say that explicitly instead of guessing."""
-        else:
-            base += f"""
-
-If you need the frozen selection state for this turn, use `{selection_tunnel_url}` or the `selection-tunnel.json` file referenced by the request pack."""
-
+        refs["selection_tunnel_url"] = selection_tunnel_url
     if live_preview_context_url:
-        base += f"""
-
-If you need the current warm preview state for this turn, call `{live_preview_context_url}`, run `{pixel_forge_cli} preview-context --project . --request <request-id>` if available, or read the `live-preview-context.json` file referenced by the request pack.
-Use that live-preview context to inspect the already-running Pixel Forge preview tab in place instead of replaying login, navigation, or view reconstruction.
-Prefer the live-preview context for current page state and the selection tunnel plus attachments for durable frozen evidence.
-If the live-preview context already includes controller-captured DOM state, use that fast path first.
-If the task still needs deeper live inspection of DOM behavior, console, or network and attach hints exist, use those exact CDP hints instead of recreating auth or navigation.
-If neither controller-captured live state nor attach hints are available, fall back to the frozen Pixel Forge artifacts and state that limitation explicitly instead of guessing."""
-        if explicit_live_attach_required:
-            base += """
-
-This turn explicitly requests real live-attach proof. If attach hints exist, you must attempt CDP attach to the warm preview session. Controller-browserview state may help orient you, but it is not sufficient to satisfy this request on its own."""
-
-    if context_patch and continuation_mode != "bootstrap":
-        base += f"""
-
-Session context patch for this already-running Agent Deck session:
-```json
-{json.dumps(context_patch, indent=2)}
-```
-Treat this as the smallest current-turn continuity delta for the warm session. Use it before re-reading older bootstrap framing or reconstructing browser/session state from scratch."""
-
-        live_preview_patch = context_patch.get("live_preview") if isinstance(context_patch, dict) else None
-        if isinstance(live_preview_patch, dict):
-            live_inspection_mode = live_preview_patch.get("live_inspection_mode")
-            attach_hints = live_preview_patch.get("attach_hints")
-            if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
-                base += """
-
-This context patch includes direct CDP attach hints for the already-running warm preview target.
-Use the structured live-preview context first. If you still need deeper authenticated browser inspection, invoke the `using-chrome-devtools-mcp` skill and attach through the provided `browser_url` instead of replaying login or navigation."""
-                if explicit_live_attach_required:
-                    base += """
-
-This turn explicitly requires real warm-session attach proof. Because attach hints exist, do not treat controller-browserview live context as a successful substitute. Attempt CDP attach, then either record success from the attached session or record failure and stop."""
-                if request_id:
-                    base += f"""
-
-If you attempt live attach for this request, record it explicitly:
-- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --via chrome-devtools-mcp --note "connecting to warm preview via chrome-devtools-mcp"`
-- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --via chrome-devtools-mcp --evidence "<one fact only visible in the current live DOM>"`
-- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via chrome-devtools-mcp --note "<short failure reason>"`
-If you use a different attach mechanism, replace the `--via` value with the actual mechanism you used, for example `raw-cdp`.
-Do not claim a successful live attach unless you have recorded the success proof with a concrete live-only DOM fact.
-Unless the request explicitly asks for interaction, keep the proof read-only: do not click, type, submit, or navigate the live preview while collecting the receipt."""
-            elif live_inspection_mode == "controller-browserview" and request_id and not explicit_live_attach_required:
-                base += f"""
-
-This context patch includes controller-captured live DOM state for the already-running preview tab.
-Use that structured live context first before escalating to any browser attach path or replaying navigation.
-If that live context gives you the decisive fact for this request, record the proof explicitly:
-- `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence "<one fact only visible in the captured live BrowserView DOM>"`
-Do not claim that a deeper live attach happened unless you actually used the emitted attach hints."""
-            elif live_inspection_mode == "controller-browserview" and request_id:
-                base += f"""
-
-This context patch includes controller-captured live DOM state, but this turn explicitly requires real live-attach proof and no attach hints are available here.
-Use the captured state only to explain the limitation.
-- Record failure instead of a controller-browserview success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via no-live-attach-hints --note "attach hints unavailable for explicit live-attach proof request"`"""
+        refs["live_preview_context_url"] = live_preview_context_url
+    if explicit_live_attach_required:
+        refs["live_attach_proof_required"] = True
 
     selection_sources = _selection_source_summary(selection_tunnel)
-    if continuation_mode != "delta" and len(selection_sources) > 1:
-        source_lines = "\n".join(
-            f"- {label or 'Preview'} ({count} selection{'s' if count != 1 else ''}) at {url}"
+    if len(selection_sources) > 1:
+        refs["selection_sources"] = [
+            {
+                "label": label,
+                "url": url,
+                "count": count,
+            }
             for label, url, count in selection_sources
-        )
-        base += f"""
+        ]
 
-Selections span multiple preview sources. Use the grouped sources in the request pack as the source of truth for target-vs-reference context, and do not collapse them into one preview URL:
-{source_lines}"""
-
-    if continuation_mode != "delta" and self_edit_safe_mode:
-        base += """
-
-This workspace is Pixel Forge itself. Do not run `./install.sh`, `pixel-forge restart`, or any command that replaces or restarts the active Pixel Forge controller while this request is still streaming.
-Make repo changes and safe verification-only checks inside the workspace."""
+    constraints: list[str] = []
+    if self_edit_safe_mode:
+        constraints.append("no_pixel_forge_restart")
         if self_edit_scope == "preview":
-            base += """
-
-This is an isolated clone-backed self-edit session. Finish by stating whether the clone preview update is ready to load inside Pixel Forge preview. Do not claim that a controller update is staged or ready from this clone workspace."""
+            constraints.append("clone_preview_only")
         elif self_edit_scope == "controller":
-            base += """
+            constraints.append("stage_controller_after_turn")
+    if constraints:
+        refs["constraints"] = constraints
 
-This is the canonical Pixel Forge root. Finish by stating whether the controller update is ready to stage/load after this request completes."""
+    if context_patch and continuation_mode != "bootstrap":
+        refs["context_patch"] = context_patch
 
-    if preview_url and continuation_mode != "delta":
-        if informational_only:
-            base += f"""
-
-The active preview target for this request is {preview_url}. This request is informational only, so do not rebuild, restart, deploy, or reload unless the user explicitly asks."""
-        else:
-            base += f"""
-
-The active preview target for this request is {preview_url}. If this workspace controls that target, do not stop at code changes: apply the update to that preview target and verify this exact URL/path reflects the change before you finish."""
-            if self_edit_safe_mode:
-                if self_edit_scope == "preview":
-                    base += """
-
-For Pixel Forge self-edit requests running in an isolated clone workspace, do not replace the active controller mid-stream. Keep the result in the preview-update lane only, and finish by stating whether the clone preview update is ready to load."""
-                else:
-                    base += """
-
-For Pixel Forge self-edit requests in the canonical root, do not replace the active controller mid-stream. Use the staged controller-update flow instead, and finish by stating whether the updated controller build is ready to load."""
-            elif _is_remote_preview(preview_url):
-                base += """
-
-For repo-controlled remote previews, deploy using whatever deployment process this project uses (deploy script, docker compose, CI trigger, etc.). Look in the workspace for deploy.sh, Makefile, docker-compose.yml, fly.toml, or similar."""
-            else:
-                base += """
-
-For local/dev previews, rebuild, restart, or reload the service serving this URL so the preview updates in place."""
-
-            base += """
-
-If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload."""
-
-    return base
+    return (
+        f"{prompt_text}\n\n"
+        "Pixel Forge refs:\n"
+        "```json\n"
+        f"{json.dumps(refs, indent=2)}\n"
+        "```"
+    )
 
 
 async def _deliver_live_editor_prompt_to_agent_deck_session(
@@ -3659,9 +3524,9 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
                 dispatch_status_message = (
-                    f"Sending Pixel Forge continuation {request_pack.relative_directory} into existing Agent Deck session..."
+                    "Sending Pixel Forge turn into existing Agent Deck session..."
                     if continuation_mode == "attached-session"
-                    else f"Dispatching request pack {request_pack.relative_directory} to Agent Deck..."
+                    else "Sending Pixel Forge turn to Agent Deck..."
                 )
                 await websocket.send_json(
                     {
@@ -3674,6 +3539,7 @@ async def live_editor_chat(websocket: WebSocket):
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
                     request_id=request_pack.request_id,
+                    turn_input_file_path=request_pack.relative_turn_input_file,
                     turn_input_payload=request_pack.turn_input_payload,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,

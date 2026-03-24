@@ -306,6 +306,91 @@ def _selection_source_summary(
     return grouped
 
 
+def _attach_proof_commands(
+    *,
+    pixel_forge_cli: str,
+    request_id: str,
+) -> dict[str, str]:
+    return {
+        "attempt": (
+            f'{pixel_forge_cli} attach-proof --project . --request {request_id} '
+            '--status attempted --via chrome-devtools-mcp '
+            '--note "connecting to warm preview via chrome-devtools-mcp"'
+        ),
+        "success": (
+            f'{pixel_forge_cli} attach-proof --project . --request {request_id} '
+            '--status succeeded --via chrome-devtools-mcp '
+            '--evidence "<one fact only visible in the current live DOM>"'
+        ),
+        "failed": (
+            f'{pixel_forge_cli} attach-proof --project . --request {request_id} '
+            '--status failed --via chrome-devtools-mcp '
+            '--note "<short failure reason>"'
+        ),
+    }
+
+
+def _live_preview_attach_proof_payload(
+    *,
+    live_preview_context: dict[str, object] | None,
+    pixel_forge_cli: str,
+    request_id: str,
+    explicit_live_attach_required: bool,
+) -> dict[str, Any] | None:
+    if not isinstance(live_preview_context, dict):
+        return None
+
+    attach_hints = live_preview_context.get("attach_hints")
+    live_inspection_mode = str(
+        live_preview_context.get("live_inspection_mode") or ""
+    ).strip().lower()
+
+    if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
+        payload: dict[str, Any] = {
+            "required": explicit_live_attach_required,
+            "mode": "chrome-devtools-mcp",
+            "read_only": True,
+            "commands": _attach_proof_commands(
+                pixel_forge_cli=pixel_forge_cli,
+                request_id=request_id,
+            ),
+        }
+        if explicit_live_attach_required:
+            payload["limitation"] = (
+                "controller-browserview context is not sufficient when real live-attach proof is required"
+            )
+        return payload
+
+    if live_inspection_mode == "controller-browserview" and not explicit_live_attach_required:
+        return {
+            "required": False,
+            "mode": "controller-browserview",
+            "commands": {
+                "success": (
+                    f'{pixel_forge_cli} attach-proof --project . --request {request_id} '
+                    '--via controller-browserview --status succeeded '
+                    '--evidence "<one fact only visible in the captured live BrowserView DOM>"'
+                )
+            },
+        }
+
+    if live_inspection_mode == "controller-browserview":
+        return {
+            "required": True,
+            "mode": "no-live-attach-hints",
+            "commands": {
+                "failed": (
+                    f'{pixel_forge_cli} attach-proof --project . --request {request_id} '
+                    '--status failed --via no-live-attach-hints '
+                    '--note "attach hints unavailable for explicit live-attach proof request"'
+                )
+            },
+            "limitation": "attach hints unavailable for explicit live-attach proof request",
+        }
+
+    return None
+
+
 def _write_session_brief(
     project_path: str,
     thread_id: str,
@@ -465,6 +550,45 @@ def create_request_pack(
                 }
             )
 
+    request_file = pack_dir / "request.md"
+    relative_request_file = str(request_file.relative_to(Path(project_path).resolve()))
+    live_preview_payload = _normalized_live_preview_context(live_preview_context)
+    attach_proof_payload = _live_preview_attach_proof_payload(
+        live_preview_context=live_preview_context,
+        pixel_forge_cli=pixel_forge_cli,
+        request_id=request_id,
+        explicit_live_attach_required=explicit_live_attach_required,
+    )
+    if isinstance(live_preview_payload, dict) and attach_proof_payload is not None:
+        live_preview_payload = {
+            **live_preview_payload,
+            "attach_proof": attach_proof_payload,
+        }
+
+    artifact_refs = {
+        key: value
+        for key, value in {
+            "session_brief_file": relative_session_brief_path,
+            "request_mirror_file": relative_request_file,
+            "selected_elements_file": relative_selected_path,
+            "selection_tunnel_file": relative_selection_tunnel_path,
+            "live_preview_context_file": relative_live_preview_context_path,
+            "context_patch_file": relative_context_patch_path,
+        }.items()
+        if value
+    }
+    delivery_payload = None
+    if preview_url:
+        delivery_payload = {
+            "preview_target_url": preview_url,
+            "sync_required": not informational_only,
+            "target_kind": "remote" if _is_remote_preview(preview_url) else "local",
+            "if_uncontrolled": "state_explicitly" if not informational_only else None,
+        }
+        delivery_payload = {
+            key: value for key, value in delivery_payload.items() if value is not None
+        }
+
     turn_input_payload: dict[str, Any] = {
         "source": "pixel-forge",
         "request_id": request_id,
@@ -477,6 +601,8 @@ def create_request_pack(
         "prompt_text": message.strip() or "Use the attached request context and make the requested live edit.",
         "requested_skills": normalized_requested_skills,
         "preview_target_url": preview_url,
+        "delivery": delivery_payload,
+        "artifacts": artifact_refs,
         "selection": {
             "count": selection_count,
             "sources": [
@@ -489,7 +615,7 @@ def create_request_pack(
             ],
             "items": _normalized_selection_items(selection_tunnel),
         },
-        "live_preview": _normalized_live_preview_context(live_preview_context),
+        "live_preview": live_preview_payload,
         "attachments": attachment_manifest,
         "context_patch": turn_context_patch if isinstance(turn_context_patch, dict) else None,
     }
@@ -503,13 +629,15 @@ def create_request_pack(
         turn_input_path.relative_to(Path(project_path).resolve())
     )
 
-    request_file = pack_dir / "request.md"
-    relative_request_file = str(request_file.relative_to(Path(project_path).resolve()))
     request_sections = [
-        "# Pixel Forge Live Edit Request",
+        "# Pixel Forge Turn Mirror",
         "",
         f"- Thread ID: `{thread_id}`",
         f"- Request ID: `{request_id}`",
+        "- Source: `pixel-forge`",
+        f"- Continuation mode: `{continuation_mode}`",
+        f"- Mode: `{'inspect' if informational_only else 'edit'}`",
+        f"- Selected element count: `{selection_count}`",
     ]
     if agent_deck_session_id and agent_deck_session_title:
         request_sections.append(
@@ -526,271 +654,117 @@ def create_request_pack(
     if acp_session_id:
         request_sections.append(f"- ACP Session ID: `{acp_session_id}`")
 
-    if continuation_mode == "bootstrap":
-        request_intro = [
-            "",
-            "## Session Bootstrap",
-            "",
-            f"- Read `{relative_session_brief_path}` before you act on this thread.",
-            "- Treat this request pack as the first Pixel Forge handoff for the current endpoint-session continuity.",
-        ]
-        if informational_only:
-            working_rules = [
-                "- Read this request pack before answering.",
-                "- This is an informational inspection request, not a code-change request.",
-                "- Prefer answering directly from the selected-elements artifact, selection tunnel, and attachments. Only inspect source if those artifacts are insufficient.",
-                "- Keep the reply concise and directly answer the user's question.",
-            ]
-        else:
-            working_rules = [
-                "- Read this request pack before changing code.",
-                "- Make the smallest correct change.",
-            ]
-    elif continuation_mode == "attached-session":
-        request_intro = [
-            "",
-            "## Session Continuity",
-            "",
-            f"- Read `{relative_session_brief_path}` for the stable Pixel Forge thread constraints.",
-            "- This turn continues an already-running Agent Deck session through Pixel Forge.",
-            "- Do not treat this as a new session bootstrap. Keep the existing Agent Deck session continuity and use the new Pixel Forge context for this turn.",
-        ]
-        if informational_only:
-            working_rules = [
-                "- Read this request pack before answering.",
-                "- This is an informational continuation into an already-running Agent Deck session, not a code-change bootstrap.",
-                "- Prefer the new Pixel Forge artifacts over repo/source digging unless those artifacts are insufficient.",
-                "- Keep the reply concise and directly answer the user's question.",
-            ]
-        else:
-            working_rules = [
-                "- Read this request pack before changing code.",
-                "- Make the smallest correct change.",
-                "- Treat this as a continuation into the existing Agent Deck session, not a fresh repo bootstrap.",
-            ]
-    else:
-        request_intro = [
-            "",
-            "## Session Continuity",
-            "",
-            "- This turn is a delta, not a full session reboot.",
-            f"- Stable thread brief: `{relative_session_brief_path}`. Re-read it only if needed.",
-        ]
-        if informational_only:
-            working_rules = [
-                "- Read this request pack before answering.",
-                "- This is an informational inspection request, not a code-change request.",
-                "- Prefer the new request-pack artifacts over repo/source digging unless the artifacts are insufficient.",
-                "- Keep the reply concise and directly answer the user's question.",
-            ]
-        else:
-            working_rules = [
-                "- Read this request pack before changing code.",
-                "- Make the smallest correct change.",
-            ]
-    if turn_working_rules:
-        working_rules.extend(turn_working_rules)
+    request_sections.extend(["", "## User Prompt", ""])
+    request_sections.append(
+        message.strip() or "Use the attached request context and make the requested live edit."
+    )
+
+    request_sections.extend(["", "## Turn Files", ""])
     request_sections.extend(
         [
-            "",
+            f"- Session brief: `{relative_session_brief_path}`",
+            f"- Typed turn: `{relative_turn_input_path}`",
         ]
     )
-    request_sections.extend(
-        [
-            "## Structured Turn Input",
-            "",
-            f"- Canonical typed turn payload: `{relative_turn_input_path}`",
-            "- Use that structured payload first for the current prompt text, selected items, live-preview state, requested skills, and attachment refs.",
-            "- Treat the rest of this request pack as the durable human-readable mirror and audit surface for the same turn.",
-            "",
-        ]
-    )
+    if relative_context_patch_path:
+        request_sections.append(f"- Context patch: `{relative_context_patch_path}`")
+    if relative_selected_path:
+        request_sections.append(f"- Selected elements: `{relative_selected_path}`")
+    if relative_selection_tunnel_path:
+        request_sections.append(f"- Selection tunnel: `{relative_selection_tunnel_path}`")
+    if relative_live_preview_context_path:
+        request_sections.append(
+            f"- Live preview context: `{relative_live_preview_context_path}`"
+        )
+    if relative_attachment_paths:
+        request_sections.append("- Attachments:")
+        request_sections.extend([f"  - `{path}`" for path in relative_attachment_paths])
+
     if normalized_requested_skills:
         request_sections.extend(
             [
+                "",
                 "## Skills",
                 "",
-                "- Invoke each listed skill via the skill/tool mechanism before reading source code, using repo-specific tools, or making changes.",
                 *[f"- `{skill}`" for skill in normalized_requested_skills],
-                "",
             ]
         )
-    request_sections.extend(
-        [
-            "## User Request",
-            "",
-            message.strip() or "Use the attached request context and make the requested live edit.",
-            *request_intro,
-            "",
-            "## Working Rules",
-            "",
-            *working_rules,
-        ]
-    )
-    request_sections.extend(
-        [
-            "",
-            "## Turn Provenance",
-            "",
-            "- Source: `pixel-forge`",
-            f"- Continuity mode: `{continuation_mode}`",
-            f"- Selected element count: `{selection_count}`",
-        ]
-    )
+
     if selection_sources:
         request_sections.extend(
             [
-                "- Selection sources:",
+                "",
+                "## Selection Sources",
+                "",
                 *[
-                    f"  - `{label or 'Preview'}` at `{url}` ({count} selection{'s' if count != 1 else ''})"
+                    f"- `{label or 'Preview'}` at `{url}` ({count} selection{'s' if count != 1 else ''})"
                     for label, url, count in selection_sources
                 ],
             ]
         )
+
     if preview_url:
-        preview_lines = [
-            "",
-            "## Active Preview Target",
-            "",
-            f"- Active preview target when this request was sent: `{preview_url}`.",
-        ]
-        if informational_only:
-            preview_lines.extend(
-                [
-                    "- This request is informational only. Do not rebuild, restart, deploy, or reload the preview target unless the user explicitly asks for that.",
-                ]
-            )
-        else:
-            preview_lines.extend(
-                [
-                    "- If this workspace controls that target, do not stop at code changes. Apply the update to that preview target and verify that this exact location reflects the change before you finish.",
-                    (
-                        "- For local/dev previews, rebuild, restart, or reload the local service serving this URL."
-                        if not _is_remote_preview(preview_url)
-                        else "- For repo-controlled remote previews, deploy using the workspace's deployment process."
-                    ),
-                    "- If the preview target is external or not controlled by this workspace, state that explicitly and skip deployment or reload.",
-                ]
-            )
-        request_sections.extend(preview_lines)
-    if relative_selected_path:
         request_sections.extend(
             [
                 "",
-                "## Selected Elements",
+                "## Preview Target",
                 "",
-                (
-                    f"- Read `{relative_selected_path}` for the selected element context captured from the running app before answering."
-                    if informational_only
-                    else f"- Read `{relative_selected_path}` for the selected element context captured from the running app."
-                ),
+                f"- `{preview_url}`",
             ]
         )
-    if relative_selection_tunnel_path:
-        request_sections.extend(
-            [
-                "",
-                "## Selection Tunnel",
-                "",
-                f"- Read `{relative_selection_tunnel_path}` for the structured frozen selection state Pixel Forge captured.",
-                "- Use it as authoritative evidence for the selected target context instead of replaying login, navigation, or view reconstruction unless the request explicitly requires that.",
-            ]
-        )
+        if delivery_payload:
+            request_sections.extend(
+                [
+                    f"- Sync required: `{bool(delivery_payload.get('sync_required'))}`",
+                    f"- Target kind: `{delivery_payload.get('target_kind')}`",
+                ]
+            )
+            if delivery_payload.get("if_uncontrolled"):
+                request_sections.append("- If uncontrolled: state explicitly")
+
     if relative_live_preview_context_path:
         request_sections.extend(
             [
                 "",
-                "## Live Preview Context",
+                "## Live Preview",
                 "",
-                f"- Read `{relative_live_preview_context_path}` for the live-preview handoff metadata captured from the already-running Pixel Forge preview tab.",
-                "- Prefer that live context for current page state when it is available, and use the selection tunnel plus attachments as the durable frozen evidence for this turn.",
-                "- If the live context already includes controller-captured DOM state, use that fast path first.",
-                "- If you still need deeper live inspection of DOM behavior, console, or network and the context includes attach hints, use those exact CDP hints instead of replaying auth or navigation.",
-                "- If neither controller-captured live state nor attach hints are available, do not recreate auth or navigation from scratch unless the request explicitly requires it. Fall back to the frozen Pixel Forge artifacts and state the limitation plainly.",
             ]
-        )
-        attach_hints = (
-            live_preview_context.get("attach_hints")
-            if isinstance(live_preview_context, dict)
-            else None
         )
         live_inspection_mode = (
             live_preview_context.get("live_inspection_mode")
             if isinstance(live_preview_context, dict)
             else None
         )
-        if isinstance(attach_hints, dict) and attach_hints.get("browser_url"):
+        if live_inspection_mode:
+            request_sections.append(f"- Live inspection mode: `{live_inspection_mode}`")
+        if attach_proof_payload is not None:
             request_sections.extend(
                 [
-                    "",
-                    "## Live Attach Proof",
-                    "",
-                    "- If you attach to the already-running warm preview target over CDP, record that proof for this request.",
-                    (
-                        "- This request explicitly requires a real CDP attach when attach hints are present. Controller-captured BrowserView DOM state may help orient you, but it is not sufficient to satisfy this proof on its own."
-                        if explicit_live_attach_required
-                        else None
-                    ),
-                    f"- Before attach: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status attempted --via chrome-devtools-mcp --note \"connecting to warm preview via chrome-devtools-mcp\"`",
-                    f"- On success: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status succeeded --via chrome-devtools-mcp --evidence \"<one fact only visible in the current live DOM>\"`",
-                    f"- On failure: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via chrome-devtools-mcp --note \"<short failure reason>\"`",
-                    "- If you use a different attach mechanism, replace the `--via` value with the actual mechanism you used, for example `raw-cdp`.",
-                    (
-                        "- If live attach fails, record the failure proof and stop instead of substituting a controller-browserview success receipt."
-                        if explicit_live_attach_required
-                        else None
-                    ),
-                    "- Unless the request explicitly asks for interaction, keep the proof read-only: do not click, type, submit, or navigate the live preview while collecting the receipt.",
-                    "- That command writes `attach-proof.json` into this request pack and mirrors the proof into the shared workstation event stream.",
+                    f"- Attach proof mode: `{attach_proof_payload.get('mode')}`",
+                    f"- Attach proof required: `{bool(attach_proof_payload.get('required'))}`",
                 ]
             )
-            request_sections = [section for section in request_sections if section is not None]
-        elif live_inspection_mode == "controller-browserview" and not explicit_live_attach_required:
-            request_sections.extend(
-                [
-                    "",
-                    "## Live Preview Proof",
-                    "",
-                    "- This request already includes controller-captured live DOM state from the running Pixel Forge BrowserView preview tab.",
-                    f"- If that live context gives you the decisive fact for this request, record it with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --via controller-browserview --status succeeded --evidence \"<one fact only visible in the captured live BrowserView DOM>\"`",
-                    "- Do not claim that a deeper live attach happened unless you actually used emitted attach hints.",
-                ]
-            )
-        elif live_inspection_mode == "controller-browserview":
-            request_sections.extend(
-                [
-                    "",
-                    "## Live Attach Limitation",
-                    "",
-                    "- This request explicitly asks for a real live attach proof, but this request pack only includes controller-captured BrowserView DOM state and no attach hints.",
-                    "- Do not record a controller-browserview success proof in place of a real attach proof for this request.",
-                    f"- Record a failed attach proof with: `{pixel_forge_cli} attach-proof --project . --request {request_id} --status failed --via no-live-attach-hints --note \"attach hints unavailable for explicit live-attach proof request\"`",
-                ]
-            )
-    if relative_context_patch_path:
+            commands = attach_proof_payload.get("commands")
+            if isinstance(commands, dict):
+                for key, label in (
+                    ("attempt", "Attempt"),
+                    ("success", "Success"),
+                    ("failed", "Failure"),
+                ):
+                    value = commands.get(key)
+                    if isinstance(value, str) and value.strip():
+                        request_sections.append(f"- {label}: `{value}`")
+            limitation = attach_proof_payload.get("limitation")
+            if isinstance(limitation, str) and limitation.strip():
+                request_sections.append(f"- Limitation: {limitation.strip()}")
+
+    if turn_working_rules:
         request_sections.extend(
             [
                 "",
-                "## Session Context Patch",
+                "## Turn Constraints",
                 "",
-                f"- Read `{relative_context_patch_path}` for the compact turn-to-turn context patch Pixel Forge prepared for this same warm session.",
-                "- Treat it as the smallest current-turn continuity delta for the already-running Claude/Codex session, not as a replacement for the durable request-pack evidence.",
-            ]
-        )
-    if relative_attachment_paths:
-        request_sections.extend(
-            [
-                "",
-                "## Attachments",
-                "",
-                *[
-                    (
-                        f"- Read `{path}` before answering."
-                        if informational_only
-                        else f"- Read `{path}` before editing."
-                    )
-                    for path in relative_attachment_paths
-                ],
+                *turn_working_rules,
             ]
         )
 

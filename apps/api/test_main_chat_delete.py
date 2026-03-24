@@ -149,9 +149,10 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
-    def test_build_dispatch_prompt_mentions_live_preview_context(self) -> None:
+    def test_build_dispatch_prompt_uses_prompt_first_transport_with_compact_refs(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
             turn_input_payload={
                 "prompt_text": "Inspect the active preview",
                 "selection": {"count": 0, "items": []},
@@ -160,14 +161,15 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
         )
 
-        self.assertIn("Current typed Pixel Forge turn payload", prompt)
-        self.assertIn('"prompt_text": "Inspect the active preview"', prompt)
-        self.assertIn("Start with that typed payload before falling back to the disk artifacts.", prompt)
-        self.assertIn("live-preview-context", prompt)
-        self.assertIn("pixel-forge preview-context --project . --request <request-id>", prompt)
-        self.assertIn("already-running Pixel Forge preview tab", prompt)
+        self.assertTrue(prompt.startswith("Inspect the active preview"))
+        self.assertIn("Pixel Forge refs:", prompt)
+        self.assertIn('"turn": ".pixel-forge/requests/abcd/turn-input.json"', prompt)
+        self.assertIn('"mirror": ".pixel-forge/requests/abcd/request.md"', prompt)
+        self.assertIn('"selection_tunnel_url": "http://pixel-forge.test/api/live-editor/selection-tunnel?request_id=abcd"', prompt)
+        self.assertIn('"live_preview_context_url": "http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd"', prompt)
+        self.assertNotIn("Current typed Pixel Forge turn payload", prompt)
 
-    def test_build_dispatch_prompt_mentions_context_patch_and_attach_hints(self) -> None:
+    def test_build_dispatch_prompt_includes_context_patch_in_compact_refs(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
             request_id="abcd",
@@ -186,17 +188,14 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertIn("Session context patch for this already-running Agent Deck session", prompt)
+        self.assertIn("Pixel Forge refs:", prompt)
+        self.assertIn('"continuation": "delta"', prompt)
+        self.assertIn('"context_patch": {', prompt)
         self.assertIn('"thread_id": "thread-a"', prompt)
         self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
-        self.assertIn("using-chrome-devtools-mcp", prompt)
-        self.assertIn("instead of replaying login or navigation", prompt)
-        self.assertIn("pixel-forge attach-proof --project . --request abcd --status attempted --via chrome-devtools-mcp", prompt)
-        self.assertIn("pixel-forge attach-proof --project . --request abcd --status succeeded --via chrome-devtools-mcp", prompt)
-        self.assertIn("replace the `--via` value with the actual mechanism you used", prompt)
-        self.assertIn("Do not claim a successful live attach unless", prompt)
+        self.assertNotIn("Session context patch for this already-running Agent Deck session", prompt)
 
-    def test_build_dispatch_prompt_requires_real_attach_for_explicit_attach_proof(self) -> None:
+    def test_build_dispatch_prompt_marks_real_attach_requirement_without_wrapper_prose(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
             request_id="abcd",
@@ -217,13 +216,11 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertIn("explicitly requests real live-attach proof", prompt)
-        self.assertIn("it is not sufficient to satisfy this request on its own", prompt)
-        self.assertIn("explicitly requires real warm-session attach proof", prompt)
-        self.assertIn("keep the proof read-only", prompt)
-        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
+        self.assertIn('"live_attach_proof_required": true', prompt)
+        self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
+        self.assertNotIn("explicitly requests real live-attach proof", prompt)
 
-    def test_build_dispatch_prompt_mentions_controller_browserview_live_context(self) -> None:
+    def test_build_dispatch_prompt_keeps_controller_browserview_context_as_data(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
             request_id="abcd",
@@ -239,11 +236,10 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertIn("controller-captured live DOM state", prompt)
-        self.assertIn("--via controller-browserview --status succeeded", prompt)
-        self.assertIn("Do not claim that a deeper live attach happened", prompt)
+        self.assertIn('"live_inspection_mode": "controller-browserview"', prompt)
+        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
 
-    def test_build_dispatch_prompt_requires_failed_proof_when_explicit_attach_has_no_hints(self) -> None:
+    def test_build_dispatch_prompt_marks_attach_requirement_when_hints_are_missing(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
             request_id="abcd",
@@ -260,9 +256,8 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertIn("explicitly requires real live-attach proof", prompt)
-        self.assertIn("Record failure instead of a controller-browserview success", prompt)
-        self.assertIn("--via no-live-attach-hints", prompt)
+        self.assertIn('"live_attach_proof_required": true', prompt)
+        self.assertIn('"live_inspection_mode": "controller-browserview"', prompt)
         self.assertNotIn("--via controller-browserview --status succeeded", prompt)
 
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:

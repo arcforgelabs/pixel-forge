@@ -65,12 +65,11 @@ do not treat /tmp/workspace as a skill.
             request_body = request_pack.request_file.read_text(encoding="utf-8")
             manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
 
-            self.assertIn("## Session Continuity", request_body)
-            self.assertIn("already-running Agent Deck session through Pixel Forge", request_body)
-            self.assertIn("## Turn Provenance", request_body)
+            self.assertIn("# Pixel Forge Turn Mirror", request_body)
             self.assertIn("- Source: `pixel-forge`", request_body)
-            self.assertIn("- Continuity mode: `attached-session`", request_body)
+            self.assertIn("- Continuation mode: `attached-session`", request_body)
             self.assertIn("- Selected element count: `1`", request_body)
+            self.assertIn("## Selection Sources", request_body)
             self.assertIn("`Google` at `https://www.google.com/` (1 selection)", request_body)
             self.assertEqual(manifest["continuation_mode"], "attached-session")
             self.assertEqual(manifest["source"], "pixel-forge")
@@ -116,14 +115,14 @@ do not treat /tmp/workspace as a skill.
                 request_pack.live_preview_context_file.read_text(encoding="utf-8")
             )
 
-            self.assertIn("## Live Preview Context", request_body)
-            self.assertIn("## Live Attach Proof", request_body)
+            self.assertIn("## Turn Files", request_body)
             self.assertIn("live-preview-context.json", request_body)
+            self.assertIn("## Live Preview", request_body)
+            self.assertIn("Attach proof mode", request_body)
             self.assertIn("pixel-forge attach-proof --project . --request", request_body)
             self.assertIn("--status attempted --via chrome-devtools-mcp", request_body)
             self.assertIn("--status succeeded --via chrome-devtools-mcp", request_body)
             self.assertIn("--status failed --via chrome-devtools-mcp", request_body)
-            self.assertIn("replace the `--via` value with the actual mechanism you used", request_body)
             self.assertEqual(
                 manifest["live_preview_context_file"],
                 request_pack.relative_live_preview_context_file,
@@ -172,11 +171,15 @@ do not treat /tmp/workspace as a skill.
                 request_pack.turn_input_file.read_text(encoding="utf-8")
             )
 
-            self.assertIn("## Structured Turn Input", request_body)
+            self.assertIn("## Turn Files", request_body)
             self.assertIn("turn-input.json", request_body)
             self.assertEqual(manifest["turn_input_file"], request_pack.relative_turn_input_file)
             self.assertEqual(turn_input_payload["prompt_text"], "Please use /using-pixel-forge and update the selected card label.")
             self.assertEqual(turn_input_payload["requested_skills"], ["using-pixel-forge"])
+            self.assertEqual(
+                turn_input_payload["artifacts"]["request_mirror_file"],
+                request_pack.relative_request_file,
+            )
             self.assertEqual(turn_input_payload["selection"]["count"], 1)
             self.assertEqual(turn_input_payload["selection"]["items"][0]["id"], "selection-1")
             self.assertEqual(turn_input_payload["live_preview"]["current_url"], "https://example.com/app")
@@ -247,10 +250,9 @@ do not treat /tmp/workspace as a skill.
 
             request_body = request_pack.request_file.read_text(encoding="utf-8")
 
-            self.assertIn("explicitly requires a real CDP attach", request_body)
-            self.assertIn("record the failure proof and stop", request_body)
-            self.assertIn("keep the proof read-only", request_body)
-            self.assertNotIn("--via controller-browserview --status succeeded", request_body)
+            self.assertIn("Attach proof required: `True`", request_body)
+            self.assertIn("Attach proof mode: `chrome-devtools-mcp`", request_body)
+            self.assertIn("controller-browserview context is not sufficient", request_body)
 
     def test_request_pack_writes_context_patch_section_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -283,7 +285,7 @@ do not treat /tmp/workspace as a skill.
                 request_pack.context_patch_file.read_text(encoding="utf-8")
             )
 
-            self.assertIn("## Session Context Patch", request_body)
+            self.assertIn("## Turn Files", request_body)
             self.assertIn("context-patch.json", request_body)
             self.assertEqual(
                 manifest["context_patch_file"],
@@ -370,9 +372,8 @@ do not treat /tmp/workspace as a skill.
 
             request_body = request_pack.request_file.read_text(encoding="utf-8")
 
-            self.assertIn("## Live Preview Context", request_body)
-            self.assertIn("controller-captured DOM state", request_body)
-            self.assertIn("## Live Preview Proof", request_body)
+            self.assertIn("## Live Preview", request_body)
+            self.assertIn("Live inspection mode: `controller-browserview`", request_body)
             self.assertIn("--via controller-browserview --status succeeded", request_body)
 
     def test_request_pack_records_failed_attach_when_explicit_attach_has_no_hints(self) -> None:
@@ -400,8 +401,7 @@ do not treat /tmp/workspace as a skill.
 
             request_body = request_pack.request_file.read_text(encoding="utf-8")
 
-            self.assertIn("## Live Attach Limitation", request_body)
-            self.assertIn("Do not record a controller-browserview success proof", request_body)
+            self.assertIn("Attach proof mode: `no-live-attach-hints`", request_body)
             self.assertIn('--status failed --via no-live-attach-hints --note "attach hints unavailable for explicit live-attach proof request"', request_body)
             self.assertNotIn("--via controller-browserview --status succeeded", request_body)
 
