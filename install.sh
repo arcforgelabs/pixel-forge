@@ -41,6 +41,7 @@ AGENT_DECK_SURFACE_URL="${PIXEL_FORGE_AGENT_DECK_SURFACE_URL:-http://${AGENT_DEC
 AGENT_DECK_FOUNDATION_INSTALL_DIR="$INSTALL_DIR/foundations/agent-deck"
 AGENT_DECK_FOUNDATION_BUILD_DIR="$AGENT_DECK_FOUNDATION_INSTALL_DIR/build"
 AGENT_DECK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_BUILD_DIR/agent-deck"
+AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck"
 AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-alpha.sh"
 AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
 STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_alpha_state_root.py"
@@ -97,21 +98,36 @@ install_agent_deck_foundation_binary() {
         return
     fi
 
-    rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
-    mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+    local prebuilt_build_binary="$AGENT_DECK_BUNDLED_BINARY_PATH"
+    local fallback_bundled_binary="$AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH"
 
     if command -v go >/dev/null 2>&1; then
         echo "Building bundled alpha Agent Deck binary..."
+        rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+        mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
         (
             cd "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
             "$(command -v go)" build -o "$AGENT_DECK_BUNDLED_BINARY_PATH" ./cmd/agent-deck
         )
+        cp "$AGENT_DECK_BUNDLED_BINARY_PATH" "$fallback_bundled_binary"
+        chmod +x "$fallback_bundled_binary"
         return
     fi
 
-    if [ -x "$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck" ]; then
+    if [ -x "$prebuilt_build_binary" ]; then
+        echo "Using prebuilt alpha Agent Deck binary from foundation build output..."
+        chmod +x "$prebuilt_build_binary"
+        cp "$prebuilt_build_binary" "$fallback_bundled_binary"
+        chmod +x "$fallback_bundled_binary"
+        return
+    fi
+
+    rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+    mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
+
+    if [ -x "$fallback_bundled_binary" ]; then
         echo "Using prebuilt alpha Agent Deck binary from the foundation bundle..."
-        cp "$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck" "$AGENT_DECK_BUNDLED_BINARY_PATH"
+        cp "$fallback_bundled_binary" "$AGENT_DECK_BUNDLED_BINARY_PATH"
         chmod +x "$AGENT_DECK_BUNDLED_BINARY_PATH"
         return
     fi

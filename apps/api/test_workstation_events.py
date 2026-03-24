@@ -100,17 +100,20 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
             str(self.project_path),
             "thread-a",
             agent_deck_session_id="deck-a",
-            event_type="turn_started",
+            event_type="turn_input",
             payload={
                 "request_id": "request-1",
                 "agent_deck_session_id": "deck-a",
                 "agent_deck_session_title": "pixel-forge-thread-a",
                 "agent_deck_tool": "codex",
                 "workspace_path": str(self.workspace_path),
+                "turn_input": {
+                    "prompt_text": "Inspect the current preview",
+                },
             },
         )
 
-        self.assertEqual(record.event_type, "turn_started")
+        self.assertEqual(record.event_type, "turn_input")
         self.assertTrue(
             workstation_events.chat_has_typed_turn_events(
                 str(self.project_path),

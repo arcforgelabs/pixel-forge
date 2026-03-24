@@ -17,7 +17,12 @@ interface PreviewBridgePdfSource {
 
 interface PreviewBridge {
   emitEvent?: (type: string, data?: Record<string, unknown>) => void
-  readPdfPreviewSource?: () => Promise<PreviewBridgePdfSource>
+  readPdfPreviewSource?: (payload?: {
+    tabId?: string
+    sourceUrl?: string
+    title?: string
+    contentType?: string
+  }) => Promise<PreviewBridgePdfSource>
 }
 
 interface PdfLineCandidate {
@@ -141,8 +146,12 @@ function pageKeyFor(sourceUrl: string, pageNumber: number): string {
   return `${sourceUrl}#page=${pageNumber}`
 }
 
+function findPdfPreviewRoot(element: Element | null): HTMLElement | null {
+  return element?.closest?.('.pf-pdf-preview') as HTMLElement | null
+}
+
 function findPdfPageRoot(element: Element | null): HTMLElement | null {
-  return element?.closest?.('[data-pf-pdf-page-number]') as HTMLElement | null
+  return element?.closest?.('[data-pf-pdf-page-root="1"]') as HTMLElement | null
 }
 
 function pageNumberForRoot(pageRoot: HTMLElement | null): number | null {
@@ -155,6 +164,27 @@ function pageNumberForRoot(pageRoot: HTMLElement | null): number | null {
 
 function findTextSpan(element: Element | null): HTMLElement | null {
   return element?.closest?.('[data-pf-pdf-text="1"]') as HTMLElement | null
+}
+
+function ownsPdfPreviewElement(element: Element | null): boolean {
+  return Boolean(findPdfPreviewRoot(element))
+}
+
+function shouldIgnorePdfSelectionTarget(element: Element | null): boolean {
+  if (!ownsPdfPreviewElement(element)) {
+    return false
+  }
+
+  if (findTextSpan(element)) {
+    return false
+  }
+
+  const pageRoot = findPdfPageRoot(element)
+  if (pageRoot && element === pageRoot) {
+    return false
+  }
+
+  return true
 }
 
 function rectsIntersect(
@@ -409,6 +439,12 @@ export default function PdfPreviewPage() {
 
   useEffect(() => {
     const adapter: NonNullable<Window['__pixelForgePdfSelectionAdapter']> = {
+      ownsElement(element) {
+        return ownsPdfPreviewElement(element)
+      },
+      shouldIgnoreElement(element) {
+        return shouldIgnorePdfSelectionTarget(element)
+      },
       getPageContext() {
         const state = stateRef.current
         const primaryVisiblePage = state.visiblePages[0] || 1
@@ -419,7 +455,7 @@ export default function PdfPreviewPage() {
         }
       },
       getSurfaceKind(element: Element | null) {
-        return findPdfPageRoot(element) ? 'pdf' : null
+        return ownsPdfPreviewElement(element) ? 'pdf' : null
       },
       findRegionSurface(element: Element | null) {
         return findPdfPageRoot(element)
@@ -658,6 +694,11 @@ export default function PdfPreviewPage() {
 
   useEffect(() => {
     let cancelled = false
+    const searchParams = new URLSearchParams(window.location.search)
+    const routeTabId = normalizeText(searchParams.get('tabId'), 120)
+    const routeSourceUrl = normalizeText(searchParams.get('source'))
+    const routeTitle = normalizeText(searchParams.get('title'), 240)
+    const routeContentType = normalizeText(searchParams.get('contentType'), 120)
 
     const updateVisiblePages = () => {
       const viewport = viewportRef.current
@@ -680,7 +721,12 @@ export default function PdfPreviewPage() {
         throw new Error('Preview PDF bridge is unavailable')
       }
 
-      const source = await bridge.readPdfPreviewSource()
+      const source = await bridge.readPdfPreviewSource({
+        tabId: routeTabId || undefined,
+        sourceUrl: routeSourceUrl || undefined,
+        title: routeTitle || undefined,
+        contentType: routeContentType || undefined,
+      })
       const sourceUrl = source.source_url || window.location.href
       const sourceTitle = normalizeText(source.title, 240) || normalizeText(sourceUrl.split('/').pop(), 240) || 'PDF Preview'
       const pdfBytes = normalizeBytes(source.bytes)
@@ -718,6 +764,7 @@ export default function PdfPreviewPage() {
       for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
         const pageRoot = document.createElement('article')
         pageRoot.className = 'pf-pdf-page page'
+        pageRoot.dataset.pfPdfPageRoot = '1'
         pageRoot.dataset.pfPdfPageNumber = String(pageNumber)
         pageRoot.setAttribute('aria-label', `PDF page ${pageNumber}`)
         viewerElement.appendChild(pageRoot)

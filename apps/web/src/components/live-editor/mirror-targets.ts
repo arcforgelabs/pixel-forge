@@ -2,6 +2,7 @@ export interface MirrorTargetRecord {
   instance_slug: string
   source_root: string
   web_url: string
+  stable_url?: string
 }
 
 export interface PendingMirrorPreviewUpdate {
@@ -250,7 +251,10 @@ export function findMirrorTargetByPreviewUrl<T extends MirrorTargetRecord>(
   }
 
   return (
-    mirrorBuilds.find((record) => normalizeMirrorUrl(record.web_url) === normalizedPreviewUrl)
+    mirrorBuilds.find((record) =>
+      normalizeMirrorUrl(record.stable_url || record.web_url) === normalizedPreviewUrl
+      || normalizeMirrorUrl(record.web_url) === normalizedPreviewUrl
+    )
     || null
   )
 }
@@ -308,7 +312,7 @@ export function shouldOfferMirrorSwitch<T extends MirrorTargetRecord>(options: {
   }
 
   const normalizedActiveUrl = normalizeMirrorUrl(activeTabUrl)
-  const normalizedNextUrl = normalizeMirrorUrl(nextMirrorTarget.web_url)
+  const normalizedNextUrl = normalizeMirrorUrl(nextMirrorTarget.stable_url || nextMirrorTarget.web_url)
   if (!normalizedActiveUrl || !normalizedNextUrl) {
     return false
   }

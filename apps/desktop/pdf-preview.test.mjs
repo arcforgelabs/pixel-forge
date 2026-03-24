@@ -12,6 +12,7 @@ import {
   isPdfContentType,
   looksLikePdfUrl,
   readPdfDocumentSource,
+  readInternalPdfViewerState,
   resolvePdfTargetMetadata,
 } from './pdf-preview.mjs'
 
@@ -74,10 +75,15 @@ test('detectPdfPreviewTarget falls back to session fetch for content-type based 
 })
 
 test('builds and recognizes the internal viewer url', () => {
-  const viewerUrl = buildInternalPdfViewerUrl('http://pixel-forge.localhost:7001', 'tab-7')
+  const viewerUrl = buildInternalPdfViewerUrl('http://pixel-forge.localhost:7001', {
+    tabId: 'tab-7',
+    sourceUrl: 'file:///tmp/quote.pdf',
+    title: 'Quote.pdf',
+    contentType: 'application/pdf',
+  })
   assert.equal(
     viewerUrl,
-    'http://pixel-forge.localhost:7001/internal/pdf-viewer?embedded=1&tabId=tab-7',
+    'http://pixel-forge.localhost:7001/internal/pdf-viewer?embedded=1&tabId=tab-7&source=file%3A%2F%2F%2Ftmp%2Fquote.pdf&title=Quote.pdf&contentType=application%2Fpdf',
   )
   assert.equal(
     isInternalPdfViewerUrl(viewerUrl, 'http://pixel-forge.localhost:7001'),
@@ -86,6 +92,15 @@ test('builds and recognizes the internal viewer url', () => {
   assert.equal(
     isInternalPdfViewerUrl('https://example.com/manual.pdf', 'http://pixel-forge.localhost:7001'),
     false,
+  )
+  assert.deepEqual(
+    readInternalPdfViewerState(viewerUrl, 'http://pixel-forge.localhost:7001'),
+    {
+      tabId: 'tab-7',
+      sourceUrl: 'file:///tmp/quote.pdf',
+      title: 'Quote.pdf',
+      contentType: 'application/pdf',
+    },
   )
 })
 

@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 from runtime_config import (
+    api_port as controller_api_port,
     shared_state_dir as runtime_shared_state_dir,
     source_root as runtime_source_root,
 )
@@ -45,6 +46,7 @@ class LocalTargetRecord:
     web_host: str
     api_url: str
     web_url: str
+    stable_url: str
     state_dir: str
     log_file: str
     pid: int | None
@@ -84,6 +86,10 @@ def _target_state_dir(instance_slug: str) -> Path:
     path = runtime_shared_state_dir() / "instances" / instance_slug
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def stable_preview_url_for_host(web_host: str) -> str:
+    return f"http://{web_host}:{controller_api_port()}"
 
 
 @dataclass(slots=True)
@@ -218,6 +224,7 @@ def _validate_pixel_forge_project(project_path: str) -> None:
 
 def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) -> LocalTargetRecord:
     runtime_kind = _normalize_runtime_kind(str(metadata.get("runtime_kind") or DEFAULT_RUNTIME_KIND))
+    web_host = str(metadata["web_host"])
     return LocalTargetRecord(
         kind=PIXEL_FORGE_TARGET_KIND,
         runtime_kind=runtime_kind,
@@ -227,9 +234,10 @@ def _record_from_metadata(metadata: dict[str, Any], *, already_running: bool) ->
         instance_slug=str(metadata["instance_slug"]),
         api_port=int(metadata["api_port"]),
         web_port=int(metadata["web_port"]),
-        web_host=str(metadata["web_host"]),
+        web_host=web_host,
         api_url=str(metadata["api_url"]),
         web_url=str(metadata["web_url"]),
+        stable_url=stable_preview_url_for_host(web_host),
         state_dir=str(metadata["state_dir"]),
         log_file=str(metadata["log_file"]),
         pid=int(metadata["pid"]) if metadata.get("pid") else None,
@@ -763,3 +771,35 @@ def list_pixel_forge_targets(
         reverse=True,
     )
     return records
+
+
+def get_pixel_forge_target_by_host(web_host: str) -> LocalTargetRecord | None:
+    normalized_web_host = web_host.strip().lower()
+    if not normalized_web_host:
+        return None
+
+    instances_root = runtime_shared_state_dir() / "instances"
+    if not instances_root.exists():
+        return None
+
+    for metadata_path in instances_root.glob("*/runtime.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        metadata = _normalize_listed_target_metadata(metadata)
+        if not metadata:
+            continue
+        if str(metadata.get("web_host") or "").strip().lower() != normalized_web_host:
+            continue
+
+        pid = int(metadata["pid"]) if metadata.get("pid") else None
+        running = _is_http_ready(str(metadata.get("web_url") or "")) and _process_alive(pid)
+        try:
+            return _record_from_metadata(metadata, already_running=running)
+        except Exception:
+            return None
+
+    return None

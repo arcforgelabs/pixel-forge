@@ -35,6 +35,8 @@ class RequestPack:
     relative_session_brief_file: str | None
     request_file: Path
     relative_request_file: str
+    turn_input_file: Path | None
+    relative_turn_input_file: str | None
     manifest_file: Path
     relative_manifest_file: str
     selected_elements_file: Path | None
@@ -48,6 +50,7 @@ class RequestPack:
     attachment_paths: list[Path]
     relative_attachment_paths: list[str]
     requested_skills: list[str]
+    turn_input_payload: dict[str, Any]
 
 
 def _safe_name(name: str, fallback: str) -> str:
@@ -91,6 +94,32 @@ def extract_requested_skills(message: str) -> list[str]:
         requested_skills.append(match.group(1))
 
     return normalize_requested_skills(requested_skills)
+
+
+def _normalized_selection_items(
+    selection_tunnel: dict[str, object] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(selection_tunnel, dict):
+        return []
+    selections = selection_tunnel.get("selections")
+    if not isinstance(selections, list):
+        return []
+    return [
+        entry
+        for entry in selections
+        if isinstance(entry, dict)
+    ]
+
+
+def _normalized_live_preview_context(
+    live_preview_context: dict[str, object] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(live_preview_context, dict):
+        return None
+    return {
+        key: value
+        for key, value in live_preview_context.items()
+    }
 
 
 def _request_root(project_path: str) -> Path:
@@ -436,6 +465,44 @@ def create_request_pack(
                 }
             )
 
+    turn_input_payload: dict[str, Any] = {
+        "source": "pixel-forge",
+        "request_id": request_id,
+        "thread_id": thread_id,
+        "continuation_mode": continuation_mode,
+        "informational_only": informational_only,
+        "explicit_live_attach_required": explicit_live_attach_required,
+        "canonical_project_path": normalized_canonical_project_path,
+        "workspace_project_path": str(Path(project_path).resolve()),
+        "prompt_text": message.strip() or "Use the attached request context and make the requested live edit.",
+        "requested_skills": normalized_requested_skills,
+        "preview_target_url": preview_url,
+        "selection": {
+            "count": selection_count,
+            "sources": [
+                {
+                    "label": label,
+                    "url": url,
+                    "count": count,
+                }
+                for label, url, count in selection_sources
+            ],
+            "items": _normalized_selection_items(selection_tunnel),
+        },
+        "live_preview": _normalized_live_preview_context(live_preview_context),
+        "attachments": attachment_manifest,
+        "context_patch": turn_context_patch if isinstance(turn_context_patch, dict) else None,
+    }
+
+    turn_input_path = pack_dir / "turn-input.json"
+    turn_input_path.write_text(
+        json.dumps(turn_input_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    relative_turn_input_path = str(
+        turn_input_path.relative_to(Path(project_path).resolve())
+    )
+
     request_file = pack_dir / "request.md"
     relative_request_file = str(request_file.relative_to(Path(project_path).resolve()))
     request_sections = [
@@ -525,6 +592,16 @@ def create_request_pack(
         working_rules.extend(turn_working_rules)
     request_sections.extend(
         [
+            "",
+        ]
+    )
+    request_sections.extend(
+        [
+            "## Structured Turn Input",
+            "",
+            f"- Canonical typed turn payload: `{relative_turn_input_path}`",
+            "- Use that structured payload first for the current prompt text, selected items, live-preview state, requested skills, and attachment refs.",
+            "- Treat the rest of this request pack as the durable human-readable mirror and audit surface for the same turn.",
             "",
         ]
     )
@@ -749,6 +826,7 @@ def create_request_pack(
                 ],
                 "session_brief_file": relative_session_brief_path,
                 "request_file": relative_request_file,
+                "turn_input_file": relative_turn_input_path,
                 "selected_elements_file": relative_selected_path,
                 "selection_tunnel_file": relative_selection_tunnel_path,
                 "live_preview_context_file": relative_live_preview_context_path,
@@ -772,6 +850,8 @@ def create_request_pack(
         relative_session_brief_file=relative_session_brief_path,
         request_file=request_file,
         relative_request_file=relative_request_file,
+        turn_input_file=turn_input_path,
+        relative_turn_input_file=relative_turn_input_path,
         manifest_file=manifest_file,
         relative_manifest_file=str(manifest_file.relative_to(Path(project_path).resolve())),
         selected_elements_file=selected_path,
@@ -785,6 +865,7 @@ def create_request_pack(
         attachment_paths=attachment_paths,
         relative_attachment_paths=relative_attachment_paths,
         requested_skills=normalized_requested_skills,
+        turn_input_payload=turn_input_payload,
     )
 
 

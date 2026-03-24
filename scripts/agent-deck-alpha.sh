@@ -51,15 +51,24 @@ fi
 if [[ "$needs_rebuild" == "1" ]]; then
   GO_BIN="${PIXEL_FORGE_GO_BIN:-$(command -v go || true)}"
   if [[ -z "$GO_BIN" ]]; then
-    echo "alpha Agent Deck launcher could not find a bundled binary and 'go' is unavailable to build one" >&2
-    exit 1
+    if [[ -x "$FALLBACK_BUNDLED_BIN" ]]; then
+      echo "alpha Agent Deck launcher is using the bundled fallback binary because 'go' is unavailable" >&2
+      RUN_BIN="$FALLBACK_BUNDLED_BIN"
+    elif [[ -x "$BUILD_BIN" ]]; then
+      echo "alpha Agent Deck launcher is using the existing build output because 'go' is unavailable" >&2
+      RUN_BIN="$BUILD_BIN"
+    else
+      echo "alpha Agent Deck launcher could not find a bundled binary and 'go' is unavailable to build one" >&2
+      exit 1
+    fi
+  else
+    mkdir -p "$BUILD_DIR"
+    (
+      cd "$FOUNDATION_ROOT"
+      "$GO_BIN" build -o "$BUILD_BIN" ./cmd/agent-deck
+    )
+    RUN_BIN="$BUILD_BIN"
   fi
-  mkdir -p "$BUILD_DIR"
-  (
-    cd "$FOUNDATION_ROOT"
-    "$GO_BIN" build -o "$BUILD_BIN" ./cmd/agent-deck
-  )
-  RUN_BIN="$BUILD_BIN"
 fi
 
 exec "$RUN_BIN" "$@"

@@ -12,9 +12,14 @@ import { create } from 'zustand'
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { getDesktopApp, hasDesktopAppMethod } from '@/lib/desktop-app'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
+import {
+  findLatestRecoverablePdfUrl,
+  normalizePersistedPreviewUrl,
+} from '@/lib/preview-url'
 import type {
   PersistedPreviewTab,
   PersistedThreadEditorState,
+  PersistedWorkspacePreviewMeta,
   ProjectSessionRecord,
 } from '@/store/session-store'
 import type {
@@ -124,6 +129,7 @@ interface ObservedAgentDeckSessionOutputEvent {
 }
 
 type ObservedAgentDeckTurnEventType =
+  | 'turn_input'
   | 'turn_started'
   | 'turn_status'
   | 'turn_chunk'
@@ -160,6 +166,21 @@ export interface LocalTargetMeta {
   createdAt: string | null
 }
 
+export interface WorkspacePreviewMeta {
+  kind: 'workspace-preview'
+  workspacePath: string
+  workspaceRoot: string
+  appPath: string
+  relativeAppPath: string
+  title: string
+  scriptName: string
+  packageManager: 'pnpm' | 'npm' | 'yarn' | 'bun'
+  framework: string | null
+  preferredPort: number | null
+  instanceSlug: string
+  createdAt: string | null
+}
+
 export interface PreviewTab {
   id: string
   url: string
@@ -170,6 +191,7 @@ export interface PreviewTab {
   frameSrc: string
   snapshotDataUrl: string | null
   localTarget: LocalTargetMeta | null
+  workspacePreview: WorkspacePreviewMeta | null
 }
 
 export interface PreviewAuthIssue {
@@ -362,6 +384,20 @@ function createEmptyPreviewTab(index = 1): PreviewTab {
     frameSrc: 'about:blank',
     snapshotDataUrl: null,
     localTarget: null,
+    workspacePreview: null,
+  }
+}
+
+function restoreWorkspacePreviewMeta(
+  workspacePreview: PersistedWorkspacePreviewMeta | null | undefined
+): WorkspacePreviewMeta | null {
+  if (!workspacePreview) {
+    return null
+  }
+  return {
+    ...workspacePreview,
+    framework: workspacePreview.framework ?? null,
+    preferredPort: workspacePreview.preferredPort ?? null,
   }
 }
 
@@ -422,13 +458,19 @@ function createEmptyThreadState(): ThreadChatState {
   }
 }
 
+function collapseDuplicateHistoryEntries(entries: string[]): string[] {
+  return entries.filter((entry, index) => entry !== entries[index - 1])
+}
+
 function restorePreviewTab(
   tab: PersistedPreviewTab,
-  index: number
+  index: number,
+  fallbackUrl?: string | null
 ): PreviewTab {
+  const normalizedUrl = normalizePersistedPreviewUrl(tab.url, fallbackUrl)
   return {
     id: tab.id,
-    url: tab.url,
+    url: normalizedUrl,
     title: tab.title || `Tab ${index}`,
     mode: tab.mode,
     proxySessionId: null,
@@ -441,19 +483,30 @@ function restorePreviewTab(
           audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
         }
       : null,
+    workspacePreview: restoreWorkspacePreviewMeta(tab.workspacePreview),
   }
 }
 
-function persistPreviewTab(tab: PreviewTab): PersistedPreviewTab {
+function persistPreviewTab(
+  tab: PreviewTab,
+  fallbackUrl?: string | null
+): PersistedPreviewTab {
   return {
     id: tab.id,
-    url: tab.url,
+    url: normalizePersistedPreviewUrl(tab.url, fallbackUrl),
     title: tab.title,
     mode: tab.mode,
     localTarget: tab.localTarget
       ? {
           ...tab.localTarget,
           audienceWorkspacePath: tab.localTarget.audienceWorkspacePath ?? null,
+        }
+      : null,
+    workspacePreview: tab.workspacePreview
+      ? {
+          ...tab.workspacePreview,
+          framework: tab.workspacePreview.framework ?? null,
+          preferredPort: tab.workspacePreview.preferredPort ?? null,
         }
       : null,
   }
@@ -482,18 +535,28 @@ function createThreadEditorStateFromPersisted(
     return emptyState
   }
 
+  const recoveredPdfUrl = findLatestRecoverablePdfUrl([
+    ...editorState.urlHistory,
+    ...editorState.previewTabs.map((tab) => tab.url),
+    normalizedFallbackUrl,
+  ])
+
   const restoredTabs = editorState.previewTabs.length > 0
-    ? editorState.previewTabs.map((tab, index) => restorePreviewTab(tab, index + 1))
+    ? editorState.previewTabs.map((tab, index) => restorePreviewTab(tab, index + 1, recoveredPdfUrl))
     : createEmptyThreadEditorState().previewTabs
 
   const activePreviewTabId = restoredTabs.some((tab) => tab.id === editorState.activePreviewTabId)
     ? editorState.activePreviewTabId
     : restoredTabs[0]?.id ?? null
   const targetUrl =
-    editorState.targetUrl.trim()
+    normalizePersistedPreviewUrl(editorState.targetUrl, recoveredPdfUrl)
     || restoredTabs.find((tab) => tab.id === activePreviewTabId)?.url?.trim()
     || normalizedFallbackUrl
-  const urlHistory = editorState.urlHistory.filter((entry) => entry.trim())
+  const urlHistory = collapseDuplicateHistoryEntries(
+    editorState.urlHistory
+      .map((entry) => normalizePersistedPreviewUrl(entry, recoveredPdfUrl))
+      .filter((entry) => entry.trim())
+  )
   const urlHistoryCursor = urlHistory.length > 0
     ? Math.max(-1, Math.min(editorState.urlHistoryCursor, urlHistory.length - 1))
     : -1
@@ -521,16 +584,26 @@ function createThreadEditorStateFromPersisted(
 function buildPersistedEditorState(
   threadState: ThreadChatState
 ): PersistedThreadEditorState {
+  const recoveredPdfUrl = findLatestRecoverablePdfUrl([
+    threadState.targetUrl,
+    ...threadState.previewTabs.map((tab) => tab.url),
+    ...threadState.urlHistory,
+  ])
+
   return {
     draftAgentType: normalizeDraftAgentType(threadState.draftAgentType),
     activePreviewTool: threadState.activePreviewTool === 'select' ? 'select' : null,
-    targetUrl: threadState.targetUrl.trim(),
+    targetUrl: normalizePersistedPreviewUrl(threadState.targetUrl.trim(), recoveredPdfUrl),
     activeTab: threadState.activeTab,
     viewportMode: threadState.viewportMode,
     showUrlHistory: threadState.showUrlHistory,
-    previewTabs: threadState.previewTabs.map(persistPreviewTab),
+    previewTabs: threadState.previewTabs.map((tab) => persistPreviewTab(tab, recoveredPdfUrl)),
     activePreviewTabId: threadState.activePreviewTabId,
-    urlHistory: threadState.urlHistory.map((entry) => entry.trim()).filter(Boolean),
+    urlHistory: collapseDuplicateHistoryEntries(
+      threadState.urlHistory
+        .map((entry) => normalizePersistedPreviewUrl(entry.trim(), recoveredPdfUrl))
+        .filter(Boolean)
+    ),
     urlHistoryCursor: threadState.urlHistoryCursor,
   }
 }
@@ -1317,6 +1390,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       'activity',
       'session_status',
       'session_output',
+      'turn_input',
       'turn_started',
       'turn_status',
       'turn_chunk',

@@ -18,6 +18,7 @@ from state_db import connect as connect_state_db
 _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
 TURN_EVENT_TYPES = {
+    "turn_input",
     "turn_started",
     "turn_status",
     "turn_chunk",

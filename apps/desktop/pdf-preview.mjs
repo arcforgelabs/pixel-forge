@@ -21,6 +21,25 @@ function parseUrl(rawUrl) {
   }
 }
 
+export function readInternalPdfViewerState(candidateUrl, shellUrl) {
+  const target = parseUrl(candidateUrl)
+  const shell = parseUrl(shellUrl)
+  if (!target || !shell) {
+    return null
+  }
+
+  if (target.origin !== shell.origin || target.pathname !== PDF_VIEWER_PATH) {
+    return null
+  }
+
+  return {
+    tabId: normalizeText(target.searchParams.get('tabId')),
+    sourceUrl: normalizeText(target.searchParams.get('source')),
+    title: normalizeText(target.searchParams.get('title')),
+    contentType: normalizeText(target.searchParams.get('contentType')),
+  }
+}
+
 function filenameFromDisposition(contentDisposition) {
   const normalized = normalizeText(contentDisposition)
   if (!normalized) {
@@ -214,21 +233,32 @@ export async function readPdfDocumentSource({
   }
 }
 
-export function buildInternalPdfViewerUrl(shellUrl, tabId = '') {
+export function buildInternalPdfViewerUrl(
+  shellUrl,
+  {
+    tabId = '',
+    sourceUrl = '',
+    title = '',
+    contentType = '',
+  } = {},
+) {
   const url = new URL(PDF_VIEWER_PATH, shellUrl)
   url.searchParams.set('embedded', '1')
   if (normalizeText(tabId)) {
     url.searchParams.set('tabId', String(tabId))
   }
+  if (normalizeText(sourceUrl)) {
+    url.searchParams.set('source', String(sourceUrl))
+  }
+  if (normalizeText(title)) {
+    url.searchParams.set('title', String(title))
+  }
+  if (normalizeText(contentType)) {
+    url.searchParams.set('contentType', String(contentType))
+  }
   return url.toString()
 }
 
 export function isInternalPdfViewerUrl(candidateUrl, shellUrl) {
-  try {
-    const target = new URL(candidateUrl, shellUrl)
-    const shell = new URL(shellUrl)
-    return target.origin === shell.origin && target.pathname === PDF_VIEWER_PATH
-  } catch {
-    return false
-  }
+  return readInternalPdfViewerState(candidateUrl, shellUrl) !== null
 }

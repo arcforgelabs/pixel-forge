@@ -16,12 +16,14 @@ const workspaceMirror = {
   instance_slug: 'pixel-forge-mirror-target-14673d35',
   source_root: '/home/samuelrodda/repos/3-resources/pixel-forge',
   web_url: 'http://pixel-forge-mirror-target-14673d35.localhost:7103',
+  stable_url: 'http://pixel-forge-mirror-target-14673d35.localhost:7001',
 }
 
 const stagedMirror = {
   instance_slug: 'pixel-forge-mirror-target-e8beb508',
   source_root: '/home/samuelrodda/.pixel-forge/controller-updates/qgf735gm2bk',
   web_url: 'http://pixel-forge-mirror-target-e8beb508.localhost:7108',
+  stable_url: 'http://pixel-forge-mirror-target-e8beb508.localhost:7001',
 }
 
 describe('mirror target resolution', () => {
@@ -31,7 +33,7 @@ describe('mirror target resolution', () => {
       pendingControllerUpdate: {
         projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
         snapshotPath: stagedMirror.source_root,
-        previewUrl: 'http://pixel-forge-mirror-target-14673d35.localhost:7103/',
+        previewUrl: 'http://pixel-forge-mirror-target-14673d35.localhost:7001/',
       },
       mirrorBuilds: [stagedMirror, workspaceMirror],
     })
@@ -73,7 +75,7 @@ describe('mirror target resolution', () => {
       pendingControllerUpdate: {
         projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
         snapshotPath: stagedMirror.source_root,
-        previewUrl: workspaceMirror.web_url,
+        previewUrl: workspaceMirror.stable_url,
       },
       mirrorBuilds: [stagedMirror, workspaceMirror],
     })
@@ -83,17 +85,17 @@ describe('mirror target resolution', () => {
         activeMirrorTarget: {
           instanceSlug: workspaceMirror.instance_slug,
         },
-        activeTabUrl: workspaceMirror.web_url,
+        activeTabUrl: workspaceMirror.stable_url,
         nextMirrorTarget,
       })
     ).toBe(false)
   })
 
-  it('normalizes trailing slashes when matching preview urls', () => {
+  it('matches the stable preview alias before the raw transport url', () => {
     expect(
       findMirrorTargetByPreviewUrl(
         [workspaceMirror],
-        'http://pixel-forge-mirror-target-14673d35.localhost:7103/'
+        'http://pixel-forge-mirror-target-14673d35.localhost:7001/'
       )
     ).toEqual(workspaceMirror)
   })

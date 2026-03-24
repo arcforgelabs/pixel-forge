@@ -33,6 +33,15 @@ function rectContainsPoint(rect, x, y) {
   )
 }
 
+function rectsIntersect(first, second) {
+  return !(
+    first.right < second.left
+    || first.left > second.right
+    || first.bottom < second.top
+    || first.top > second.bottom
+  )
+}
+
 function toViewportRect(rect) {
   const left = clamp(rect.left, 0, window.innerWidth)
   const top = clamp(rect.top, 0, window.innerHeight)
@@ -71,21 +80,323 @@ function currentPageContext() {
     typeof adapter?.getPageContext === 'function'
       ? adapter.getPageContext()
       : null
+  let builtInPdfContext = null
+  if (!adapterContext && isBuiltInPdfPreviewPage()) {
+    try {
+      const currentUrl = new URL(window.location.href)
+      const sourceUrl = currentUrl.searchParams.get('source') || window.location.href
+      const sourceTitle =
+        currentUrl.searchParams.get('title')
+        || document.title
+        || sourceUrl
+      builtInPdfContext = {
+        pageUrl: sourceUrl,
+        pageTitle: sourceTitle,
+        pageKey: normalizePageKey(sourceUrl),
+      }
+    } catch {
+      builtInPdfContext = null
+    }
+  }
   const pageUrl =
     typeof adapterContext?.pageUrl === 'string' && adapterContext.pageUrl
       ? adapterContext.pageUrl
+      : typeof builtInPdfContext?.pageUrl === 'string' && builtInPdfContext.pageUrl
+        ? builtInPdfContext.pageUrl
       : window.location.href
   return {
     pageUrl,
     pageTitle:
       typeof adapterContext?.pageTitle === 'string'
         ? adapterContext.pageTitle
+        : typeof builtInPdfContext?.pageTitle === 'string'
+          ? builtInPdfContext.pageTitle
         : document.title || null,
     pageKey:
       typeof adapterContext?.pageKey === 'string' && adapterContext.pageKey
         ? adapterContext.pageKey
+        : typeof builtInPdfContext?.pageKey === 'string' && builtInPdfContext.pageKey
+          ? builtInPdfContext.pageKey
         : normalizePageKey(pageUrl),
   }
+}
+
+function builtInPdfPageKey(pageUrl, pageNumber) {
+  return `${pageUrl}#page=${pageNumber}`
+}
+
+function isBuiltInPdfPreviewPage() {
+  return window.location.pathname === '/internal/pdf-viewer'
+}
+
+function findBuiltInPdfPreviewRoot(element) {
+  return element?.closest?.('.pf-pdf-preview') || null
+}
+
+function findBuiltInPdfPageRoot(element) {
+  return element?.closest?.('[data-pf-pdf-page-root="1"]') || null
+}
+
+function findBuiltInPdfTextTarget(element) {
+  return element?.closest?.('[data-pf-pdf-text="1"]') || null
+}
+
+function builtInPdfPageNumber(pageRoot) {
+  const value = Number(pageRoot?.dataset?.pfPdfPageNumber)
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : null
+}
+
+function unionRects(rects) {
+  if (!Array.isArray(rects) || rects.length === 0) {
+    return null
+  }
+  const left = Math.min(...rects.map((rect) => rect.left))
+  const top = Math.min(...rects.map((rect) => rect.top))
+  const right = Math.max(...rects.map((rect) => rect.right))
+  const bottom = Math.max(...rects.map((rect) => rect.bottom))
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  }
+}
+
+function expandRect(rect, padX, padY) {
+  return {
+    left: rect.left - padX,
+    top: rect.top - padY,
+    right: rect.right + padX,
+    bottom: rect.bottom + padY,
+    width: rect.width + padX * 2,
+    height: rect.height + padY * 2,
+  }
+}
+
+function pointDistanceToRect(x, y, rect) {
+  const deltaX =
+    x < rect.left
+      ? rect.left - x
+      : x > rect.right
+        ? x - rect.right
+        : 0
+  const deltaY =
+    y < rect.top
+      ? rect.top - y
+      : y > rect.bottom
+        ? y - rect.bottom
+        : 0
+  return Math.hypot(deltaX, deltaY)
+}
+
+function collectBuiltInPdfTextSpans(pageRoot) {
+  if (!(pageRoot instanceof Element)) {
+    return []
+  }
+  return Array.from(pageRoot.querySelectorAll('[data-pf-pdf-text="1"]'))
+    .filter((span) => span instanceof HTMLElement)
+    .filter((span) => {
+      const rect = span.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0 && normalizeText(span.textContent, 120)
+    })
+}
+
+function collectBuiltInPdfLineCandidates(pageRoot) {
+  const pageNumber = builtInPdfPageNumber(pageRoot)
+  if (!(pageRoot instanceof HTMLElement) || !pageNumber) {
+    return []
+  }
+
+  const items = collectBuiltInPdfTextSpans(pageRoot)
+    .map((span) => ({
+      span,
+      rect: span.getBoundingClientRect(),
+      text: normalizeText(span.textContent, 160),
+    }))
+    .sort((left, right) => {
+      const topDelta = left.rect.top - right.rect.top
+      return Math.abs(topDelta) > 4 ? topDelta : left.rect.left - right.rect.left
+    })
+
+  const groups = []
+  items.forEach((item) => {
+    const centerY = item.rect.top + item.rect.height / 2
+    const lastGroup = groups[groups.length - 1]
+    const tolerance = Math.max(4, (lastGroup?.averageHeight || item.rect.height) * 0.75)
+    if (!lastGroup || Math.abs(centerY - lastGroup.centerY) > tolerance) {
+      groups.push({
+        centerY,
+        averageHeight: item.rect.height,
+        items: [item],
+      })
+      return
+    }
+
+    lastGroup.items.push(item)
+    lastGroup.centerY =
+      (lastGroup.centerY * (lastGroup.items.length - 1) + centerY) / lastGroup.items.length
+    lastGroup.averageHeight =
+      (lastGroup.averageHeight * (lastGroup.items.length - 1) + item.rect.height) / lastGroup.items.length
+  })
+
+  return groups.flatMap((group) => {
+    const sortedItems = [...group.items].sort((left, right) => left.rect.left - right.rect.left)
+    const rect = unionRects(sortedItems.map((item) => item.rect))
+    const text = normalizeText(sortedItems.map((item) => item.text).join(' '), 400)
+    if (!rect || !text) {
+      return []
+    }
+    return [{
+      anchorElement: sortedItems[0].span,
+      pageNumber,
+      pageRoot,
+      rect,
+      spans: sortedItems.map((item) => item.span),
+      text,
+    }]
+  })
+}
+
+function findBuiltInPdfLineCandidateForElement(element) {
+  const pageRoot = findBuiltInPdfPageRoot(element)
+  const anchorSpan = findBuiltInPdfTextTarget(element)
+  if (!(pageRoot instanceof HTMLElement) || !(anchorSpan instanceof HTMLElement)) {
+    return null
+  }
+  return collectBuiltInPdfLineCandidates(pageRoot).find((candidate) =>
+    candidate.spans.some((span) => span === anchorSpan)
+  ) || null
+}
+
+function findBuiltInPdfLineCandidateByText(pageRoot, textNeedle) {
+  const normalizedNeedle = normalizeText(textNeedle, 240)
+  if (!(pageRoot instanceof HTMLElement) || !normalizedNeedle) {
+    return null
+  }
+  const prefix = normalizedNeedle.slice(0, Math.min(normalizedNeedle.length, 72))
+  return collectBuiltInPdfLineCandidates(pageRoot).find((candidate) => {
+    const candidateText = normalizeText(candidate.text, 400)
+    return candidateText.includes(prefix) || prefix.includes(candidateText.slice(0, 48))
+  }) || null
+}
+
+function resolveBuiltInPdfLineCandidate(element, clientX = Number.NaN, clientY = Number.NaN) {
+  return (
+    findBuiltInPdfLineCandidateForElement(element)
+    || findBuiltInPdfLineCandidateNearPoint(element, clientX, clientY)
+  )
+}
+
+function findBuiltInPdfLineCandidateNearPoint(element, clientX, clientY) {
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null
+  }
+  const pageRoot = findBuiltInPdfPageRoot(element)
+  if (!(pageRoot instanceof HTMLElement)) {
+    return null
+  }
+  const candidates = collectBuiltInPdfLineCandidates(pageRoot)
+  let bestCandidate = null
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (const candidate of candidates) {
+    const hitRect = expandRect(
+      candidate.rect,
+      Math.max(18, candidate.rect.height * 1.4),
+      Math.max(10, candidate.rect.height * 1.1),
+    )
+    if (!rectContainsPoint(hitRect, clientX, clientY)) {
+      continue
+    }
+    const distance = pointDistanceToRect(clientX, clientY, candidate.rect)
+    const centerY = candidate.rect.top + candidate.rect.height / 2
+    const verticalDelta = Math.abs(clientY - centerY)
+    const horizontalDelta =
+      clientX < candidate.rect.left
+        ? candidate.rect.left - clientX
+        : clientX > candidate.rect.right
+          ? clientX - candidate.rect.right
+          : 0
+    const score = distance + verticalDelta * 1.75 + horizontalDelta * 0.35
+    if (score < bestScore) {
+      bestScore = score
+      bestCandidate = candidate
+    }
+  }
+
+  return bestCandidate
+}
+
+function extractBuiltInPdfTextForRegion(pageRoot, regionRect) {
+  if (!(pageRoot instanceof HTMLElement)) {
+    return null
+  }
+  const matchingLines = collectBuiltInPdfLineCandidates(pageRoot).filter((candidate) =>
+    rectContainsPoint(regionRect, candidate.rect.left + candidate.rect.width / 2, candidate.rect.top + candidate.rect.height / 2)
+      || rectsIntersect(candidate.rect, regionRect)
+  )
+  const combinedText = normalizeText(
+    matchingLines.map((candidate) => candidate.text).join(' '),
+    500,
+  )
+  return combinedText || null
+}
+
+function builtInPdfOwnsElement(element) {
+  return isBuiltInPdfPreviewPage() && !!findBuiltInPdfPreviewRoot(element)
+}
+
+function builtInPdfShouldIgnoreElement(element) {
+  if (!builtInPdfOwnsElement(element)) {
+    return false
+  }
+  if (findBuiltInPdfTextTarget(element)) {
+    return false
+  }
+  const pageRoot = findBuiltInPdfPageRoot(element)
+  return pageRoot ? element !== pageRoot : true
+}
+
+function resolveBuiltInPdfClickTarget(element, clientX, clientY) {
+  if (!builtInPdfOwnsElement(element)) {
+    return null
+  }
+  const lineCandidate = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
+  if (lineCandidate?.anchorElement instanceof Element) {
+    return lineCandidate.anchorElement
+  }
+  return findBuiltInPdfPageRoot(element)
+}
+
+function getBuiltInPdfHoverTargets(element, clientX, clientY) {
+  if (!builtInPdfOwnsElement(element)) {
+    return []
+  }
+  const lineCandidate = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
+  const pageRoot = findBuiltInPdfPageRoot(element)
+  if (lineCandidate?.anchorElement instanceof Element && pageRoot instanceof Element) {
+    return [lineCandidate.anchorElement, pageRoot]
+  }
+  if (pageRoot instanceof Element) {
+    return [pageRoot]
+  }
+  return []
+}
+
+function adapterOwnsElement(element) {
+  const adapter = getSelectionAdapter()
+  return typeof adapter?.ownsElement === 'function'
+    ? !!adapter.ownsElement(element)
+    : false
+}
+
+function adapterShouldIgnoreElement(element) {
+  const adapter = getSelectionAdapter()
+  return typeof adapter?.shouldIgnoreElement === 'function'
+    ? !!adapter.shouldIgnoreElement(element)
+    : false
 }
 
 export function installSelectionBridge({ emit, captureRegion }) {
@@ -314,23 +625,52 @@ export function installSelectionBridge({ emit, captureRegion }) {
     return String(selection?.id || selection?.xpath || '')
   }
 
-  function setSelectionTone(overlay, badge, tone = 'selected') {
-    const palette = tone === 'promotion'
-      ? {
-          border: '#f59e0b',
-          background: 'rgba(245, 158, 11, 0.12)',
-          shadow: 'rgba(245, 158, 11, 0.28)',
-          badge: '#f59e0b',
-        }
-      : {
-          border: '#22c55e',
-          background: 'rgba(34, 197, 94, 0.15)',
-          shadow: 'rgba(34, 197, 94, 0.3)',
-          badge: '#22c55e',
-        }
+  function selectionPaletteFor(selection, tone = 'selected') {
+    if (tone === 'promotion') {
+      return {
+        border: '#f59e0b',
+        background: 'rgba(245, 158, 11, 0.12)',
+        shadow: 'rgba(245, 158, 11, 0.28)',
+        badge: '#f59e0b',
+        borderStyle: 'solid',
+      }
+    }
+
+    if (selection?.selectorKind === 'region') {
+      return {
+        border: '#f59e0b',
+        background: 'rgba(245, 158, 11, 0.14)',
+        shadow: 'rgba(245, 158, 11, 0.28)',
+        badge: '#f59e0b',
+        borderStyle: 'dashed',
+      }
+    }
+
+    if (selection?.surfaceKind === 'pdf') {
+      return {
+        border: '#10b981',
+        background: 'rgba(16, 185, 129, 0.12)',
+        shadow: 'rgba(16, 185, 129, 0.28)',
+        badge: '#10b981',
+        borderStyle: 'solid',
+      }
+    }
+
+    return {
+      border: '#22c55e',
+      background: 'rgba(34, 197, 94, 0.15)',
+      shadow: 'rgba(34, 197, 94, 0.3)',
+      badge: '#22c55e',
+      borderStyle: 'solid',
+    }
+  }
+
+  function setSelectionTone(overlay, badge, selection, tone = 'selected') {
+    const palette = selectionPaletteFor(selection, tone)
 
     overlay.style.borderColor = palette.border
     overlay.style.background = palette.background
+    overlay.style.borderStyle = palette.borderStyle
     overlay.style.boxShadow = `0 0 0 1px ${palette.shadow}`
     badge.style.background = palette.badge
   }
@@ -344,7 +684,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       (selected) => selected.selectionKey === promotionSourceSelectionKey
     )
     if (entry) {
-      setSelectionTone(entry.overlay, entry.badge, 'selected')
+      setSelectionTone(entry.overlay, entry.badge, entry.selection, 'selected')
     }
     promotionSourceSelectionKey = null
   }
@@ -367,7 +707,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return
     }
 
-    setSelectionTone(entry.overlay, entry.badge, 'promotion')
+    setSelectionTone(entry.overlay, entry.badge, entry.selection, 'promotion')
     promotionSourceSelectionKey = selectionKeyValue
   }
 
@@ -390,7 +730,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return false
     }
 
-    if (selection.pageKey && selection.pageKey !== normalizePageKey()) {
+    if (selection.pageKey && selection.pageKey !== currentPageContext().pageKey) {
       return false
     }
 
@@ -426,7 +766,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return false
     }
 
-    if (selection.pageKey && selection.pageKey !== normalizePageKey()) {
+    if (selection.pageKey && selection.pageKey !== currentPageContext().pageKey) {
       return false
     }
 
@@ -463,6 +803,97 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
   }
 
+  function resolveBuiltInPdfSelection(selection) {
+    if (selection.surfaceKind !== 'pdf' || !isBuiltInPdfPreviewPage()) {
+      return null
+    }
+
+    const pageNumber =
+      Number.isFinite(Number(selection.pdfPage)) && Number(selection.pdfPage) > 0
+        ? Math.round(Number(selection.pdfPage))
+        : null
+    const pageRoot = pageNumber
+      ? document.querySelector(
+        `[data-pf-pdf-page-root="1"][data-pf-pdf-page-number="${pageNumber}"]`
+      )
+      : (
+          typeof selection.rootXPath === 'string' && selection.rootXPath
+            ? findBuiltInPdfPageRoot(findElementByXPath(selection.rootXPath))
+            : findBuiltInPdfPageRoot(findElementByXPath(selection.xpath))
+        )
+
+    if (selection.selectorKind === 'region' && selection.region && pageRoot instanceof Element) {
+      const rect = computeRegionRect(pageRoot.getBoundingClientRect(), selection.region)
+      if (rect.width <= 0 || rect.height <= 0) {
+        return null
+      }
+      return {
+        element: pageRoot,
+        rect,
+        summary: {
+          tag_name: 'pdf-page',
+          xpath: typeof selection.rootXPath === 'string' ? selection.rootXPath : '',
+          text_excerpt:
+            normalizeText(selection.pdfTextContent, 240)
+            || extractBuiltInPdfTextForRegion(pageRoot, rect)
+            || null,
+          bounding_box: buildBoundingBox(rect),
+          pdf_page: pageNumber,
+        },
+      }
+    }
+
+    const hintedElement =
+      typeof selection.xpath === 'string' && selection.xpath
+        ? findElementByXPath(selection.xpath)
+        : null
+    const hintedCandidate = findBuiltInPdfLineCandidateForElement(hintedElement)
+    const expectedText =
+      normalizeText(selection.pdfTextContent, 240)
+      || normalizeText(selection.textSample, 240)
+    if (
+      hintedCandidate
+      && (
+        !expectedText
+        || normalizeText(hintedCandidate.text, 240).includes(expectedText.slice(0, 48))
+      )
+    ) {
+      return {
+        element: hintedCandidate.anchorElement,
+        rect: hintedCandidate.rect,
+        summary: {
+          tag_name: 'pdf-text',
+          xpath: typeof selection.xpath === 'string' ? selection.xpath : '',
+          text_excerpt: hintedCandidate.text,
+          bounding_box: buildBoundingBox(hintedCandidate.rect),
+          pdf_page: hintedCandidate.pageNumber,
+        },
+      }
+    }
+
+    const resolvedPageRoot =
+      pageRoot instanceof HTMLElement ? pageRoot : findBuiltInPdfPageRoot(hintedElement)
+    const matchedCandidate = findBuiltInPdfLineCandidateByText(
+      resolvedPageRoot,
+      expectedText || '',
+    )
+    if (!matchedCandidate) {
+      return null
+    }
+
+    return {
+      element: matchedCandidate.anchorElement,
+      rect: matchedCandidate.rect,
+      summary: {
+        tag_name: 'pdf-text',
+        xpath: typeof selection.xpath === 'string' ? selection.xpath : '',
+        text_excerpt: matchedCandidate.text,
+        bounding_box: buildBoundingBox(matchedCandidate.rect),
+        pdf_page: matchedCandidate.pageNumber,
+      },
+    }
+  }
+
   function resolveSelection(selection) {
     const adapter = getSelectionAdapter()
     if (selection.surfaceKind === 'pdf' && typeof adapter?.resolveSelection === 'function') {
@@ -470,6 +901,11 @@ export function installSelectionBridge({ emit, captureRegion }) {
         findElementByXPath,
         normalizeText,
       })
+    }
+
+    const builtInPdfResolved = resolveBuiltInPdfSelection(selection)
+    if (builtInPdfResolved) {
+      return builtInPdfResolved
     }
 
     if (selection.selectorKind === 'region') {
@@ -522,13 +958,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
     return node instanceof Element && node.hasAttribute('data-pixel-forge-injected')
   }
 
-  function createSelectionOverlay(rect, globalIndex) {
+  function createSelectionOverlay(rect, globalIndex, selection) {
     const overlay = document.createElement('div')
     overlay.setAttribute('data-pixel-forge-injected', 'true')
     overlay.style.cssText = `
       position: fixed;
       pointer-events: none;
       z-index: 2147483645;
+      border-width: 2px;
       border-radius: 4px;
     `
     document.body.appendChild(overlay)
@@ -554,7 +991,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
     `
     document.body.appendChild(badge)
 
-    setSelectionTone(overlay, badge, 'selected')
+    setSelectionTone(overlay, badge, selection, 'selected')
     updateSelectionPosition(rect, overlay, badge)
     return { overlay, badge }
   }
@@ -592,6 +1029,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function detectSurfaceKind(element) {
+    if (builtInPdfOwnsElement(element)) {
+      return 'pdf'
+    }
+
     const adapter = getSelectionAdapter()
     if (typeof adapter?.getSurfaceKind === 'function') {
       const adapterSurfaceKind = adapter.getSurfaceKind(element)
@@ -652,11 +1093,21 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   function getAncestorTargets(element) {
     const targets = []
+    const restrictToOwnedSurface = adapterOwnsElement(element) || builtInPdfOwnsElement(element)
     let current = element
 
     while (current instanceof Element) {
       if (
+        restrictToOwnedSurface
+        && !adapterOwnsElement(current)
+        && !builtInPdfOwnsElement(current)
+      ) {
+        break
+      }
+      if (
         !current.hasAttribute('data-pixel-forge-injected')
+        && !builtInPdfShouldIgnoreElement(current)
+        && !adapterShouldIgnoreElement(current)
         && isElementVisiblyRenderable(current)
       ) {
         targets.push(current)
@@ -680,7 +1131,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return
     }
 
-    const classification = classifySelectionTarget(element)
+    const classification = classifySelectionTarget(element, hoverClientX, hoverClientY)
     currentTarget = {
       element,
       selectorKind: classification.selectorKind,
@@ -696,9 +1147,12 @@ export function installSelectionBridge({ emit, captureRegion }) {
   function setHoverTarget(element, clientX, clientY) {
     hoverClientX = clientX
     hoverClientY = clientY
-    hoverTargets = getAncestorTargets(element)
+    const builtInPdfTargets = getBuiltInPdfHoverTargets(element, clientX, clientY)
+    hoverTargets = builtInPdfTargets.length > 0
+      ? builtInPdfTargets
+      : getAncestorTargets(element)
     hoverTargetIndex = 0
-    setCurrentHoverTarget(hoverTargets[0] || element)
+    setCurrentHoverTarget(hoverTargets[0] || null)
   }
 
   function cycleHoverTarget() {
@@ -745,7 +1199,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return null
     }
 
-    const classification = classifySelectionTarget(nextAncestor)
+    const classification = classifySelectionTarget(nextAncestor, clientX, clientY)
     const targetElement =
       classification.selectorKind === 'region' && classification.surfaceElement
         ? classification.surfaceElement
@@ -1094,6 +1548,11 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function findRegionSurface(element) {
+    const builtInPdfPage = findBuiltInPdfPageRoot(element)
+    if (builtInPdfPage && !findBuiltInPdfTextTarget(element)) {
+      return builtInPdfPage
+    }
+
     const adapter = getSelectionAdapter()
     if (typeof adapter?.findRegionSurface === 'function') {
       const adapterSurface = adapter.findRegionSurface(element)
@@ -1116,7 +1575,28 @@ export function installSelectionBridge({ emit, captureRegion }) {
     return null
   }
 
-  function classifySelectionTarget(element) {
+  function classifySelectionTarget(element, clientX = Number.NaN, clientY = Number.NaN) {
+    const builtInPdfLine = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
+    if (builtInPdfLine) {
+      return {
+        selectorKind: 'dom',
+        surfaceElement: null,
+        hoverRect: builtInPdfLine.rect,
+        label: `PDF page ${builtInPdfLine.pageNumber} text`,
+      }
+    }
+
+    const builtInPdfPage = findBuiltInPdfPageRoot(element)
+    const builtInPdfPageNumberValue = builtInPdfPageNumber(builtInPdfPage)
+    if (builtInPdfPage instanceof Element && builtInPdfPageNumberValue) {
+      return {
+        selectorKind: 'region',
+        surfaceElement: builtInPdfPage,
+        hoverRect: builtInPdfPage.getBoundingClientRect(),
+        label: `PDF page ${builtInPdfPageNumberValue} region`,
+      }
+    }
+
     const adapter = getSelectionAdapter()
     if (typeof adapter?.classifySelectionTarget === 'function') {
       const adapterClassification = adapter.classifySelectionTarget(element)
@@ -1161,7 +1641,41 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
   }
 
-  async function buildDomSelection(element, selectionId = generateSelectionId()) {
+  async function buildDomSelection(
+    element,
+    selectionId = generateSelectionId(),
+    clientX = Number.NaN,
+    clientY = Number.NaN,
+  ) {
+    const builtInPdfLine = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
+    if (builtInPdfLine) {
+      const pageContext = currentPageContext()
+      return {
+        id: selectionId,
+        selectorKind: 'dom',
+        surfaceKind: 'pdf',
+        pageKey: builtInPdfPageKey(pageContext.pageUrl, builtInPdfLine.pageNumber),
+        tagName: 'pdf-text',
+        elementId: null,
+        classList: ['pdf-text'],
+        textContent: builtInPdfLine.text,
+        xpath: getXPath(builtInPdfLine.anchorElement),
+        outerHTML: builtInPdfLine.spans.map((span) => span.outerHTML).join(''),
+        rootXPath: null,
+        rootTagName: null,
+        rootElementId: null,
+        rootClassList: [],
+        region: null,
+        previewDataUrl: await capturePreviewData(builtInPdfLine.rect),
+        pageUrl: pageContext.pageUrl,
+        pageTitle: pageContext.pageTitle,
+        selectionId,
+        pdfPage: builtInPdfLine.pageNumber,
+        pdfTextContent: builtInPdfLine.text,
+        __pixelForgeResolvedElement: builtInPdfLine.anchorElement,
+      }
+    }
+
     const adapter = getSelectionAdapter()
     if (typeof adapter?.buildSelectionDescriptor === 'function') {
       const adapterSelection = await adapter.buildSelectionDescriptor(
@@ -1209,8 +1723,13 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   function buildRegionBounds(surfaceElement, clientX, clientY) {
     const surfaceRect = surfaceElement.getBoundingClientRect()
-    const width = clamp(Math.min(surfaceRect.width * 0.3, 320), 96, surfaceRect.width)
-    const height = clamp(Math.min(surfaceRect.height * 0.24, 240), 72, surfaceRect.height)
+    const isBuiltInPdfPage = !!builtInPdfPageNumber(surfaceElement)
+    const width = isBuiltInPdfPage
+      ? clamp(Math.min(surfaceRect.width * 0.22, 240), 120, surfaceRect.width)
+      : clamp(Math.min(surfaceRect.width * 0.3, 320), 96, surfaceRect.width)
+    const height = isBuiltInPdfPage
+      ? clamp(Math.min(surfaceRect.height * 0.14, 132), 56, surfaceRect.height)
+      : clamp(Math.min(surfaceRect.height * 0.24, 240), 72, surfaceRect.height)
     const left = clamp(
       clientX - width / 2,
       surfaceRect.left,
@@ -1233,7 +1752,10 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
   async function buildRegionSelection(surfaceElement, clientX, clientY, selectionId = generateSelectionId()) {
     const adapter = getSelectionAdapter()
-    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+    if (
+      !builtInPdfPageNumber(surfaceElement)
+      && typeof adapter?.buildSelectionDescriptor === 'function'
+    ) {
       const adapterSelection = await adapter.buildSelectionDescriptor(
         surfaceElement,
         clientX,
@@ -1268,33 +1790,46 @@ export function installSelectionBridge({ emit, captureRegion }) {
       anchorY: Number(((clientY - surfaceRect.top) / Math.max(surfaceRect.height, 1)).toFixed(6)),
     }
 
+    const builtInPdfPageNumberValue = builtInPdfPageNumber(surfaceElement)
+    const builtInPdfText =
+      builtInPdfPageNumberValue
+        ? extractBuiltInPdfTextForRegion(surfaceElement, regionRect)
+        : null
+
     return {
       id: selectionId,
       selectorKind: 'region',
       surfaceKind: detectSurfaceKind(surfaceElement),
-      pageKey: pageContext.pageKey,
-      tagName: surfaceElement.tagName.toLowerCase(),
+      pageKey: builtInPdfPageNumberValue
+        ? builtInPdfPageKey(pageContext.pageUrl, builtInPdfPageNumberValue)
+        : pageContext.pageKey,
+      tagName: builtInPdfPageNumberValue ? 'pdf-page' : surfaceElement.tagName.toLowerCase(),
       elementId: null,
       classList: [],
-      textContent: '',
+      textContent: builtInPdfText || '',
       xpath: '',
       outerHTML: surfaceElement.outerHTML,
       rootXPath: getXPath(surfaceElement),
-      rootTagName: surfaceElement.tagName.toLowerCase(),
+      rootTagName: builtInPdfPageNumberValue ? 'pdf-page' : surfaceElement.tagName.toLowerCase(),
       rootElementId: surfaceElement.id || null,
-      rootClassList: [...surfaceElement.classList],
+      rootClassList: builtInPdfPageNumberValue ? ['pdf-page'] : [...surfaceElement.classList],
       region,
       previewDataUrl: await capturePreviewData(regionRect),
       pageUrl: pageContext.pageUrl,
       pageTitle: pageContext.pageTitle,
       selectionId,
+      pdfPage: builtInPdfPageNumberValue,
+      pdfTextContent: builtInPdfText,
       __pixelForgeResolvedElement: surfaceElement,
     }
   }
 
   async function buildSelectionDescriptor(element, clientX, clientY, selectionId = generateSelectionId()) {
     const adapter = getSelectionAdapter()
-    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+    if (
+      !builtInPdfOwnsElement(element)
+      && typeof adapter?.buildSelectionDescriptor === 'function'
+    ) {
       const adapterSelection = await adapter.buildSelectionDescriptor(
         element,
         clientX,
@@ -1313,14 +1848,39 @@ export function installSelectionBridge({ emit, captureRegion }) {
       }
     }
 
-    const classification = classifySelectionTarget(element)
+    const classification = classifySelectionTarget(element, clientX, clientY)
     if (classification.selectorKind === 'region' && classification.surfaceElement) {
       return buildRegionSelection(classification.surfaceElement, clientX, clientY, selectionId)
     }
-    return buildDomSelection(element, selectionId)
+    return buildDomSelection(element, selectionId, clientX, clientY)
+  }
+
+  function findRenderedDomSelectionIndex(element, clientX, clientY) {
+    const xpath = getXPath(element)
+    for (let index = selectedElements.length - 1; index >= 0; index -= 1) {
+      const entry = selectedElements[index]
+      if (entry.selection.selectorKind === 'region') {
+        continue
+      }
+      if (entry.selection.surfaceKind === 'pdf') {
+        if (entry.lastRect && rectContainsPoint(entry.lastRect, clientX, clientY)) {
+          return index
+        }
+        continue
+      }
+      if (entry.xpath === xpath) {
+        return index
+      }
+    }
+    return -1
   }
 
   function findRenderedSelectionIndex(element, clientX, clientY) {
+    const domSelectionIndex = findRenderedDomSelectionIndex(element, clientX, clientY)
+    if (domSelectionIndex >= 0) {
+      return domSelectionIndex
+    }
+
     const xpath = getXPath(element)
     for (let index = selectedElements.length - 1; index >= 0; index -= 1) {
       const entry = selectedElements[index]
@@ -1395,7 +1955,8 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
       const { overlay, badge } = createSelectionOverlay(
         resolved.rect,
-        normalizeGlobalIndex(desiredSelection.globalIndex, selectedElements.length + 1)
+        normalizeGlobalIndex(desiredSelection.globalIndex, selectedElements.length + 1),
+        desiredSelection,
       )
 
       selectedElements.push({
@@ -1418,6 +1979,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
     if (candidate.promotionSourceSelectionId) {
       hoverOverlay.style.borderColor = '#f59e0b'
       hoverOverlay.style.background = 'rgba(245, 158, 11, 0.12)'
+      hoverOverlay.style.borderStyle = 'solid'
       hoverLabel.style.background = '#f59e0b'
       hoverLabel.textContent = candidate.label
     } else {
@@ -1428,12 +1990,27 @@ export function installSelectionBridge({ emit, captureRegion }) {
       if (selectedIndex >= 0) {
         hoverOverlay.style.borderColor = '#ef4444'
         hoverOverlay.style.background = 'rgba(239, 68, 68, 0.1)'
+        hoverOverlay.style.borderStyle = 'solid'
         hoverLabel.style.background = '#ef4444'
         hoverLabel.textContent = 'Click to deselect'
       } else {
-        hoverOverlay.style.borderColor = '#3b82f6'
-        hoverOverlay.style.background = 'rgba(59, 130, 246, 0.1)'
-        hoverLabel.style.background = '#3b82f6'
+        const palette = candidate.selectorKind === 'region'
+          ? {
+              border: '#f59e0b',
+              background: 'rgba(245, 158, 11, 0.12)',
+              badge: '#f59e0b',
+              borderStyle: 'dashed',
+            }
+          : {
+              border: '#10b981',
+              background: 'rgba(16, 185, 129, 0.12)',
+              badge: '#10b981',
+              borderStyle: 'solid',
+            }
+        hoverOverlay.style.borderColor = palette.border
+        hoverOverlay.style.background = palette.background
+        hoverOverlay.style.borderStyle = palette.borderStyle
+        hoverLabel.style.background = palette.badge
         hoverLabel.textContent = candidate.label
       }
     }
@@ -1490,7 +2067,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
 
     const globalIndex = normalizeGlobalIndex(selection.globalIndex, selectedElements.length + 1)
-    const { overlay, badge } = createSelectionOverlay(resolved.rect, globalIndex)
+    const { overlay, badge } = createSelectionOverlay(resolved.rect, globalIndex, selection)
     selectedElements.push({
       selectionKey: selectionKey(selection),
       selection,
@@ -1520,7 +2097,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
 
     removeRenderedSelection(selected)
     const globalIndex = selected.globalIndex
-    const { overlay, badge } = createSelectionOverlay(resolved.rect, globalIndex)
+    const { overlay, badge } = createSelectionOverlay(resolved.rect, globalIndex, selection)
 
     selectedElements[index] = {
       selectionKey: selectionKey(selection),
@@ -1578,8 +2155,26 @@ export function installSelectionBridge({ emit, captureRegion }) {
     event.stopPropagation()
     event.stopImmediatePropagation()
 
-    const element = currentTarget?.element || event.target
-    if (!(element instanceof Element)) {
+    const rawEventTarget = event.target instanceof Element ? event.target : null
+    if (!rawEventTarget) {
+      return false
+    }
+
+    let element = currentTarget?.element instanceof Element
+      ? currentTarget.element
+      : rawEventTarget
+
+    if (builtInPdfOwnsElement(rawEventTarget)) {
+      const builtInTarget = resolveBuiltInPdfClickTarget(
+        rawEventTarget,
+        event.clientX,
+        event.clientY,
+      )
+      if (!(builtInTarget instanceof Element)) {
+        return false
+      }
+      element = builtInTarget
+    } else if (!currentTarget && adapterOwnsElement(element)) {
       return false
     }
 
@@ -1615,7 +2210,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return false
     }
 
-    const selectedIndex = findRenderedSelectionIndex(element, event.clientX, event.clientY)
+    const builtInPdfTextTarget = resolveBuiltInPdfLineCandidate(
+      rawEventTarget,
+      event.clientX,
+      event.clientY,
+    )
+    const selectedIndex = builtInPdfTextTarget
+      ? findRenderedDomSelectionIndex(element, event.clientX, event.clientY)
+      : findRenderedSelectionIndex(element, event.clientX, event.clientY)
     if (selectedIndex >= 0) {
       await deselectElement(selectedIndex)
     } else {

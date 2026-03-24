@@ -17,7 +17,7 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import uuid4
 
 from agent_deck_bridge import (
@@ -337,6 +337,7 @@ _FRONTEND_DIST_OVERRIDE = os.environ.get("PIXEL_FORGE_FRONTEND_DIST")
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 _INSTALLED_DIST = Path(__file__).resolve().parent / "frontend"
 _SERVING_FRONTEND = False
+_FRONTEND_INDEX_PATH: Path | None = None
 _FRONTEND_DIST_CANDIDATES: list[Path] = []
 
 if _FRONTEND_DIST_OVERRIDE:
@@ -345,6 +346,16 @@ _FRONTEND_DIST_CANDIDATES.extend((_INSTALLED_DIST, _FRONTEND_DIST))
 
 for _dist_candidate in _FRONTEND_DIST_CANDIDATES:
     if (_dist_candidate / "index.html").is_file():
+        _FRONTEND_INDEX_PATH = _dist_candidate / "index.html"
+
+        def _serve_frontend_entry() -> FileResponse:
+            response = FileResponse(
+                str(_FRONTEND_INDEX_PATH),
+                media_type="text/html",
+            )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
         # Serve sub-asset directories explicitly so they take priority over
         # the catch-all proxy router, which would otherwise eat these paths.
         for _subdir in ("assets", "favicon", "brand"):
@@ -355,15 +366,20 @@ for _dist_candidate in _FRONTEND_DIST_CANDIDATES:
                     StaticFiles(directory=str(_subdir_path)),
                     name=f"frontend-{_subdir}",
                 )
+                app.mount(
+                    f"/internal/{_subdir}",
+                    StaticFiles(directory=str(_subdir_path)),
+                    name=f"frontend-internal-{_subdir}",
+                )
 
         @app.get("/")
         async def serve_frontend_index():
-            response = FileResponse(
-                str(_dist_candidate / "index.html"),
-                media_type="text/html",
-            )
-            response.headers["Cache-Control"] = "no-store"
-            return response
+            return _serve_frontend_entry()
+
+        @app.get("/internal/{internal_path:path}")
+        async def serve_frontend_internal_route(internal_path: str):
+            del internal_path
+            return _serve_frontend_entry()
 
         _SERVING_FRONTEND = True
         print(f"[pixel-forge] Serving built frontend from {_dist_candidate}")
@@ -590,6 +606,42 @@ def serialize_project_url(url_record) -> dict[str, object]:
         "last_used": url_record.last_used,
         "use_count": url_record.use_count,
     }
+
+
+def _normalize_project_preview_url(raw_url: str | None) -> str | None:
+    normalized_url = str(raw_url or "").strip()
+    if not normalized_url:
+        return None
+
+    parsed = urlparse(normalized_url)
+    if parsed.path != "/internal/pdf-viewer":
+        return normalized_url
+
+    source_url = ""
+    for candidate in parse_qs(parsed.query).get("source", []):
+        source_url = str(candidate or "").strip()
+        if source_url:
+            break
+
+    return source_url or None
+
+
+def _serialize_project_urls(url_records) -> list[dict[str, object]]:
+    serialized_urls: list[dict[str, object]] = []
+    seen_urls: set[str] = set()
+
+    for url_record in url_records:
+        normalized_url = _normalize_project_preview_url(getattr(url_record, "url", None))
+        if not normalized_url or normalized_url in seen_urls:
+            continue
+        seen_urls.add(normalized_url)
+        serialized_urls.append({
+            "url": normalized_url,
+            "last_used": url_record.last_used,
+            "use_count": url_record.use_count,
+        })
+
+    return serialized_urls
 
 
 def serialize_project(project_record) -> dict[str, object]:
@@ -873,16 +925,21 @@ async def remove_project(project_path: str):
 
 @app.get("/api/projects/{project_path:path}/urls")
 async def get_project_urls(project_path: str):
-    return {"urls": [serialize_project_url(url) for url in list_project_urls(project_path)]}
+    return {"urls": _serialize_project_urls(list_project_urls(project_path))}
 
 
 @app.post("/api/projects/{project_path:path}/urls")
 async def add_project_url(project_path: str, request: ProjectUrlRequest):
+    normalized_url = _normalize_project_preview_url(request.url)
     try:
-        urls = touch_project_url(project_path, request.url)
+        urls = (
+            touch_project_url(project_path, normalized_url)
+            if normalized_url
+            else list_project_urls(project_path)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"urls": [serialize_project_url(url) for url in urls]}
+    return {"urls": _serialize_project_urls(urls)}
 
 
 @app.get("/api/projects/{project_path:path}/sessions")

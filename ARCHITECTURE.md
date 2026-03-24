@@ -88,6 +88,8 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - The alpha lane now ships two separate Agent Deck operator surfaces over the same alpha-owned runtime: a dedicated terminal app launcher for the real TUI and a separate web surface for browser/shell embedding.
 - The alpha lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge-alpha agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.
 - The browser-only web path is a debug/service fallback, not the supported Live Editor preview surface.
+- For Pixel Forge-owned local targets, visible preview identity is now stable per workspace/source root and decoupled from the raw backend port. The controller owns that stable alias; the actual mirror/dev target port may float underneath when the documented/default port is unavailable.
+- For supported repo-local workspace previews, the controller should offer deterministic candidate discovery from the bound workspace, recommend one likely app surface, launch it inside that same workspace boundary, and keep the visible preview identity stable while the real dev-server port floats underneath to avoid clone-to-clone clashes.
 - Shared control-plane truth for this lane now lives under `~/.pixel-forge-alpha` for projects, resumable sessions, staged controller updates, clone-scoped preview-update publications, and mirror instance metadata. The old `~/.pixel-forge/workstation-v2` path is only a one-way migration fallback when present and should be retired after successful alpha verification.
 - The shared control plane now has a first workstation-kernel slice: durable chat lanes in `sessions`, live chat-to-session bindings in `chat_session_bindings`, and append-only typed turn/activity records in `workstation_events`.
 - Persisted `sessions.thread_id` remains the stable chat-id compatibility surface in this lane. Agent Deck session ids are binding metadata and lookup keys, not the primary user-facing category.
@@ -106,6 +108,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Explicit slash-skill requests are promoted out of freeform user prose into a dedicated request-pack `## Skills` section, and the dispatch wrapper treats them as invoke-now instructions instead of optional hints.
 - Slash-skill autocomplete and skill visibility come from scanning the real skill folder trees on disk: the managed Pixel Forge skill home plus external agent skill homes like Claude, Codex, and OpenClaw. The managed alpha skill home lives under `~/.pixel-forge-alpha`, not inside the mutable app install tree, so reinstalling Pixel Forge does not wipe the skill surface.
 - Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
+- Alpha deliberately does not carry forward a heuristic arbitrary-repo preview broker. The controller owns stable identity, recursion guards, and the minimal alias/proxy surface for Pixel Forge-owned local targets. For ordinary repo-local previews, alpha may support explicit deterministic candidate discovery and workspace-bound launch for common app shapes, but it should not silently infer arbitrary service lifecycle ownership from weak repo heuristics.
 - Controller updates stage a frozen snapshot, optionally from an exact local git ref, through one shared CLI surface.
 - Controller installs default to canonical-root sources only. Clone workspaces under `.agents/` are preview/edit sandboxes until they are promoted back into the canonical root or the operator explicitly opts into a noncanonical source.
 - Clone-backed self-edit completions publish preview-only frozen snapshots scoped to the bound clone/session. Loading that update reuses the chat's primary mirror tab for that workspace by default, while still allowing separate mirror candidates to coexist when the operator opens them deliberately.
@@ -162,7 +165,9 @@ The important boundary is:
 - That lane now also emits exact CDP attach hints whenever the warm preview substrate exposes them: DevTools browser URL, target metadata, and a canonical `chrome-devtools-mcp --browserUrl ... --slim --no-usage-statistics` command for the current warm tab. Controller BrowserView previews now contribute controller-captured DOM state first and CDP metadata for the same warm session when the Electron substrate exposes it.
 - Pixel Forge now also owns a canonical live attach proof lane: when live attach hints exist, request packs and dispatch prompts give the agent exact `pixel-forge attach-proof` commands, which write `attach-proof.json` into the request pack and mirror the same receipt into `workstation_events`. That receipt now carries the canonical project identity plus an explicit `--via` mechanism, so clone-backed chats can mirror proof into the shared kernel without path drift and the artifact can say which attach path was actually used. Controller-captured live DOM facts can use that same receipt lane with `--via controller-browserview`.
 - When the operator explicitly asks for real live/CDP attach proof and attach hints exist, that proof lane now requires an actual attach attempt; controller-browserview context remains useful orientation data, but it is no longer treated as a successful substitute for the requested attach proof.
-- A real operator run has now proven direct CDP attach and live control on an authenticated warm preview tab. The remaining gap is narrower: re-prove the repaired clone-backed receipt lane in the installed alpha controller so `attach-proof.json` and `workstation_events` both succeed cleanly after the canonical-path and explicit-`via` hardening.
+- Workspace-local previews for common `package.json` app shapes can now be discovered from the bound lane workspace, recommended deterministically, started on a free port inside that same workspace boundary, and reopened through a stable controller-owned alias instead of borrowing a process-global localhost target.
+- Each turn now also has one canonical typed payload in the shared kernel and request pack. `turn-input.json` is the durable artifact projection, `turn_input` mirrors the same payload into `workstation_events`, and the dispatch wrapper now embeds that structured turn payload directly before pointing to the disk mirrors.
+- A real operator run has now proven direct CDP attach and live control on an authenticated warm preview tab, and a fresh installed-alpha rerun has now proven the repaired clone-backed attach receipt lane end to end. The next gap is no longer attach proof or typed turn assembly at Pixel Forge’s layer; it is native ingress and inspection ownership. The last mile still depends on a prompt wrapper plus agent-side live-inspection choreography instead of one thin first-party structured bridge into the native Claude/Codex session.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same alpha-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
 
 ### Current Handoff Lanes
@@ -202,10 +207,18 @@ The important boundary is:
 
 | Layer | Useful | Not Enough Yet | What Unlocks Deeper Integration |
 |---|---|---|---|
-| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, stable session brief, per-turn `context-patch.json`, rich controller-captured live DOM context, CDP attach hints for the same warm session when available, and durable attach receipts | Direct browser reuse is still not yet re-proven on a real authenticated Claude run | Proven attach/reuse flow, richer artifact references, less prompt mediation |
+| Pixel Forge request packs + selection tunnel + live preview context | Truthful frozen context, inspectable disk artifacts, stable session brief, per-turn `context-patch.json`, rich controller-captured live DOM context, CDP attach hints for the same warm session when available, durable attach receipts, stable workspace-bound preview aliases above floating ports, and one typed `turn_input` payload on the shared kernel | Native Claude/Codex still ingest that payload through a prompt wrapper, and deeper live inspection still depends too much on agent-side choreography | First-party live inspection surface, thinner native context-item bridge, less prompt mediation |
 | Agent Deck native sessions | Real operator control, real takeover of Claude/Codex, session visibility | Mostly terminal/transcript surface, limited structured context injection | Better session metadata hooks, stronger transcript/event surfaces |
 | ACPX 0.3.1 | Structured prompting, queueing, cancel, typed tool events, persistent ACP-owned sessions, pinned upstream foundation for future sidecar work | No proven attach/load path for an already-running native Agent Deck Claude/Codex session | Attach/import existing native agent session, context update primitives, session metadata sync |
 | Pixel Forge skill/CLI | Stable agent-facing way to read frozen and live captured state | Still operator-invoked pull path instead of ambient session context | Direct artifact/context item transport on top of the same truthful capture model |
+
+### Document-Like Selection Lane
+
+- Alpha currently handles PDFs as a selection and inspection substrate, not as true PDF object editing. The internal viewer renders the document and projects two selection units into the common selection engine: `pdf text` for resolved text hits and `pdf region` for spatial fallback captures.
+- The current `pdf text` unit is line-like, not range-like. It carries the real source document URL, page number, extracted text, a text-layer anchor, and frozen preview evidence. `pdf region` carries the source URL, page number, normalized area bounds, nearby text when available, and frozen preview evidence. Viewer chrome is intentionally excluded from ordinary committed selections.
+- The target architecture for PDFs is first-class text-range selection. Click-drag highlight should commit one semantic selection artifact for the highlighted words or lines, with combined text, stable page/range anchors, frozen evidence, and any discoverable workspace provenance such as generator or source-file hints.
+- The next missing live lane is exact replay. An agent should be able to refocus the already-loaded document to the saved page/area/range and highlight it directly from the selection tunnel or live-preview context when that substrate is available. Until then, the PDF lane remains frozen evidence plus live context, not exact document replay.
+- New document-like formats should plug into the same substrate-adapter contract instead of inventing separate operator workflows. The common tool model stays the same; each substrate only defines its native semantic units, fallback units, and replay capability.
 
 ### Upstream Capability Gap
 
@@ -260,19 +273,19 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: Claude/Codex now have truthful turn-state on the shared kernel, per-turn context patches, rich warm-preview context, CDP attach hints for the same session when available, and attach receipts, but the warm-session browser reuse itself is still not re-proven end to end on a real authenticated Claude lane.
+The next target release should attack the new current limiting factor from `SPECS.md`: document-like selection fidelity. Alpha can now route PDFs into the internal viewer and commit `pdf text` or `pdf region` artifacts against the real source document, but text hit-snapping is still too fragile, the semantic text unit is still a resolved line instead of a highlighted range, and there is no first-class exact replay lane back into the warm document.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
-- keep the typed Pixel Forge-managed turn path and the new off-path Claude/Codex turn paths as the shared truth
-- keep the warm-preview live-preview context lane as the first real handoff path, with controller-captured live DOM state as the fast path and the selection tunnel as durable frozen evidence
-- keep `context-patch.json` as the compact per-turn continuity lane for already-running sessions
-- keep `pixel-forge attach-proof` as the canonical receipt path for live attach attempts and controller-browserview live-proof receipts
-- prove one Claude lane can actually reuse the same warm preview through the emitted attach hints without replaying auth or navigation
-- keep snapshot activity fallback as compatibility glue only while chats still lack primary workstation history
-- keep the new Agent Deck surface pointed at the same kernel while replacing its remaining status-file/storage compatibility glue with native event truth
-- keep ACPX pinned and available as an upstream sidecar candidate without forcing it into the visible endpoint lane before shared-session attach exists
+- keep the common tool/selection model substrate-driven instead of adding a PDF-only side workflow
+- keep viewer chrome excluded from committed PDF selections so the document remains the only ordinary target surface
+- tighten ordinary PDF clicks so meaningful text hits win before region fallback
+- add one semantic `pdf text range` artifact for click-drag highlights instead of many single-line hits
+- keep `pdf region` as a clearly distinct spatial fallback with page/area evidence instead of pretending it is equivalent to text
+- carry exact page/range/area metadata plus frozen evidence through the selection tunnel and live-preview context
+- prove one warm-document replay lane that can refocus and highlight the saved PDF page/area/range without replaying navigation manually
+- generalize the same substrate-adapter contract for later document-like formats instead of inventing new operator workflows per format
 
 ### Next Target Release Diagram
 

@@ -308,6 +308,8 @@ declare global {
         pageTitle: string | null
         pageKey: string
       }
+      ownsElement?(element: Element | null): boolean
+      shouldIgnoreElement?(element: Element | null): boolean
       getSurfaceKind?(element: Element | null): string | null
       findRegionSurface?(element: Element | null): Element | null
       classifySelectionTarget?(element: Element | null): {

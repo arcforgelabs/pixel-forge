@@ -408,6 +408,72 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('rehydrates stale internal pdf viewer urls back to the source pdf url', () => {
+    useSessionStore.setState({
+      projectSessions: [
+        {
+          id: 1,
+          projectPath: '/tmp/example-project',
+          workspacePath: '/tmp/example-project/.agents/thread-a',
+          threadId: 'thread-a',
+          backend: 'agent-deck',
+          agentDeckSessionId: 'deck-session-a',
+          agentDeckSessionTitle: 'pixel-forge-thread-a',
+          agentDeckTool: 'codex',
+          editorState: {
+            activePreviewTool: null,
+            targetUrl: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+            activeTab: 'elements',
+            viewportMode: 'desktop',
+            showUrlHistory: false,
+            previewTabs: [
+              {
+                id: 'tab-a',
+                url: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+                title: 'Pixel Forge (alpha)',
+                mode: 'browser',
+                localTarget: null,
+                workspacePreview: null,
+              },
+            ],
+            activePreviewTabId: 'tab-a',
+            urlHistory: [
+              'file:///tmp/quote.pdf',
+              'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+            ],
+            urlHistoryCursor: 1,
+          },
+          createdAt: '2026-03-20T00:00:00Z',
+          lastActive: '2026-03-20T00:00:00Z',
+          requestId: null,
+        },
+      ],
+      liveEditorSession: {
+        threadId: 'thread-a',
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project/.agents/thread-a',
+        agentDeckSessionId: 'deck-session-a',
+        agentDeckSessionTitle: 'pixel-forge-thread-a',
+        agentDeckTool: 'codex',
+        requestId: null,
+      },
+    })
+
+    useLiveEditorStore.getState().hydrateProjectThreads({
+      projectSessions: useSessionStore.getState().projectSessions,
+      activeThreadKey: 'thread-a',
+      previewUrl: null,
+    })
+
+    expect(useLiveEditorStore.getState().targetUrl).toBe('file:///tmp/quote.pdf')
+    expect(useLiveEditorStore.getState().previewTabs[0]).toMatchObject({
+      id: 'tab-a',
+      url: 'file:///tmp/quote.pdf',
+      mode: 'browser',
+    })
+    expect(useLiveEditorStore.getState().urlHistory).toEqual(['file:///tmp/quote.pdf'])
+  })
+
   it('can find an existing draft thread by target Agent Deck session id', () => {
     const store = useLiveEditorStore.getState()
     const firstThreadKey = store.activeThreadKey

@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -11,6 +12,7 @@ from agent_deck_bridge import (
     AgentDeckDeleteAssessment,
     AgentDeckSessionInfo,
 )
+from project_chats import ProjectChatRecord
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
@@ -98,14 +100,69 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         delete_session.assert_called_once_with("/tmp/project", "thread-a")
         delete_thread.assert_called_once_with("thread-a")
 
+
+class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_create_project_chat_generates_unique_chat_thread_id(self) -> None:
+        expected_thread_id = "chat-1234567890ab"
+        created_chat = ProjectChatRecord(
+            id=expected_thread_id,
+            project_path="/tmp/project",
+            title=f"Chat {expected_thread_id[:8]}",
+            thread_id=expected_thread_id,
+            workspace_path="/tmp/project",
+            backend="agent-deck",
+            agent_deck_session_id=None,
+            agent_deck_session_title=f"Chat {expected_thread_id[:8]}",
+            agent_deck_tool=None,
+            agent_deck_session_status=None,
+            binding_state="detached",
+            workspace_kind="root",
+            origin_kind="managed",
+            created_at="2026-03-21T00:00:00Z",
+            last_active="2026-03-21T00:00:00Z",
+        )
+
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "upsert_project", Mock()),
+            patch.object(main, "project_name_for_path", Mock(return_value="project")),
+            patch.object(
+                main,
+                "uuid4",
+                Mock(return_value=SimpleNamespace(hex="1234567890abcdef1234567890abcdef")),
+            ),
+            patch.object(main, "upsert_session", Mock()) as upsert_session,
+            patch.object(
+                main,
+                "_load_reconciled_project_chats",
+                AsyncMock(return_value=("/tmp/project", [created_chat])),
+            ),
+        ):
+            payload = await main.create_project_chat(
+                "/tmp/project",
+                main.AgentDeckSessionRequest(agent_type="claude", title=None, workspace_mode="root"),
+            )
+
+        upsert_session.assert_called_once()
+        self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
+        self.assertEqual(payload["thread_id"], expected_thread_id)
+        self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
+
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
     def test_build_dispatch_prompt_mentions_live_preview_context(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview",
+                "selection": {"count": 0, "items": []},
+            },
             selection_tunnel_url="http://pixel-forge.test/api/live-editor/selection-tunnel?request_id=abcd",
             live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
         )
 
+        self.assertIn("Current typed Pixel Forge turn payload", prompt)
+        self.assertIn('"prompt_text": "Inspect the active preview"', prompt)
+        self.assertIn("Start with that typed payload before falling back to the disk artifacts.", prompt)
         self.assertIn("live-preview-context", prompt)
         self.assertIn("pixel-forge preview-context --project . --request <request-id>", prompt)
         self.assertIn("already-running Pixel Forge preview tab", prompt)

@@ -62,7 +62,7 @@ if (shouldExposeDesktopBridge()) {
 contextBridge.exposeInMainWorld('__pixelForgePreviewBridge', {
   emitEvent: (type, data = {}) => emit(type, data),
   inspectLiveContext: (payload) => bridge.inspectLiveContext(payload),
-  readPdfPreviewSource: () => ipcRenderer.invoke('pixel-forge-preview:get-pdf-document'),
+  readPdfPreviewSource: (payload = {}) => ipcRenderer.invoke('pixel-forge-preview:get-pdf-document', payload),
 })
 
 ipcRenderer.on('pixel-forge-preview:command', async (_event, command) => {

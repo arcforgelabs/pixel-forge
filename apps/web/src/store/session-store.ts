@@ -24,12 +24,28 @@ export interface PersistedLocalTargetMeta {
   createdAt: string | null;
 }
 
+export interface PersistedWorkspacePreviewMeta {
+  kind: "workspace-preview";
+  workspacePath: string;
+  workspaceRoot: string;
+  appPath: string;
+  relativeAppPath: string;
+  title: string;
+  scriptName: string;
+  packageManager: "pnpm" | "npm" | "yarn" | "bun";
+  framework: string | null;
+  preferredPort: number | null;
+  instanceSlug: string;
+  createdAt: string | null;
+}
+
 export interface PersistedPreviewTab {
   id: string;
   url: string;
   title: string;
   mode: PersistedLiveEditorPreviewMode;
   localTarget: PersistedLocalTargetMeta | null;
+  workspacePreview: PersistedWorkspacePreviewMeta | null;
 }
 
 export interface PersistedThreadEditorState {

@@ -5,7 +5,7 @@
  * Pixel Forge's embedded Chromium surface rather than through a proxy iframe.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSessionStore } from '@/store/session-store'
 import {
   Dialog,
@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
+import { normalizePersistedPreviewUrl } from '@/lib/preview-url'
 import type {
   PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPreviewTool,
@@ -321,10 +322,12 @@ function parsePreviewSelectionData(
     return null
   }
 
-  const sourceUrl =
+  const sourceUrl = normalizePersistedPreviewUrl(
     typeof data.pageUrl === 'string'
       ? data.pageUrl
-      : sourceTab.url
+      : sourceTab.url,
+    sourceTab.url
+  )
 
   return {
     id: selectionId,
@@ -523,12 +526,6 @@ export function LiveEditorPane() {
   // We need a ref to loadApp so goBack/goForward can call it without circular deps
   const loadAppRef = useRef<((url?: string, options?: LoadAppOptions) => Promise<void>) | null>(null)
 
-  const currentProjectUrls = useSessionStore((state) => {
-    if (!state.projectPath) return []
-    const project = state.recentProjects.find((entry) => entry.path === state.projectPath)
-    return project?.previewUrls ?? []
-  })
-
   const {
     connect,
     disconnectAll,
@@ -570,6 +567,20 @@ export function LiveEditorPane() {
     selectionUndoStack,
     selectionRedoStack,
   } = useLiveEditorStore()
+
+  const scopedUrlHistory = useMemo(() => {
+    const entries: string[] = []
+    const seen = new Set<string>()
+    for (let index = urlHistory.length - 1; index >= 0; index -= 1) {
+      const url = normalizePersistedPreviewUrl(urlHistory[index]) || ''
+      if (!url || seen.has(url)) {
+        continue
+      }
+      seen.add(url)
+      entries.push(url)
+    }
+    return entries
+  }, [urlHistory])
   const currentThreadSession =
     projectSessions.find((session) => session.threadId === activeThreadKey)
     || (
@@ -645,11 +656,12 @@ export function LiveEditorPane() {
       urlNavRef.current = false
       return
     }
-    if (!url) return
+    const normalizedUrl = normalizePersistedPreviewUrl(url)
+    if (!normalizedUrl) return
     setUrlHistory((prev) => {
       const truncated = prev.slice(0, urlHistoryCursor + 1)
-      if (truncated[truncated.length - 1] === url) return truncated
-      return [...truncated, url]
+      if (truncated[truncated.length - 1] === normalizedUrl) return truncated
+      return [...truncated, normalizedUrl]
     })
     setUrlHistoryCursor((prev) => prev + 1)
   }, [setUrlHistory, setUrlHistoryCursor, urlHistoryCursor])
@@ -892,7 +904,7 @@ export function LiveEditorPane() {
 
   const syncStorePreviewUrl = useCallback(
     async (url: string | null) => {
-      const normalizedUrl = url?.trim() || null
+      const normalizedUrl = normalizePersistedPreviewUrl(url) || null
       internalPreviewUrlRef.current = normalizedUrl
       try {
         await setPreviewUrl(normalizedUrl)
@@ -1166,7 +1178,7 @@ export function LiveEditorPane() {
         tabId: resolvedTabId,
         url: urlToLoad,
       })
-      const resolvedTargetUrl = data.target_url
+      const resolvedTargetUrl = normalizePersistedPreviewUrl(data.target_url, urlToLoad) || urlToLoad
 
       setAuthIssue(null)
       setTargetUrl(resolvedTargetUrl)
@@ -1353,7 +1365,7 @@ export function LiveEditorPane() {
   }, [activeMode, activePreviewTabId, activeThreadKey, projectPath, restoreActivePreviewTab])
 
   const openUrlHistory = useCallback(async () => {
-    if (currentProjectUrls.length === 0) {
+    if (scopedUrlHistory.length === 0) {
       return
     }
 
@@ -1368,7 +1380,7 @@ export function LiveEditorPane() {
           width: rect.width,
           height: rect.height,
         },
-        items: currentProjectUrls.map((url) => ({
+        items: scopedUrlHistory.map((url) => ({
           value: url,
           label: url,
         })),
@@ -1384,7 +1396,7 @@ export function LiveEditorPane() {
     }
 
     setShowUrlHistory((current) => !current)
-  }, [currentProjectUrls, loadApp, setShowUrlHistory, setTargetUrl, targetUrl])
+  }, [loadApp, scopedUrlHistory, setShowUrlHistory, setTargetUrl, targetUrl])
 
   const applyControllerUpdate = useCallback(async () => {
     const desktopApp = desktopAppRef.current
@@ -2359,7 +2371,10 @@ export function LiveEditorPane() {
     }
 
     if (payload.type === 'browser-location-changed') {
-      const nextUrl = typeof payload.url === 'string' ? payload.url : sourceTab.url
+      const nextUrl = normalizePersistedPreviewUrl(
+        typeof payload.url === 'string' ? payload.url : sourceTab.url,
+        sourceTab.url,
+      ) || sourceTab.url
       const nextTitle = typeof payload.title === 'string' ? payload.title : sourceTab.title
 
       setPreviewTabs((currentTabs) =>
@@ -2722,16 +2737,16 @@ export function LiveEditorPane() {
                   size="sm"
                   className="h-7 rounded-l-none border-l-0 border-border/60 px-1.5"
                   onClick={() => void openUrlHistory()}
-                  disabled={currentProjectUrls.length === 0}
+                  disabled={scopedUrlHistory.length === 0}
                   title="Recent preview URLs"
                 >
                   <ChevronDown className={`h-3 w-3 transition-transform ${showUrlHistory ? 'rotate-180' : ''}`} />
                 </Button>
               </div>
-              {showUrlHistory && currentProjectUrls.length > 0 && (
+              {showUrlHistory && scopedUrlHistory.length > 0 && (
                 <div className="mt-1 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
                   <div className="max-h-48 overflow-y-auto py-1">
-                    {currentProjectUrls.map((url) => (
+                    {scopedUrlHistory.map((url) => (
                       <button
                         key={url}
                         onClick={() => {

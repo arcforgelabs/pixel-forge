@@ -9,6 +9,7 @@ import {
   detectPdfPreviewTarget,
   isInternalPdfViewerUrl,
   looksLikePdfUrl,
+  readInternalPdfViewerState,
   readPdfDocumentSource,
 } from './pdf-preview.mjs'
 import { readControllerVersion, readProjectVersion } from './version.mjs'
@@ -105,6 +106,21 @@ function getPreviewRecord(ownerContextId, tabId) {
 function getPreviewRecordForWebContentsId(webContentsId) {
   const previewKey = previewKeyByWebContentsId.get(webContentsId)
   return previewKey ? previewViews.get(previewKey) ?? null : null
+}
+
+function getPreviewRecordForTabId(tabId) {
+  const normalizedTabId = normalizeText(tabId)
+  if (!normalizedTabId) {
+    return null
+  }
+
+  for (const previewRecord of previewViews.values()) {
+    if (previewRecord.tabId === normalizedTabId) {
+      return previewRecord
+    }
+  }
+
+  return null
 }
 
 function currentView(ownerContextId) {
@@ -1305,13 +1321,23 @@ function updatePreviewReportedLocation(previewRecord, url, title) {
 }
 
 function currentPreviewUrl(previewRecord, fallbackUrl = '') {
+  const embeddedPdfState = readInternalPdfViewerState(
+    previewRecord?.view?.webContents.getURL(),
+    SHELL_URL,
+  )
   return previewRecord?.reportedUrl
+    || embeddedPdfState?.sourceUrl
     || previewRecord?.view?.webContents.getURL()
     || fallbackUrl
 }
 
 function currentPreviewTitle(previewRecord, fallbackTitle = '') {
+  const embeddedPdfState = readInternalPdfViewerState(
+    previewRecord?.view?.webContents.getURL(),
+    SHELL_URL,
+  )
   return previewRecord?.reportedTitle
+    || embeddedPdfState?.title
     || previewRecord?.view?.webContents.getTitle()
     || currentPreviewUrl(previewRecord, fallbackTitle)
     || fallbackTitle
@@ -1344,7 +1370,39 @@ async function resolvePreviewTarget(previewRecord, url) {
   }
 
   if (isInternalPdfViewerUrl(url, SHELL_URL)) {
-    return url
+    const embeddedPdfState = readInternalPdfViewerState(url, SHELL_URL)
+    const sourceUrl = (
+      embeddedPdfState?.sourceUrl
+      || normalizeText(previewRecord?.pdfContext?.sourceUrl)
+      || normalizeText(previewRecord?.reportedUrl)
+    )
+    if (!sourceUrl) {
+      return url
+    }
+
+    const title =
+      embeddedPdfState?.title
+      || normalizeText(previewRecord?.pdfContext?.title)
+      || normalizeText(previewRecord?.reportedTitle)
+      || null
+    const contentType =
+      embeddedPdfState?.contentType
+      || normalizeText(previewRecord?.pdfContext?.contentType)
+      || null
+
+    previewRecord.surfaceKind = 'pdf'
+    previewRecord.pdfContext = {
+      sourceUrl,
+      title,
+      contentType,
+    }
+    updatePreviewReportedLocation(previewRecord, sourceUrl, title)
+    return buildInternalPdfViewerUrl(SHELL_URL, {
+      tabId: previewRecord.tabId,
+      sourceUrl,
+      title,
+      contentType,
+    })
   }
 
   const pdfTarget = await detectPdfPreviewTarget(previewRecord.view.webContents.session, url)
@@ -1360,32 +1418,43 @@ async function resolvePreviewTarget(previewRecord, url) {
     contentType: pdfTarget.contentType,
   }
   updatePreviewReportedLocation(previewRecord, pdfTarget.sourceUrl, pdfTarget.title)
-  return buildInternalPdfViewerUrl(SHELL_URL, previewRecord.tabId)
+  return buildInternalPdfViewerUrl(SHELL_URL, {
+    tabId: previewRecord.tabId,
+    sourceUrl: pdfTarget.sourceUrl,
+    title: pdfTarget.title,
+    contentType: pdfTarget.contentType,
+  })
 }
 
-async function readPreviewPdfDocument(previewRecord) {
-  const sourceUrl = normalizeText(previewRecord?.pdfContext?.sourceUrl)
-  if (!previewRecord || !sourceUrl) {
+async function readPreviewPdfDocument(previewRecord, options = {}) {
+  const sourceUrl = (
+    normalizeText(previewRecord?.pdfContext?.sourceUrl)
+    || normalizeText(options?.sourceUrl)
+  )
+  const previewSession = previewRecord?.view?.webContents?.session || options?.previewSession || null
+  if (!sourceUrl) {
     throw new Error('No PDF preview document is available for this tab')
   }
 
   const pdfSource = await readPdfDocumentSource({
-    previewSession: previewRecord.view.webContents.session,
+    previewSession,
     sourceUrl,
-    title: previewRecord.pdfContext?.title,
-    contentType: previewRecord.pdfContext?.contentType,
+    title: previewRecord?.pdfContext?.title || normalizeText(options?.title),
+    contentType: previewRecord?.pdfContext?.contentType || normalizeText(options?.contentType),
   })
-  previewRecord.pdfContext = {
-    sourceUrl: pdfSource.sourceUrl,
-    title: pdfSource.title,
-    contentType: pdfSource.contentType,
+  if (previewRecord) {
+    previewRecord.pdfContext = {
+      sourceUrl: pdfSource.sourceUrl,
+      title: pdfSource.title,
+      contentType: pdfSource.contentType,
+    }
+    updatePreviewReportedLocation(previewRecord, pdfSource.sourceUrl, pdfSource.title)
   }
-  updatePreviewReportedLocation(previewRecord, pdfSource.sourceUrl, pdfSource.title)
 
   return {
     source_url: currentPreviewUrl(previewRecord, pdfSource.sourceUrl),
     title: currentPreviewTitle(previewRecord, pdfSource.title || pdfSource.sourceUrl),
-    content_type: previewRecord.pdfContext?.contentType || 'application/pdf',
+    content_type: previewRecord?.pdfContext?.contentType || pdfSource.contentType || 'application/pdf',
     bytes: pdfSource.bytes,
   }
 }
@@ -2011,9 +2080,17 @@ app.whenReady().then(() => {
     return controllerUpdateApplyState
   })
 
-  ipcMain.handle('pixel-forge-preview:get-pdf-document', async (event) => {
-    const previewRecord = getPreviewRecordForWebContentsId(event.sender.id)
-    return await readPreviewPdfDocument(previewRecord)
+  ipcMain.handle('pixel-forge-preview:get-pdf-document', async (event, payload) => {
+    let previewRecord = getPreviewRecordForWebContentsId(event.sender.id)
+    if ((!previewRecord || !normalizeText(previewRecord?.pdfContext?.sourceUrl)) && payload?.tabId) {
+      previewRecord = getPreviewRecordForTabId(payload.tabId)
+    }
+    return await readPreviewPdfDocument(previewRecord, {
+      previewSession: event.sender.session,
+      sourceUrl: payload?.sourceUrl,
+      title: payload?.title,
+      contentType: payload?.contentType,
+    })
   })
 
   ipcMain.handle('pixel-forge-app:stage-controller-update', async (_event, payload) => {

@@ -35,12 +35,27 @@ function SelectedElementChip({
   index,
   onRemove,
 }: SelectedElementChipProps) {
+  const isRegion = element.selectorKind === 'region'
+  const isPdfText = element.surfaceKind === 'pdf' && !isRegion
+  const badgeClassName = isRegion
+    ? 'bg-amber-500'
+    : isPdfText
+      ? 'bg-emerald-500'
+      : 'bg-green-500'
+  const labelClassName = isRegion
+    ? 'text-amber-300'
+    : isPdfText
+      ? 'text-emerald-300'
+      : 'text-foreground'
+
   // Build display label
   let label =
-    element.selectorKind === 'region'
+    isRegion
       ? `${element.surfaceKind} region`
-      : element.tagName
-  if (element.selectorKind !== 'region') {
+      : isPdfText
+        ? 'pdf text'
+        : element.tagName
+  if (!isRegion && !isPdfText) {
     if (element.elementId) {
       label += `#${element.elementId}`
     } else if (element.classList.length > 0) {
@@ -54,13 +69,13 @@ function SelectedElementChip({
   return (
     <div className="group flex items-center gap-2 bg-muted rounded-lg px-2 py-1.5 text-sm">
       {/* Selection number badge */}
-      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-green-500 text-white text-xs font-medium flex items-center justify-center">
+      <span className={`flex-shrink-0 w-5 h-5 rounded-full ${badgeClassName} text-white text-xs font-medium flex items-center justify-center`}>
         {index + 1}
       </span>
 
       {/* Element info */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <span className="font-mono text-xs text-foreground truncate">
+        <span className={`font-mono text-xs truncate ${labelClassName}`}>
           {label}
         </span>
         <span className="text-[11px] text-primary/80 truncate">
