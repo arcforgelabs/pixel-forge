@@ -14,11 +14,54 @@ import { useLiveEditorStore } from './store/chat-store'
 import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
 import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, X } from 'lucide-react'
+import { splitTextWithInlineAttachments } from './composer-attachments'
 
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
   onApplyControllerUpdate?: () => void
   onLoadPreviewUpdate?: () => void
+}
+
+function attachmentLabel(attachment: ChatAttachment, index: number): string {
+  if (attachment.label?.trim()) {
+    return attachment.label.trim()
+  }
+  if (attachment.inlineToken?.trim()) {
+    return attachment.inlineToken.trim().replace(/^\[|\]$/g, '')
+  }
+  if (attachment.kind === 'image') {
+    return `Image #${index + 1}`
+  }
+  if (attachment.kind === 'paste') {
+    return `Paste #${index + 1}`
+  }
+  return `File #${index + 1}`
+}
+
+function decodeTextDataUrl(dataUrl: string): string {
+  const marker = 'base64,'
+  const markerIndex = dataUrl.indexOf(marker)
+  if (markerIndex < 0) {
+    return ''
+  }
+
+  try {
+    const binary = atob(dataUrl.slice(markerIndex + marker.length))
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return ''
+  }
+}
+
+function resolvePasteText(attachment: ChatAttachment): string {
+  if (attachment.textContent?.trim()) {
+    return attachment.textContent
+  }
+  if (attachment.mimeType === 'text/plain') {
+    return decodeTextDataUrl(attachment.dataUrl)
+  }
+  return ''
 }
 
 export function ChatMessages({
@@ -35,8 +78,15 @@ export function ChatMessages({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
+  const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
 
   const closeLightbox = useCallback(() => setLightboxImage(null), [])
+  const togglePasteExpanded = useCallback((id: string) => {
+    setExpandedPasteIds((current) => ({
+      ...current,
+      [id]: !current[id],
+    }))
+  }, [])
 
   const downloadImage = useCallback(() => {
     if (!lightboxImage) return
@@ -81,6 +131,138 @@ export function ChatMessages({
       behavior: 'smooth',
     })
   }, [messages, currentStreamContent])
+
+  const renderInlineUserContent = useCallback((
+    content: string,
+    attachments: ChatAttachment[] | undefined
+  ) => {
+    if (!attachments || attachments.length === 0) {
+      return (
+        <p className="text-sm break-words [overflow-wrap:anywhere]">
+          {content}
+        </p>
+      )
+    }
+
+    const parts = splitTextWithInlineAttachments(content, attachments)
+    return (
+      <div className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+        {parts.map((part, index) => {
+          if (part.kind === 'text') {
+            return (
+              <span key={`text-${index}`}>
+                {part.text}
+              </span>
+            )
+          }
+
+          const attachment = part.attachment
+          if (!attachment) {
+            return null
+          }
+
+          const attachmentIndex = attachments.findIndex((entry) => entry.id === attachment.id)
+          const label = attachmentLabel(attachment, attachmentIndex >= 0 ? attachmentIndex : index)
+          const toneClassName = attachment.kind === 'paste'
+            ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
+            : attachment.kind === 'image'
+              ? 'border-sky-500/35 bg-sky-500/10 text-sky-100'
+              : 'border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground'
+
+          return (
+            <span
+              key={attachment.id}
+              className={`mx-0.5 inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium align-middle ${toneClassName}`}
+            >
+              [{label}]
+            </span>
+          )
+        })}
+      </div>
+    )
+  }, [])
+
+  const renderAttachmentGallery = useCallback((
+    attachments: ChatAttachment[],
+    tone: 'assistant' | 'user'
+  ) => (
+    <div className="flex flex-wrap gap-2">
+      {attachments.map((attachment, index) => {
+        const label = attachmentLabel(attachment, index)
+        const isPasteExpanded = expandedPasteIds[attachment.id] ?? false
+        const pasteText = attachment.kind === 'paste' ? resolvePasteText(attachment) : ''
+        const baseClassName = tone === 'assistant'
+          ? 'border-border/40 bg-background/50 text-foreground'
+          : 'border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground'
+
+        if (attachment.kind === 'image') {
+          const imageClassName = tone === 'assistant'
+            ? 'max-h-48 object-contain'
+            : 'h-20 w-20 object-cover'
+          return (
+            <div key={attachment.id} className="space-y-1">
+              <img
+                src={attachment.dataUrl}
+                alt={attachment.name}
+                className={`${imageClassName} cursor-pointer rounded-lg border ${baseClassName} transition-opacity hover:opacity-80`}
+                onClick={() => setLightboxImage(attachment)}
+              />
+              <div className="px-1 text-[11px] text-muted-foreground">
+                {label}
+              </div>
+            </div>
+          )
+        }
+
+        if (attachment.kind === 'paste') {
+          return (
+            <div
+              key={attachment.id}
+              className={`max-w-[24rem] rounded-lg border px-3 py-2 ${baseClassName}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold">
+                    {label}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {attachment.name}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => togglePasteExpanded(attachment.id)}
+                  className="shrink-0 rounded-md border border-current/20 px-2 py-1 text-[11px] font-medium opacity-80 transition-opacity hover:opacity-100"
+                >
+                  {isPasteExpanded ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
+              <pre className={`mt-2 overflow-hidden whitespace-pre-wrap break-words rounded-md bg-black/10 px-2 py-2 text-[11px] leading-relaxed ${isPasteExpanded ? '' : 'line-clamp-4'}`}>
+                {pasteText || attachment.name}
+              </pre>
+            </div>
+          )
+        }
+
+        return (
+          <div
+            key={attachment.id}
+            className={`flex max-w-[18rem] items-center gap-2 rounded-lg border px-3 py-2 ${baseClassName}`}
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold">
+                {label}
+              </div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {attachment.name}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  ), [expandedPasteIds, togglePasteExpanded])
 
   return (
     <div
@@ -182,29 +364,7 @@ export function ChatMessages({
                       </div>
                     )}
                     {msg.attachments && msg.attachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {msg.attachments.map((attachment) => (
-                          attachment.kind === 'image' ? (
-                            <img
-                              key={attachment.id}
-                              src={attachment.dataUrl}
-                              alt={attachment.name}
-                              className="max-h-48 cursor-pointer rounded-lg border border-border/40 object-contain transition-opacity hover:opacity-80"
-                              onClick={() => setLightboxImage(attachment)}
-                            />
-                          ) : (
-                            <div
-                              key={attachment.id}
-                              className="flex max-w-[16rem] items-center gap-2 rounded-lg border border-border/40 bg-background/50 px-3 py-2 text-foreground"
-                            >
-                              <FileText className="h-4 w-4 shrink-0" />
-                              <span className="truncate text-xs font-medium">
-                                {attachment.name}
-                              </span>
-                            </div>
-                          )
-                        ))}
-                      </div>
+                      renderAttachmentGallery(msg.attachments, 'assistant')
                     )}
                     {msg.isRemoteComplete && onRefreshPreview && (
                       <Button
@@ -221,34 +381,10 @@ export function ChatMessages({
                 ) : (
                   <div className="space-y-3">
                     {msg.content && (
-                      <p className="text-sm break-words [overflow-wrap:anywhere]">
-                        {msg.content}
-                      </p>
+                      renderInlineUserContent(msg.content, msg.attachments)
                     )}
                     {msg.attachments && msg.attachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {msg.attachments.map((attachment) => (
-                          attachment.kind === 'image' ? (
-                            <img
-                              key={attachment.id}
-                              src={attachment.dataUrl}
-                              alt={attachment.name}
-                              className="h-20 w-20 cursor-pointer rounded-lg border border-primary-foreground/20 object-cover transition-opacity hover:opacity-80"
-                              onClick={() => setLightboxImage(attachment)}
-                            />
-                          ) : (
-                            <div
-                              key={attachment.id}
-                              className="flex max-w-[16rem] items-center gap-2 rounded-lg border border-primary-foreground/20 bg-primary-foreground/10 px-3 py-2 text-primary-foreground"
-                            >
-                              <FileText className="h-4 w-4 shrink-0" />
-                              <span className="truncate text-xs font-medium">
-                                {attachment.name}
-                              </span>
-                            </div>
-                          )
-                        ))}
-                      </div>
+                      renderAttachmentGallery(msg.attachments, 'user')
                     )}
                   </div>
                 )}

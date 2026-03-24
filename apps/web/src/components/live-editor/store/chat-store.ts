@@ -59,7 +59,10 @@ export interface ChatAttachment {
   name: string
   mimeType: string
   dataUrl: string
-  kind: 'image' | 'file'
+  kind: 'image' | 'file' | 'paste'
+  label?: string
+  inlineToken?: string
+  textContent?: string
 }
 
 export interface ChatMessage {
@@ -745,21 +748,43 @@ function buildAttachmentSummary(attachments: ChatAttachment[]): string {
   const imageCount = attachments.filter(
     (attachment) => attachment.kind === 'image'
   ).length
-  const fileCount = attachments.length - imageCount
+  const pasteCount = attachments.filter(
+    (attachment) => attachment.kind === 'paste'
+  ).length
+  const fileCount = attachments.filter(
+    (attachment) => attachment.kind === 'file'
+  ).length
 
-  if (imageCount > 0 && fileCount === 0) {
+  if (imageCount > 0 && fileCount === 0 && pasteCount === 0) {
     return imageCount === 1
       ? 'Attached 1 reference image.'
       : `Attached ${imageCount} reference images.`
   }
 
-  if (fileCount > 0 && imageCount === 0) {
+  if (fileCount > 0 && imageCount === 0 && pasteCount === 0) {
     return fileCount === 1
       ? 'Attached 1 reference file.'
       : `Attached ${fileCount} reference files.`
   }
 
-  return `Attached ${imageCount} image${imageCount === 1 ? '' : 's'} and ${fileCount} file${fileCount === 1 ? '' : 's'}.`
+  if (pasteCount > 0 && imageCount === 0 && fileCount === 0) {
+    return pasteCount === 1
+      ? 'Attached 1 pasted reference.'
+      : `Attached ${pasteCount} pasted references.`
+  }
+
+  const parts: string[] = []
+  if (imageCount > 0) {
+    parts.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`)
+  }
+  if (fileCount > 0) {
+    parts.push(`${fileCount} file${fileCount === 1 ? '' : 's'}`)
+  }
+  if (pasteCount > 0) {
+    parts.push(`${pasteCount} paste${pasteCount === 1 ? '' : 's'}`)
+  }
+
+  return `Attached ${parts.join(', ')}.`
 }
 
 function shouldMirrorSelectionAttachmentsToAssistant(

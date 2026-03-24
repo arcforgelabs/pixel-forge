@@ -20,6 +20,16 @@ import {
   findSkillAutocompleteMatch,
   getSkillAutocompleteSuggestions,
 } from './skill-autocomplete'
+import {
+  createInlineAttachmentLabel,
+  createInlineAttachmentToken,
+  createPlainTextDataUrl,
+  insertInlineTokens,
+  pruneInlineAttachmentsFromText,
+  removeInlineTokenText,
+  resolveInlineAttachmentDeletion,
+  shouldConvertPasteToAttachment,
+} from './composer-attachments'
 
 function formatAgentLabel(agentType: string | null | undefined): string {
   if (agentType === 'claude') {
@@ -66,6 +76,11 @@ export function ChatInput() {
   const [dismissedSkillToken, setDismissedSkillToken] = useState<string | null>(null)
   const agentPickerRef = useRef<HTMLDivElement>(null)
   const desktopAppRef = useRef(getDesktopApp())
+  const attachmentOrdinalRef = useRef<Record<'image' | 'file' | 'paste', number>>({
+    image: 0,
+    file: 0,
+    paste: 0,
+  })
   const {
     sendMessage,
     isStreaming,
@@ -144,6 +159,58 @@ export function ChatInput() {
     focusTextareaAt(next.caret)
   }
 
+  function nextAttachmentLabel(kind: ChatAttachment['kind']): string {
+    attachmentOrdinalRef.current[kind] += 1
+    return createInlineAttachmentLabel(kind, attachmentOrdinalRef.current[kind])
+  }
+
+  function resetAttachmentOrdinals() {
+    attachmentOrdinalRef.current = {
+      image: 0,
+      file: 0,
+      paste: 0,
+    }
+  }
+
+  function getInsertionRange(): { start: number; end: number } {
+    const textarea = textareaRef.current
+    if (!textarea) {
+      return { start: caretIndex, end: caretIndex }
+    }
+
+    const start = textarea.selectionStart ?? caretIndex
+    const end = textarea.selectionEnd ?? start
+    return { start, end }
+  }
+
+  function insertAttachmentsIntoComposer(
+    nextAttachments: ChatAttachment[],
+    selectionStart?: number,
+    selectionEnd?: number
+  ) {
+    if (nextAttachments.length === 0) {
+      return
+    }
+
+    const fallbackRange = getInsertionRange()
+    const start = selectionStart ?? fallbackRange.start
+    const end = selectionEnd ?? fallbackRange.end
+    const tokens = nextAttachments
+      .map((attachment) => attachment.inlineToken)
+      .filter((token): token is string => typeof token === 'string' && token.length > 0)
+
+    let nextCaret = end
+    setInput((current) => {
+      const insertion = insertInlineTokens(current, tokens, start, end)
+      nextCaret = insertion.caret
+      return insertion.value
+    })
+    setAttachments((current) => [...current, ...nextAttachments])
+    setCaretIndex(nextCaret)
+    setDismissedSkillToken(null)
+    focusTextareaAt(nextCaret)
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
@@ -151,9 +218,10 @@ export function ChatInput() {
     sendMessage(input.trim(), attachments)
     setInput('')
     setAttachments([])
+    resetAttachmentOrdinals()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showSkillAutocomplete && skillSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -175,6 +243,27 @@ export function ChatInput() {
       if (e.key === 'Escape' && activeSkillTokenKey) {
         e.preventDefault()
         setDismissedSkillToken(activeSkillTokenKey)
+        return
+      }
+    }
+
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const deletion = resolveInlineAttachmentDeletion(
+        input,
+        attachments,
+        e.currentTarget.selectionStart ?? 0,
+        e.currentTarget.selectionEnd ?? 0,
+        e.key === 'Backspace' ? 'backward' : 'forward'
+      )
+      if (deletion) {
+        e.preventDefault()
+        setAttachments((current) =>
+          current.filter((attachment) => attachment.id !== deletion.attachment.id)
+        )
+        setInput(deletion.value)
+        setCaretIndex(deletion.caret)
+        setDismissedSkillToken(null)
+        focusTextareaAt(deletion.caret)
         return
       }
     }
@@ -245,22 +334,30 @@ export function ChatInput() {
     setCaretIndex(textareaRef.current?.selectionStart ?? input.length)
   }
 
-  const loadFiles = async (files: File[]) => {
+  const loadFiles = async (
+    files: File[],
+    selectionStart?: number,
+    selectionEnd?: number
+  ) => {
     try {
       const nextAttachments = await Promise.all(
         files.map(async (file) => {
           const dataUrl = await fileToDataURL(file)
+          const kind: ChatAttachment['kind'] = file.type.startsWith('image/') ? 'image' : 'file'
+          const label = nextAttachmentLabel(kind)
           return {
             id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             name: file.name,
             mimeType: file.type || 'application/octet-stream',
             dataUrl,
-            kind: file.type.startsWith('image/') ? 'image' : 'file',
+            kind,
+            label,
+            inlineToken: createInlineAttachmentToken(kind, attachmentOrdinalRef.current[kind]),
           } satisfies ChatAttachment
         })
       )
 
-      setAttachments((current) => [...current, ...nextAttachments])
+      insertAttachmentsIntoComposer(nextAttachments, selectionStart, selectionEnd)
     } catch (error) {
       console.error('Failed to read attachment files:', error)
       toast.error('Failed to read attachment files')
@@ -270,7 +367,8 @@ export function ChatInput() {
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : []
     if (files.length > 0) {
-      await loadFiles(files)
+      const { start, end } = getInsertionRange()
+      await loadFiles(files, start, end)
       e.target.value = ''
     }
   }
@@ -281,11 +379,14 @@ export function ChatInput() {
 
     const files = Array.from(e.dataTransfer.files || [])
     if (files.length > 0) {
-      await loadFiles(files)
+      const { start, end } = getInsertionRange()
+      await loadFiles(files, start, end)
     }
   }
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const selectionStart = e.currentTarget.selectionStart ?? 0
+    const selectionEnd = e.currentTarget.selectionEnd ?? selectionStart
     const clipboardFiles = Array.from(e.clipboardData.items)
       .filter((item) => item.kind === 'file')
       .map((item) => item.getAsFile())
@@ -293,12 +394,52 @@ export function ChatInput() {
 
     if (clipboardFiles.length > 0) {
       e.preventDefault()
-      await loadFiles(clipboardFiles)
+      await loadFiles(clipboardFiles, selectionStart, selectionEnd)
+      return
+    }
+
+    const pastedText = e.clipboardData.getData('text/plain')
+    if (shouldConvertPasteToAttachment(pastedText)) {
+      e.preventDefault()
+      const label = nextAttachmentLabel('paste')
+      const sequence = attachmentOrdinalRef.current.paste
+      insertAttachmentsIntoComposer(
+        [
+          {
+            id: `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: `paste-${sequence}.txt`,
+            mimeType: 'text/plain',
+            dataUrl: createPlainTextDataUrl(pastedText),
+            kind: 'paste',
+            label,
+            inlineToken: createInlineAttachmentToken('paste', sequence),
+            textContent: pastedText,
+          },
+        ],
+        selectionStart,
+        selectionEnd
+      )
     }
   }
 
   const removeAttachment = (id: string) => {
-    setAttachments((current) => current.filter((attachment) => attachment.id !== id))
+    const attachment = attachments.find((entry) => entry.id === id)
+    setAttachments((current) => current.filter((entry) => entry.id !== id))
+    if (!attachment?.inlineToken) {
+      return
+    }
+
+    let nextCaret = caretIndex
+    setInput((current) => {
+      const removal = removeInlineTokenText(current, attachment.inlineToken)
+      if (removal.caret !== null) {
+        nextCaret = removal.caret
+      }
+      return removal.value
+    })
+    setCaretIndex(nextCaret)
+    setDismissedSkillToken(null)
+    focusTextareaAt(nextCaret)
   }
 
   const canSubmit = (input.trim() || attachments.length > 0) && !isStreaming
@@ -337,10 +478,29 @@ export function ChatInput() {
                   alt={`Pending attachment ${index + 1}`}
                   className="h-14 w-14 rounded-lg border border-border object-cover"
                 />
+              ) : attachment.kind === 'paste' ? (
+                <div className="flex h-14 max-w-[16rem] flex-col justify-between rounded-lg border border-border bg-muted/70 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-semibold">
+                      {attachment.label || `Paste #${index + 1}`}
+                    </span>
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                      PASTED
+                    </Badge>
+                  </div>
+                  <span className="line-clamp-2 text-[11px] text-muted-foreground">
+                    {(attachment.textContent || '').trim() || attachment.name}
+                  </span>
+                </div>
               ) : (
-                <div className="flex h-14 max-w-[12rem] items-center gap-2 rounded-lg border border-border bg-muted/70 px-3">
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-xs font-medium">
+                <div className="flex h-14 max-w-[14rem] flex-col justify-center gap-1 rounded-lg border border-border bg-muted/70 px-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate text-xs font-semibold">
+                      {attachment.label || `File #${index + 1}`}
+                    </span>
+                  </div>
+                  <span className="truncate text-[11px] text-muted-foreground">
                     {attachment.name}
                   </span>
                 </div>
@@ -418,9 +578,13 @@ export function ChatInput() {
             ref={textareaRef}
             value={input}
             onChange={(e) => {
-              setInput(e.target.value)
+              const nextValue = e.target.value
+              setInput(nextValue)
               setCaretIndex(e.target.selectionStart ?? e.target.value.length)
               setDismissedSkillToken(null)
+              setAttachments((current) =>
+                pruneInlineAttachmentsFromText(nextValue, current).kept
+              )
             }}
             onFocus={syncShellFocus}
             onKeyDown={handleKeyDown}

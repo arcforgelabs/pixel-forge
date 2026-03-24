@@ -106,6 +106,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - Live Editor handoff still has bootstrap-once and delta-after continuity, but the visible transport is now tool-aware and prompt-first: the operator prompt remains intact, Claude warm turns add only direct native `@file` refs for the current turn bundle, and Codex warm turns add compact context-file paths while selected images ride the native `--image` lane.
 - When the upstream session IDs are known, Pixel Forge-managed warm turns dispatch through native resumed Claude/Codex subprocesses instead of Agent Deck key-send. Agent Deck remains the session identity layer and observability surface, but Pixel Forge no longer needs to type the turn into tmux just to reach the real agent.
 - Stable Live Editor workflow rules live in a thread-level `session-brief.md`, while each per-turn `request.md` is now a concise human-readable mirror and `turn-input.json` is the canonical typed turn bundle for that turn.
+- The chat composer now has a first-pass attachment-token model over the existing textarea: large pasted text becomes a `paste` attachment instead of a giant raw draft blob, inline `[Paste #n]` / `[Image #n]` / `[File #n]` reference tokens preserve prompt position, and chat history can expand pasted text from the attachment card. This is intentionally still a thin segment model, not yet a full rich embedded item editor or a true native multi-item upstream transport.
 - Explicit slash-skill requests are promoted out of freeform user prose into `turn-input.json` and a dedicated request-pack `## Skills` section as exact skill names, while the live dispatch keeps the operator's exact slash-skill text instead of wrapping it in extra explanation.
 - Slash-skill autocomplete and skill visibility come from scanning the real skill folder trees on disk: the managed Pixel Forge skill home plus external agent skill homes like Claude, Codex, and OpenClaw. The managed alpha skill home lives under `~/.pixel-forge-alpha`, not inside the mutable app install tree, so reinstalling Pixel Forge does not wipe the skill surface.
 - Mirror runtimes are isolated sibling Pixel Forge instances keyed by source snapshot or runtime root. The primary mirror-launch control binds to the isolated Live Editor workspace source and creates an isolated clone when needed.
@@ -274,16 +275,18 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: native-feeling handoff transport. Alpha now has truthful typed turn assembly, root-or-clone first-bind choice in the draft chat flow, prompt-first direct `@file` refs, selection tunnels, and live-preview context, but the final handoff still lands in Claude/Codex as a plain string turn rather than a true native item bridge.
+The next target release should attack the new current limiting factor from `SPECS.md`: universal native context ingress plus live browser attach. Alpha now has truthful typed turn assembly, root-or-clone first-bind choice in the draft chat flow, prompt-first direct `@file` refs, inline attachment-token composer behavior, selection tunnels, and live-preview context, but the final handoff still lands in Claude/Codex through tool-specific edges instead of one thin universal item bridge plus one universal warm-browser attach contract.
 
 The smallest complete unit that matters:
 
 - keep the existing persisted chat identity first-class instead of surfacing raw Agent Deck sessions as the user category
 - keep the operator's prompt text exact instead of reintroducing memo wrappers
 - keep draft first-bind intent explicit with the existing `Clone` or `Root` choice and lock it once the lane exists
-- carry turn context through one durable typed payload plus direct `@file` refs instead of adding new prose layers
-- prove the thinner prompt-first transport in the installed shell instead of stopping at unit tests
-- add one genuine native context-item lane for the highest-value artifact class instead of broadening the wrapper contract
+- keep the new inline attachment-token composer model as the operator-facing truth, then translate that model into native tool inputs at the edge instead of flattening it back into wrapper prose
+- carry turn context through one durable typed payload plus direct artifact refs instead of adding new prose layers
+- broker one universal warm-browser attach contract that can emit the same CDP/MCP handle to Claude, Codex, and future agents
+- prove the thinner prompt-first transport and the shared live-browser attach lane in the installed shell instead of stopping at unit tests
+- add one genuine native context-item lane for the highest-value artifact classes without inventing a second operator workflow
 - keep `request.md` and the other request-pack files as truthful mirrors/debug artifacts rather than the conversational surface
 - generalize the same item-bridge contract across DOM, PDF, image, and future document-like artifacts instead of inventing substrate-specific prompt wrappers
 
@@ -292,12 +295,15 @@ The smallest complete unit that matters:
 ```mermaid
 flowchart LR
   User[User-prepared preview state] --> Preview[Running Preview Tab / Session]
+  Preview --> Attach[Brokered Live Browser Attach]
   Preview --> Tunnel[Frozen Selection Tunnel]
-  Tunnel --> Pack[Per-turn Request Pack]
+  Tunnel --> Pack[Per-turn Request Pack + Typed Turn]
   Brief[Thread Session Brief] --> Bootstrap[Bootstrap Once]
   Brief --> Delta[Delta Turns After]
   Pack --> Bootstrap
   Pack --> Delta
+  Attach --> Bootstrap
+  Attach --> Delta
   Bootstrap --> Agent[Native Agent Deck Endpoint Session]
   Delta --> Agent
   Agent --> Workspace[Workspace Changes]

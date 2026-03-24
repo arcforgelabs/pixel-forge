@@ -185,6 +185,36 @@ do not treat /tmp/workspace as a skill.
             self.assertEqual(turn_input_payload["live_preview"]["current_url"], "https://example.com/app")
             self.assertEqual(turn_input_payload["attachments"][0]["name"], "reference.png")
 
+    def test_request_pack_persists_paste_attachments_as_plain_text_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Please review the attached pasted reference.",
+                "<selected-elements />",
+                [
+                    {
+                        "name": "paste-1.txt",
+                        "mime_type": "text/plain",
+                        "data_url": "data:text/plain;charset=utf-8;base64,SGVsbG8gZnJvbSBQaXhlbCBGb3JnZQ==",
+                        "kind": "paste",
+                    }
+                ],
+            )
+
+            turn_input_payload = json.loads(
+                request_pack.turn_input_file.read_text(encoding="utf-8")
+            )
+            attachment_path = request_pack.attachment_paths[0]
+
+            self.assertEqual(turn_input_payload["attachments"][0]["kind"], "paste")
+            self.assertEqual(turn_input_payload["attachments"][0]["mime_type"], "text/plain")
+            self.assertTrue(str(attachment_path).endswith(".txt"))
+            self.assertEqual(
+                attachment_path.read_text(encoding="utf-8"),
+                "Hello from Pixel Forge",
+            )
+
     def test_request_pack_uses_runtime_cli_name_for_live_attach_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(
