@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
+import shutil
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +19,7 @@ from state_db import legacy_live_editor_db_path
 _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
 DEFAULT_PROFILE_ID = "default"
+SAFE_THREAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @dataclass(slots=True)
@@ -147,6 +151,290 @@ def project_name_for_path(project_path: str) -> str:
 
 def _next_chat_id() -> str:
     return f"chat-{uuid4().hex[:12]}"
+
+
+def _safe_thread_name(name: str, fallback: str = "thread") -> str:
+    stripped = SAFE_THREAD_NAME_RE.sub("-", name).strip(".-")
+    return stripped or fallback
+
+
+def _thread_artifact_root(project_path: str, thread_id: str) -> Path:
+    return Path(normalize_project_path(project_path)) / ".pixel-forge" / "threads" / _safe_thread_name(
+        thread_id,
+        "thread",
+    )
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _maybe_move_thread_artifacts(
+    project_path: str,
+    from_thread_id: str,
+    to_thread_id: str,
+) -> None:
+    source_root = _thread_artifact_root(project_path, from_thread_id)
+    target_root = _thread_artifact_root(project_path, to_thread_id)
+    if source_root == target_root or not source_root.exists():
+        return
+
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    if not target_root.exists():
+        shutil.move(str(source_root), str(target_root))
+        return
+
+    for child in source_root.iterdir():
+        destination = target_root / child.name
+        if destination.exists():
+            continue
+        shutil.move(str(child), str(destination))
+
+    try:
+        source_root.rmdir()
+    except OSError:
+        pass
+
+
+def _should_promote_attached_draft_thread(
+    thread_id: str,
+    agent_deck_session_id: str | None,
+) -> bool:
+    normalized_thread_id = thread_id.strip()
+    return bool(
+        normalized_thread_id.startswith("draft-")
+        and isinstance(agent_deck_session_id, str)
+        and agent_deck_session_id.strip()
+    )
+
+
+def _next_unique_chat_id(conn: sqlite3.Connection) -> str:
+    has_live_editor_threads = _table_exists(conn, "live_editor_threads")
+    while True:
+        candidate = _next_chat_id()
+        session_collision = conn.execute(
+            """
+            SELECT 1
+            FROM sessions
+            WHERE thread_id = ?
+            LIMIT 1
+            """,
+            (candidate,),
+        ).fetchone()
+        live_editor_collision = (
+            conn.execute(
+                """
+                SELECT 1
+                FROM live_editor_threads
+                WHERE thread_id = ?
+                LIMIT 1
+                """,
+                (candidate,),
+            ).fetchone()
+            if has_live_editor_threads
+            else None
+        )
+        if session_collision is None and live_editor_collision is None:
+            return candidate
+
+
+def _update_workstation_event_thread_identity(
+    conn: sqlite3.Connection,
+    *,
+    project_path: str,
+    from_thread_id: str,
+    to_thread_id: str,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, payload_json
+        FROM workstation_events
+        WHERE project_path = ?
+          AND chat_id = ?
+        """,
+        (project_path, to_thread_id),
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        changed = False
+        if payload.get("chat_id") == from_thread_id:
+            payload["chat_id"] = to_thread_id
+            changed = True
+        if payload.get("thread_id") == from_thread_id:
+            payload["thread_id"] = to_thread_id
+            changed = True
+        if not changed:
+            continue
+        conn.execute(
+            """
+            UPDATE workstation_events
+            SET payload_json = ?
+            WHERE id = ?
+            """,
+            (json.dumps(payload, separators=(",", ":"), sort_keys=True), row["id"]),
+        )
+
+
+def _promote_session_thread_identity(
+    conn: sqlite3.Connection,
+    *,
+    project_path: str,
+    from_thread_id: str,
+    to_thread_id: str,
+) -> bool:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_from_thread_id = from_thread_id.strip()
+    normalized_to_thread_id = to_thread_id.strip()
+    if not normalized_from_thread_id or not normalized_to_thread_id:
+        return False
+    if normalized_from_thread_id == normalized_to_thread_id:
+        return False
+
+    existing_session = conn.execute(
+        """
+        SELECT 1
+        FROM sessions
+        WHERE project_path = ?
+          AND thread_id = ?
+        """,
+        (normalized_project_path, normalized_from_thread_id),
+    ).fetchone()
+    if existing_session is None:
+        return False
+
+    session_collision = conn.execute(
+        """
+        SELECT 1
+        FROM sessions
+        WHERE thread_id = ?
+        LIMIT 1
+        """,
+        (normalized_to_thread_id,),
+    ).fetchone()
+    live_editor_collision = (
+        conn.execute(
+            """
+            SELECT 1
+            FROM live_editor_threads
+            WHERE thread_id = ?
+            LIMIT 1
+            """,
+            (normalized_to_thread_id,),
+        ).fetchone()
+        if _table_exists(conn, "live_editor_threads")
+        else None
+    )
+    if session_collision is not None or live_editor_collision is not None:
+        raise ValueError(
+            f"Cannot promote {normalized_from_thread_id} to existing thread id {normalized_to_thread_id}"
+        )
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET thread_id = ?
+            WHERE project_path = ?
+              AND thread_id = ?
+            """,
+            (normalized_to_thread_id, normalized_project_path, normalized_from_thread_id),
+        )
+        conn.execute(
+            """
+            UPDATE chat_session_bindings
+            SET chat_id = ?
+            WHERE project_path = ?
+              AND chat_id = ?
+            """,
+            (normalized_to_thread_id, normalized_project_path, normalized_from_thread_id),
+        )
+        conn.execute(
+            """
+            UPDATE workstation_events
+            SET chat_id = ?
+            WHERE project_path = ?
+              AND chat_id = ?
+            """,
+            (normalized_to_thread_id, normalized_project_path, normalized_from_thread_id),
+        )
+        _update_workstation_event_thread_identity(
+            conn,
+            project_path=normalized_project_path,
+            from_thread_id=normalized_from_thread_id,
+            to_thread_id=normalized_to_thread_id,
+        )
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET thread_id = ?
+            WHERE project_path = ?
+              AND thread_id = ?
+            """,
+            (normalized_to_thread_id, normalized_project_path, normalized_from_thread_id),
+        )
+        conn.execute(
+            """
+            UPDATE profile_state
+            SET active_live_editor_thread_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE active_live_editor_thread_id = ?
+            """,
+            (normalized_to_thread_id, normalized_from_thread_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(
+            f"Foreign key violations detected after promoting {normalized_from_thread_id}"
+        )
+
+    _maybe_move_thread_artifacts(
+        normalized_project_path,
+        normalized_from_thread_id,
+        normalized_to_thread_id,
+    )
+    return True
+
+
+def _promote_legacy_attached_draft_sessions(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT project_path, thread_id
+        FROM sessions
+        WHERE thread_id LIKE 'draft-%'
+          AND agent_deck_session_id IS NOT NULL
+          AND TRIM(agent_deck_session_id) <> ''
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    for row in rows:
+        _promote_session_thread_identity(
+            conn,
+            project_path=row["project_path"],
+            from_thread_id=row["thread_id"],
+            to_thread_id=_next_unique_chat_id(conn),
+        )
 
 
 def _connect() -> sqlite3.Connection:
@@ -492,6 +780,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        conn.commit()
+        _promote_legacy_attached_draft_sessions(conn)
         conn.execute(
             """
             INSERT INTO chat_session_bindings (
@@ -861,6 +1151,56 @@ def _is_stale_clone_session(record: SessionRecord) -> bool:
     return not os.path.isdir(record.workspace_path)
 
 
+def _session_has_saved_activity(conn: sqlite3.Connection, thread_id: str) -> bool:
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return False
+
+    if _table_exists(conn, "live_editor_threads"):
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM live_editor_threads
+            WHERE thread_id = ?
+            LIMIT 1
+            """,
+            (normalized_thread_id,),
+        ).fetchone()
+        if row is not None:
+            return True
+
+    if _table_exists(conn, "workstation_events"):
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workstation_events
+            WHERE chat_id = ?
+            LIMIT 1
+            """,
+            (normalized_thread_id,),
+        ).fetchone()
+        if row is not None:
+            return True
+
+    return False
+
+
+def _should_prune_detached_adopted_root_session(
+    conn: sqlite3.Connection,
+    record: SessionRecord,
+    project_path: str,
+) -> bool:
+    if record.origin_kind != "adopted":
+        return False
+    if record.agent_deck_session_id:
+        return False
+    if normalize_project_path(record.workspace_path) != normalize_project_path(project_path):
+        return False
+    if _session_has_meaningful_editor_state(record):
+        return False
+    return not _session_has_saved_activity(conn, record.thread_id)
+
+
 def detach_missing_agent_deck_session_bindings(
     project_path: str,
     available_session_ids: set[str] | list[str] | tuple[str, ...],
@@ -913,7 +1253,27 @@ def detach_missing_agent_deck_session_bindings(
                 """,
                 (normalized_path, *detached_thread_ids),
             )
-        if stale_ids or detached_thread_ids:
+        records = _fetch_session_records(
+            conn,
+            where_sql="sessions.project_path = ?",
+            params=(normalized_path,),
+        )
+        pruned_thread_ids = [
+            record.thread_id
+            for record in records
+            if _should_prune_detached_adopted_root_session(conn, record, normalized_path)
+        ]
+        if pruned_thread_ids:
+            placeholders = ",".join("?" for _ in pruned_thread_ids)
+            conn.execute(
+                f"""
+                DELETE FROM sessions
+                WHERE project_path = ?
+                  AND thread_id IN ({placeholders})
+                """,
+                (normalized_path, *pruned_thread_ids),
+            )
+        if stale_ids or detached_thread_ids or pruned_thread_ids:
             conn.commit()
 
         return _fetch_session_records(
@@ -950,17 +1310,34 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
             params=(normalized_path,),
         )
         stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
+        pruned_thread_ids = [
+            record.thread_id
+            for record in records
+            if _should_prune_detached_adopted_root_session(conn, record, normalized_path)
+        ]
         if stale_ids:
             placeholders = ",".join("?" for _ in stale_ids)
             conn.execute(
                 f"DELETE FROM sessions WHERE id IN ({placeholders})",
                 stale_ids,
             )
+        if pruned_thread_ids:
+            placeholders = ",".join("?" for _ in pruned_thread_ids)
+            conn.execute(
+                f"""
+                DELETE FROM sessions
+                WHERE project_path = ?
+                  AND thread_id IN ({placeholders})
+                """,
+                (normalized_path, *pruned_thread_ids),
+            )
+        if stale_ids or pruned_thread_ids:
             conn.commit()
         return [
             record
             for record in records
             if record.id not in stale_ids
+            and record.thread_id not in pruned_thread_ids
             and should_surface_session(record, normalized_path)
         ]
 
@@ -1332,7 +1709,8 @@ def upsert_session(
     editor_state: dict[str, Any] | None = None,
 ) -> SessionRecord:
     normalized_path = normalize_project_path(project_path)
-    if not thread_id.strip():
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
         raise ValueError("thread_id is required")
     normalized_agent_deck_session_id = (
         agent_deck_session_id.strip()
@@ -1354,6 +1732,29 @@ def upsert_session(
         if project_exists is None:
             raise ValueError("Project does not exist")
 
+        effective_thread_id = normalized_thread_id
+        if _should_promote_attached_draft_thread(
+            normalized_thread_id,
+            normalized_agent_deck_session_id,
+        ):
+            existing_draft_row = conn.execute(
+                """
+                SELECT 1
+                FROM sessions
+                WHERE project_path = ?
+                  AND thread_id = ?
+                """,
+                (normalized_path, normalized_thread_id),
+            ).fetchone()
+            effective_thread_id = _next_unique_chat_id(conn)
+            if existing_draft_row is not None:
+                _promote_session_thread_identity(
+                    conn,
+                    project_path=normalized_path,
+                    from_thread_id=normalized_thread_id,
+                    to_thread_id=effective_thread_id,
+                )
+
         conflicting_record: SessionRecord | None = None
         stale_ids: list[int] = []
         if normalized_agent_deck_session_id:
@@ -1367,7 +1768,7 @@ def upsert_session(
                 params=(
                     normalized_path,
                     normalized_agent_deck_session_id,
-                    thread_id.strip(),
+                    effective_thread_id,
                 ),
             )
             for record in rows:
@@ -1416,7 +1817,7 @@ def upsert_session(
             (
                 normalized_path,
                 normalized_workspace_path,
-                thread_id.strip(),
+                effective_thread_id,
                 backend.strip() or "agent-deck",
                 _normalize_origin_kind(origin_kind),
                 normalized_agent_deck_session_id,
@@ -1429,14 +1830,14 @@ def upsert_session(
             _upsert_chat_binding(
                 conn,
                 project_path=normalized_path,
-                chat_id=thread_id.strip(),
+                chat_id=effective_thread_id,
                 workspace_path=normalized_workspace_path,
                 agent_deck_session_id=normalized_agent_deck_session_id,
                 agent_deck_session_title=agent_deck_session_title,
                 agent_deck_tool=agent_deck_tool,
             )
         else:
-            _delete_chat_binding(conn, thread_id.strip())
+            _delete_chat_binding(conn, effective_thread_id)
         conn.execute(
             """
             UPDATE projects
@@ -1447,7 +1848,7 @@ def upsert_session(
         )
         conn.commit()
 
-    saved = get_project_session(normalized_path, thread_id.strip())
+    saved = get_project_session(normalized_path, effective_thread_id)
     if saved is None:
         raise RuntimeError("Session record disappeared during upsert")
     return saved

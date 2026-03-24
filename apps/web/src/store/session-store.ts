@@ -544,6 +544,30 @@ function mergeProjectChat(
   );
 }
 
+function removeSessionByThreadId(
+  sessions: ProjectSessionRecord[],
+  threadId: string | null
+): ProjectSessionRecord[] {
+  const normalizedThreadId = threadId?.trim() || null;
+  if (!normalizedThreadId) {
+    return sessions;
+  }
+  return sessions.filter((entry) => entry.threadId !== normalizedThreadId);
+}
+
+function removeProjectChatByThreadId(
+  chats: ProjectChatRecord[],
+  threadId: string | null
+): ProjectChatRecord[] {
+  const normalizedThreadId = threadId?.trim() || null;
+  if (!normalizedThreadId) {
+    return chats;
+  }
+  return chats.filter(
+    (entry) => entry.id !== normalizedThreadId && entry.threadId !== normalizedThreadId
+  );
+}
+
 function inferWorkspaceKind(
   projectPath: string,
   workspacePath: string
@@ -1276,8 +1300,17 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     }
 
     const savedSession = await upsertProjectSessionToApi(projectPath, session);
+    const sourceThreadId = session.threadId?.trim() || null;
+    const promotedFromThreadId =
+      sourceThreadId && sourceThreadId !== savedSession.threadId
+        ? sourceThreadId
+        : null;
     const nextLiveEditorSession =
-      liveEditorSession?.threadId === savedSession.threadId
+      liveEditorSession
+      && (
+        liveEditorSession.threadId === savedSession.threadId
+        || (sourceThreadId !== null && liveEditorSession.threadId === sourceThreadId)
+      )
         ? {
             ...liveEditorSession,
             ...savedSession,
@@ -1286,24 +1319,44 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         : liveEditorSession;
 
     set((state) => {
+      const baseProjectSessions = removeSessionByThreadId(
+        state.projectSessions,
+        promotedFromThreadId
+      );
+      const baseProjectSessionsForMap = removeSessionByThreadId(
+        state.projectSessionsByProject[state.projectPath ?? ""] ?? state.projectSessions,
+        promotedFromThreadId
+      );
+      const baseProjectChats = removeProjectChatByThreadId(
+        state.projectChats,
+        promotedFromThreadId
+      );
+      const baseProjectChatsForMap = removeProjectChatByThreadId(
+        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats,
+        promotedFromThreadId
+      );
       const mergedChat = projectChatFromSession(
         state.projectPath,
         savedSession,
-        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats
+        baseProjectChatsForMap
       );
       const nextProjectChats = mergedChat
-        ? mergeProjectChat(state.projectChats, mergedChat)
-        : state.projectChats;
+        ? mergeProjectChat(baseProjectChats, mergedChat)
+        : baseProjectChats;
 
       return {
         liveEditorSession: nextLiveEditorSession,
         projectSessions: mergeSession(
-          state.projectSessions,
+          baseProjectSessions,
           state.projectPath,
           savedSession
         ),
         projectSessionsByProject: mergeSessionIntoProjectMap(
-          state.projectSessionsByProject,
+          setProjectSessionsForPath(
+            state.projectSessionsByProject,
+            state.projectPath,
+            baseProjectSessionsForMap
+          ),
           state.projectPath,
           savedSession
         ),
@@ -1429,7 +1482,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     }
 
     const matchingLiveEditorSession = liveEditorSession
-      ? sessions.find((session) => session.threadId === liveEditorSession.threadId) ?? null
+      ? sessions.find((session) => session.threadId === liveEditorSession.threadId)
+        ?? (
+          liveEditorSession.agentDeckSessionId
+            ? sessions.find(
+                (session) =>
+                  session.agentDeckSessionId === liveEditorSession.agentDeckSessionId
+              ) ?? null
+            : null
+        )
       : null;
     const nextLiveEditorSession = matchingLiveEditorSession
       ? {

@@ -796,6 +796,106 @@ describe("session-store project chat visibility", () => {
       agentDeckSessionTitle: "Chat B refreshed",
     });
   });
+
+  it("replaces a persisted attached draft lane when the backend promotes it to a chat id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.includes("/api/projects/")
+          && url.includes("/sessions")
+          && init?.method === "POST"
+        ) {
+          return new Response(
+            JSON.stringify({
+              id: 9,
+              project_path: "/tmp/example-project",
+              workspace_path: "/tmp/example-project/.agents/thread-live",
+              thread_id: "chat-promoted",
+              backend: "agent-deck",
+              agent_deck_session_id: "deck-live",
+              agent_deck_session_title: "Live chat",
+              agent_deck_tool: "claude",
+              editor_state: null,
+              created_at: "2026-03-21T00:00:00Z",
+              last_active: "2026-03-21T00:05:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    const draftSession = createProjectSession({
+      threadId: "draft-hidden",
+      workspacePath: "/tmp/example-project/.agents/thread-live",
+      agentDeckSessionId: "deck-live",
+      agentDeckSessionTitle: "Live chat",
+      agentDeckTool: "claude",
+    });
+    const draftChat = {
+      id: "draft-hidden",
+      projectPath: "/tmp/example-project",
+      title: "Live chat",
+      threadId: "draft-hidden",
+      workspacePath: "/tmp/example-project/.agents/thread-live",
+      backend: "agent-deck" as const,
+      agentDeckSessionId: "deck-live",
+      agentDeckSessionTitle: "Live chat",
+      agentDeckTool: "claude",
+      agentDeckSessionStatus: "running",
+      bindingState: "attached" as const,
+      workspaceKind: "clone" as const,
+      originKind: "managed" as const,
+      createdAt: "2026-03-21T00:00:00Z",
+      lastActive: "2026-03-21T00:00:00Z",
+    };
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      liveEditorSession: {
+        threadId: "draft-hidden",
+        backend: "agent-deck",
+        workspacePath: "/tmp/example-project/.agents/thread-live",
+        agentDeckSessionId: "deck-live",
+        agentDeckSessionTitle: "Live chat",
+        agentDeckTool: "claude",
+        requestId: null,
+      },
+      projectSessions: [draftSession],
+      projectSessionsByProject: {
+        "/tmp/example-project": [draftSession],
+      },
+      projectChats: [draftChat],
+      projectChatsByProject: {
+        "/tmp/example-project": [draftChat],
+      },
+    });
+
+    const saved = await useSessionStore.getState().persistProjectSession({
+      threadId: "draft-hidden",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project/.agents/thread-live",
+      agentDeckSessionId: "deck-live",
+      agentDeckSessionTitle: "Live chat",
+      agentDeckTool: "claude",
+      requestId: null,
+    });
+
+    expect(saved?.threadId).toBe("chat-promoted");
+    expect(useSessionStore.getState().liveEditorSession).toMatchObject({
+      threadId: "chat-promoted",
+      agentDeckSessionId: "deck-live",
+    });
+    expect(useSessionStore.getState().projectSessions.map((session) => session.threadId)).toEqual([
+      "chat-promoted",
+    ]);
+    expect(useSessionStore.getState().projectChats.map((chat) => chat.threadId)).toEqual([
+      "chat-promoted",
+    ]);
+  });
 });
 
 describe("session-store project ordering", () => {

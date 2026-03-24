@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import tempfile
 import unittest
@@ -377,6 +378,82 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
             sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
 
         self.assertEqual(sessions, [])
+
+    async def test_list_project_sessions_removes_missing_isolated_rows_before_surfacing(self) -> None:
+        async def run_command(args, cwd=None):
+            if args[:2] == ["ls", "-json"]:
+                return (
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": "deck-orphan",
+                                "title": "orphan clone",
+                                "path": "/tmp/project/.agents/orphan-clone",
+                                "group": "project",
+                                "tool": "claude",
+                                "command": "claude",
+                                "status": "idle",
+                                "created_at": "2026-03-24T00:00:00Z",
+                            },
+                            {
+                                "id": "deck-root",
+                                "title": "root session",
+                                "path": "/tmp/project",
+                                "group": "project",
+                                "tool": "codex",
+                                "command": "codex",
+                                "status": "running",
+                                "created_at": "2026-03-24T00:01:00Z",
+                            },
+                        ]
+                    ),
+                    "",
+                )
+            if args[:2] == ["rm", "deck-orphan"]:
+                return (0, "", "")
+            raise AssertionError(f"Unexpected agent-deck command: {args!r} cwd={cwd!r}")
+
+        with (
+            patch.object(agent_deck_bridge, "_run_agent_deck_command", side_effect=run_command) as run_mock,
+            patch.object(
+                agent_deck_bridge.os.path,
+                "isdir",
+                side_effect=lambda path: path == "/tmp/project",
+            ),
+        ):
+            sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual([session.id for session in sessions], ["deck-root"])
+        self.assertEqual(run_mock.await_count, 2)
+
+
+class AgentDeckBridgeCloseoutPromptTest(unittest.TestCase):
+    def test_clone_closeout_prompt_requires_zombie_source_cleanup_without_asking(self) -> None:
+        context = agent_deck_bridge.AgentDeckSessionActionContext(
+            session_id="deck-zombie",
+            session_title="draft-lane",
+            group_path="pixel-forge/project",
+            workspace_path="/tmp/project/.agents/draft-lane",
+            repo_root="/tmp/project",
+            target_branch="master",
+            is_clone=True,
+            is_worktree=False,
+            clone_dirty=False,
+            clone_branch_state="in_sync",
+        )
+
+        prompt = agent_deck_bridge._build_closeout_prompt(context)
+
+        self.assertIn(
+            "treat it as a zombie and remove that Agent Deck session row in the same pass",
+            prompt,
+        )
+        self.assertIn(
+            "Do not ask for permission to remove a zombie source session",
+            prompt,
+        )
+        self.assertIn("agent-deck rm 'deck-zombie' -q", prompt)
 
 
 class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):

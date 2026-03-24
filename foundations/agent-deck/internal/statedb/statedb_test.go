@@ -177,6 +177,57 @@ func TestDeleteInstance(t *testing.T) {
 	}
 }
 
+func TestDeleteInstance_TombstoneBlocksStaleSaveResurrection(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Now()
+
+	staleSnapshot := []*InstanceRow{
+		{
+			ID:          "stale-a",
+			Title:       "Stale A",
+			ProjectPath: "/tmp/a",
+			GroupPath:   "grp",
+			Tool:        "claude",
+			Status:      "idle",
+			CreatedAt:   now,
+			ToolData:    json.RawMessage("{}"),
+		},
+		{
+			ID:          "stale-b",
+			Title:       "Stale B",
+			ProjectPath: "/tmp/b",
+			GroupPath:   "grp",
+			Tool:        "claude",
+			Status:      "idle",
+			CreatedAt:   now,
+			ToolData:    json.RawMessage("{}"),
+		},
+	}
+
+	if err := db.SaveInstances(staleSnapshot); err != nil {
+		t.Fatalf("SaveInstances initial: %v", err)
+	}
+
+	if err := db.DeleteInstance("stale-a"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if err := db.SaveInstances(staleSnapshot); err != nil {
+		t.Fatalf("SaveInstances stale replay: %v", err)
+	}
+
+	rows, err := db.LoadInstances()
+	if err != nil {
+		t.Fatalf("LoadInstances: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("Expected 1 surviving instance after stale replay, got %d", len(rows))
+	}
+	if rows[0].ID != "stale-b" {
+		t.Fatalf("Expected stale-b to survive, got %s", rows[0].ID)
+	}
+}
+
 func TestStatusReadWrite(t *testing.T) {
 	db := newTestDB(t)
 

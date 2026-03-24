@@ -528,6 +528,7 @@ async def _list_project_session_targets(
 ) -> list[AgentDeckSessionTarget]:
     payload = await _run_agent_deck_json_array_command(["ls", "-json"])
     sessions: list[AgentDeckSessionTarget] = []
+    normalized_project_path = _normalize_path(project_path)
 
     for entry in payload:
         if not isinstance(entry, dict):
@@ -542,6 +543,19 @@ async def _list_project_session_targets(
 
         if not include_acpx_backed and _is_acpx_backed_payload(entry):
             continue
+
+        session_id = _normalized_text(entry.get("id"))
+        normalized_session_path = _normalize_path(session_path)
+        is_root_session = normalized_session_path == normalized_project_path
+        if (
+            session_id
+            and not is_root_session
+            and not os.path.isdir(normalized_session_path)
+        ):
+            code, stdout, stderr = await _run_agent_deck_command(["rm", session_id, "-q"])
+            error_output = stderr.strip() or stdout.strip()
+            if code == 0 or _is_missing_session_error(error_output):
+                continue
 
         sessions.append(_payload_to_session_target(entry))
 
@@ -835,8 +849,11 @@ def _build_closeout_prompt(
         "1. Stay within the named source session and the canonical repo root.",
         "2. Inspect both the source workspace and canonical repo root before deciding what to do.",
         "3. Preserve unrelated local work in the canonical root.",
-        "4. Keep Agent Deck state truthful and prefer Agent Deck-native cleanup.",
-        "5. Keep the final report concise: what changed, what was checked, what remains uncertain, and whether the source session is safe to remove.",
+        "4. Keep Agent Deck state truthful and prefer Agent Deck-native cleanup over ad hoc tmux or filesystem cleanup.",
+        "5. If the source workspace is gone but Agent Deck still lists the source session, treat it as a zombie and remove that Agent Deck session row in the same pass.",
+        "6. Do not ask for permission to remove a zombie source session or stale Agent Deck row when the source workspace is already gone and no unique work remains. Remove it and verify.",
+        "7. Do not claim the source session is removed unless Agent Deck itself no longer lists that source session. Deleting only the clone/worktree directory is not enough.",
+        "8. Keep the final report concise: what changed, what was checked, what remains uncertain, and whether the source session is safe to remove.",
         "",
         "Useful starting points:",
         f"- git -C {context.repo_root!r} status --short",
@@ -844,6 +861,7 @@ def _build_closeout_prompt(
         f"- git -C {context.repo_root!r} diff --stat",
         f"- git -C {context.workspace_path!r} diff --stat",
         f"- agent-deck session output {context.session_id!r} -q",
+        "- agent-deck ls --json",
     ]
 
     if context.is_clone:
@@ -851,8 +869,17 @@ def _build_closeout_prompt(
             f"- Relevant closeout tools likely include `agent-deck clone finish {context.session_title!r} --into {target_branch}` "
             f"and `agent-deck clone finish {context.session_title!r} --no-merge`."
         )
+        lines.append(
+            "- Verify the source session row disappears from `agent-deck ls --json` before you report it removed."
+        )
+        lines.append(
+            f"- If clone cleanup removes the workspace but the source row survives, follow with `agent-deck rm {context.session_id!r} -q` and re-check `agent-deck ls --json`."
+        )
     else:
         lines.append(f"- Relevant cleanup tools likely include `agent-deck rm {context.session_title!r}`.")
+        lines.append(
+            "- Verify the source session row disappears from `agent-deck ls --json` before you report it removed."
+        )
 
     if user_prompt and user_prompt.strip():
         lines.extend(["", "Additional operator instructions:", user_prompt.strip()])

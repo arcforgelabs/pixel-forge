@@ -1,11 +1,16 @@
+import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import live_editor_threads
 import project_store
+import workstation_events
+from state_db import db_path as state_db_path
 
 
 class ProjectStoreSessionStateTest(unittest.TestCase):
@@ -175,6 +180,29 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(sessions[0].editor_state["targetUrl"], "https://claude.ai/new")
         self.assertEqual(sessions[0].workspace_path, str(workspace_path))
 
+    def test_detach_missing_agent_deck_session_binding_prunes_empty_detached_adopted_root_shells(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        adopted = project_store.create_adopted_project_session(
+            str(project_path),
+            workspace_path=str(project_path),
+            agent_deck_session_id="deck-closeout",
+            agent_deck_session_title="closeout: stale shell",
+            agent_deck_tool="claude",
+        )
+
+        sessions = project_store.detach_missing_agent_deck_session_bindings(
+            str(project_path),
+            set(),
+        )
+
+        self.assertEqual(sessions, [])
+        self.assertIsNone(
+            project_store.get_project_session(str(project_path), adopted.thread_id)
+        )
+
     def test_default_profile_state_is_initialized_and_round_trips(self) -> None:
         initial = project_store.get_profile_state()
 
@@ -216,6 +244,203 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertTrue(adopted.thread_id.startswith("chat-"))
         self.assertEqual(adopted.agent_deck_session_id, "deck-adopted")
         self.assertEqual(adopted.workspace_path, str(workspace_path))
+
+    def test_upsert_session_promotes_attached_draft_thread_to_chat_identity(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        workspace_path = project_path / ".agents" / "draft-lane"
+        workspace_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        saved = project_store.upsert_session(
+            str(project_path),
+            thread_id="draft-temp",
+            backend="agent-deck",
+            origin_kind="managed",
+            workspace_path=str(workspace_path),
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="pixel-forge-draft-temp",
+            agent_deck_tool="claude",
+            editor_state={"draftAgentType": "claude"},
+        )
+
+        self.assertTrue(saved.thread_id.startswith("chat-"))
+        self.assertNotEqual(saved.thread_id, "draft-temp")
+        self.assertIsNone(project_store.get_project_session(str(project_path), "draft-temp"))
+        self.assertEqual(
+            [session.thread_id for session in project_store.list_project_sessions(str(project_path))],
+            [saved.thread_id],
+        )
+
+    def test_list_project_sessions_promotes_legacy_attached_draft_references(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        workspace_path = project_path / ".agents" / "pixel-forge-project-draft-l6"
+        workspace_path.mkdir(parents=True)
+        artifact_root = project_path / ".pixel-forge" / "threads" / "draft-l6ychw5wsdb"
+        artifact_root.mkdir(parents=True)
+        (artifact_root / "session-brief.md").write_text("legacy brief\n", encoding="utf-8")
+
+        project_store.ensure_state_store_initialized()
+        live_editor_threads.get_or_create_live_editor_thread(
+            str(project_path),
+            "bootstrap-thread",
+        )
+        live_editor_threads.delete_live_editor_thread("bootstrap-thread")
+        with sqlite3.connect(state_db_path()) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    path,
+                    name,
+                    output_mode,
+                    custom_output_path,
+                    created_at,
+                    last_opened
+                ) VALUES (?, ?, 'scratch', NULL, '2026-03-24 03:15:05', '2026-03-24 03:50:07')
+                """,
+                (str(project_path), "project"),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    project_path,
+                    workspace_path,
+                    thread_id,
+                    backend,
+                    origin_kind,
+                    agent_deck_session_id,
+                    agent_deck_session_title,
+                    agent_deck_tool,
+                    editor_state_json,
+                    created_at,
+                    last_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(project_path),
+                    str(workspace_path),
+                    "draft-l6ychw5wsdb",
+                    "agent-deck",
+                    "managed",
+                    "deck-attached",
+                    "pixel-forge-project-draft-l6",
+                    "claude",
+                    json.dumps({"draftAgentType": "claude"}),
+                    "2026-03-24 03:15:05",
+                    "2026-03-24 03:50:07",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO chat_session_bindings (
+                    chat_id,
+                    project_path,
+                    workspace_path,
+                    agent_deck_session_id,
+                    agent_deck_session_title,
+                    agent_deck_tool,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "draft-l6ychw5wsdb",
+                    str(project_path),
+                    str(workspace_path),
+                    "deck-attached",
+                    "pixel-forge-project-draft-l6",
+                    "claude",
+                    "2026-03-24 03:15:05",
+                    "2026-03-24 03:50:07",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO live_editor_threads (
+                    thread_id,
+                    project_path,
+                    workspace_path,
+                    backend,
+                    agent_deck_session_id,
+                    agent_deck_session_title,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "draft-l6ychw5wsdb",
+                    str(project_path),
+                    str(workspace_path),
+                    "agent-deck",
+                    "deck-attached",
+                    "pixel-forge-project-draft-l6",
+                    "2026-03-24 03:15:05",
+                    "2026-03-24 03:50:07",
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE profile_state
+                SET active_project_path = ?,
+                    active_mode = 'live-editor',
+                    active_live_editor_thread_id = ?,
+                    updated_at = '2026-03-24 03:50:07'
+                WHERE profile_id = ?
+                """,
+                (str(project_path), "draft-l6ychw5wsdb", project_store.DEFAULT_PROFILE_ID),
+            )
+            conn.commit()
+
+        workstation_events.append_workstation_event(
+            str(project_path),
+            "draft-l6ychw5wsdb",
+            agent_deck_session_id="deck-attached",
+            event_type="turn_started",
+            payload={
+                "chat_id": "draft-l6ychw5wsdb",
+                "thread_id": "draft-l6ychw5wsdb",
+                "message": "working",
+            },
+        )
+
+        project_store._DB_INITIALIZED = False
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertEqual(len(sessions), 1)
+        promoted_thread_id = sessions[0].thread_id
+        self.assertTrue(promoted_thread_id.startswith("chat-"))
+        self.assertNotEqual(promoted_thread_id, "draft-l6ychw5wsdb")
+
+        with sqlite3.connect(state_db_path()) as conn:
+            binding_chat_id = conn.execute(
+                "SELECT chat_id FROM chat_session_bindings WHERE agent_deck_session_id = ?",
+                ("deck-attached",),
+            ).fetchone()[0]
+            live_thread_id = conn.execute(
+                "SELECT thread_id FROM live_editor_threads WHERE agent_deck_session_id = ?",
+                ("deck-attached",),
+            ).fetchone()[0]
+            profile_thread_id = conn.execute(
+                "SELECT active_live_editor_thread_id FROM profile_state WHERE profile_id = ?",
+                (project_store.DEFAULT_PROFILE_ID,),
+            ).fetchone()[0]
+            event_chat_id, payload_json = conn.execute(
+                "SELECT chat_id, payload_json FROM workstation_events WHERE agent_deck_session_id = ?",
+                ("deck-attached",),
+            ).fetchone()
+
+        payload = json.loads(payload_json)
+        self.assertEqual(binding_chat_id, promoted_thread_id)
+        self.assertEqual(live_thread_id, promoted_thread_id)
+        self.assertEqual(profile_thread_id, promoted_thread_id)
+        self.assertEqual(event_chat_id, promoted_thread_id)
+        self.assertEqual(payload["chat_id"], promoted_thread_id)
+        self.assertEqual(payload["thread_id"], promoted_thread_id)
+        self.assertFalse(artifact_root.exists())
+        self.assertTrue(
+            (project_path / ".pixel-forge" / "threads" / promoted_thread_id / "session-brief.md").exists()
+        )
 
     def test_deleting_active_project_clears_profile_pointer(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
@@ -370,6 +595,31 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNotNone(hidden_draft)
         self.assertIsNotNone(visible_chat)
         self.assertEqual([session.thread_id for session in sessions], ["chat-visible"])
+
+    def test_list_project_sessions_prunes_empty_detached_adopted_root_shells(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        adopted = project_store.upsert_session(
+            str(project_path),
+            thread_id="chat-adopted",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(project_path),
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+            agent_deck_tool=None,
+            editor_state=None,
+        )
+
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertEqual(sessions, [])
+        self.assertIsNotNone(adopted)
+        self.assertIsNone(
+            project_store.get_project_session(str(project_path), "chat-adopted")
+        )
 
 
 if __name__ == "__main__":

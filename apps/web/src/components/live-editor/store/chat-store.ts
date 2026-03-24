@@ -1461,6 +1461,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return toKey || fromKey
     }
 
+    if (observedThreadKey === fromKey) {
+      stopObservedThreadStreaming()
+    }
+
     set((state) => {
       const fromState = getThreadStateSnapshot(state.threadStates, fromKey)
       const nextThreadStates = {
@@ -1555,7 +1559,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       editorState: buildPersistedEditorState(threadState),
     })
 
-    if (savedSession && get().activeThreadKey === threadKey) {
+    const resolvedThreadKey =
+      savedSession && savedSession.threadId !== threadKey
+        ? migrateThreadState(threadKey, savedSession.threadId)
+        : threadKey
+
+    if (savedSession && get().activeThreadKey === resolvedThreadKey) {
       useSessionStore.getState().setLiveEditorSession({
         threadId: savedSession.threadId,
         backend: savedSession.backend,

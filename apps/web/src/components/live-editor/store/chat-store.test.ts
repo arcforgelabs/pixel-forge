@@ -367,6 +367,42 @@ describe('live editor selection history', () => {
     vi.useRealTimers()
   })
 
+  it('renames the active thread when persistence promotes a draft to a chat lane', async () => {
+    const draftThreadKey = useLiveEditorStore.getState().activeThreadKey
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+    })
+
+    const persistSpy = vi
+      .spyOn(useSessionStore.getState(), 'persistProjectSession')
+      .mockResolvedValue({
+        id: 7,
+        projectPath: '/tmp/example-project',
+        workspacePath: '/tmp/example-project/.agents/thread-live',
+        threadId: 'chat-promoted',
+        backend: 'agent-deck',
+        agentDeckSessionId: 'deck-session-a',
+        agentDeckSessionTitle: 'Live chat',
+        agentDeckTool: 'claude',
+        editorState: null,
+        createdAt: '2026-03-21T00:00:00Z',
+        lastActive: '2026-03-21T00:05:00Z',
+        requestId: null,
+      })
+
+    await useLiveEditorStore.getState().persistThreadState()
+
+    expect(useLiveEditorStore.getState().activeThreadKey).toBe('chat-promoted')
+    expect(useLiveEditorStore.getState().threadStates[draftThreadKey]).toBeUndefined()
+    expect(useLiveEditorStore.getState().threadStates['chat-promoted']).toBeTruthy()
+    expect(useSessionStore.getState().liveEditorSession).toMatchObject({
+      threadId: 'chat-promoted',
+      agentDeckSessionId: 'deck-session-a',
+    })
+
+    persistSpy.mockRestore()
+  })
+
   it('hydrates persisted preview state from the shared session store', () => {
     useSessionStore.setState({
       projectSessions: [

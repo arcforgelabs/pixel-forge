@@ -18,7 +18,7 @@ import (
 
 // SchemaVersion tracks the current database schema version.
 // Bump this when adding migrations.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // StateDB wraps a SQLite database for session/group persistence.
 // Thread-safe for concurrent use from multiple goroutines within one process.
@@ -235,6 +235,16 @@ func (s *StateDB) Migrate() error {
 		return fmt.Errorf("statedb: create recent_sessions: %w", err)
 	}
 
+	// instance_tombstones table (schema v3)
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS instance_tombstones (
+			id         TEXT PRIMARY KEY,
+			deleted_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("statedb: create instance_tombstones: %w", err)
+	}
+
 	// Set schema version only when missing or changed.
 	// Avoiding a write on every open reduces lock contention between CLI processes.
 	schemaVersion := fmt.Sprintf("%d", SchemaVersion)
@@ -316,15 +326,21 @@ func (s *StateDB) SaveInstances(insts []*InstanceRow) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	tombstones, err := loadTombstoneIDs(tx)
+	if err != nil {
+		return err
+	}
+	filteredInsts := filterTombstonedInstances(insts, tombstones)
+
 	// Delete rows not in the new list to prevent deleted sessions from reappearing.
-	if len(insts) == 0 {
+	if len(filteredInsts) == 0 {
 		if _, err := tx.Exec("DELETE FROM instances"); err != nil {
 			return err
 		}
 	} else {
-		placeholders := make([]string, len(insts))
-		args := make([]any, len(insts))
-		for i, inst := range insts {
+		placeholders := make([]string, len(filteredInsts))
+		args := make([]any, len(filteredInsts))
+		for i, inst := range filteredInsts {
 			placeholders[i] = "?"
 			args[i] = inst.ID
 		}
@@ -348,7 +364,7 @@ func (s *StateDB) SaveInstances(insts []*InstanceRow) error {
 	}
 	defer stmt.Close()
 
-	for _, inst := range insts {
+	for _, inst := range filteredInsts {
 		toolData := inst.ToolData
 		if len(toolData) == 0 {
 			toolData = json.RawMessage("{}")
@@ -375,7 +391,9 @@ func (s *StateDB) LoadInstances() ([]*InstanceRow, error) {
 			created_at, last_accessed,
 			parent_session_id, worktree_path, worktree_repo, worktree_branch,
 			isolation_type, tool_data
-		FROM instances ORDER BY sort_order
+		FROM instances
+		WHERE id NOT IN (SELECT id FROM instance_tombstones)
+		ORDER BY sort_order
 	`)
 	if err != nil {
 		return nil, err
@@ -408,8 +426,64 @@ func (s *StateDB) LoadInstances() ([]*InstanceRow, error) {
 
 // DeleteInstance removes an instance by ID.
 func (s *StateDB) DeleteInstance(id string) error {
-	_, err := s.db.Exec("DELETE FROM instances WHERE id = ?", id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(
+		"INSERT OR REPLACE INTO instance_tombstones (id, deleted_at) VALUES (?, ?)",
+		id,
+		time.Now().Unix(),
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM instances WHERE id = ?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func loadTombstoneIDs(queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}) (map[string]struct{}, error) {
+	rows, err := queryer.Query("SELECT id FROM instance_tombstones")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tombstones := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		tombstones[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tombstones, nil
+}
+
+func filterTombstonedInstances(insts []*InstanceRow, tombstones map[string]struct{}) []*InstanceRow {
+	if len(insts) == 0 || len(tombstones) == 0 {
+		return insts
+	}
+
+	filtered := make([]*InstanceRow, 0, len(insts))
+	for _, inst := range insts {
+		if inst == nil {
+			continue
+		}
+		if _, deleted := tombstones[inst.ID]; deleted {
+			continue
+		}
+		filtered = append(filtered, inst)
+	}
+	return filtered
 }
 
 // UpdateInstanceField updates a single column for a given instance.
