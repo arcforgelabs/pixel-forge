@@ -113,6 +113,7 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       queuedMessages: nextThreadState.queuedMessages,
       targetAgentDeckSessionId: nextThreadState.targetAgentDeckSessionId,
       draftAgentType: nextThreadState.draftAgentType,
+      draftWorkspaceMode: nextThreadState.draftWorkspaceMode,
       selectedElements: nextThreadState.selectedElements,
       selectionUndoStack: nextThreadState.selectionUndoStack,
       selectionRedoStack: nextThreadState.selectionRedoStack,
@@ -1145,10 +1146,66 @@ describe('live editor selection history', () => {
     expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
       message: 'Use the draft agent',
       agent_type: 'codex',
+      workspace_mode: 'clone',
     })
     expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty(
       'target_agent_deck_session_id'
     )
+  })
+
+  it('uses the draft workspace mode for the first outbound live-edit payload before bind', () => {
+    useSessionStore.setState({
+      defaultAgentType: 'claude',
+    })
+    useLiveEditorStore.getState().setDraftWorkspaceMode('root')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Bind this chat in the canonical root')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Bind this chat in the canonical root',
+      agent_type: 'claude',
+      workspace_mode: 'root',
+    })
+  })
+
+  it('does not send workspace mode when targeting an existing Agent Deck session', () => {
+    useSessionStore.setState({
+      projectPath: '/tmp/example-project',
+      defaultAgentType: 'claude',
+      selectedAgentDeckTargetId: 'deck-session-123',
+      agentDeckTargets: [
+        {
+          id: 'deck-session-123',
+          title: 'codex-target',
+          path: '/tmp/example-project',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setDraftWorkspaceMode('root')
+    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Reuse the existing live lane')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty('workspace_mode')
   })
 
   it('matches tool results to the correct running tool by tool call id', () => {

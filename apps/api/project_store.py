@@ -849,6 +849,10 @@ def _normalize_agent_type(value: object | None) -> str:
     return "codex" if value == "codex" else "claude"
 
 
+def _normalize_workspace_mode(value: object | None) -> str:
+    return "root" if value == "root" else "clone"
+
+
 def _normalize_origin_kind(value: object | None) -> str:
     return "adopted" if value == "adopted" else "managed"
 
@@ -972,6 +976,9 @@ def normalize_session_editor_state(editor_state: object | None) -> dict[str, Any
 
     return {
         "draftAgentType": _normalize_agent_type(editor_state.get("draftAgentType")),
+        "draftWorkspaceMode": _normalize_workspace_mode(
+            editor_state.get("draftWorkspaceMode")
+        ),
         "activePreviewTool": _normalize_active_preview_tool(
             editor_state.get("activePreviewTool")
         ),

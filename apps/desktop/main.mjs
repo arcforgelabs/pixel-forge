@@ -1479,6 +1479,26 @@ async function loadPreviewUrl(ownerContextId, tabId, url) {
   return buildPreviewLoadResponse(previewRecord, url)
 }
 
+function navigatePreviewHistory(ownerContextId, tabId, direction) {
+  const previewRecord = getPreviewRecord(ownerContextId, tabId)
+  if (!previewRecord) {
+    throw new Error(`Unknown preview tab: ${tabId}`)
+  }
+
+  const view = previewRecord.view
+  const canNavigate = direction === 'back'
+    ? view.webContents.canGoBack()
+    : view.webContents.canGoForward()
+  if (canNavigate) {
+    if (direction === 'back') {
+      view.webContents.goBack()
+    } else {
+      view.webContents.goForward()
+    }
+  }
+  return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
+}
+
 function sendPreviewCommand(ownerContextId, tabId, command) {
   const previewRecord = getPreviewRecord(ownerContextId, tabId)
   if (!previewRecord) {
@@ -1896,6 +1916,14 @@ app.whenReady().then(() => {
     previewRecord.view.webContents.focus()
     updatePreviewInputState(ownerContextId, { focusedSurface: 'preview' })
     return { ok: true }
+  })
+
+  ipcMain.handle('pixel-forge-preview:go-back', async (event, payload) => {
+    return navigatePreviewHistory(event.sender.id, String(payload?.tabId || ''), 'back')
+  })
+
+  ipcMain.handle('pixel-forge-preview:go-forward', async (event, payload) => {
+    return navigatePreviewHistory(event.sender.id, String(payload?.tabId || ''), 'forward')
   })
 
   ipcMain.handle('pixel-forge-preview:refresh', async (event, payload) => {

@@ -12,6 +12,7 @@ export type OutputMode = "scratch" | "custom";
 export type PersistedLiveEditorPreviewMode = "proxy" | "browser" | null;
 export type PersistedLiveEditorPanelTab = "chat" | "elements";
 export type PersistedLiveEditorViewportMode = "fluid" | "desktop" | "phone";
+export type DraftWorkspaceMode = "clone" | "root";
 
 export interface PersistedLocalTargetMeta {
   kind: "pixel-forge";
@@ -50,6 +51,7 @@ export interface PersistedPreviewTab {
 
 export interface PersistedThreadEditorState {
   draftAgentType?: string;
+  draftWorkspaceMode?: DraftWorkspaceMode;
   activePreviewTool: "select" | null;
   targetUrl: string;
   activeTab: PersistedLiveEditorPanelTab;
@@ -239,6 +241,7 @@ interface SessionStore {
   createProjectChatSession: (options?: {
     agentType?: string;
     title?: string | null;
+    workspaceMode?: DraftWorkspaceMode;
   }) => Promise<ProjectChatRecord>;
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
@@ -866,6 +869,7 @@ async function createProjectChat(
   options: {
     agentType: string;
     title?: string | null;
+    workspaceMode?: DraftWorkspaceMode;
   }
 ): Promise<ProjectChatRecord> {
   const payload = await requestJson<ApiProjectChat>(
@@ -875,6 +879,7 @@ async function createProjectChat(
       body: JSON.stringify({
         agent_type: options.agentType,
         title: options.title ?? null,
+        workspace_mode: options.workspaceMode ?? "clone",
       }),
     }
   );
@@ -1643,6 +1648,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       const created = await createProjectChat(projectPath, {
         agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
+        workspaceMode: options?.workspaceMode ?? "clone",
       });
       const createdTarget = agentDeckTargetFromProjectChat(created);
       const createdSession = projectSessionFromProjectChat(created);

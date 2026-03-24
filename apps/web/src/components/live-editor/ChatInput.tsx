@@ -31,6 +31,10 @@ function formatAgentLabel(agentType: string | null | undefined): string {
   return agentType || 'Agent'
 }
 
+function formatWorkspaceModeLabel(workspaceMode: string | null | undefined): string {
+  return workspaceMode === 'root' ? 'Root' : 'Clone'
+}
+
 function formatSkillTargetLabel(target: string | null | undefined): string {
   if (!target) {
     return 'Installed'
@@ -68,7 +72,9 @@ export function ChatInput() {
     selectedElements,
     targetAgentDeckSessionId,
     draftAgentType,
+    draftWorkspaceMode,
     setDraftAgentType,
+    setDraftWorkspaceMode,
   } = useLiveEditorStore()
   const {
     defaultAgentType,
@@ -93,6 +99,7 @@ export function ChatInput() {
   const agentSelectionLocked = Boolean(
     liveEditorSession?.agentDeckSessionId || targetAgentDeckSessionId
   )
+  const showDraftWorkspaceModeControl = !agentSelectionLocked
   const activeSkillMatch = findSkillAutocompleteMatch(input, caretIndex)
   const activeSkillTokenKey = activeSkillMatch
     ? `${activeSkillMatch.start}:${activeSkillMatch.end}:${activeSkillMatch.query}`
@@ -522,6 +529,26 @@ export function ChatInput() {
             >
               <Send className="h-3.5 w-3.5" />
             </Button>
+            {showDraftWorkspaceModeControl && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDraftWorkspaceMode(draftWorkspaceMode === 'root' ? 'clone' : 'root')
+                }}
+                className="h-7 px-2 rounded-none border-l border-border/20"
+                title={
+                  draftWorkspaceMode === 'root'
+                    ? 'First send will bind this chat in the canonical workspace root'
+                    : 'First send will create and bind an isolated clone workspace'
+                }
+              >
+                <span className="px-1 text-[11px] font-medium">
+                  {formatWorkspaceModeLabel(draftWorkspaceMode)}
+                </span>
+              </Button>
+            )}
             {/* Agent selector */}
             <div className="relative" ref={agentPickerRef}>
               <Button
@@ -541,7 +568,7 @@ export function ChatInput() {
                     ? `Agent is locked to ${formatAgentLabel(effectiveAgentType)} for this live lane`
                     : `Agent: ${formatAgentLabel(effectiveAgentType)}`
                 }
-              >
+                >
                 <span className="px-1 text-[11px] font-medium">
                   {formatAgentLabel(effectiveAgentType)}
                 </span>

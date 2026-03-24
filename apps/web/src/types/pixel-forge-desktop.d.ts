@@ -180,6 +180,8 @@ export interface PixelForgeDesktopPreviewAPI {
   show(tabId: string): Promise<{ ok: true }>
   activate(tabId: string): Promise<{ ok: true }>
   focus(tabId: string): Promise<{ ok: true }>
+  goBack(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
+  goForward(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   refresh(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   inspect(
     tabId: string,

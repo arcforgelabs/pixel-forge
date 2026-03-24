@@ -145,120 +145,126 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
 
         upsert_session.assert_called_once()
         self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
+        self.assertEqual(
+            upsert_session.call_args.kwargs["editor_state"],
+            {
+                "draftAgentType": "claude",
+                "draftWorkspaceMode": "root",
+            },
+        )
         self.assertEqual(payload["thread_id"], expected_thread_id)
         self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
-    def test_build_dispatch_prompt_uses_prompt_first_transport_with_compact_refs(self) -> None:
+    def test_build_dispatch_prompt_uses_prompt_first_transport_with_native_file_refs(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
             turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
             turn_input_payload={
                 "prompt_text": "Inspect the active preview",
+                "artifacts": {
+                    "session_brief_file": ".pixel-forge/threads/thread-a/session-brief.md",
+                    "selection_tunnel_file": ".pixel-forge/requests/abcd/selection-tunnel.json",
+                    "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
+                },
+                "attachments": [
+                    {
+                        "path": ".pixel-forge/requests/abcd/attachments/reference.png",
+                    }
+                ],
                 "selection": {"count": 0, "items": []},
             },
-            selection_tunnel_url="http://pixel-forge.test/api/live-editor/selection-tunnel?request_id=abcd",
-            live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
         )
 
         self.assertTrue(prompt.startswith("Inspect the active preview"))
-        self.assertIn("Pixel Forge refs:", prompt)
-        self.assertIn('"turn": ".pixel-forge/requests/abcd/turn-input.json"', prompt)
-        self.assertIn('"mirror": ".pixel-forge/requests/abcd/request.md"', prompt)
-        self.assertIn('"selection_tunnel_url": "http://pixel-forge.test/api/live-editor/selection-tunnel?request_id=abcd"', prompt)
-        self.assertIn('"live_preview_context_url": "http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd"', prompt)
-        self.assertNotIn("Current typed Pixel Forge turn payload", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/turn-input.json", prompt)
+        self.assertIn("@.pixel-forge/threads/thread-a/session-brief.md", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/selection-tunnel.json", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/live-preview-context.json", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/attachments/reference.png", prompt)
+        self.assertNotIn("Pixel Forge refs:", prompt)
+        self.assertNotIn("request.md", prompt)
 
-    def test_build_dispatch_prompt_includes_context_patch_in_compact_refs(self) -> None:
+    def test_build_dispatch_prompt_includes_context_patch_as_native_file_ref(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
-            request_id="abcd",
-            continuation_mode="delta",
-            context_patch={
-                "source": "pixel-forge",
-                "thread_id": "thread-a",
-                "continuation_mode": "delta",
-                "live_preview": {
-                    "current_url": "https://example.com/app",
-                    "attach_hints": {
-                        "browser_url": "http://127.0.0.1:9222",
-                        "target_id": "target-1",
-                    },
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Check the warm preview",
+                "artifacts": {
+                    "context_patch_file": ".pixel-forge/requests/abcd/context-patch.json",
                 },
             },
         )
 
-        self.assertIn("Pixel Forge refs:", prompt)
-        self.assertIn('"continuation": "delta"', prompt)
-        self.assertIn('"context_patch": {', prompt)
-        self.assertIn('"thread_id": "thread-a"', prompt)
-        self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
-        self.assertNotIn("Session context patch for this already-running Agent Deck session", prompt)
+        self.assertTrue(prompt.startswith("Check the warm preview"))
+        self.assertIn("@.pixel-forge/requests/abcd/turn-input.json", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/context-patch.json", prompt)
+        self.assertNotIn("Pixel Forge refs:", prompt)
 
-    def test_build_dispatch_prompt_marks_real_attach_requirement_without_wrapper_prose(self) -> None:
+    def test_build_dispatch_prompt_uses_turn_input_file_for_attach_requirements(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
-            request_id="abcd",
-            continuation_mode="delta",
-            explicit_live_attach_required=True,
-            live_preview_context_url="http://pixel-forge.test/api/live-editor/live-preview-context?request_id=abcd",
-            context_patch={
-                "source": "pixel-forge",
-                "thread_id": "thread-a",
-                "continuation_mode": "delta",
-                "live_preview": {
-                    "current_url": "https://example.com/app",
-                    "attach_hints": {
-                        "browser_url": "http://127.0.0.1:9222",
-                        "target_id": "target-1",
-                    },
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Prove the live attach path if it exists.",
+                "artifacts": {
+                    "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
                 },
             },
         )
 
-        self.assertIn('"live_attach_proof_required": true', prompt)
-        self.assertIn('"browser_url": "http://127.0.0.1:9222"', prompt)
-        self.assertNotIn("explicitly requests real live-attach proof", prompt)
+        self.assertTrue(prompt.startswith("Prove the live attach path if it exists."))
+        self.assertIn("@.pixel-forge/requests/abcd/turn-input.json", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/live-preview-context.json", prompt)
+        self.assertNotIn("live_attach_proof_required", prompt)
 
-    def test_build_dispatch_prompt_keeps_controller_browserview_context_as_data(self) -> None:
+    def test_build_dispatch_prompt_does_not_inline_controller_browserview_context(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
-            request_id="abcd",
-            continuation_mode="delta",
-            context_patch={
-                "source": "pixel-forge",
-                "thread_id": "thread-a",
-                "continuation_mode": "delta",
-                "live_preview": {
-                    "live_inspection_mode": "controller-browserview",
-                    "current_url": "https://field.example.com/app",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview state.",
+                "artifacts": {
+                    "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
                 },
             },
         )
 
-        self.assertIn('"live_inspection_mode": "controller-browserview"', prompt)
-        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/live-preview-context.json", prompt)
+        self.assertNotIn("controller-browserview", prompt)
 
-    def test_build_dispatch_prompt_marks_attach_requirement_when_hints_are_missing(self) -> None:
+    def test_build_dispatch_prompt_deduplicates_native_refs(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
-            request_id="abcd",
-            continuation_mode="delta",
-            explicit_live_attach_required=True,
-            context_patch={
-                "source": "pixel-forge",
-                "thread_id": "thread-a",
-                "continuation_mode": "delta",
-                "live_preview": {
-                    "live_inspection_mode": "controller-browserview",
-                    "current_url": "https://field.example.com/app",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview state.",
+                "artifacts": {
+                    "selection_tunnel_file": ".pixel-forge/requests/abcd/selection-tunnel.json",
                 },
+                "attachments": [
+                    {"path": ".pixel-forge/requests/abcd/selection-tunnel.json"},
+                    {"path": ".pixel-forge/requests/abcd/selection-tunnel.json"},
+                ],
             },
         )
 
-        self.assertIn('"live_attach_proof_required": true', prompt)
-        self.assertIn('"live_inspection_mode": "controller-browserview"', prompt)
-        self.assertNotIn("--via controller-browserview --status succeeded", prompt)
+        self.assertEqual(
+            prompt.count("@.pixel-forge/requests/abcd/selection-tunnel.json"),
+            1,
+        )
+
+    def test_build_dispatch_prompt_falls_back_to_request_mirror_when_turn_bundle_is_missing(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview state.",
+            },
+        )
+
+        self.assertTrue(prompt.startswith("Inspect the active preview state."))
+        self.assertIn("@.pixel-forge/requests/abcd/request.md", prompt)
 
     async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
         session_info = AgentDeckSessionInfo(

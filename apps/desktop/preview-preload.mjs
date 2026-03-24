@@ -34,6 +34,8 @@ if (shouldExposeDesktopBridge()) {
       show: (tabId) => ipcRenderer.invoke('pixel-forge-preview:show', { tabId }),
       activate: (tabId) => ipcRenderer.invoke('pixel-forge-preview:activate', { tabId }),
       focus: (tabId) => ipcRenderer.invoke('pixel-forge-preview:focus', { tabId }),
+      goBack: (tabId) => ipcRenderer.invoke('pixel-forge-preview:go-back', { tabId }),
+      goForward: (tabId) => ipcRenderer.invoke('pixel-forge-preview:go-forward', { tabId }),
       refresh: (tabId) => ipcRenderer.invoke('pixel-forge-preview:refresh', { tabId }),
       close: (tabId) => ipcRenderer.invoke('pixel-forge-preview:close', { tabId }),
       setTool: (tabId, tool) =>

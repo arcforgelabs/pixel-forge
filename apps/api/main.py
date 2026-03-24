@@ -1092,6 +1092,7 @@ async def create_project_chat(
             agent_deck_tool=None,
             editor_state={
                 "draftAgentType": request.agent_type,
+                "draftWorkspaceMode": request.workspace_mode,
             },
         )
     except ValueError as exc:
@@ -2457,6 +2458,19 @@ def build_live_editor_dispatch_prompt(
     informational_only: bool = False,
     explicit_live_attach_required: bool = False,
 ) -> str:
+    del request_id
+    del preview_url
+    del selection_tunnel
+    del selection_tunnel_url
+    del live_preview_context_url
+    del context_patch
+    del requested_skills
+    del self_edit_safe_mode
+    del self_edit_scope
+    del continuation_mode
+    del informational_only
+    del explicit_live_attach_required
+
     prompt_text = ""
     if isinstance(turn_input_payload, dict):
         raw_prompt_text = turn_input_payload.get("prompt_text")
@@ -2465,75 +2479,45 @@ def build_live_editor_dispatch_prompt(
     if not prompt_text:
         prompt_text = "Use the attached Pixel Forge turn context."
 
-    normalized_requested_skills = normalize_requested_skills(
-        requested_skills
-        if requested_skills is not None
-        else (
-            turn_input_payload.get("requested_skills")
-            if isinstance(turn_input_payload, dict)
-            and isinstance(turn_input_payload.get("requested_skills"), list)
-            else None
-        )
-    )
+    reference_paths: list[str] = []
+    seen_paths: set[str] = set()
 
-    refs: dict[str, object] = {
-        "source": "pixel-forge",
-        "mode": "inspect" if informational_only else "edit",
-        "mirror": request_file_path,
-    }
-    if turn_input_file_path:
-        refs["turn"] = turn_input_file_path
-    if continuation_mode != "bootstrap":
-        refs["continuation"] = continuation_mode
-    if normalized_requested_skills:
-        refs["load_skills"] = normalized_requested_skills
-    delivery = None
+    def append_reference(path_value: object | None) -> None:
+        if not isinstance(path_value, str):
+            return
+        normalized_path = path_value.strip()
+        if not normalized_path or normalized_path in seen_paths:
+            return
+        seen_paths.add(normalized_path)
+        reference_paths.append(f"@{normalized_path}")
+
+    append_reference(turn_input_file_path)
+
     if isinstance(turn_input_payload, dict):
-        raw_delivery = turn_input_payload.get("delivery")
-        if isinstance(raw_delivery, dict):
-            delivery = raw_delivery
-    if delivery:
-        refs["delivery"] = delivery
-    elif preview_url:
-        refs["preview_target_url"] = preview_url
-    if selection_tunnel_url:
-        refs["selection_tunnel_url"] = selection_tunnel_url
-    if live_preview_context_url:
-        refs["live_preview_context_url"] = live_preview_context_url
-    if explicit_live_attach_required:
-        refs["live_attach_proof_required"] = True
+        raw_artifacts = turn_input_payload.get("artifacts")
+        if isinstance(raw_artifacts, dict):
+            for key in (
+                "session_brief_file",
+                "context_patch_file",
+                "selected_elements_file",
+                "selection_tunnel_file",
+                "live_preview_context_file",
+            ):
+                append_reference(raw_artifacts.get(key))
 
-    selection_sources = _selection_source_summary(selection_tunnel)
-    if len(selection_sources) > 1:
-        refs["selection_sources"] = [
-            {
-                "label": label,
-                "url": url,
-                "count": count,
-            }
-            for label, url, count in selection_sources
-        ]
+        raw_attachments = turn_input_payload.get("attachments")
+        if isinstance(raw_attachments, list):
+            for attachment in raw_attachments:
+                if isinstance(attachment, dict):
+                    append_reference(attachment.get("path"))
 
-    constraints: list[str] = []
-    if self_edit_safe_mode:
-        constraints.append("no_pixel_forge_restart")
-        if self_edit_scope == "preview":
-            constraints.append("clone_preview_only")
-        elif self_edit_scope == "controller":
-            constraints.append("stage_controller_after_turn")
-    if constraints:
-        refs["constraints"] = constraints
+    if not reference_paths:
+        append_reference(request_file_path)
 
-    if context_patch and continuation_mode != "bootstrap":
-        refs["context_patch"] = context_patch
+    if not reference_paths:
+        return prompt_text
 
-    return (
-        f"{prompt_text}\n\n"
-        "Pixel Forge refs:\n"
-        "```json\n"
-        f"{json.dumps(refs, indent=2)}\n"
-        "```"
-    )
+    return f"{prompt_text}\n\n" + "\n".join(reference_paths)
 
 
 async def _deliver_live_editor_prompt_to_agent_deck_session(
@@ -3256,6 +3240,7 @@ async def live_editor_chat(websocket: WebSocket):
             preview_url = data.get("preview_url", "")
             live_preview = data.get("live_preview")
             agent_type = data.get("agent_type", "claude")
+            workspace_mode = data.get("workspace_mode", "clone")
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
 
             if not attachments and legacy_images:
@@ -3333,6 +3318,11 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread,
                     agent_type=agent_type,
+                    workspace_mode=(
+                        workspace_mode
+                        if isinstance(workspace_mode, str)
+                        else "clone"
+                    ),
                     target_agent_deck_session_id=(
                         target_agent_deck_session_id
                         if isinstance(target_agent_deck_session_id, str)
@@ -3660,6 +3650,11 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread,
                     agent_type=agent_type,
+                    workspace_mode=(
+                        workspace_mode
+                        if isinstance(workspace_mode, str)
+                        else "clone"
+                    ),
                 )
                 _assert_agent_deck_lane_available(
                     normalized_project_path,

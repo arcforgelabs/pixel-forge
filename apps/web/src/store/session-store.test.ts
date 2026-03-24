@@ -537,7 +537,10 @@ describe("session-store thread switching", () => {
 });
 
 describe("session-store chat creation", () => {
+  let createChatBody: Record<string, unknown> | null = null;
+
   beforeEach(() => {
+    createChatBody = null;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -547,6 +550,7 @@ describe("session-store chat creation", () => {
           && url.includes("/chats")
           && init?.method === "POST"
         ) {
+          createChatBody = JSON.parse(String(init.body || "{}"));
           return new Response(
             JSON.stringify({
               id: "thread-b",
@@ -623,6 +627,22 @@ describe("session-store chat creation", () => {
     expect(state.agentDeckTargets).toHaveLength(0);
     expect(state.selectedAgentDeckTargetId).toBeNull();
     expect(state.defaultAgentType).toBe("claude");
+    expect(createChatBody).toMatchObject({
+      agent_type: "codex",
+      workspace_mode: "clone",
+    });
+  });
+
+  it("can create a fresh draft chat with canonical-root first-bind intent", async () => {
+    await useSessionStore.getState().createProjectChatSession({
+      agentType: "claude",
+      workspaceMode: "root",
+    });
+
+    expect(createChatBody).toMatchObject({
+      agent_type: "claude",
+      workspace_mode: "root",
+    });
   });
 
   it("surfaces plain-text chat creation failures without rereading the response body", async () => {

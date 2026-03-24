@@ -17,6 +17,7 @@ import {
   normalizePersistedPreviewUrl,
 } from '@/lib/preview-url'
 import type {
+  DraftWorkspaceMode,
   PersistedPreviewTab,
   PersistedThreadEditorState,
   PersistedWorkspacePreviewMeta,
@@ -201,6 +202,7 @@ export interface PreviewAuthIssue {
 
 export interface ThreadEditorState {
   draftAgentType: string
+  draftWorkspaceMode: DraftWorkspaceMode
   activePreviewTool: PixelForgeDesktopPreviewTool
   targetUrl: string
   activeTab: LiveEditorPanelTab
@@ -229,6 +231,7 @@ export interface ThreadChatState {
   queuedMessages: PendingOutboundMessage[]
   targetAgentDeckSessionId: string | null
   draftAgentType: string
+  draftWorkspaceMode: DraftWorkspaceMode
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
@@ -258,6 +261,7 @@ interface ActiveThreadViewState {
   queuedMessages: PendingOutboundMessage[]
   targetAgentDeckSessionId: string | null
   draftAgentType: string
+  draftWorkspaceMode: DraftWorkspaceMode
   selectedElements: SelectedElement[]
   selectionUndoStack: SelectedElement[][]
   selectionRedoStack: SelectedElement[][]
@@ -303,6 +307,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   removeThread: (threadKey: string | null | undefined, fallbackThreadKey?: string | null) => void
   setTargetAgentDeckSessionId: (sessionId: string | null) => void
   setDraftAgentType: (agentType: string) => void
+  setDraftWorkspaceMode: (workspaceMode: DraftWorkspaceMode) => void
   getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
   findThreadKeyByTargetAgentDeckSessionId: (
     sessionId: string | null | undefined
@@ -349,6 +354,12 @@ function generateId(): string {
 
 function normalizeDraftAgentType(agentType: string | null | undefined): string {
   return agentType === 'codex' ? 'codex' : 'claude'
+}
+
+function normalizeDraftWorkspaceMode(
+  workspaceMode: string | null | undefined
+): DraftWorkspaceMode {
+  return workspaceMode === 'root' ? 'root' : 'clone'
 }
 
 function getDefaultDraftAgentType(): string {
@@ -403,11 +414,13 @@ function restoreWorkspacePreviewMeta(
 }
 
 function createEmptyThreadEditorState(
-  draftAgentType: string = getDefaultDraftAgentType()
+  draftAgentType: string = getDefaultDraftAgentType(),
+  draftWorkspaceMode: DraftWorkspaceMode = 'clone',
 ): ThreadEditorState {
   const initialPreviewTab = createEmptyPreviewTab()
   return {
     draftAgentType: normalizeDraftAgentType(draftAgentType),
+    draftWorkspaceMode: normalizeDraftWorkspaceMode(draftWorkspaceMode),
     activePreviewTool: null,
     targetUrl: '',
     activeTab: 'chat',
@@ -566,6 +579,7 @@ function createThreadEditorStateFromPersisted(
     draftAgentType: normalizeDraftAgentType(
       editorState.draftAgentType || getDefaultDraftAgentType()
     ),
+    draftWorkspaceMode: normalizeDraftWorkspaceMode(editorState.draftWorkspaceMode),
     activePreviewTool: editorState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl,
     activeTab: editorState.activeTab === 'elements' ? 'elements' : 'chat',
@@ -593,6 +607,7 @@ function buildPersistedEditorState(
 
   return {
     draftAgentType: normalizeDraftAgentType(threadState.draftAgentType),
+    draftWorkspaceMode: normalizeDraftWorkspaceMode(threadState.draftWorkspaceMode),
     activePreviewTool: threadState.activePreviewTool === 'select' ? 'select' : null,
     targetUrl: normalizePersistedPreviewUrl(threadState.targetUrl.trim(), recoveredPdfUrl),
     activeTab: threadState.activeTab,
@@ -644,6 +659,10 @@ function shouldPersistThreadState(
     return true
   }
 
+  if (threadState.draftWorkspaceMode !== 'clone') {
+    return true
+  }
+
   return threadState.previewTabs.some((tab) =>
     Boolean(tab.url.trim() || tab.localTarget)
   )
@@ -676,6 +695,7 @@ function buildActiveThreadViewState(
     queuedMessages: threadState.queuedMessages,
     targetAgentDeckSessionId: threadState.targetAgentDeckSessionId,
     draftAgentType: threadState.draftAgentType,
+    draftWorkspaceMode: threadState.draftWorkspaceMode,
     selectedElements: threadState.selectedElements,
     selectionUndoStack: threadState.selectionUndoStack,
     selectionRedoStack: threadState.selectionRedoStack,
@@ -2289,6 +2309,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
+      const workspaceMode = normalizeDraftWorkspaceMode(activeThreadState.draftWorkspaceMode)
       void (async () => {
         let livePreviewPayload: Record<string, unknown> | null = null
         if (activePreviewTab) {
@@ -2339,6 +2360,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           element_context: elementContext,
           preview_url: previewUrl || '',
           agent_type: agentType,
+        }
+
+        if (!boundSession?.threadId && !targetAgentDeckSessionId) {
+          payload.workspace_mode = workspaceMode
         }
 
         if (livePreviewPayload) {
@@ -2490,6 +2515,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         draftAgentType: normalizedAgentType,
+      }))
+      scheduleThreadPersistence(activeThreadKey)
+    },
+
+    setDraftWorkspaceMode: (workspaceMode) => {
+      const activeThreadKey = get().activeThreadKey
+      const normalizedWorkspaceMode = normalizeDraftWorkspaceMode(workspaceMode)
+      const boundSession = resolveThreadSession(activeThreadKey)
+      const targetedSessionId = get().getTargetAgentDeckSessionId(activeThreadKey)
+      if (boundSession?.agentDeckSessionId || targetedSessionId) {
+        return
+      }
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        draftWorkspaceMode: normalizedWorkspaceMode,
       }))
       scheduleThreadPersistence(activeThreadKey)
     },

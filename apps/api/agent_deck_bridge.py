@@ -1152,12 +1152,22 @@ async def ensure_agent_deck_session(
     project_path: str,
     thread: LiveEditorThreadRecord,
     agent_type: str = "claude",
+    workspace_mode: str = "clone",
     *,
     target_agent_deck_session_id: str | None = None,
 ) -> AgentDeckSessionInfo:
     payload: dict[str, object]
     rebind_workspace_path = _thread_rebind_workspace_path(project_path, thread)
-    launch_workspace_mode = "existing" if rebind_workspace_path else "clone"
+    requested_workspace_mode = (
+        workspace_mode.strip().lower()
+        if isinstance(workspace_mode, str) and workspace_mode.strip()
+        else "clone"
+    )
+    launch_workspace_mode = (
+        "existing"
+        if rebind_workspace_path
+        else ("root" if requested_workspace_mode == "root" else "clone")
+    )
     preferred_session_title = _preferred_thread_session_title(project_path, thread)
     persisted_thread_title = _normalized_text(thread.agent_deck_session_title)
     bound_session_id = (

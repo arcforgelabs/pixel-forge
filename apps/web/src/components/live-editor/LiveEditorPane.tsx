@@ -710,6 +710,19 @@ export function LiveEditorPane() {
   const goBack = useCallback(() => {
     if (!canGoBack) return
     const prevUrl = urlHistory[urlHistoryCursor - 1]
+    const activePreviewTab = previewTabsRef.current.find(
+      (tab) => tab.id === activeTabIdRef.current
+    ) ?? previewTabsRef.current[0] ?? null
+    if (
+      activePreviewTab?.mode === 'browser'
+      && activePreviewTab.browserTabId
+      && desktopPreviewRef.current?.goBack
+    ) {
+      setUrlHistoryCursor((c) => Math.max(0, c - 1))
+      urlNavRef.current = true
+      void desktopPreviewRef.current.goBack(activePreviewTab.id)
+      return
+    }
     setUrlHistoryCursor((c) => c - 1)
     setTargetUrl(prevUrl)
     urlNavRef.current = true
@@ -719,11 +732,30 @@ export function LiveEditorPane() {
   const goForward = useCallback(() => {
     if (!canGoForward) return
     const nextUrl = urlHistory[urlHistoryCursor + 1]
+    const activePreviewTab = previewTabsRef.current.find(
+      (tab) => tab.id === activeTabIdRef.current
+    ) ?? previewTabsRef.current[0] ?? null
+    if (
+      activePreviewTab?.mode === 'browser'
+      && activePreviewTab.browserTabId
+      && desktopPreviewRef.current?.goForward
+    ) {
+      setUrlHistoryCursor((c) => Math.min(urlHistory.length - 1, c + 1))
+      urlNavRef.current = true
+      void desktopPreviewRef.current.goForward(activePreviewTab.id)
+      return
+    }
     setUrlHistoryCursor((c) => c + 1)
     setTargetUrl(nextUrl)
     urlNavRef.current = true
     void loadAppRef.current?.(nextUrl)
-  }, [canGoForward, setTargetUrl, setUrlHistoryCursor, urlHistory, urlHistoryCursor])
+  }, [
+    canGoForward,
+    setTargetUrl,
+    setUrlHistoryCursor,
+    urlHistory,
+    urlHistoryCursor,
+  ])
 
   useEffect(() => {
     selectedElementsRef.current = selectedElements
