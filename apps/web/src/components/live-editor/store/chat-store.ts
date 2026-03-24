@@ -2399,7 +2399,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           [nextDraftKey]: nextThreadState,
         })
       )
-      scheduleThreadPersistence(nextDraftKey, 0)
+      if (nextThreadState.targetAgentDeckSessionId) {
+        scheduleThreadPersistence(nextDraftKey, 0)
+      }
       maybeObserveActiveThread()
     },
 

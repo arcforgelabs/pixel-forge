@@ -160,6 +160,94 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(adopted_chat.agent_deck_session_id, "deck-root")
         self.assertEqual(adopted_chat.binding_state, "attached")
 
+    def test_skips_internal_root_draft_sessions_even_when_preview_state_exists(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    thread_id="draft-q2",
+                    workspace_path="/tmp/project",
+                    agent_deck_session_id=None,
+                    agent_deck_session_title=None,
+                    agent_deck_tool=None,
+                    editor_state={
+                        "draftAgentType": "claude",
+                        "targetUrl": "https://field.arcforge.au/",
+                        "previewTabs": [
+                            {
+                                "id": "preview-restored",
+                                "url": "https://field.arcforge.au/",
+                                "title": "Field",
+                                "mode": "browser",
+                                "localTarget": None,
+                            }
+                        ],
+                        "activePreviewTabId": "preview-restored",
+                        "urlHistory": ["https://field.arcforge.au/"],
+                        "urlHistoryCursor": 0,
+                    },
+                )
+            ],
+            visible_targets=[],
+        )
+
+        self.assertEqual(chats, [])
+
+    def test_keeps_explicit_root_chat_draft_sessions_visible(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    thread_id="chat-12345678",
+                    workspace_path="/tmp/project",
+                    agent_deck_session_id=None,
+                    agent_deck_session_title="Useful draft",
+                    agent_deck_tool=None,
+                    editor_state={
+                        "draftAgentType": "claude",
+                    },
+                )
+            ],
+            visible_targets=[],
+        )
+
+        self.assertEqual(len(chats), 1)
+        self.assertEqual(chats[0].thread_id, "chat-12345678")
+        self.assertEqual(chats[0].title, "Useful draft")
+        self.assertEqual(chats[0].binding_state, "detached")
+
+    def test_preserves_input_session_order_instead_of_resorting_by_activity(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    id=1,
+                    thread_id="thread-a",
+                    agent_deck_session_id="deck-a",
+                    last_active="2026-03-21T00:10:00Z",
+                ),
+                create_session(
+                    id=2,
+                    thread_id="thread-b",
+                    agent_deck_session_id="deck-b",
+                    agent_deck_session_title="pixel-forge-thread-b",
+                    workspace_path="/tmp/project/.agents/thread-b",
+                    last_active="2026-03-21T00:01:00Z",
+                ),
+            ],
+            visible_targets=[
+                create_target(id="deck-a", path="/tmp/project/.agents/thread-a"),
+                create_target(
+                    id="deck-b",
+                    title="pixel-forge-thread-b",
+                    path="/tmp/project/.agents/thread-b",
+                    created_at="2026-03-21T00:00:00Z",
+                ),
+            ],
+        )
+
+        self.assertEqual([chat.thread_id for chat in chats], ["thread-a", "thread-b"])
+
     def test_finds_reconciled_chat_by_agent_deck_session_id(self) -> None:
         chats = reconcile_project_chats(
             "/tmp/project",

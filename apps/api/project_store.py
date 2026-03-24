@@ -52,6 +52,80 @@ class SessionRecord:
     last_active: str
 
 
+def _session_has_meaningful_editor_state(session: SessionRecord) -> bool:
+    editor_state = session.editor_state
+    if not isinstance(editor_state, dict):
+        return False
+
+    if str(editor_state.get("targetUrl") or "").strip():
+        return True
+
+    if str(editor_state.get("targetPreviewTabId") or "").strip():
+        return True
+
+    if editor_state.get("activePreviewTool") == "select":
+        return True
+
+    url_history = editor_state.get("urlHistory")
+    if isinstance(url_history, list) and any(
+        isinstance(entry, str) and entry.strip() for entry in url_history
+    ):
+        return True
+
+    preview_tabs = editor_state.get("previewTabs")
+    if isinstance(preview_tabs, list):
+        if len(preview_tabs) > 1:
+            return True
+        if len(preview_tabs) == 1 and isinstance(preview_tabs[0], dict):
+            tab = preview_tabs[0]
+            if str(tab.get("url") or "").strip():
+                return True
+            if tab.get("localTarget") is not None:
+                return True
+
+    return False
+
+
+def should_surface_session(
+    session: SessionRecord,
+    project_path: str,
+) -> bool:
+    normalized_workspace_path = normalize_project_path(session.workspace_path)
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_thread_id = (
+        session.thread_id.strip()
+        if isinstance(session.thread_id, str) and session.thread_id.strip()
+        else ""
+    )
+
+    if (
+        normalized_thread_id.startswith("draft-")
+        and normalized_workspace_path == normalized_project_path
+        and not (
+            isinstance(session.agent_deck_session_id, str)
+            and session.agent_deck_session_id.strip()
+        )
+    ):
+        return False
+
+    if session.agent_deck_session_id:
+        return True
+
+    if normalized_workspace_path != normalized_project_path:
+        return True
+
+    if normalized_thread_id.startswith("chat-"):
+        return True
+
+    if (
+        isinstance(session.agent_deck_session_title, str)
+        and session.agent_deck_session_title.strip()
+    ):
+        return True
+
+    return _session_has_meaningful_editor_state(session)
+
+
 @dataclass(slots=True)
 class ProfileStateRecord:
     profile_id: str
@@ -701,7 +775,7 @@ def _fetch_session_records(
         f"""
         {_SESSION_SELECT_SQL}
         WHERE {where_sql}
-        ORDER BY last_active DESC, sessions.id DESC
+        ORDER BY sessions.id ASC
         """,
         params,
     ).fetchall()
@@ -883,7 +957,12 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
                 stale_ids,
             )
             conn.commit()
-        return [record for record in records if record.id not in stale_ids]
+        return [
+            record
+            for record in records
+            if record.id not in stale_ids
+            and should_surface_session(record, normalized_path)
+        ]
 
 
 def get_project_session(
@@ -1012,7 +1091,7 @@ def list_projects() -> list[ProjectRecord]:
             """
             SELECT path, name, output_mode, custom_output_path, created_at, last_opened
             FROM projects
-            ORDER BY last_opened DESC, created_at DESC, path ASC
+            ORDER BY created_at ASC, path ASC
             """
         ).fetchall()
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_deck_bridge import AgentDeckSessionTarget
-from project_store import SessionRecord, normalize_project_path
+from project_store import SessionRecord, normalize_project_path, should_surface_session
 
 
 @dataclass(slots=True)
@@ -55,8 +55,13 @@ def _chat_title(
     return "Chat"
 
 
-def _sort_timestamp(chat: ProjectChatRecord) -> str:
-    return chat.last_active or chat.created_at or ""
+def _target_sort_key(target: AgentDeckSessionTarget) -> tuple[str, str, str]:
+    normalized_title = (
+        target.title.strip().lower()
+        if isinstance(target.title, str) and target.title.strip()
+        else ""
+    )
+    return (target.created_at or "", normalized_title, target.id)
 
 
 def _match_target_for_session(
@@ -121,6 +126,9 @@ def reconcile_project_chats(
     chats: list[ProjectChatRecord] = []
 
     for session in sessions:
+        if not should_surface_session(session, normalized_project_path):
+            continue
+
         matched_target = _match_target_for_session(
             session,
             visible_targets=visible_targets,
@@ -166,10 +174,10 @@ def reconcile_project_chats(
             )
         )
 
-    for target in visible_targets:
-        if target.id in used_target_ids:
-            continue
-
+    for target in sorted(
+        (target for target in visible_targets if target.id not in used_target_ids),
+        key=_target_sort_key,
+    ):
         chats.append(
             ProjectChatRecord(
                 id=f"agent-deck:{target.id}",
@@ -194,11 +202,7 @@ def reconcile_project_chats(
             )
         )
 
-    return sorted(
-        chats,
-        key=lambda chat: (_sort_timestamp(chat), chat.title.lower(), chat.id),
-        reverse=True,
-    )
+    return chats
 
 
 def find_project_chat_by_agent_deck_session_id(

@@ -339,6 +339,34 @@ describe('live editor selection history', () => {
     expect(useLiveEditorStore.getState().previewTabs[0]?.browserTabId).toBe('browser-tab-two')
   })
 
+  it('does not immediately persist a blank untargeted local draft thread', async () => {
+    vi.useFakeTimers()
+    const persistSpy = vi
+      .spyOn(useSessionStore.getState(), 'persistProjectSession')
+      .mockResolvedValue(null)
+
+    useLiveEditorStore.getState().newSession()
+    await vi.runAllTimersAsync()
+
+    expect(persistSpy).not.toHaveBeenCalled()
+    persistSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('still persists a targeted draft thread immediately', async () => {
+    vi.useFakeTimers()
+    const persistSpy = vi
+      .spyOn(useSessionStore.getState(), 'persistProjectSession')
+      .mockResolvedValue(null)
+
+    useLiveEditorStore.getState().newSession('deck-session-b')
+    await vi.runAllTimersAsync()
+
+    expect(persistSpy).toHaveBeenCalledTimes(1)
+    persistSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
   it('hydrates persisted preview state from the shared session store', () => {
     useSessionStore.setState({
       projectSessions: [

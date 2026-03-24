@@ -652,6 +652,251 @@ describe("session-store chat creation", () => {
   });
 });
 
+describe("session-store project chat visibility", () => {
+  beforeEach(() => {
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [],
+      projectChatsByProject: {},
+      projectSessions: [],
+      projectSessionsByProject: {},
+      agentDeckTargets: [],
+      selectedAgentDeckTargetId: null,
+      defaultAgentType: "claude",
+      liveEditorSession: null,
+    });
+  });
+
+  it("surfaces a bound session as a visible project chat immediately", () => {
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-live",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project/.agents/thread-live",
+      agentDeckSessionId: "deck-live",
+      agentDeckSessionTitle: "Live chat",
+      agentDeckTool: "claude",
+      requestId: "request-live",
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.projectChats[0]).toMatchObject({
+      id: "thread-live",
+      threadId: "thread-live",
+      title: "Live chat",
+      agentDeckSessionId: "deck-live",
+      bindingState: "attached",
+      workspaceKind: "clone",
+    });
+    expect(state.projectChatsByProject["/tmp/example-project"][0]).toMatchObject({
+      id: "thread-live",
+      agentDeckSessionId: "deck-live",
+    });
+  });
+
+  it("does not surface an unbound local draft as a visible project chat", () => {
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "draft-hidden",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+      requestId: null,
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.projectChats).toHaveLength(0);
+    expect(state.projectChatsByProject["/tmp/example-project"]).toBeUndefined();
+  });
+
+  it("preserves existing chat order when a later chat is refreshed", () => {
+    const firstChat = {
+      id: "thread-a",
+      projectPath: "/tmp/example-project",
+      title: "Chat A",
+      threadId: "thread-a",
+      workspacePath: "/tmp/example-project/.agents/thread-a",
+      backend: "agent-deck" as const,
+      agentDeckSessionId: "deck-a",
+      agentDeckSessionTitle: "Chat A",
+      agentDeckTool: "claude",
+      agentDeckSessionStatus: "idle",
+      bindingState: "attached" as const,
+      workspaceKind: "clone" as const,
+      originKind: "managed" as const,
+      createdAt: "2026-03-21T00:00:00Z",
+      lastActive: "2026-03-21T00:00:00Z",
+    };
+    const secondChat = {
+      id: "thread-b",
+      projectPath: "/tmp/example-project",
+      title: "Chat B",
+      threadId: "thread-b",
+      workspacePath: "/tmp/example-project/.agents/thread-b",
+      backend: "agent-deck" as const,
+      agentDeckSessionId: "deck-b",
+      agentDeckSessionTitle: "Chat B",
+      agentDeckTool: "claude",
+      agentDeckSessionStatus: "idle",
+      bindingState: "attached" as const,
+      workspaceKind: "clone" as const,
+      originKind: "managed" as const,
+      createdAt: "2026-03-21T00:01:00Z",
+      lastActive: "2026-03-21T00:01:00Z",
+    };
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChats: [firstChat, secondChat],
+      projectChatsByProject: {
+        "/tmp/example-project": [firstChat, secondChat],
+      },
+      projectSessions: [
+        createProjectSession({
+          threadId: "thread-a",
+          workspacePath: "/tmp/example-project/.agents/thread-a",
+          agentDeckSessionId: "deck-a",
+          agentDeckSessionTitle: "Chat A",
+          requestId: "request-a",
+        }),
+        createProjectSession({
+          id: 2,
+          threadId: "thread-b",
+          workspacePath: "/tmp/example-project/.agents/thread-b",
+          agentDeckSessionId: "deck-b",
+          agentDeckSessionTitle: "Chat B",
+          requestId: "request-b",
+        }),
+      ],
+      projectSessionsByProject: {},
+    });
+
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-b",
+      backend: "agent-deck",
+      workspacePath: "/tmp/example-project/.agents/thread-b",
+      agentDeckSessionId: "deck-b",
+      agentDeckSessionTitle: "Chat B refreshed",
+      agentDeckTool: "claude",
+      requestId: "request-b",
+    });
+
+    const state = useSessionStore.getState();
+    expect(state.projectChats.map((chat) => chat.threadId)).toEqual([
+      "thread-a",
+      "thread-b",
+    ]);
+    expect(state.projectSessions.map((session) => session.threadId)).toEqual([
+      "thread-a",
+      "thread-b",
+    ]);
+    expect(state.projectChats[1]).toMatchObject({
+      threadId: "thread-b",
+      title: "Chat B",
+      agentDeckSessionTitle: "Chat B refreshed",
+    });
+  });
+});
+
+describe("session-store project ordering", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/api/projects") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              path: "/tmp/example-project",
+              name: "example-project",
+              output_mode: "scratch",
+              custom_output_path: null,
+              created_at: "2026-03-20T00:00:00Z",
+              last_opened: "2026-03-21T00:00:00Z",
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/urls")) {
+          return new Response(
+            JSON.stringify({ urls: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/sessions")) {
+          return new Response(
+            JSON.stringify({ sessions: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/chats")) {
+          return new Response(
+            JSON.stringify({ chats: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.endsWith("/agent-deck-sessions")) {
+          return new Response(
+            JSON.stringify({ sessions: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    useSessionStore.setState({
+      projectPath: "/tmp/other-project",
+      projectName: "other-project",
+      previewUrl: null,
+      recentProjects: [
+        {
+          path: "/tmp/other-project",
+          name: "other-project",
+          previewUrls: [],
+          outputMode: "scratch",
+          customOutputPath: undefined,
+          lastOpened: "2026-03-20T00:05:00Z",
+        },
+        {
+          path: "/tmp/example-project",
+          name: "example-project",
+          previewUrls: [],
+          outputMode: "scratch",
+          customOutputPath: undefined,
+          lastOpened: "2026-03-20T00:00:00Z",
+        },
+      ],
+      projectSessions: [],
+      projectSessionsByProject: {},
+      projectChats: [],
+      projectChatsByProject: {},
+      agentDeckTargets: [],
+      selectedAgentDeckTargetId: null,
+      defaultAgentType: "claude",
+      liveEditorSession: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("preserves the existing sidebar project order when reopening a project", async () => {
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      persistProfile: false,
+    });
+
+    expect(useSessionStore.getState().recentProjects.map((project) => project.path)).toEqual([
+      "/tmp/other-project",
+      "/tmp/example-project",
+    ]);
+  });
+});
+
 describe("createAgentDeckTargetSession", () => {
   beforeEach(() => {
     vi.stubGlobal(

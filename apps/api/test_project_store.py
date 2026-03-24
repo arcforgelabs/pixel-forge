@@ -233,6 +233,144 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(profile_state.active_project_path)
         self.assertIsNone(profile_state.active_live_editor_thread_id)
 
+    def test_list_projects_preserves_creation_order_after_reopening(self) -> None:
+        first_project_path = Path(self.tempdir.name) / "first-project"
+        second_project_path = Path(self.tempdir.name) / "second-project"
+        project_store.upsert_project(str(first_project_path))
+        project_store.upsert_project(str(second_project_path))
+
+        with project_store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE projects
+                SET created_at = ?, last_opened = ?
+                WHERE path = ?
+                """,
+                ("2026-03-20T00:00:00Z", "2026-03-20T00:00:00Z", str(first_project_path)),
+            )
+            conn.execute(
+                """
+                UPDATE projects
+                SET created_at = ?, last_opened = ?
+                WHERE path = ?
+                """,
+                ("2026-03-21T00:00:00Z", "2026-03-21T00:00:00Z", str(second_project_path)),
+            )
+            conn.commit()
+
+        project_store.upsert_project(str(first_project_path))
+
+        temp_projects = [
+            project.path
+            for project in project_store.list_projects()
+            if project.path.startswith(self.tempdir.name)
+        ]
+        self.assertEqual(
+            temp_projects,
+            [str(first_project_path), str(second_project_path)],
+        )
+
+    def test_list_project_sessions_preserves_creation_order_after_activity_updates(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        workspace_a = project_path / ".agents" / "thread-a"
+        workspace_b = project_path / ".agents" / "thread-b"
+        workspace_a.mkdir(parents=True)
+        workspace_b.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        project_store.upsert_session(
+            str(project_path),
+            thread_id="thread-a",
+            backend="agent-deck",
+            workspace_path=str(workspace_a),
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="thread-a",
+            agent_deck_tool="claude",
+        )
+        project_store.upsert_session(
+            str(project_path),
+            thread_id="thread-b",
+            backend="agent-deck",
+            workspace_path=str(workspace_b),
+            agent_deck_session_id="deck-b",
+            agent_deck_session_title="thread-b",
+            agent_deck_tool="claude",
+        )
+
+        with project_store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET created_at = ?, last_active = ?
+                WHERE project_path = ? AND thread_id = ?
+                """,
+                ("2026-03-20T00:00:00Z", "2026-03-20T00:00:00Z", str(project_path), "thread-a"),
+            )
+            conn.execute(
+                """
+                UPDATE sessions
+                SET created_at = ?, last_active = ?
+                WHERE project_path = ? AND thread_id = ?
+                """,
+                ("2026-03-21T00:00:00Z", "2026-03-22T00:00:00Z", str(project_path), "thread-b"),
+            )
+            conn.commit()
+
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertEqual(
+            [session.thread_id for session in sessions],
+            ["thread-a", "thread-b"],
+        )
+
+    def test_list_project_sessions_hides_internal_root_draft_placeholders(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_store.upsert_project(str(project_path))
+
+        hidden_draft = project_store.upsert_session(
+            str(project_path),
+            thread_id="draft-q2",
+            backend="agent-deck",
+            workspace_path=str(project_path),
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": "claude",
+                "targetUrl": "https://field.arcforge.au/",
+                "previewTabs": [
+                    {
+                        "id": "preview-restored",
+                        "url": "https://field.arcforge.au/",
+                        "title": "Field",
+                        "mode": "browser",
+                        "localTarget": None,
+                    }
+                ],
+                "activePreviewTabId": "preview-restored",
+                "urlHistory": ["https://field.arcforge.au/"],
+                "urlHistoryCursor": 0,
+            },
+        )
+        visible_chat = project_store.upsert_session(
+            str(project_path),
+            thread_id="chat-visible",
+            backend="agent-deck",
+            workspace_path=str(project_path),
+            agent_deck_session_id=None,
+            agent_deck_session_title="Visible draft",
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": "claude",
+            },
+        )
+
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertIsNotNone(hidden_draft)
+        self.assertIsNotNone(visible_chat)
+        self.assertEqual([session.thread_id for session in sessions], ["chat-visible"])
+
 
 if __name__ == "__main__":
     unittest.main()

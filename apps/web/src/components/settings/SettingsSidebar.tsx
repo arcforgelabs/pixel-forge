@@ -273,6 +273,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     activateThread,
     clearElements,
     newSession: resetLiveEditorThread,
+    persistThreadState,
     removeThread,
     getThreadStatus,
     findThreadKeyByTargetAgentDeckSessionId,
@@ -748,8 +749,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   }
 
   async function handleCreateProjectChat(startFreshThread = false) {
+    const currentProjectPath = projectPath;
+    let emptyThreadKey: string | null = null;
     if (startFreshThread) {
-      const emptyThreadKey = Object.entries(threadStates).find(
+      emptyThreadKey = Object.entries(threadStates).find(
         ([threadKey, ts]) => {
           if (ts.messages.length > 0) {
             return false;
@@ -759,15 +762,39 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           }
           return !projectSessions.some((session) => session.threadId === threadKey);
         }
-      )?.[0];
+      )?.[0] ?? null;
       if (emptyThreadKey) {
-        activateThread(emptyThreadKey);
-        toast('An empty chat already exists — use it or send a message first.');
-        return;
+        if (currentProjectPath) {
+          await reloadProjectChatState(currentProjectPath);
+        }
+
+        const refreshedSessionStore = useSessionStore.getState();
+        const visibleDraftSession = refreshedSessionStore.projectSessions.find(
+          (session) => session.threadId === emptyThreadKey
+        ) ?? null;
+        const visibleDraftChat = refreshedSessionStore.projectChats.find(
+          (chat) => chat.threadId === emptyThreadKey
+        ) ?? null;
+
+        if (visibleDraftSession || visibleDraftChat) {
+          if (visibleDraftSession) {
+            switchToThread(visibleDraftSession);
+          }
+          activateThread(emptyThreadKey);
+          toast('An empty chat already exists — reopened it instead of creating another.');
+          return;
+        }
       }
     }
     try {
       const created = await createProjectChatSession({ agentType: defaultAgentType });
+      if (
+        startFreshThread
+        && emptyThreadKey
+        && emptyThreadKey !== created.threadId
+      ) {
+        removeThread(emptyThreadKey, created.threadId ?? null);
+      }
       if (startFreshThread) {
         if (!created.threadId) {
           throw new Error("Created chat is missing its draft thread.");
@@ -780,6 +807,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         }
         switchToThread(createdThread);
         activateThread(created.threadId);
+        await persistThreadState(created.threadId);
         toast.success(`Started fresh chat · ${created.title}`);
         return;
       }

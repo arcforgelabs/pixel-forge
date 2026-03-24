@@ -475,7 +475,14 @@ function normalizeRegisteredSkill(skill: ApiRegisteredSkill): RegisteredSkill {
 }
 
 function mergeProject(projects: SavedProject[], project: SavedProject): SavedProject[] {
-  return [project, ...projects.filter((existing) => existing.path !== project.path)];
+  const existingIndex = projects.findIndex((existing) => existing.path === project.path);
+  if (existingIndex < 0) {
+    return [...projects, project];
+  }
+
+  return projects.map((existing, index) =>
+    index === existingIndex ? { ...existing, ...project } : existing
+  );
 }
 
 function mergeSession(
@@ -514,14 +521,34 @@ function mergeSession(
         ...session,
       };
 
-  return [merged, ...sessions.filter((entry) => entry.threadId !== merged.threadId)];
+  if (!existing) {
+    return [...sessions, merged];
+  }
+
+  return sessions.map((entry) =>
+    entry.threadId === merged.threadId ? merged : entry
+  );
 }
 
 function mergeProjectChat(
   chats: ProjectChatRecord[],
   chat: ProjectChatRecord
 ): ProjectChatRecord[] {
-  return [chat, ...chats.filter((entry) => entry.id !== chat.id)];
+  const existingIndex = chats.findIndex((entry) => entry.id === chat.id);
+  if (existingIndex < 0) {
+    return [...chats, chat];
+  }
+
+  return chats.map((entry, index) =>
+    index === existingIndex ? { ...entry, ...chat } : entry
+  );
+}
+
+function inferWorkspaceKind(
+  projectPath: string,
+  workspacePath: string
+): "root" | "clone" {
+  return workspacePath.startsWith(`${projectPath}/.agents/`) ? "clone" : "root";
 }
 
 function setProjectSessionsForPath(
@@ -654,6 +681,61 @@ function projectSessionFromProjectChat(
     createdAt: chat.createdAt ?? fallbackTimestamp,
     lastActive: chat.lastActive ?? fallbackTimestamp,
     requestId: null,
+  };
+}
+
+function projectChatFromSession(
+  projectPath: string | null,
+  session: LiveEditorSessionMeta | null,
+  existingChats: ProjectChatRecord[]
+): ProjectChatRecord | null {
+  if (!projectPath || !session) {
+    return null;
+  }
+
+  const threadId = session.threadId?.trim() || null;
+  const agentDeckSessionId = session.agentDeckSessionId?.trim() || null;
+  if (!threadId || !agentDeckSessionId) {
+    return null;
+  }
+
+  const existingChat = existingChats.find((chat) => chat.id === threadId) ?? null;
+  const recordLikeSession = session as Partial<ProjectSessionRecord>;
+  const now = new Date().toISOString();
+  const workspacePath = session.workspacePath?.trim() || projectPath;
+
+  return {
+    id: existingChat?.id ?? threadId,
+    projectPath,
+    title:
+      existingChat?.title
+      ?? session.agentDeckSessionTitle
+      ?? `Chat ${threadId}`,
+    threadId,
+    workspacePath,
+    backend: session.backend,
+    agentDeckSessionId,
+    agentDeckSessionTitle:
+      session.agentDeckSessionTitle
+      ?? existingChat?.agentDeckSessionTitle
+      ?? existingChat?.title
+      ?? `Chat ${threadId}`,
+    agentDeckTool: session.agentDeckTool ?? existingChat?.agentDeckTool ?? null,
+    agentDeckSessionStatus:
+      existingChat?.agentDeckSessionStatus
+      ?? (agentDeckSessionId ? "unknown" : null),
+    bindingState: "attached",
+    workspaceKind: inferWorkspaceKind(projectPath, workspacePath),
+    originKind: existingChat?.originKind ?? "managed",
+    createdAt:
+      existingChat?.createdAt
+      ?? (typeof recordLikeSession.createdAt === "string"
+        ? recordLikeSession.createdAt
+        : now),
+    lastActive:
+      typeof recordLikeSession.lastActive === "string"
+        ? recordLikeSession.lastActive
+        : existingChat?.lastActive ?? now,
   };
 }
 
@@ -1151,15 +1233,36 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       return;
     }
 
-    set((state) => ({
-      projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
-      projectSessionsByProject: mergeSessionIntoProjectMap(
-        state.projectSessionsByProject,
+    set((state) => {
+      const mergedChat = projectChatFromSession(
         state.projectPath,
-        session
-      ),
-      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
-    }));
+        session,
+        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats
+      );
+      const nextProjectChats = mergedChat
+        ? mergeProjectChat(state.projectChats, mergedChat)
+        : state.projectChats;
+
+      return {
+        projectSessions: mergeSession(state.projectSessions, state.projectPath, session),
+        projectSessionsByProject: mergeSessionIntoProjectMap(
+          state.projectSessionsByProject,
+          state.projectPath,
+          session
+        ),
+        agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
+        ...(mergedChat
+          ? {
+              projectChats: nextProjectChats,
+              projectChatsByProject: setProjectChatsForPath(
+                state.projectChatsByProject,
+                state.projectPath,
+                nextProjectChats
+              ),
+            }
+          : {}),
+      };
+    });
   },
 
   persistProjectSession: async (session) => {
@@ -1182,20 +1285,41 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           }
         : liveEditorSession;
 
-    set((state) => ({
-      liveEditorSession: nextLiveEditorSession,
-      projectSessions: mergeSession(
-        state.projectSessions,
+    set((state) => {
+      const mergedChat = projectChatFromSession(
         state.projectPath,
-        savedSession
-      ),
-      projectSessionsByProject: mergeSessionIntoProjectMap(
-        state.projectSessionsByProject,
-        state.projectPath,
-        savedSession
-      ),
-      agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
-    }));
+        savedSession,
+        state.projectChatsByProject[state.projectPath ?? ""] ?? state.projectChats
+      );
+      const nextProjectChats = mergedChat
+        ? mergeProjectChat(state.projectChats, mergedChat)
+        : state.projectChats;
+
+      return {
+        liveEditorSession: nextLiveEditorSession,
+        projectSessions: mergeSession(
+          state.projectSessions,
+          state.projectPath,
+          savedSession
+        ),
+        projectSessionsByProject: mergeSessionIntoProjectMap(
+          state.projectSessionsByProject,
+          state.projectPath,
+          savedSession
+        ),
+        agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
+        ...(mergedChat
+          ? {
+              projectChats: nextProjectChats,
+              projectChatsByProject: setProjectChatsForPath(
+                state.projectChatsByProject,
+                state.projectPath,
+                nextProjectChats
+              ),
+            }
+          : {}),
+      };
+    });
 
     return savedSession;
   },
