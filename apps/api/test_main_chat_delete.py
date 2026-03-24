@@ -185,6 +185,25 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Pixel Forge refs:", prompt)
         self.assertNotIn("request.md", prompt)
 
+    def test_build_dispatch_prompt_uses_plain_context_paths_for_codex(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview",
+                "artifacts": {
+                    "selection_tunnel_file": ".pixel-forge/requests/abcd/selection-tunnel.json",
+                },
+            },
+            tool="codex",
+        )
+
+        self.assertTrue(prompt.startswith("Inspect the active preview"))
+        self.assertIn("Context files:", prompt)
+        self.assertIn(".pixel-forge/requests/abcd/turn-input.json", prompt)
+        self.assertIn(".pixel-forge/requests/abcd/selection-tunnel.json", prompt)
+        self.assertNotIn("@.pixel-forge/requests/abcd/turn-input.json", prompt)
+
     def test_build_dispatch_prompt_includes_context_patch_as_native_file_ref(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
@@ -255,6 +274,55 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             1,
         )
 
+    def test_build_dispatch_prompt_can_exclude_paths_promoted_to_native_items(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview state.",
+                "attachments": [
+                    {"path": ".pixel-forge/requests/abcd/attachments/reference.png"},
+                    {"path": ".pixel-forge/requests/abcd/attachments/notes.txt"},
+                ],
+            },
+            tool="codex",
+            exclude_attachment_paths={
+                ".pixel-forge/requests/abcd/attachments/reference.png",
+            },
+        )
+
+        self.assertNotIn(".pixel-forge/requests/abcd/attachments/reference.png", prompt)
+        self.assertIn(".pixel-forge/requests/abcd/attachments/notes.txt", prompt)
+
+    def test_native_image_attachment_paths_extracts_only_images(self) -> None:
+        image_paths = main._native_image_attachment_paths(
+            {
+                "attachments": [
+                    {
+                        "path": ".pixel-forge/requests/abcd/attachments/reference.png",
+                        "mime_type": "image/png",
+                    },
+                    {
+                        "path": ".pixel-forge/requests/abcd/attachments/mockup.webp",
+                        "kind": "image",
+                        "mime_type": "image/webp",
+                    },
+                    {
+                        "path": ".pixel-forge/requests/abcd/attachments/notes.txt",
+                        "mime_type": "text/plain",
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(
+            image_paths,
+            [
+                ".pixel-forge/requests/abcd/attachments/reference.png",
+                ".pixel-forge/requests/abcd/attachments/mockup.webp",
+            ],
+        )
+
     def test_build_dispatch_prompt_falls_back_to_request_mirror_when_turn_bundle_is_missing(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",
@@ -266,7 +334,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(prompt.startswith("Inspect the active preview state."))
         self.assertIn("@.pixel-forge/requests/abcd/request.md", prompt)
 
-    async def test_deliver_live_editor_prompt_uses_reliable_send_for_claude(self) -> None:
+    async def test_deliver_live_editor_prompt_prefers_native_claude_resume(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",
             agent_deck_session_title="Chat thread-a",
@@ -279,6 +347,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             acpx_record_id=None,
             acp_session_id=None,
             claude_session_id="claude-session-a",
+            codex_session_id=None,
             jsonl_path=Path("/tmp/claude.jsonl"),
         )
         websocket = Mock()
@@ -297,9 +366,9 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             patch.object(main, "get_last_output", AsyncMock()) as get_last_output,
             patch.object(
                 main,
-                "send_agent_deck_prompt_reliably",
+                "send_native_claude_prompt_reliably",
                 AsyncMock(),
-            ) as send_prompt,
+            ) as native_send,
             patch.object(
                 main,
                 "wait_for_agent_deck_turn_completion",
@@ -316,12 +385,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             )
 
         get_last_output.assert_not_awaited()
-        send_prompt.assert_awaited_once_with(
-            session_info,
-            project_path="/tmp/project/.agents/thread-a",
-            prompt="Read request.md",
-            no_wait=False,
-        )
+        native_send.assert_not_awaited()
         websocket.send_json.assert_awaited_once_with(
             {
                 "type": "status",
@@ -332,6 +396,82 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIsNone(status_heartbeat_task)
         self.assertEqual(len(create_task_calls), 1)
+
+    async def test_deliver_live_editor_prompt_falls_back_to_agent_deck_send_for_busy_codex(self) -> None:
+        session_info = AgentDeckSessionInfo(
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="Chat thread-a",
+            workspace_path="/tmp/project/.agents/thread-a",
+            tmux_session="tmux-a",
+            tool="codex",
+            status="running",
+            acpx_agent=None,
+            acpx_session_name=None,
+            acpx_record_id=None,
+            acp_session_id=None,
+            claude_session_id=None,
+            codex_session_id="codex-session-a",
+            jsonl_path=Path("/tmp/codex.jsonl"),
+        )
+        websocket = Mock()
+        websocket.send_json = AsyncMock()
+        create_task_calls: list[object] = []
+        fake_wait_task = object()
+        fake_heartbeat_task = object()
+
+        def fake_create_task(coro: object) -> object:
+            create_task_calls.append(coro)
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            if len(create_task_calls) == 1:
+                return fake_wait_task
+            return fake_heartbeat_task
+
+        with (
+            patch.object(main, "get_last_output", AsyncMock(return_value="baseline")) as get_last_output,
+            patch.object(
+                main,
+                "send_native_codex_prompt_reliably",
+                AsyncMock(),
+            ) as native_send,
+            patch.object(
+                main,
+                "send_agent_deck_prompt_reliably",
+                AsyncMock(),
+            ) as send_prompt,
+            patch.object(
+                main,
+                "wait_for_agent_deck_turn_completion",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                main,
+                "_emit_live_editor_wait_heartbeat",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(main.asyncio, "create_task", side_effect=fake_create_task),
+        ):
+            baseline_output, turn_wait_task, status_heartbeat_task = (
+                await main._deliver_live_editor_prompt_to_agent_deck_session(
+                    session_info=session_info,
+                    websocket=websocket,
+                    dispatch_prompt="Review the request",
+                    native_image_paths=[".pixel-forge/requests/abcd/attachments/reference.png"],
+                )
+            )
+
+        native_send.assert_not_awaited()
+        get_last_output.assert_not_awaited()
+        send_prompt.assert_awaited_once_with(
+            session_info,
+            project_path="/tmp/project/.agents/thread-a",
+            prompt="Review the request",
+            no_wait=True,
+        )
+        self.assertEqual(baseline_output, "")
+        self.assertIs(turn_wait_task, fake_wait_task)
+        self.assertIs(status_heartbeat_task, fake_heartbeat_task)
 
 
 if __name__ == "__main__":

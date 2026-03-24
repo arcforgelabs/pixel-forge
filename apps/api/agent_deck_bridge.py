@@ -36,6 +36,7 @@ class AgentDeckSessionInfo:
     acpx_record_id: str | None
     acp_session_id: str | None
     claude_session_id: str | None
+    codex_session_id: str | None
     jsonl_path: Path | None
 
 
@@ -1076,6 +1077,7 @@ async def _build_session_info(
     acpx_record_id: str | None = None
     acp_session_id: str | None = None
     claude_session_id: str | None = None
+    codex_session_id: str | None = None
     jsonl_path: Path | None = None
 
     parsed_acpx_command = _parsed_acpx_payload(payload)
@@ -1110,6 +1112,27 @@ async def _build_session_info(
                 if isinstance(fallback_claude_id, str) and fallback_claude_id:
                     claude_session_id = fallback_claude_id
                     jsonl_path = claude_jsonl_path(workspace_path, claude_session_id)
+    elif session_tool == "codex":
+        fallback_codex_id = payload.get("codex_session_id")
+        if isinstance(fallback_codex_id, str) and fallback_codex_id:
+            codex_session_id = fallback_codex_id
+            jsonl_path = codex_jsonl_path(codex_session_id)
+        else:
+            codex_session_id, jsonl_path, payload = await _wait_for_codex_session_id(
+                agent_deck_session_id,
+            )
+            agent_deck_title, workspace_path, tmux_session, status = _payload_session_metadata(
+                payload,
+                fallback_title=agent_deck_title,
+                default_path=workspace_path,
+            )
+            if codex_session_id:
+                jsonl_path = codex_jsonl_path(codex_session_id)
+            if not codex_session_id:
+                fallback_codex_id = payload.get("codex_session_id")
+                if isinstance(fallback_codex_id, str) and fallback_codex_id:
+                    codex_session_id = fallback_codex_id
+                    jsonl_path = codex_jsonl_path(codex_session_id)
 
     return AgentDeckSessionInfo(
         agent_deck_session_id=agent_deck_session_id,
@@ -1123,6 +1146,7 @@ async def _build_session_info(
         acpx_record_id=acpx_record_id,
         acp_session_id=acp_session_id,
         claude_session_id=claude_session_id,
+        codex_session_id=codex_session_id,
         jsonl_path=jsonl_path,
     )
 
@@ -1143,6 +1167,26 @@ async def _wait_for_claude_session_id(
         if isinstance(claude_session_id, str) and claude_session_id:
             jsonl_path = claude_jsonl_path(project_path, claude_session_id)
             return claude_session_id, jsonl_path, payload
+        await asyncio.sleep(0.5)
+
+    return None, None, last_payload
+
+
+async def _wait_for_codex_session_id(
+    agent_deck_session_id: str,
+    *,
+    timeout_seconds: float = 20.0,
+) -> tuple[str | None, Path | None, dict[str, object]]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_payload: dict[str, object] = {}
+
+    while asyncio.get_running_loop().time() < deadline:
+        payload = await session_show(agent_deck_session_id)
+        last_payload = payload
+        codex_session_id = payload.get("codex_session_id")
+        if isinstance(codex_session_id, str) and codex_session_id:
+            jsonl_path = codex_jsonl_path(codex_session_id)
+            return codex_session_id, jsonl_path, payload
         await asyncio.sleep(0.5)
 
     return None, None, last_payload
@@ -1515,6 +1559,43 @@ async def stream_claude_jsonl(
     return stats
 
 
+async def stream_codex_jsonl(
+    websocket,
+    jsonl_path: Path,
+    start_offset: int,
+    wait_task: asyncio.Task[object],
+    *,
+    on_emit: StreamPayloadCallback | None = None,
+) -> SessionOutputStreamStats:
+    stats = SessionOutputStreamStats()
+    offset = start_offset
+    last_activity = asyncio.get_running_loop().time()
+
+    while True:
+        offset, chunks = read_codex_jsonl_text_chunks(jsonl_path, offset)
+        if chunks:
+            last_activity = asyncio.get_running_loop().time()
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                stats.streamed_text = True
+                stats.last_output += chunk
+                await _emit_stream_payload(
+                    websocket,
+                    {"type": "chunk", "content": chunk},
+                    on_emit=on_emit,
+                )
+
+        if wait_task.done():
+            idle_for = asyncio.get_running_loop().time() - last_activity
+            if idle_for >= STREAM_IDLE_AFTER_COMPLETION_SECONDS:
+                break
+
+        await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+
+    return stats
+
+
 async def send_agent_deck_prompt_reliably(
     session_info: AgentDeckSessionInfo,
     *,
@@ -1538,6 +1619,109 @@ async def send_agent_deck_prompt_reliably(
     if code != 0:
         raise AgentDeckBridgeError(
             stderr.strip() or stdout.strip() or "Agent Deck live-edit request failed"
+        )
+
+
+def _native_agent_env(session_info: AgentDeckSessionInfo) -> dict[str, str]:
+    env = os.environ.copy()
+    env["AGENTDECK_INSTANCE_ID"] = session_info.agent_deck_session_id
+    env["AGENTDECK_TITLE"] = session_info.agent_deck_session_title
+    env["AGENTDECK_TOOL"] = session_info.tool
+    if session_info.claude_session_id:
+        env["CLAUDE_SESSION_ID"] = session_info.claude_session_id
+    if session_info.codex_session_id:
+        env["CODEX_SESSION_ID"] = session_info.codex_session_id
+    return env
+
+
+def _claude_resume_identifier_args(session_info: AgentDeckSessionInfo) -> list[str]:
+    if not session_info.claude_session_id:
+        raise AgentDeckBridgeError(
+            f"Claude session `{session_info.agent_deck_session_title}` is missing a native session ID"
+        )
+
+    use_resume = True
+    jsonl_path = session_info.jsonl_path
+    if jsonl_path is not None:
+        try:
+            use_resume = jsonl_path.exists() and jsonl_path.stat().st_size > 0
+        except OSError:
+            use_resume = True
+
+    if use_resume:
+        return ["-r", session_info.claude_session_id]
+    return ["--session-id", session_info.claude_session_id]
+
+
+async def send_native_claude_prompt_reliably(
+    session_info: AgentDeckSessionInfo,
+    *,
+    project_path: str,
+    prompt: str,
+) -> None:
+    cmd = [
+        "claude",
+        *_claude_resume_identifier_args(session_info),
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--dangerously-skip-permissions",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path,
+        env=_native_agent_env(session_info),
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise AgentDeckBridgeError(
+            stderr.decode().strip()
+            or "Claude native live-edit request failed"
+        )
+
+
+async def send_native_codex_prompt_reliably(
+    session_info: AgentDeckSessionInfo,
+    *,
+    project_path: str,
+    prompt: str,
+    image_paths: list[str] | None = None,
+) -> None:
+    if not session_info.codex_session_id:
+        raise AgentDeckBridgeError(
+            f"Codex session `{session_info.agent_deck_session_title}` is missing a native session ID"
+        )
+
+    cmd = [
+        "codex",
+        "exec",
+        "resume",
+        session_info.codex_session_id,
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+    ]
+    for image_path in image_paths or []:
+        normalized_path = image_path.strip()
+        if not normalized_path:
+            continue
+        cmd.extend(["--image", normalized_path])
+    cmd.append(prompt)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=project_path,
+        env=_native_agent_env(session_info),
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise AgentDeckBridgeError(
+            stderr.decode().strip()
+            or "Codex native live-edit request failed"
         )
 
 

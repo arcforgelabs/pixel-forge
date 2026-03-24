@@ -34,8 +34,11 @@ from agent_deck_bridge import (
     list_project_agent_deck_sessions,
     list_live_editor_agent_deck_sessions,
     send_agent_deck_prompt_reliably,
+    send_native_claude_prompt_reliably,
+    send_native_codex_prompt_reliably,
     rename_agent_deck_session_target,
     stream_claude_jsonl,
+    stream_codex_jsonl,
     stream_codex_session_output,
     wait_for_agent_deck_turn_completion,
 )
@@ -2457,6 +2460,8 @@ def build_live_editor_dispatch_prompt(
     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "bootstrap",
     informational_only: bool = False,
     explicit_live_attach_required: bool = False,
+    tool: str = "claude",
+    exclude_attachment_paths: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> str:
     del request_id
     del preview_url
@@ -2481,15 +2486,24 @@ def build_live_editor_dispatch_prompt(
 
     reference_paths: list[str] = []
     seen_paths: set[str] = set()
+    excluded_paths = {
+        path.strip()
+        for path in (exclude_attachment_paths or [])
+        if isinstance(path, str) and path.strip()
+    }
 
     def append_reference(path_value: object | None) -> None:
         if not isinstance(path_value, str):
             return
         normalized_path = path_value.strip()
-        if not normalized_path or normalized_path in seen_paths:
+        if (
+            not normalized_path
+            or normalized_path in excluded_paths
+            or normalized_path in seen_paths
+        ):
             return
         seen_paths.add(normalized_path)
-        reference_paths.append(f"@{normalized_path}")
+        reference_paths.append(normalized_path)
 
     append_reference(turn_input_file_path)
 
@@ -2517,7 +2531,45 @@ def build_live_editor_dispatch_prompt(
     if not reference_paths:
         return prompt_text
 
-    return f"{prompt_text}\n\n" + "\n".join(reference_paths)
+    normalized_tool = tool.strip().lower()
+    if normalized_tool == "codex":
+        return f"{prompt_text}\n\nContext files:\n" + "\n".join(reference_paths)
+
+    return f"{prompt_text}\n\n" + "\n".join(
+        f"@{path}" for path in reference_paths
+    )
+
+
+def _native_image_attachment_paths(
+    turn_input_payload: dict[str, object] | None,
+) -> list[str]:
+    if not isinstance(turn_input_payload, dict):
+        return []
+
+    image_paths: list[str] = []
+    seen_paths: set[str] = set()
+    raw_attachments = turn_input_payload.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+
+    for attachment in raw_attachments:
+        if not isinstance(attachment, dict):
+            continue
+        path_value = attachment.get("path")
+        if not isinstance(path_value, str):
+            continue
+        normalized_path = path_value.strip()
+        if not normalized_path or normalized_path in seen_paths:
+            continue
+        mime_type = attachment.get("mime_type")
+        kind = attachment.get("kind")
+        if kind == "image" or (
+            isinstance(mime_type, str) and mime_type.startswith("image/")
+        ):
+            seen_paths.add(normalized_path)
+            image_paths.append(normalized_path)
+
+    return image_paths
 
 
 async def _deliver_live_editor_prompt_to_agent_deck_session(
@@ -2525,6 +2577,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
     session_info,
     websocket: WebSocket,
     dispatch_prompt: str,
+    native_image_paths: list[str] | None = None,
     on_status: LiveEditorStatusCallback | None = None,
 ) -> tuple[str, asyncio.Task[object], asyncio.Task[object] | None]:
     baseline_output = ""
@@ -2534,26 +2587,78 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
         "waiting",
         "idle",
     }
+    normalized_native_image_paths = [
+        path.strip()
+        for path in (native_image_paths or [])
+        if isinstance(path, str) and path.strip()
+    ]
 
-    if session_info.tool == "codex":
+    if session_info.tool == "codex" and not (
+        session_info.codex_session_id and session_info.jsonl_path
+    ):
         baseline_output = await get_last_output(session_info.agent_deck_session_id)
 
-    await send_agent_deck_prompt_reliably(
-        session_info,
-        project_path=session_info.workspace_path,
-        prompt=dispatch_prompt,
-        no_wait=queue_onto_busy_session and session_info.tool != "claude",
-    )
-
     tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
-    if session_info.tool == "codex":
-        status_message = (
-            f"Queued request to busy {tool_label} session. Waiting for completion..."
-            if queue_onto_busy_session
-            else f"Request delivered to {tool_label}. Waiting for completion..."
+    status_heartbeat_task: asyncio.Task[object] | None = None
+    if (
+        session_info.tool == "claude"
+        and session_info.claude_session_id
+        and not queue_onto_busy_session
+    ):
+        turn_wait_task = asyncio.create_task(
+            send_native_claude_prompt_reliably(
+                session_info,
+                project_path=session_info.workspace_path,
+                prompt=dispatch_prompt,
+            )
         )
-    else:
         status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+    elif (
+        session_info.tool == "codex"
+        and session_info.codex_session_id
+        and session_info.jsonl_path
+        and not queue_onto_busy_session
+    ):
+        turn_wait_task = asyncio.create_task(
+            send_native_codex_prompt_reliably(
+                session_info,
+                project_path=session_info.workspace_path,
+                prompt=dispatch_prompt,
+                image_paths=normalized_native_image_paths,
+            )
+        )
+        status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+    else:
+        await send_agent_deck_prompt_reliably(
+            session_info,
+            project_path=session_info.workspace_path,
+            prompt=dispatch_prompt,
+            no_wait=queue_onto_busy_session and session_info.tool != "claude",
+        )
+        if session_info.tool == "codex":
+            status_message = (
+                f"Queued request to busy {tool_label} session. Waiting for completion..."
+                if queue_onto_busy_session
+                else f"Request delivered to {tool_label}. Waiting for completion..."
+            )
+        else:
+            status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+
+        turn_wait_task = asyncio.create_task(
+            wait_for_agent_deck_turn_completion(
+                session_info,
+                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+            )
+        )
+        if session_info.tool != "claude":
+            status_heartbeat_task = asyncio.create_task(
+                _emit_live_editor_wait_heartbeat(
+                    websocket,
+                    tool=session_info.tool,
+                    wait_task=turn_wait_task,
+                    on_status=on_status,
+                )
+            )
 
     await websocket.send_json(
         {
@@ -2563,23 +2668,6 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
     )
     if on_status is not None:
         await on_status(status_message)
-
-    turn_wait_task = asyncio.create_task(
-        wait_for_agent_deck_turn_completion(
-            session_info,
-            completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-        )
-    )
-    status_heartbeat_task: asyncio.Task[object] | None = None
-    if session_info.tool != "claude":
-        status_heartbeat_task = asyncio.create_task(
-            _emit_live_editor_wait_heartbeat(
-                websocket,
-                tool=session_info.tool,
-                wait_task=turn_wait_task,
-                on_status=on_status,
-            )
-        )
 
     return baseline_output, turn_wait_task, status_heartbeat_task
 
@@ -3526,6 +3614,11 @@ async def live_editor_chat(websocket: WebSocket):
                 )
                 await emit_turn_status(dispatch_status_message)
 
+                native_image_paths = (
+                    _native_image_attachment_paths(request_pack.turn_input_payload)
+                    if session_info.tool == "codex"
+                    else []
+                )
                 dispatch_prompt = build_live_editor_dispatch_prompt(
                     request_pack.relative_request_file,
                     request_id=request_pack.request_id,
@@ -3562,6 +3655,8 @@ async def live_editor_chat(websocket: WebSocket):
                     informational_only=informational_only,
                     explicit_live_attach_required=explicit_live_attach_required,
                     requested_skills=requested_skills,
+                    tool=session_info.tool,
+                    exclude_attachment_paths=native_image_paths,
                 )
                 assistant_output = ""
                 if session_info.acpx_agent and session_info.acpx_session_name:
@@ -3604,13 +3699,22 @@ async def live_editor_chat(websocket: WebSocket):
                         session_info=session_info,
                         websocket=websocket,
                         dispatch_prompt=dispatch_prompt,
+                        native_image_paths=native_image_paths,
                         on_status=emit_turn_status,
                     )
                     send_task = turn_wait_task
 
                     stream_stats = None
-                    if jsonl_path:
+                    if session_info.tool == "claude" and jsonl_path:
                         stream_stats = await stream_claude_jsonl(
+                            websocket,
+                            jsonl_path,
+                            start_offset,
+                            send_task,
+                            on_emit=mirror_stream_payload,
+                        )
+                    elif session_info.tool == "codex" and jsonl_path:
+                        stream_stats = await stream_codex_jsonl(
                             websocket,
                             jsonl_path,
                             start_offset,

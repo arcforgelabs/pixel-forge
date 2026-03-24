@@ -24,6 +24,7 @@ def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionI
         acpx_record_id=None,
         acp_session_id=None,
         claude_session_id=None,
+        codex_session_id=None,
         jsonl_path=None,
     )
 
@@ -123,6 +124,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                     acpx_record_id=None,
                     acp_session_id=None,
                     claude_session_id=None,
+                    codex_session_id=None,
                     jsonl_path=None,
                 )
             )
@@ -191,6 +193,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                     acpx_record_id=None,
                     acp_session_id=None,
                     claude_session_id=None,
+                    codex_session_id=None,
                     jsonl_path=None,
                 )
             )

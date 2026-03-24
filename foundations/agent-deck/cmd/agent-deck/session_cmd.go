@@ -212,6 +212,9 @@ func handleSessionStart(profile string, args []string) {
 	if inst.ClaudeSessionID != "" {
 		jsonData["claude_session_id"] = inst.ClaudeSessionID
 	}
+	if inst.CodexSessionID != "" {
+		jsonData["codex_session_id"] = inst.CodexSessionID
+	}
 	if initialMessage != "" {
 		jsonData["message"] = initialMessage
 		jsonData["message_pending"] = false
@@ -733,6 +736,10 @@ func handleSessionShow(profile string, args []string) {
 		if mcps := mcpInfoForJSON(mcpInfo); mcps != nil {
 			jsonData["mcps"] = mcps
 		}
+	}
+	if inst.Tool == "codex" {
+		jsonData["codex_session_id"] = inst.CodexSessionID
+		jsonData["can_restart"] = inst.CanRestart()
 	}
 
 	if inst.Exists() {
