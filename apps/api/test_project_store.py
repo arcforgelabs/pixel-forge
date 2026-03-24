@@ -20,12 +20,14 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.original_shared_state_dir = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
         project_store._DB_INITIALIZED = False
+        live_editor_threads._DB_INITIALIZED = False
 
     def tearDown(self) -> None:
         if self.original_shared_state_dir is None:
             os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
         else:
             os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        live_editor_threads._DB_INITIALIZED = False
 
     def test_upsert_session_persists_sanitized_editor_state(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
@@ -201,6 +203,43 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(sessions, [])
         self.assertIsNone(
             project_store.get_project_session(str(project_path), adopted.thread_id)
+        )
+
+    def test_detach_missing_agent_deck_session_binding_prunes_empty_legacy_managed_root_shells(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        legacy_thread_id = "legacy-empty-root-shell-a"
+        saved = project_store.upsert_session(
+            str(project_path),
+            thread_id=legacy_thread_id,
+            backend="agent-deck",
+            origin_kind="managed",
+            workspace_path=str(project_path),
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+            agent_deck_tool=None,
+            editor_state=None,
+        )
+        self.assertIsNotNone(saved)
+
+        live_editor_threads.get_or_create_live_editor_thread(
+            str(project_path),
+            legacy_thread_id,
+        )
+
+        sessions = project_store.detach_missing_agent_deck_session_bindings(
+            str(project_path),
+            set(),
+        )
+
+        self.assertEqual(sessions, [])
+        self.assertIsNone(
+            project_store.get_project_session(str(project_path), legacy_thread_id)
+        )
+        self.assertIsNone(
+            live_editor_threads.get_live_editor_thread(legacy_thread_id)
         )
 
     def test_default_profile_state_is_initialized_and_round_trips(self) -> None:
@@ -619,6 +658,38 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNotNone(adopted)
         self.assertIsNone(
             project_store.get_project_session(str(project_path), "chat-adopted")
+        )
+
+    def test_list_project_sessions_prunes_empty_legacy_managed_root_shells(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        legacy_thread_id = "legacy-empty-root-shell-b"
+        project_store.upsert_session(
+            str(project_path),
+            thread_id=legacy_thread_id,
+            backend="agent-deck",
+            origin_kind="managed",
+            workspace_path=str(project_path),
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+            agent_deck_tool=None,
+            editor_state=None,
+        )
+        live_editor_threads.get_or_create_live_editor_thread(
+            str(project_path),
+            legacy_thread_id,
+        )
+
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertEqual(sessions, [])
+        self.assertIsNone(
+            project_store.get_project_session(str(project_path), legacy_thread_id)
+        )
+        self.assertIsNone(
+            live_editor_threads.get_live_editor_thread(legacy_thread_id)
         )
 
 

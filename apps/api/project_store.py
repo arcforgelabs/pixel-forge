@@ -1151,23 +1151,10 @@ def _is_stale_clone_session(record: SessionRecord) -> bool:
     return not os.path.isdir(record.workspace_path)
 
 
-def _session_has_saved_activity(conn: sqlite3.Connection, thread_id: str) -> bool:
+def _session_has_workstation_events(conn: sqlite3.Connection, thread_id: str) -> bool:
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return False
-
-    if _table_exists(conn, "live_editor_threads"):
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM live_editor_threads
-            WHERE thread_id = ?
-            LIMIT 1
-            """,
-            (normalized_thread_id,),
-        ).fetchone()
-        if row is not None:
-            return True
 
     if _table_exists(conn, "workstation_events"):
         row = conn.execute(
@@ -1181,8 +1168,136 @@ def _session_has_saved_activity(conn: sqlite3.Connection, thread_id: str) -> boo
         ).fetchone()
         if row is not None:
             return True
+    return False
+
+
+def _live_editor_thread_has_meaningful_state(
+    conn: sqlite3.Connection,
+    thread_id: str,
+) -> bool:
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id or not _table_exists(conn, "live_editor_threads"):
+        return False
+
+    row = conn.execute(
+        """
+        SELECT agent_deck_session_id, agent_deck_session_title, last_request_id
+        FROM live_editor_threads
+        WHERE thread_id = ?
+        LIMIT 1
+        """,
+        (normalized_thread_id,),
+    ).fetchone()
+    if row is None:
+        return False
+
+    for column in ("agent_deck_session_id", "agent_deck_session_title", "last_request_id"):
+        value = row[column]
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def _profile_state_references_thread(
+    conn: sqlite3.Connection,
+    thread_id: str,
+) -> bool:
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id or not _table_exists(conn, "profile_state"):
+        return False
+
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM profile_state
+        WHERE active_live_editor_thread_id = ?
+        LIMIT 1
+        """,
+        (normalized_thread_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _session_has_saved_activity(conn: sqlite3.Connection, thread_id: str) -> bool:
+    normalized_thread_id = thread_id.strip()
+    if not normalized_thread_id:
+        return False
+
+    if _live_editor_thread_has_meaningful_state(conn, normalized_thread_id):
+        return True
+
+    if _session_has_workstation_events(conn, normalized_thread_id):
+        return True
 
     return False
+
+
+def _should_prune_detached_legacy_managed_root_session(
+    conn: sqlite3.Connection,
+    record: SessionRecord,
+    project_path: str,
+) -> bool:
+    if record.origin_kind != "managed":
+        return False
+    if record.agent_deck_session_id:
+        return False
+    if normalize_project_path(record.workspace_path) != normalize_project_path(project_path):
+        return False
+
+    normalized_thread_id = (
+        record.thread_id.strip()
+        if isinstance(record.thread_id, str) and record.thread_id.strip()
+        else ""
+    )
+    if not normalized_thread_id:
+        return False
+    if normalized_thread_id.startswith("chat-") or normalized_thread_id.startswith("draft-"):
+        return False
+    if (
+        isinstance(record.agent_deck_session_title, str)
+        and record.agent_deck_session_title.strip()
+    ):
+        return False
+    if _session_has_meaningful_editor_state(record):
+        return False
+    if _profile_state_references_thread(conn, normalized_thread_id):
+        return False
+    return not _session_has_saved_activity(conn, normalized_thread_id)
+
+
+def _delete_project_thread_rows(
+    conn: sqlite3.Connection,
+    project_path: str,
+    thread_ids: list[str],
+) -> None:
+    if not thread_ids:
+        return
+
+    placeholders = ",".join("?" for _ in thread_ids)
+    conn.execute(
+        f"""
+        DELETE FROM chat_session_bindings
+        WHERE project_path = ?
+          AND chat_id IN ({placeholders})
+        """,
+        (project_path, *thread_ids),
+    )
+    if _table_exists(conn, "live_editor_threads"):
+        conn.execute(
+            f"""
+            DELETE FROM live_editor_threads
+            WHERE thread_id IN ({placeholders})
+            """,
+            (*thread_ids,),
+        )
+    conn.execute(
+        f"""
+        DELETE FROM sessions
+        WHERE project_path = ?
+          AND thread_id IN ({placeholders})
+        """,
+        (project_path, *thread_ids),
+    )
 
 
 def _should_prune_detached_adopted_root_session(
@@ -1262,17 +1377,10 @@ def detach_missing_agent_deck_session_bindings(
             record.thread_id
             for record in records
             if _should_prune_detached_adopted_root_session(conn, record, normalized_path)
+            or _should_prune_detached_legacy_managed_root_session(conn, record, normalized_path)
         ]
         if pruned_thread_ids:
-            placeholders = ",".join("?" for _ in pruned_thread_ids)
-            conn.execute(
-                f"""
-                DELETE FROM sessions
-                WHERE project_path = ?
-                  AND thread_id IN ({placeholders})
-                """,
-                (normalized_path, *pruned_thread_ids),
-            )
+            _delete_project_thread_rows(conn, normalized_path, pruned_thread_ids)
         if stale_ids or detached_thread_ids or pruned_thread_ids:
             conn.commit()
 
@@ -1314,6 +1422,7 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
             record.thread_id
             for record in records
             if _should_prune_detached_adopted_root_session(conn, record, normalized_path)
+            or _should_prune_detached_legacy_managed_root_session(conn, record, normalized_path)
         ]
         if stale_ids:
             placeholders = ",".join("?" for _ in stale_ids)
@@ -1322,15 +1431,7 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
                 stale_ids,
             )
         if pruned_thread_ids:
-            placeholders = ",".join("?" for _ in pruned_thread_ids)
-            conn.execute(
-                f"""
-                DELETE FROM sessions
-                WHERE project_path = ?
-                  AND thread_id IN ({placeholders})
-                """,
-                (normalized_path, *pruned_thread_ids),
-            )
+            _delete_project_thread_rows(conn, normalized_path, pruned_thread_ids)
         if stale_ids or pruned_thread_ids:
             conn.commit()
         return [
