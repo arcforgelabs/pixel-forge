@@ -502,6 +502,8 @@ class AppliedSelectionRequest(BaseModel):
     elementId: str | None = None
     classList: list[str] = []
     textSample: str = ""
+    pdfSelectionKind: Literal["text", "text-range", "region"] | None = None
+    pdfTextRange: dict[str, int] | None = None
     rootXPath: str | None = None
     rootTagName: str | None = None
     rootElementId: str | None = None
@@ -524,6 +526,7 @@ class BrowserPreviewCommandRequest(BaseModel):
     xpath: str | None = None
     xpaths: list[str] | None = None
     selections: list[AppliedSelectionRequest] | None = None
+    reveal: bool | None = None
 
 
 class LocalTargetStartRequest(BaseModel):
@@ -1864,6 +1867,8 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
                         "elementId": selection.elementId,
                         "classList": selection.classList,
                         "textSample": selection.textSample,
+                        "pdfSelectionKind": selection.pdfSelectionKind,
+                        "pdfTextRange": selection.pdfTextRange,
                         "rootXPath": selection.rootXPath,
                         "rootTagName": selection.rootTagName,
                         "rootElementId": selection.rootElementId,
@@ -1874,6 +1879,7 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
                 ]
                 or payload.xpaths
                 or [],
+                reveal=bool(payload.reveal),
             )
         elif payload.action == "refresh":
             tab = await MANAGED_BROWSER_PREVIEW.refresh_tab(payload.browser_tab_id)

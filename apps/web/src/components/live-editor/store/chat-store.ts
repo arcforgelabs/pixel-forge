@@ -365,6 +365,7 @@ function cloneSelectedElement(element: SelectedElement): SelectedElement {
     classList: [...element.classList],
     rootClassList: [...element.rootClassList],
     region: element.region ? { ...element.region } : null,
+    pdfTextRange: element.pdfTextRange ? { ...element.pdfTextRange } : null,
     timestamp: new Date(element.timestamp),
   }
 }

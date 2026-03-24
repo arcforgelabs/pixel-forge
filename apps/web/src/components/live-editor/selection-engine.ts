@@ -1,5 +1,7 @@
 export type SelectionSelectorKind = 'dom' | 'region'
 
+export type PdfSelectionKind = 'text' | 'text-range' | 'region'
+
 export type SelectionSurfaceKind =
   | 'dom'
   | 'svg'
@@ -23,6 +25,13 @@ export interface SelectionRegion {
   anchorY: number
 }
 
+export interface PdfTextRange {
+  startIndex: number
+  startOffset: number
+  endIndex: number
+  endOffset: number
+}
+
 export interface SelectionRecord {
   id: string
   selectorKind: SelectionSelectorKind
@@ -39,7 +48,9 @@ export interface SelectionRecord {
   rootElementId: string | null
   rootClassList: string[]
   region: SelectionRegion | null
+  pdfSelectionKind?: PdfSelectionKind | null
   pdfPage?: number | null
+  pdfTextRange?: PdfTextRange | null
   pdfTextContent?: string | null
   previewDataUrl: string | null
   sourceTabId: string
@@ -76,7 +87,9 @@ export interface SelectionTunnelRecord {
   rootElementId: string | null
   rootClassList: string[]
   region: SelectionRegion | null
+  pdfSelectionKind?: PdfSelectionKind | null
   pdfPage?: number | null
+  pdfTextRange?: PdfTextRange | null
   pdfTextContent?: string | null
   previewAttachmentName: string | null
   outerHTMLExcerpt: string
@@ -160,7 +173,9 @@ function buildDomElementBlock(
 ${selection.elementId ? `<id>${escapeXml(selection.elementId)}</id>` : ''}
 ${selection.classList.length > 0 ? `<classes>${escapeXml(selection.classList.join(' '))}</classes>` : ''}
 <page-key>${escapeXml(selection.pageKey)}</page-key>
+${selection.pdfSelectionKind ? `<pdf-selection-kind>${escapeXml(selection.pdfSelectionKind)}</pdf-selection-kind>` : ''}
 ${selection.pdfPage ? `<pdf-page>${selection.pdfPage}</pdf-page>` : ''}
+${selection.pdfTextRange ? `<pdf-text-range start-index="${selection.pdfTextRange.startIndex}" start-offset="${selection.pdfTextRange.startOffset}" end-index="${selection.pdfTextRange.endIndex}" end-offset="${selection.pdfTextRange.endOffset}" />` : ''}
 ${selection.pdfTextContent ? `<pdf-text>${escapeXml(selection.pdfTextContent)}</pdf-text>` : ''}
 <xpath>${escapeXml(selection.xpath)}</xpath>
 ${previewAttachmentName ? `<preview-attachment>${escapeXml(previewAttachmentName)}</preview-attachment>` : ''}
@@ -180,6 +195,7 @@ function buildRegionElementBlock(
   return `<selected-element global-index="${globalIndex}" selector="${selection.selectorKind}" surface="${selection.surfaceKind}">
 <tag>${escapeXml(selection.tagName)}</tag>
 <page-key>${escapeXml(selection.pageKey)}</page-key>
+${selection.pdfSelectionKind ? `<pdf-selection-kind>${escapeXml(selection.pdfSelectionKind)}</pdf-selection-kind>` : ''}
 ${selection.pdfPage ? `<pdf-page>${selection.pdfPage}</pdf-page>` : ''}
 ${selection.pdfTextContent ? `<pdf-text>${escapeXml(selection.pdfTextContent)}</pdf-text>` : ''}
 ${selection.rootXPath ? `<root-xpath>${escapeXml(selection.rootXPath)}</root-xpath>` : ''}
@@ -260,7 +276,9 @@ export function buildSelectionArtifacts(selectedElements: SelectionRecord[]): Bu
       classList: selection.classList,
       textContent: normalizeText(selection.textContent, 240),
       xpath: selection.xpath,
+      pdfSelectionKind: selection.pdfSelectionKind ?? null,
       pdfPage: selection.pdfPage ?? null,
+      pdfTextRange: selection.pdfTextRange ?? null,
       pdfTextContent: selection.pdfTextContent ?? null,
       rootXPath: selection.rootXPath,
       rootTagName: selection.rootTagName,

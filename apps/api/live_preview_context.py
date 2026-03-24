@@ -98,10 +98,16 @@ def selection_hints_for_live_preview(
                 "source_tab_id": _normalize_text(entry.get("sourceTabId")),
                 "source_url": _normalize_text(entry.get("sourceUrl")),
                 "xpath": _normalize_text(entry.get("xpath")),
+                "pdf_selection_kind": _normalize_text(entry.get("pdfSelectionKind")),
                 "pdf_page": (
                     int(entry.get("pdfPage"))
                     if isinstance(entry.get("pdfPage"), (int, float))
                     and int(entry.get("pdfPage")) > 0
+                    else None
+                ),
+                "pdf_text_range": (
+                    entry.get("pdfTextRange")
+                    if isinstance(entry.get("pdfTextRange"), dict)
                     else None
                 ),
                 "pdf_text_content": _normalize_text(entry.get("pdfTextContent")),

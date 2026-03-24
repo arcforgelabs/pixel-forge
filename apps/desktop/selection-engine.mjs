@@ -420,6 +420,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
   let desiredSelections = []
   let reconcileFrame = null
   let domObserver = null
+  let suppressClickUntil = 0
 
   function previewOwnsInput() {
     return document.visibilityState === 'visible' && document.hasFocus()
@@ -534,7 +535,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
     return fallbackIndex
   }
 
-  function normalizeRegion(value) {
+function normalizeRegion(value) {
     if (!value || typeof value !== 'object') {
       return null
     }
@@ -567,6 +568,35 @@ export function installSelectionBridge({ emit, captureRegion }) {
       normalizedHeight: Number(region.normalizedHeight),
       anchorX: Number(region.anchorX),
       anchorY: Number(region.anchorY),
+  }
+}
+
+  function normalizePdfSelectionKind(value) {
+    return value === 'text' || value === 'text-range' || value === 'region'
+      ? value
+      : null
+  }
+
+  function normalizePdfTextRange(value) {
+    if (!value || typeof value !== 'object') {
+      return null
+    }
+    const numericKeys = [
+      'startIndex',
+      'startOffset',
+      'endIndex',
+      'endOffset',
+    ]
+    for (const key of numericKeys) {
+      if (!Number.isFinite(Number(value[key]))) {
+        return null
+      }
+    }
+    return {
+      startIndex: Math.max(1, Math.round(Number(value.startIndex))),
+      startOffset: Math.max(0, Math.round(Number(value.startOffset))),
+      endIndex: Math.max(1, Math.round(Number(value.endIndex))),
+      endOffset: Math.max(0, Math.round(Number(value.endOffset))),
     }
   }
 
@@ -608,7 +638,9 @@ export function installSelectionBridge({ emit, captureRegion }) {
         elementId: typeof entry.elementId === 'string' ? entry.elementId : null,
         classList: Array.isArray(entry.classList) ? entry.classList.filter((value) => typeof value === 'string') : [],
         textSample: typeof entry.textSample === 'string' ? normalizeText(entry.textSample, 120) : '',
+        pdfSelectionKind: normalizePdfSelectionKind(entry.pdfSelectionKind),
         pdfPage: Number.isFinite(Number(entry.pdfPage)) ? Math.round(Number(entry.pdfPage)) : null,
+        pdfTextRange: normalizePdfTextRange(entry.pdfTextRange),
         pdfTextContent: typeof entry.pdfTextContent === 'string' ? normalizeText(entry.pdfTextContent, 400) : null,
         rootXPath: typeof entry.rootXPath === 'string' ? entry.rootXPath : null,
         rootTagName: typeof entry.rootTagName === 'string' ? entry.rootTagName : null,
@@ -643,6 +675,16 @@ export function installSelectionBridge({ emit, captureRegion }) {
         shadow: 'rgba(245, 158, 11, 0.28)',
         badge: '#f59e0b',
         borderStyle: 'dashed',
+      }
+    }
+
+    if (selection?.surfaceKind === 'pdf' && selection?.pdfSelectionKind === 'text-range') {
+      return {
+        border: '#06b6d4',
+        background: 'rgba(6, 182, 212, 0.12)',
+        shadow: 'rgba(6, 182, 212, 0.28)',
+        badge: '#06b6d4',
+        borderStyle: 'solid',
       }
     }
 
@@ -1483,7 +1525,9 @@ export function installSelectionBridge({ emit, captureRegion }) {
             elementId: hint?.elementId,
             classList: hint?.classList,
             textSample: hint?.textContent,
+            pdfSelectionKind: hint?.pdfSelectionKind,
             pdfPage: hint?.pdfPage,
+            pdfTextRange: hint?.pdfTextRange,
             pdfTextContent: hint?.pdfTextContent,
             rootXPath: hint?.rootXPath,
             rootTagName: hint?.rootTagName,
@@ -1576,6 +1620,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   function classifySelectionTarget(element, clientX = Number.NaN, clientY = Number.NaN) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.classifySelectionTarget === 'function') {
+      const adapterClassification = adapter.classifySelectionTarget(element, clientX, clientY)
+      if (adapterClassification && typeof adapterClassification === 'object') {
+        return adapterClassification
+      }
+    }
+
     const builtInPdfLine = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
     if (builtInPdfLine) {
       return {
@@ -1594,14 +1646,6 @@ export function installSelectionBridge({ emit, captureRegion }) {
         surfaceElement: builtInPdfPage,
         hoverRect: builtInPdfPage.getBoundingClientRect(),
         label: `PDF page ${builtInPdfPageNumberValue} region`,
-      }
-    }
-
-    const adapter = getSelectionAdapter()
-    if (typeof adapter?.classifySelectionTarget === 'function') {
-      const adapterClassification = adapter.classifySelectionTarget(element)
-      if (adapterClassification && typeof adapterClassification === 'object') {
-        return adapterClassification
       }
     }
 
@@ -1647,6 +1691,25 @@ export function installSelectionBridge({ emit, captureRegion }) {
     clientX = Number.NaN,
     clientY = Number.NaN,
   ) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.buildSelectionDescriptor === 'function') {
+      const adapterSelection = await adapter.buildSelectionDescriptor(
+        element,
+        clientX,
+        clientY,
+        selectionId,
+        {
+          capturePreviewData,
+          getXPath,
+          normalizeText,
+          pageContext: currentPageContext(),
+        },
+      )
+      if (adapterSelection) {
+        return adapterSelection
+      }
+    }
+
     const builtInPdfLine = resolveBuiltInPdfLineCandidate(element, clientX, clientY)
     if (builtInPdfLine) {
       const pageContext = currentPageContext()
@@ -1666,32 +1729,15 @@ export function installSelectionBridge({ emit, captureRegion }) {
         rootElementId: null,
         rootClassList: [],
         region: null,
+        pdfSelectionKind: 'text',
         previewDataUrl: await capturePreviewData(builtInPdfLine.rect),
         pageUrl: pageContext.pageUrl,
         pageTitle: pageContext.pageTitle,
         selectionId,
         pdfPage: builtInPdfLine.pageNumber,
+        pdfTextRange: null,
         pdfTextContent: builtInPdfLine.text,
         __pixelForgeResolvedElement: builtInPdfLine.anchorElement,
-      }
-    }
-
-    const adapter = getSelectionAdapter()
-    if (typeof adapter?.buildSelectionDescriptor === 'function') {
-      const adapterSelection = await adapter.buildSelectionDescriptor(
-        element,
-        null,
-        null,
-        selectionId,
-        {
-          capturePreviewData,
-          getXPath,
-          normalizeText,
-          pageContext: currentPageContext(),
-        },
-      )
-      if (adapterSelection) {
-        return adapterSelection
       }
     }
 
@@ -1753,8 +1799,7 @@ export function installSelectionBridge({ emit, captureRegion }) {
   async function buildRegionSelection(surfaceElement, clientX, clientY, selectionId = generateSelectionId()) {
     const adapter = getSelectionAdapter()
     if (
-      !builtInPdfPageNumber(surfaceElement)
-      && typeof adapter?.buildSelectionDescriptor === 'function'
+      typeof adapter?.buildSelectionDescriptor === 'function'
     ) {
       const adapterSelection = await adapter.buildSelectionDescriptor(
         surfaceElement,
@@ -1814,11 +1859,13 @@ export function installSelectionBridge({ emit, captureRegion }) {
       rootElementId: surfaceElement.id || null,
       rootClassList: builtInPdfPageNumberValue ? ['pdf-page'] : [...surfaceElement.classList],
       region,
+      pdfSelectionKind: builtInPdfPageNumberValue ? 'region' : null,
       previewDataUrl: await capturePreviewData(regionRect),
       pageUrl: pageContext.pageUrl,
       pageTitle: pageContext.pageTitle,
       selectionId,
       pdfPage: builtInPdfPageNumberValue,
+      pdfTextRange: null,
       pdfTextContent: builtInPdfText,
       __pixelForgeResolvedElement: surfaceElement,
     }
@@ -1853,6 +1900,64 @@ export function installSelectionBridge({ emit, captureRegion }) {
       return buildRegionSelection(classification.surfaceElement, clientX, clientY, selectionId)
     }
     return buildDomSelection(element, selectionId, clientX, clientY)
+  }
+
+  async function buildActiveTextRangeSelection(selectionId = generateSelectionId()) {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.buildTextRangeSelectionDescriptor !== 'function') {
+      return null
+    }
+
+    return adapter.buildTextRangeSelectionDescriptor(
+      selectionId,
+      {
+        capturePreviewData,
+        getXPath,
+        normalizeText,
+        pageContext: currentPageContext(),
+      },
+    )
+  }
+
+  function clearNativeTextSelection() {
+    const adapter = getSelectionAdapter()
+    if (typeof adapter?.clearNativeTextSelection === 'function') {
+      adapter.clearNativeTextSelection()
+      return
+    }
+
+    const selection = window.getSelection?.()
+    if (selection) {
+      selection.removeAllRanges()
+    }
+  }
+
+  function revealSelection(selection) {
+    const resolved = resolveSelection(selection)
+    if (!resolved) {
+      return false
+    }
+
+    const adapter = getSelectionAdapter()
+    if (
+      selection?.surfaceKind === 'pdf'
+      && typeof adapter?.revealSelection === 'function'
+    ) {
+      return !!adapter.revealSelection(selection, {
+        findElementByXPath,
+        normalizeText,
+      })
+    }
+
+    if (typeof resolved.element?.scrollIntoView === 'function') {
+      resolved.element.scrollIntoView({
+        block: 'center',
+        inline: 'center',
+      })
+      return true
+    }
+
+    return false
   }
 
   function findRenderedDomSelectionIndex(element, clientX, clientY) {
@@ -2052,7 +2157,9 @@ export function installSelectionBridge({ emit, captureRegion }) {
       rootElementId: selection.rootElementId,
       rootClassList: selection.rootClassList,
       region: selection.region,
+      pdfSelectionKind: selection.pdfSelectionKind ?? null,
       pdfPage: selection.pdfPage ?? null,
+      pdfTextRange: selection.pdfTextRange ?? null,
       pdfTextContent: selection.pdfTextContent ?? null,
       previewDataUrl: selection.previewDataUrl,
       pageUrl: selection.pageUrl || pageContext.pageUrl,
@@ -2144,13 +2251,26 @@ export function installSelectionBridge({ emit, captureRegion }) {
     }
   }
 
-  async function applySelections(selections) {
+  async function applySelections(selections, options = {}) {
     desiredSelections = normalizeAppliedSelections(selections)
     reconcileDesiredSelections()
+
+    if (options?.reveal && desiredSelections[0]) {
+      window.requestAnimationFrame(() => {
+        revealSelection(desiredSelections[0])
+      })
+    }
   }
 
   async function handleClick(event) {
     if (!selectMode) return
+    if (Date.now() < suppressClickUntil) {
+      suppressClickUntil = 0
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      return false
+    }
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation()
@@ -2164,7 +2284,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
       ? currentTarget.element
       : rawEventTarget
 
-    if (builtInPdfOwnsElement(rawEventTarget)) {
+    const adapter = getSelectionAdapter()
+    const adapterClickTarget =
+      typeof adapter?.resolveClickTarget === 'function'
+        ? adapter.resolveClickTarget(rawEventTarget, event.clientX, event.clientY)
+        : null
+    if (adapterClickTarget instanceof Element) {
+      element = adapterClickTarget
+    } else if (builtInPdfOwnsElement(rawEventTarget)) {
       const builtInTarget = resolveBuiltInPdfClickTarget(
         rawEventTarget,
         event.clientX,
@@ -2225,6 +2352,31 @@ export function installSelectionBridge({ emit, captureRegion }) {
       await selectResolvedSelection(selection)
     }
     return false
+  }
+
+  async function handleMouseUp(event) {
+    if (!selectMode || !(event.target instanceof Element)) {
+      return
+    }
+
+    const rangeSelection = await buildActiveTextRangeSelection()
+    if (!rangeSelection) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.stopImmediatePropagation()
+
+    clearNativeTextSelection()
+    suppressClickUntil = Date.now() + 250
+    await selectResolvedSelection(rangeSelection)
+    lastPointerElement = rangeSelection.__pixelForgeResolvedElement instanceof Element
+      ? rangeSelection.__pixelForgeResolvedElement
+      : event.target
+    hoverClientX = event.clientX
+    hoverClientY = event.clientY
+    refreshHoverTargetFromPointer()
   }
 
   function handleMouseMove(event) {
@@ -2336,12 +2488,14 @@ export function installSelectionBridge({ emit, captureRegion }) {
   }
 
   document.addEventListener('mousemove', handleMouseMove, true)
+  document.addEventListener('mouseup', handleMouseUp, true)
   document.addEventListener('click', handleClick, true)
   document.addEventListener('keydown', handleKeyDown, true)
   document.addEventListener('keyup', handleKeyUp, true)
   document.addEventListener('mouseleave', hideHoverOverlay)
   window.addEventListener('blur', () => {
     keyboardState = { ctrl: false, shift: false }
+    suppressClickUntil = 0
     hideHoverOverlay()
   })
   window.addEventListener('hashchange', () => {
@@ -2442,7 +2596,18 @@ export function installSelectionBridge({ emit, captureRegion }) {
       scheduleSelectionReconcile()
     },
     async applySelections(selections) {
-      await applySelections(Array.isArray(selections) ? selections : [])
+      const normalizedPayload =
+        Array.isArray(selections)
+          ? { selections, reveal: false }
+          : (
+              selections && typeof selections === 'object'
+                ? selections
+                : { selections: [] }
+            )
+      await applySelections(
+        Array.isArray(normalizedPayload.selections) ? normalizedPayload.selections : [],
+        { reveal: Boolean(normalizedPayload.reveal) },
+      )
     },
   }
 }

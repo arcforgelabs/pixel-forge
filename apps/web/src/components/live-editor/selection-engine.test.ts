@@ -65,9 +65,9 @@ describe('buildSelectionArtifacts', () => {
         selectorKind: 'dom',
         surfaceKind: 'pdf',
         pageKey: 'https://example.com/spec.pdf#page=4',
-        tagName: 'pdf-text',
+        tagName: 'pdf-text-range',
         elementId: null,
-        classList: ['pdf-text'],
+        classList: ['pdf-text-range'],
         textContent: 'The controller must preserve the live preview session.',
         xpath: '/html/body/div[1]/div[2]/span[5]',
         outerHTML: '<span data-pf-pdf-text="1">The controller must preserve the live preview session.</span>',
@@ -76,7 +76,14 @@ describe('buildSelectionArtifacts', () => {
         rootElementId: null,
         rootClassList: [],
         region: null,
+        pdfSelectionKind: 'text-range',
         pdfPage: 4,
+        pdfTextRange: {
+          startIndex: 5,
+          startOffset: 0,
+          endIndex: 8,
+          endOffset: 12,
+        },
         pdfTextContent: 'The controller must preserve the live preview session.',
         previewDataUrl: null,
         sourceTabId: 'tab-3',
@@ -95,11 +102,20 @@ describe('buildSelectionArtifacts', () => {
       artifacts.attachments[1].name
     )
     expect(artifacts.tunnel.selections[2].surfaceKind).toBe('pdf')
+    expect(artifacts.tunnel.selections[2].pdfSelectionKind).toBe('text-range')
     expect(artifacts.tunnel.selections[2].pdfPage).toBe(4)
+    expect(artifacts.tunnel.selections[2].pdfTextRange).toEqual({
+      startIndex: 5,
+      startOffset: 0,
+      endIndex: 8,
+      endOffset: 12,
+    })
     expect(artifacts.tunnel.selections[2].pdfTextContent).toContain('live preview session')
     expect(artifacts.elementContext).toContain('selector="dom"')
     expect(artifacts.elementContext).toContain('selector="region"')
     expect(artifacts.elementContext).toContain('<pdf-page>4</pdf-page>')
+    expect(artifacts.elementContext).toContain('<pdf-selection-kind>text-range</pdf-selection-kind>')
+    expect(artifacts.elementContext).toContain('<pdf-text-range start-index="5" start-offset="0" end-index="8" end-offset="12" />')
     expect(artifacts.elementContext).toContain('<pdf-text>')
     expect(artifacts.elementContext).toContain('<preview-attachment>')
   })

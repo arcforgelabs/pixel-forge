@@ -17,6 +17,7 @@ interface SelectedElementChipProps {
     id: string
     selectorKind: 'dom' | 'region'
     surfaceKind: string
+    pdfSelectionKind?: 'text' | 'text-range' | 'region' | null
     tagName: string
     elementId: string | null
     classList: string[]
@@ -36,14 +37,19 @@ function SelectedElementChip({
   onRemove,
 }: SelectedElementChipProps) {
   const isRegion = element.selectorKind === 'region'
-  const isPdfText = element.surfaceKind === 'pdf' && !isRegion
+  const isPdfRange = element.surfaceKind === 'pdf' && element.pdfSelectionKind === 'text-range'
+  const isPdfText = element.surfaceKind === 'pdf' && !isRegion && !isPdfRange
   const badgeClassName = isRegion
     ? 'bg-amber-500'
+    : isPdfRange
+      ? 'bg-cyan-500'
     : isPdfText
       ? 'bg-emerald-500'
       : 'bg-green-500'
   const labelClassName = isRegion
     ? 'text-amber-300'
+    : isPdfRange
+      ? 'text-cyan-300'
     : isPdfText
       ? 'text-emerald-300'
       : 'text-foreground'
@@ -52,10 +58,12 @@ function SelectedElementChip({
   let label =
     isRegion
       ? `${element.surfaceKind} region`
+      : isPdfRange
+        ? 'pdf text range'
       : isPdfText
         ? 'pdf text'
         : element.tagName
-  if (!isRegion && !isPdfText) {
+  if (!isRegion && !isPdfText && !isPdfRange) {
     if (element.elementId) {
       label += `#${element.elementId}`
     } else if (element.classList.length > 0) {

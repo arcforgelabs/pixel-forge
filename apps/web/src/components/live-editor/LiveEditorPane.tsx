@@ -71,6 +71,7 @@ import {
 } from './store/chat-store'
 import {
   type SelectionRecord,
+  type PdfTextRange,
   type SelectionRegion,
 } from './selection-engine'
 
@@ -177,7 +178,9 @@ interface AppliedSelection {
   elementId: string | null
   classList: string[]
   textSample: string
+  pdfSelectionKind?: 'text' | 'text-range' | 'region' | null
   pdfPage?: number | null
+  pdfTextRange?: PdfTextRange | null
   pdfTextContent?: string | null
   rootXPath: string | null
   rootTagName: string | null
@@ -236,7 +239,9 @@ function toAppliedSelection(
     elementId: element.elementId,
     classList: element.classList,
     textSample: element.textContent.replace(/\s+/g, ' ').trim().slice(0, 120),
+    pdfSelectionKind: element.pdfSelectionKind ?? null,
     pdfPage: element.pdfPage ?? null,
+    pdfTextRange: element.pdfTextRange ?? null,
     pdfTextContent: element.pdfTextContent ?? null,
     rootXPath: element.rootXPath,
     rootTagName: element.rootTagName,
@@ -290,6 +295,33 @@ function parseSelectionRegion(value: unknown): SelectionRegion | null {
   }
 }
 
+function parsePdfTextRange(value: unknown): PdfTextRange | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const range = value as Record<string, unknown>
+  const numericKeys = [
+    'startIndex',
+    'startOffset',
+    'endIndex',
+    'endOffset',
+  ] as const
+
+  for (const key of numericKeys) {
+    if (!Number.isFinite(Number(range[key]))) {
+      return null
+    }
+  }
+
+  return {
+    startIndex: Math.max(1, Math.round(Number(range.startIndex))),
+    startOffset: Math.max(0, Math.round(Number(range.startOffset))),
+    endIndex: Math.max(1, Math.round(Number(range.endIndex))),
+    endOffset: Math.max(0, Math.round(Number(range.endOffset))),
+  }
+}
+
 function parsePreviewSelectionData(
   data: Record<string, unknown>,
   sourceTab: Pick<PreviewTab, 'id' | 'title' | 'url'>
@@ -304,7 +336,14 @@ function parsePreviewSelectionData(
         : 'dom'
   const xpath = typeof data.xpath === 'string' ? data.xpath : ''
   const rootXPath = typeof data.rootXPath === 'string' ? data.rootXPath : null
+  const pdfSelectionKind =
+    data.pdfSelectionKind === 'text'
+      || data.pdfSelectionKind === 'text-range'
+      || data.pdfSelectionKind === 'region'
+      ? data.pdfSelectionKind
+      : null
   const pdfPage = Number.isFinite(Number(data.pdfPage)) ? Math.round(Number(data.pdfPage)) : null
+  const pdfTextRange = parsePdfTextRange(data.pdfTextRange)
   const pdfTextContent =
     typeof data.pdfTextContent === 'string'
       ? data.pdfTextContent
@@ -346,7 +385,9 @@ function parsePreviewSelectionData(
     textContent: typeof data.textContent === 'string' ? data.textContent : '',
     xpath,
     outerHTML: typeof data.outerHTML === 'string' ? data.outerHTML : '',
+    pdfSelectionKind,
     pdfPage,
+    pdfTextRange,
     pdfTextContent,
     rootXPath,
     rootTagName: typeof data.rootTagName === 'string' ? data.rootTagName : null,
@@ -947,6 +988,7 @@ export function LiveEditorPane() {
           return await desktopPreview.deselect(browserTabId, String(payload?.selectionId || ''))
         }
         if (action === 'apply') {
+          const reveal = payload?.reveal === true
           return await desktopPreview.applySelections(
             browserTabId,
             Array.isArray(payload?.selections)
@@ -964,7 +1006,19 @@ export function LiveEditorPane() {
                 && Array.isArray(entry.classList)
                 && entry.classList.every((value: unknown) => typeof value === 'string')
                 && typeof entry.textSample === 'string'
+                && (entry.pdfSelectionKind === null || entry.pdfSelectionKind === undefined || entry.pdfSelectionKind === 'text' || entry.pdfSelectionKind === 'text-range' || entry.pdfSelectionKind === 'region')
                 && (entry.pdfPage === null || entry.pdfPage === undefined || Number.isFinite(entry.pdfPage))
+                && (
+                  entry.pdfTextRange === null
+                  || entry.pdfTextRange === undefined
+                  || (
+                    typeof entry.pdfTextRange === 'object'
+                    && Number.isFinite(entry.pdfTextRange.startIndex)
+                    && Number.isFinite(entry.pdfTextRange.startOffset)
+                    && Number.isFinite(entry.pdfTextRange.endIndex)
+                    && Number.isFinite(entry.pdfTextRange.endOffset)
+                  )
+                )
                 && (entry.pdfTextContent === null || entry.pdfTextContent === undefined || typeof entry.pdfTextContent === 'string')
                 && (entry.rootXPath === null || typeof entry.rootXPath === 'string')
                 && (entry.rootTagName === null || typeof entry.rootTagName === 'string')
@@ -972,7 +1026,8 @@ export function LiveEditorPane() {
                 && Array.isArray(entry.rootClassList)
                 && entry.rootClassList.every((value: unknown) => typeof value === 'string')
               )
-              : []
+              : [],
+            { reveal }
           )
         }
         if (action === 'refresh') {
@@ -1007,7 +1062,10 @@ export function LiveEditorPane() {
     }
   }, [])
 
-  const syncTabSelections = useCallback(async (tabId: string) => {
+  const syncTabSelections = useCallback(async (
+    tabId: string,
+    options?: { reveal?: boolean }
+  ) => {
     const tab = getPreviewTabById(tabId)
     if (!tab) {
       return
@@ -1041,7 +1099,10 @@ export function LiveEditorPane() {
     }
 
     if (tab.mode === 'browser' && tab.browserTabId) {
-      await sendBrowserCommand(tab.browserTabId, 'apply', { selections })
+      await sendBrowserCommand(tab.browserTabId, 'apply', {
+        selections,
+        reveal: options?.reveal === true,
+      })
     }
   }, [getPreviewTabById, sendBrowserCommand])
 
@@ -1215,7 +1276,7 @@ export function LiveEditorPane() {
 
       window.setTimeout(() => {
         void updateEmbeddedPreviewBounds()
-        void syncTabSelections(resolvedTabId)
+        void syncTabSelections(resolvedTabId, { reveal: true })
         void syncActivePreviewSelectionMode(resolvedTabId)
       }, 150)
 
@@ -2251,7 +2312,7 @@ export function LiveEditorPane() {
         },
         '*'
       )
-      void syncTabSelections(tabId)
+      void syncTabSelections(tabId, { reveal: tabId === activeTabIdRef.current })
     }, 120)
   }, [getPreviewTabById, isSelectionToolActive, syncTabSelections])
 
@@ -2396,7 +2457,9 @@ export function LiveEditorPane() {
       }
 
       window.setTimeout(() => {
-        void syncTabSelections(sourceTab.id)
+        void syncTabSelections(sourceTab.id, {
+          reveal: sourceTab.id === activePreviewTab?.id,
+        })
       }, 250)
       return
     }

@@ -41,6 +41,38 @@ interface PdfLineCandidate {
   text: string
 }
 
+interface PdfTextRange {
+  startIndex: number
+  startOffset: number
+  endIndex: number
+  endOffset: number
+}
+
+interface PdfRangeCandidate {
+  anchorElement: HTMLElement
+  pageNumber: number
+  pageRoot: HTMLElement
+  rect: {
+    left: number
+    top: number
+    right: number
+    bottom: number
+    width: number
+    height: number
+  }
+  rects: Array<{
+    left: number
+    top: number
+    right: number
+    bottom: number
+    width: number
+    height: number
+  }>
+  spans: HTMLElement[]
+  text: string
+  textRange: PdfTextRange
+}
+
 interface PdfPreviewState {
   sourceUrl: string
   title: string
@@ -76,11 +108,13 @@ interface PdfAdapterSelection {
     anchorX: number
     anchorY: number
   } | null
+  pdfSelectionKind: 'text' | 'text-range' | 'region'
   previewDataUrl: string | null
   pageUrl: string
   pageTitle: string | null
   selectionId: string
   pdfPage: number
+  pdfTextRange: PdfTextRange | null
   pdfTextContent: string | null
   __pixelForgeResolvedElement: Element
 }
@@ -199,6 +233,14 @@ function rectsIntersect(
   )
 }
 
+function rectContainsPoint(
+  rect: { left: number; top: number; right: number; bottom: number },
+  x: number,
+  y: number
+): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
 function unionRect(
   rects: Array<{
     left: number
@@ -227,11 +269,68 @@ function unionRect(
   }
 }
 
+function expandRect(
+  rect: {
+    left: number
+    top: number
+    right: number
+    bottom: number
+    width: number
+    height: number
+  },
+  padX: number,
+  padY: number
+) {
+  return {
+    left: rect.left - padX,
+    top: rect.top - padY,
+    right: rect.right + padX,
+    bottom: rect.bottom + padY,
+    width: rect.width + padX * 2,
+    height: rect.height + padY * 2,
+  }
+}
+
+function pointDistanceToRect(
+  x: number,
+  y: number,
+  rect: { left: number; top: number; right: number; bottom: number }
+) {
+  const deltaX =
+    x < rect.left
+      ? rect.left - x
+      : x > rect.right
+        ? x - rect.right
+        : 0
+  const deltaY =
+    y < rect.top
+      ? rect.top - y
+      : y > rect.bottom
+        ? y - rect.bottom
+        : 0
+  return Math.hypot(deltaX, deltaY)
+}
+
 function collectTextSpans(pageRoot: HTMLElement | null): HTMLElement[] {
   if (!pageRoot) {
     return []
   }
   return Array.from(pageRoot.querySelectorAll<HTMLElement>('[data-pf-pdf-text="1"]'))
+}
+
+function textIndexForSpan(span: HTMLElement | null): number | null {
+  const rawIndex = span?.dataset.pfPdfTextIndex
+  const numericIndex = Number(rawIndex)
+  return Number.isFinite(numericIndex) && numericIndex > 0
+    ? Math.round(numericIndex)
+    : null
+}
+
+function findTextSpanByIndex(pageRoot: HTMLElement | null, index: number | null): HTMLElement | null {
+  if (!pageRoot || !Number.isFinite(index) || !index || index < 1) {
+    return null
+  }
+  return pageRoot.querySelector<HTMLElement>(`[data-pf-pdf-text-index="${Math.round(index)}"]`)
 }
 
 function collectLineCandidates(pageRoot: HTMLElement | null): PdfLineCandidate[] {
@@ -296,6 +395,48 @@ function collectLineCandidates(pageRoot: HTMLElement | null): PdfLineCandidate[]
   })
 }
 
+function findLineCandidateNearPoint(
+  pageRoot: HTMLElement | null,
+  clientX: number,
+  clientY: number
+): PdfLineCandidate | null {
+  if (!pageRoot || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null
+  }
+
+  const candidates = collectLineCandidates(pageRoot)
+  let bestCandidate: PdfLineCandidate | null = null
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (const candidate of candidates) {
+    const hitRect = expandRect(
+      candidate.rect,
+      Math.max(18, candidate.rect.height * 1.4),
+      Math.max(10, candidate.rect.height * 1.1),
+    )
+    if (!rectContainsPoint(hitRect, clientX, clientY)) {
+      continue
+    }
+
+    const distance = pointDistanceToRect(clientX, clientY, candidate.rect)
+    const centerY = candidate.rect.top + candidate.rect.height / 2
+    const verticalDelta = Math.abs(clientY - centerY)
+    const horizontalDelta =
+      clientX < candidate.rect.left
+        ? candidate.rect.left - clientX
+        : clientX > candidate.rect.right
+          ? clientX - candidate.rect.right
+          : 0
+    const score = distance + verticalDelta * 1.75 + horizontalDelta * 0.35
+    if (score < bestScore) {
+      bestScore = score
+      bestCandidate = candidate
+    }
+  }
+
+  return bestCandidate
+}
+
 function findLineCandidateForElement(element: Element | null): PdfLineCandidate | null {
   const pageRoot = findPdfPageRoot(element)
   const anchorSpan = findTextSpan(element)
@@ -305,6 +446,24 @@ function findLineCandidateForElement(element: Element | null): PdfLineCandidate 
   return collectLineCandidates(pageRoot).find((candidate) =>
     candidate.spans.some((span) => span === anchorSpan)
   ) || null
+}
+
+function resolveLineCandidate(
+  element: Element | null,
+  clientX: number | null,
+  clientY: number | null
+): PdfLineCandidate | null {
+  const directCandidate = findLineCandidateForElement(element)
+  if (directCandidate) {
+    return directCandidate
+  }
+
+  const pageRoot = findPdfPageRoot(element)
+  if (!pageRoot || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null
+  }
+
+  return findLineCandidateNearPoint(pageRoot, Number(clientX), Number(clientY))
 }
 
 function findLineCandidateByText(
@@ -362,7 +521,204 @@ function decorateTextLayer(textLayerRoot: HTMLElement, pageNumber: number) {
       span.dataset.pfPdfText = '1'
       span.dataset.pfPdfPageNumber = String(pageNumber)
       span.dataset.pfPdfTextIndex = String(index + 1)
-    })
+  })
+}
+
+function findSelectionTextSpan(node: Node | null): HTMLElement | null {
+  if (node instanceof HTMLElement) {
+    return findTextSpan(node)
+  }
+  if (node instanceof Text) {
+    return findTextSpan(node.parentElement)
+  }
+  return null
+}
+
+function resolveTextEndpoint(
+  container: Node | null,
+  offset: number,
+  preferEnd: boolean
+): { span: HTMLElement; offset: number } | null {
+  const span = findSelectionTextSpan(container)
+  if (!span) {
+    return null
+  }
+
+  const textLength = span.textContent?.length ?? 0
+  const fallbackOffset = preferEnd ? textLength : 0
+  const resolvedOffset =
+    container instanceof Text
+      ? Math.max(0, Math.min(offset, textLength))
+      : fallbackOffset
+
+  return {
+    span,
+    offset: resolvedOffset,
+  }
+}
+
+function normalizeRangeEndpoints(
+  start: { span: HTMLElement; offset: number } | null,
+  end: { span: HTMLElement; offset: number } | null
+): { start: { span: HTMLElement; offset: number }; end: { span: HTMLElement; offset: number } } | null {
+  if (!start || !end) {
+    return null
+  }
+
+  const startIndex = textIndexForSpan(start.span)
+  const endIndex = textIndexForSpan(end.span)
+  if (!startIndex || !endIndex) {
+    return null
+  }
+
+  if (
+    startIndex < endIndex
+    || (startIndex === endIndex && start.offset <= end.offset)
+  ) {
+    return { start, end }
+  }
+
+  return {
+    start: end,
+    end: start,
+  }
+}
+
+function rectFromClientRectList(
+  rects: DOMRectList | DOMRect[]
+): Array<{
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+}> {
+  return Array.from(rects)
+    .map((rect) => ({
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    }))
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+}
+
+function buildRangeCandidateFromCurrentSelection(): PdfRangeCandidate | null {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null
+  }
+
+  const rawText = normalizeText(selection.toString(), 1200)
+  if (!rawText) {
+    return null
+  }
+
+  const range = selection.getRangeAt(0)
+  const normalizedEndpoints = normalizeRangeEndpoints(
+    resolveTextEndpoint(range.startContainer, range.startOffset, false),
+    resolveTextEndpoint(range.endContainer, range.endOffset, true),
+  )
+  if (!normalizedEndpoints) {
+    return null
+  }
+
+  const { start, end } = normalizedEndpoints
+  const pageRoot = findPdfPageRoot(start.span)
+  const endPageRoot = findPdfPageRoot(end.span)
+  const pageNumber = pageNumberForRoot(pageRoot)
+  if (!pageRoot || pageRoot !== endPageRoot || !pageNumber) {
+    return null
+  }
+
+  const startIndex = textIndexForSpan(start.span)
+  const endIndex = textIndexForSpan(end.span)
+  if (!startIndex || !endIndex) {
+    return null
+  }
+
+  const spans = collectTextSpans(pageRoot).filter((span) => {
+    const spanIndex = textIndexForSpan(span)
+    return Boolean(spanIndex && spanIndex >= startIndex && spanIndex <= endIndex)
+  })
+  if (spans.length === 0) {
+    return null
+  }
+
+  const rects = rectFromClientRectList(range.getClientRects())
+  const rect = unionRect(rects.length > 0 ? rects : spans.map((span) => span.getBoundingClientRect()))
+  if (!rect) {
+    return null
+  }
+
+  return {
+    anchorElement: start.span,
+    pageNumber,
+    pageRoot,
+    rect,
+    rects,
+    spans,
+    text: rawText,
+    textRange: {
+      startIndex,
+      startOffset: start.offset,
+      endIndex,
+      endOffset: end.offset,
+    },
+  }
+}
+
+function resolveRangeFromSelectionData(
+  pageRoot: HTMLElement | null,
+  textRange: PdfTextRange | null | undefined
+) {
+  if (!pageRoot || !textRange) {
+    return null
+  }
+
+  const startSpan = findTextSpanByIndex(pageRoot, textRange.startIndex)
+  const endSpan = findTextSpanByIndex(pageRoot, textRange.endIndex)
+  if (!startSpan || !endSpan) {
+    return null
+  }
+
+  const startNode = startSpan.firstChild ?? startSpan
+  const endNode = endSpan.firstChild ?? endSpan
+  const resolvedRange = document.createRange()
+  resolvedRange.setStart(
+    startNode,
+    Math.max(0, Math.min(textRange.startOffset, startSpan.textContent?.length ?? 0)),
+  )
+  resolvedRange.setEnd(
+    endNode,
+    Math.max(0, Math.min(textRange.endOffset, endSpan.textContent?.length ?? 0)),
+  )
+
+  const rects = rectFromClientRectList(resolvedRange.getClientRects())
+  const rect = unionRect(rects.length > 0 ? rects : [startSpan.getBoundingClientRect(), endSpan.getBoundingClientRect()])
+  if (!rect) {
+    return null
+  }
+
+  const spans = collectTextSpans(pageRoot).filter((span) => {
+    const spanIndex = textIndexForSpan(span)
+    return Boolean(
+      spanIndex
+      && spanIndex >= textRange.startIndex
+      && spanIndex <= textRange.endIndex
+    )
+  })
+
+  return {
+    anchorElement: startSpan,
+    rect,
+    rects,
+    text: normalizeText(resolvedRange.toString(), 1200),
+    spans,
+  }
 }
 
 async function renderPdfPage(
@@ -438,6 +794,67 @@ export default function PdfPreviewPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    function resolveSelectionPageRoot(
+      selection: {
+        rootXPath?: string | null
+        pdfPage?: number | null
+      },
+      helpers: PreviewSelectionHelpers
+    ) {
+      const pageNumber =
+        Number.isFinite(Number(selection.pdfPage)) && Number(selection.pdfPage) > 0
+          ? Math.round(Number(selection.pdfPage))
+          : null
+
+      return pageNumber
+        ? stateRef.current.pageElements.get(pageNumber) || null
+        : (
+            (selection.rootXPath && typeof helpers.findElementByXPath === 'function'
+              ? findPdfPageRoot(helpers.findElementByXPath(selection.rootXPath))
+              : null)
+          )
+    }
+
+    function revealResolvedSelection(
+      rect: {
+        left: number
+        top: number
+        right: number
+        bottom: number
+        width: number
+        height: number
+      },
+      pageRoot: HTMLElement | null
+    ) {
+      const viewport = viewportRef.current
+      if (!(pageRoot instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+        return false
+      }
+
+      const viewportRect = viewport.getBoundingClientRect()
+      const pageRect = pageRoot.getBoundingClientRect()
+      const isVisible =
+        rect.top >= viewportRect.top
+        && rect.bottom <= viewportRect.bottom
+        && rect.left >= viewportRect.left
+        && rect.right <= viewportRect.right
+
+      if (isVisible) {
+        return true
+      }
+
+      const pageOffsetTop = pageRoot.offsetTop
+      const desiredTop = Math.max(
+        0,
+        pageOffsetTop + (rect.top - pageRect.top) - Math.max(24, viewportRect.height * 0.3),
+      )
+      viewport.scrollTo({
+        top: desiredTop,
+        behavior: 'auto',
+      })
+      return true
+    }
+
     const adapter: NonNullable<Window['__pixelForgePdfSelectionAdapter']> = {
       ownsElement(element) {
         return ownsPdfPreviewElement(element)
@@ -460,8 +877,19 @@ export default function PdfPreviewPage() {
       findRegionSurface(element: Element | null) {
         return findPdfPageRoot(element)
       },
-      classifySelectionTarget(element: Element | null) {
-        const lineCandidate = findLineCandidateForElement(element)
+      resolveClickTarget(element: Element | null, clientX: number | null, clientY: number | null) {
+        const lineCandidate = resolveLineCandidate(element, clientX, clientY)
+        if (lineCandidate) {
+          return lineCandidate.anchorElement
+        }
+        return findPdfPageRoot(element)
+      },
+      classifySelectionTarget(
+        element: Element | null,
+        clientX: number | null,
+        clientY: number | null
+      ) {
+        const lineCandidate = resolveLineCandidate(element, clientX, clientY)
         if (lineCandidate) {
           return {
             selectorKind: 'dom' as const,
@@ -492,7 +920,7 @@ export default function PdfPreviewPage() {
         helpers: PreviewSelectionHelpers
       ): Promise<PdfAdapterSelection | null> {
         const state = stateRef.current
-        const lineCandidate = findLineCandidateForElement(element)
+        const lineCandidate = resolveLineCandidate(element, clientX, clientY)
         if (lineCandidate) {
           const previewDataUrl = await helpers.capturePreviewData(lineCandidate.rect)
           const xpath = helpers.getXPath(lineCandidate.anchorElement)
@@ -513,11 +941,13 @@ export default function PdfPreviewPage() {
             rootElementId: null,
             rootClassList: [],
             region: null,
+            pdfSelectionKind: 'text',
             previewDataUrl,
             pageUrl: state.sourceUrl || helpers.pageContext.pageUrl,
             pageTitle: state.title || helpers.pageContext.pageTitle,
             selectionId,
             pdfPage: lineCandidate.pageNumber,
+            pdfTextRange: null,
             pdfTextContent,
             __pixelForgeResolvedElement: lineCandidate.anchorElement,
           }
@@ -570,14 +1000,62 @@ export default function PdfPreviewPage() {
           rootElementId: null,
           rootClassList: ['pdf-page'],
           region,
+          pdfSelectionKind: 'region',
           previewDataUrl,
           pageUrl: state.sourceUrl || helpers.pageContext.pageUrl,
           pageTitle: state.title || helpers.pageContext.pageTitle,
           selectionId,
           pdfPage: pageNumber,
+          pdfTextRange: null,
           pdfTextContent,
           __pixelForgeResolvedElement: pageRoot,
         }
+      },
+      async buildTextRangeSelectionDescriptor(
+        selectionId: string,
+        helpers: PreviewSelectionHelpers
+      ): Promise<PdfAdapterSelection | null> {
+        const state = stateRef.current
+        const rangeCandidate = buildRangeCandidateFromCurrentSelection()
+        if (!rangeCandidate) {
+          return null
+        }
+
+        const previewDataUrl = await helpers.capturePreviewData(rangeCandidate.rect)
+        const xpath = helpers.getXPath(rangeCandidate.anchorElement)
+        return {
+          id: selectionId,
+          selectorKind: 'dom',
+          surfaceKind: 'pdf',
+          pageKey: pageKeyFor(state.sourceUrl || helpers.pageContext.pageUrl, rangeCandidate.pageNumber),
+          tagName: 'pdf-text-range',
+          elementId: null,
+          classList: ['pdf-text-range'],
+          textContent: rangeCandidate.text,
+          xpath,
+          outerHTML: rangeCandidate.spans.map((span) => span.outerHTML).join(''),
+          rootXPath: null,
+          rootTagName: null,
+          rootElementId: null,
+          rootClassList: [],
+          region: null,
+          pdfSelectionKind: 'text-range',
+          previewDataUrl,
+          pageUrl: state.sourceUrl || helpers.pageContext.pageUrl,
+          pageTitle: state.title || helpers.pageContext.pageTitle,
+          selectionId,
+          pdfPage: rangeCandidate.pageNumber,
+          pdfTextRange: rangeCandidate.textRange,
+          pdfTextContent: rangeCandidate.text,
+          __pixelForgeResolvedElement: rangeCandidate.anchorElement,
+        }
+      },
+      clearNativeTextSelection() {
+        const selection = window.getSelection()
+        if (!selection) {
+          return
+        }
+        selection.removeAllRanges()
       },
       resolveSelection(
         selection: {
@@ -590,7 +1068,9 @@ export default function PdfPreviewPage() {
             width: number
             height: number
           } | null
+          pdfSelectionKind?: 'text' | 'text-range' | 'region' | null
           pdfPage?: number | null
+          pdfTextRange?: PdfTextRange | null
           pdfTextContent?: string | null
           textSample?: string
         },
@@ -600,13 +1080,7 @@ export default function PdfPreviewPage() {
           Number.isFinite(Number(selection.pdfPage)) && Number(selection.pdfPage) > 0
             ? Math.round(Number(selection.pdfPage))
             : null
-        const pageRoot = pageNumber
-          ? stateRef.current.pageElements.get(pageNumber) || null
-          : (
-              (selection.rootXPath && typeof helpers.findElementByXPath === 'function'
-                ? findPdfPageRoot(helpers.findElementByXPath(selection.rootXPath))
-                : null)
-            )
+        const pageRoot = resolveSelectionPageRoot(selection, helpers)
 
         if (selection.selectorKind === 'region' && selection.region && pageRoot) {
           const pageRect = pageRoot.getBoundingClientRect()
@@ -631,6 +1105,32 @@ export default function PdfPreviewPage() {
               bounding_box: buildBoundingBox(rect),
               pdf_page: pageNumber,
             },
+          }
+        }
+
+        if (selection.pdfSelectionKind === 'text-range' && selection.pdfTextRange && pageRoot) {
+          const resolvedRange = resolveRangeFromSelectionData(pageRoot, selection.pdfTextRange)
+          const expectedText =
+            normalizeText(selection.pdfTextContent, 400)
+            || normalizeText(selection.textSample, 400)
+          if (
+            resolvedRange
+            && (
+              !expectedText
+              || normalizeText(resolvedRange.text, 400).includes(expectedText.slice(0, 72))
+            )
+          ) {
+            return {
+              element: resolvedRange.anchorElement,
+              rect: resolvedRange.rect,
+              summary: {
+                tag_name: 'pdf-text-range',
+                xpath: typeof selection.xpath === 'string' ? selection.xpath : '',
+                text_excerpt: resolvedRange.text || null,
+                bounding_box: buildBoundingBox(resolvedRange.rect),
+                pdf_page: pageNumber,
+              },
+            }
           }
         }
 
@@ -676,6 +1176,16 @@ export default function PdfPreviewPage() {
             pdf_page: matchedCandidate.pageNumber,
           },
         }
+      },
+      revealSelection(selection, helpers) {
+        const typedHelpers = helpers as PreviewSelectionHelpers
+        const resolved = adapter.resolveSelection?.(selection, typedHelpers)
+        if (!resolved) {
+          return false
+        }
+
+        const pageRoot = resolveSelectionPageRoot(selection, typedHelpers)
+        return revealResolvedSelection(resolved.rect, pageRoot)
       },
       inspectContextMetadata() {
         return {

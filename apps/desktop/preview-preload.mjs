@@ -44,8 +44,12 @@ if (shouldExposeDesktopBridge()) {
         ipcRenderer.invoke('pixel-forge-preview:clear-selections', { tabId }),
       deselect: (tabId, selectionId) =>
         ipcRenderer.invoke('pixel-forge-preview:deselect', { tabId, selectionId }),
-      applySelections: (tabId, selections) =>
-        ipcRenderer.invoke('pixel-forge-preview:apply-selections', { tabId, selections }),
+      applySelections: (tabId, selections, options = {}) =>
+        ipcRenderer.invoke('pixel-forge-preview:apply-selections', {
+          tabId,
+          selections,
+          reveal: Boolean(options?.reveal),
+        }),
       setBounds: (bounds) => ipcRenderer.invoke('pixel-forge-preview:set-bounds', bounds),
       hide: () => ipcRenderer.invoke('pixel-forge-preview:hide'),
     },
@@ -92,10 +96,19 @@ ipcRenderer.on('pixel-forge-preview:command', async (_event, command) => {
   if (command.type === 'apply-selections') {
     await bridge.applySelections(
       Array.isArray(command.selections)
-        ? command.selections
+        ? {
+            selections: command.selections,
+            reveal: Boolean(command.reveal),
+          }
         : Array.isArray(command.xpaths)
-          ? command.xpaths
-          : []
+          ? {
+              selections: command.xpaths,
+              reveal: Boolean(command.reveal),
+            }
+          : {
+              selections: [],
+              reveal: Boolean(command.reveal),
+            }
     )
   }
 })

@@ -99,7 +99,14 @@ export interface PixelForgeDesktopLivePreviewSelectionHint {
   elementId?: string | null
   classList?: string[]
   textContent?: string
+  pdfSelectionKind?: 'text' | 'text-range' | 'region' | null
   pdfPage?: number | null
+  pdfTextRange?: {
+    startIndex: number
+    startOffset: number
+    endIndex: number
+    endOffset: number
+  } | null
   pdfTextContent?: string | null
   xpath?: string
   rootXPath?: string | null
@@ -141,7 +148,14 @@ export interface PixelForgeAppliedSelection {
   elementId: string | null
   classList: string[]
   textSample: string
+  pdfSelectionKind?: 'text' | 'text-range' | 'region' | null
   pdfPage?: number | null
+  pdfTextRange?: {
+    startIndex: number
+    startOffset: number
+    endIndex: number
+    endOffset: number
+  } | null
   pdfTextContent?: string | null
   rootXPath: string | null
   rootTagName: string | null
@@ -176,7 +190,11 @@ export interface PixelForgeDesktopPreviewAPI {
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>
   clearSelections(tabId: string): Promise<PixelForgeBrowserPreviewResponse>
   deselect(tabId: string, selectionId: string): Promise<PixelForgeBrowserPreviewResponse>
-  applySelections(tabId: string, selections: PixelForgeAppliedSelection[]): Promise<PixelForgeBrowserPreviewResponse>
+  applySelections(
+    tabId: string,
+    selections: PixelForgeAppliedSelection[],
+    options?: { reveal?: boolean }
+  ): Promise<PixelForgeBrowserPreviewResponse>
   setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }>
   hide(): Promise<{ ok: true }>
 }
@@ -312,7 +330,8 @@ declare global {
       shouldIgnoreElement?(element: Element | null): boolean
       getSurfaceKind?(element: Element | null): string | null
       findRegionSurface?(element: Element | null): Element | null
-      classifySelectionTarget?(element: Element | null): {
+      resolveClickTarget?(element: Element | null, clientX: number | null, clientY: number | null): Element | null
+      classifySelectionTarget?(element: Element | null, clientX: number | null, clientY: number | null): {
         selectorKind: 'dom' | 'region'
         surfaceElement: Element | null
         hoverRect: DOMRect | {
@@ -326,6 +345,8 @@ declare global {
         label: string
       } | null
       buildSelectionDescriptor?(element: Element | null, clientX: number | null, clientY: number | null, selectionId: string, helpers: unknown): Promise<unknown | null>
+      buildTextRangeSelectionDescriptor?(selectionId: string, helpers: unknown): Promise<unknown | null>
+      clearNativeTextSelection?(): void
       resolveSelection?(selection: Record<string, unknown>, helpers: unknown): {
         element: Element
         rect: {
@@ -338,6 +359,7 @@ declare global {
         }
         summary?: Record<string, unknown>
       } | null
+      revealSelection?(selection: Record<string, unknown>, helpers: unknown): boolean
       inspectContextMetadata?(): Record<string, unknown> | null
     }
   }

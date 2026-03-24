@@ -214,10 +214,10 @@ The important boundary is:
 
 ### Document-Like Selection Lane
 
-- Alpha currently handles PDFs as a selection and inspection substrate, not as true PDF object editing. The internal viewer renders the document and projects two selection units into the common selection engine: `pdf text` for resolved text hits and `pdf region` for spatial fallback captures.
-- The current `pdf text` unit is line-like, not range-like. It carries the real source document URL, page number, extracted text, a text-layer anchor, and frozen preview evidence. `pdf region` carries the source URL, page number, normalized area bounds, nearby text when available, and frozen preview evidence. Viewer chrome is intentionally excluded from ordinary committed selections.
-- The target architecture for PDFs is first-class text-range selection. Click-drag highlight should commit one semantic selection artifact for the highlighted words or lines, with combined text, stable page/range anchors, frozen evidence, and any discoverable workspace provenance such as generator or source-file hints.
-- The next missing live lane is exact replay. An agent should be able to refocus the already-loaded document to the saved page/area/range and highlight it directly from the selection tunnel or live-preview context when that substrate is available. Until then, the PDF lane remains frozen evidence plus live context, not exact document replay.
+- Alpha currently handles PDFs as a selection and inspection substrate, not as true PDF object editing. The internal viewer now owns PDF semantics through an adapter boundary and projects three PDF units into the common selection engine: `pdf text` for resolved text hits, `pdf text range` for drag-highlighted text, and `pdf region` for explicit spatial fallback captures.
+- The `pdf text` and `pdf text range` units now carry the real source document URL, page number, extracted text, stable text-layer anchor metadata, and frozen preview evidence. `pdf text range` additionally carries stable start/end text indexes plus offsets so the same range can be re-resolved later. `pdf region` carries the source URL, page number, normalized area bounds, nearby text when available, and frozen preview evidence. Viewer chrome is intentionally excluded from ordinary committed selections.
+- The PDF adapter, not the desktop selection bridge, is now the source of truth for PDF hit-testing, range extraction, selection resolution, and reveal/replay inside the internal viewer. The desktop bridge still owns generic overlay rendering, event emission, and shared selection plumbing.
+- A first replay lane now exists through active-tab selection restore: applying saved PDF selections can reveal the saved page/area/range back into the already-loaded viewer. It is still narrower than the final agent-native replay goal because it has only code-level proof so far, not fresh installed-shell visual proof.
 - New document-like formats should plug into the same substrate-adapter contract instead of inventing separate operator workflows. The common tool model stays the same; each substrate only defines its native semantic units, fallback units, and replay capability.
 
 ### Upstream Capability Gap
@@ -273,7 +273,7 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: document-like selection fidelity. Alpha can now route PDFs into the internal viewer and commit `pdf text` or `pdf region` artifacts against the real source document, but text hit-snapping is still too fragile, the semantic text unit is still a resolved line instead of a highlighted range, and there is no first-class exact replay lane back into the warm document.
+The next target release should attack the new current limiting factor from `SPECS.md`: document-like selection fidelity proof and hardening. Alpha can now route PDFs into the internal viewer, commit `pdf text`, `pdf text range`, or `pdf region` artifacts against the real source document, and reveal restored PDF selections back into the warm viewer, but text hit-snapping still needs hostile-document tuning and the new range/reveal lane still needs fresh installed-shell proof.
 
 The smallest complete unit that matters:
 
@@ -281,10 +281,10 @@ The smallest complete unit that matters:
 - keep the common tool/selection model substrate-driven instead of adding a PDF-only side workflow
 - keep viewer chrome excluded from committed PDF selections so the document remains the only ordinary target surface
 - tighten ordinary PDF clicks so meaningful text hits win before region fallback
-- add one semantic `pdf text range` artifact for click-drag highlights instead of many single-line hits
+- keep one semantic `pdf text range` artifact for click-drag highlights instead of many single-line hits
 - keep `pdf region` as a clearly distinct spatial fallback with page/area evidence instead of pretending it is equivalent to text
 - carry exact page/range/area metadata plus frozen evidence through the selection tunnel and live-preview context
-- prove one warm-document replay lane that can refocus and highlight the saved PDF page/area/range without replaying navigation manually
+- prove the implemented warm-document replay lane visually in the installed shell and tune any remaining hit-testing misses instead of inventing a second replay subsystem
 - generalize the same substrate-adapter contract for later document-like formats instead of inventing new operator workflows per format
 
 ### Next Target Release Diagram

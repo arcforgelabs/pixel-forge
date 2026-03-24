@@ -66,8 +66,15 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                         "sourceUrl": "https://example.com/app",
                         "selectorKind": "dom",
                         "surfaceKind": "pdf",
+                        "pdfSelectionKind": "text-range",
                         "xpath": "//*[@id='save']",
                         "pdfPage": 3,
+                        "pdfTextRange": {
+                            "startIndex": 7,
+                            "startOffset": 0,
+                            "endIndex": 9,
+                            "endOffset": 14,
+                        },
                         "pdfTextContent": "Saved selection",
                     },
                     {
@@ -88,7 +95,20 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inspect_call.args[0], "browser-tab-1")
         self.assertEqual(inspect_call.kwargs["selection_hints"][0]["id"], "selection-1")
         self.assertEqual(inspect_call.kwargs["selection_hints"][0]["surface_kind"], "pdf")
+        self.assertEqual(
+            inspect_call.kwargs["selection_hints"][0]["pdf_selection_kind"],
+            "text-range",
+        )
         self.assertEqual(inspect_call.kwargs["selection_hints"][0]["pdf_page"], 3)
+        self.assertEqual(
+            inspect_call.kwargs["selection_hints"][0]["pdf_text_range"],
+            {
+                "startIndex": 7,
+                "startOffset": 0,
+                "endIndex": 9,
+                "endOffset": 14,
+            },
+        )
         self.assertEqual(
             inspect_call.kwargs["selection_hints"][0]["pdf_text_content"],
             "Saved selection",

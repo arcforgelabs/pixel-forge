@@ -306,11 +306,18 @@ do not treat /tmp/workspace as a skill.
                             "id": "selection-pdf-1",
                             "selectorKind": "dom",
                             "surfaceKind": "pdf",
+                            "pdfSelectionKind": "text-range",
                             "sourceTabId": "tab-pdf",
                             "sourceTabLabel": "Spec",
                             "sourceUrl": "https://example.com/spec.pdf",
                             "pageKey": "https://example.com/spec.pdf#page=2",
                             "pdfPage": 2,
+                            "pdfTextRange": {
+                                "startIndex": 3,
+                                "startOffset": 0,
+                                "endIndex": 5,
+                                "endOffset": 9,
+                            },
                             "pdfTextContent": "The warm preview session must stay intact.",
                             "xpath": "/html/body/div[1]/div[2]/span[4]",
                         }
@@ -323,7 +330,17 @@ do not treat /tmp/workspace as a skill.
             )
 
             self.assertEqual(tunnel_payload["selections"][0]["surfaceKind"], "pdf")
+            self.assertEqual(tunnel_payload["selections"][0]["pdfSelectionKind"], "text-range")
             self.assertEqual(tunnel_payload["selections"][0]["pdfPage"], 2)
+            self.assertEqual(
+                tunnel_payload["selections"][0]["pdfTextRange"],
+                {
+                    "startIndex": 3,
+                    "startOffset": 0,
+                    "endIndex": 5,
+                    "endOffset": 9,
+                },
+            )
             self.assertEqual(
                 tunnel_payload["selections"][0]["pdfTextContent"],
                 "The warm preview session must stay intact.",

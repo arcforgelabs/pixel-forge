@@ -580,7 +580,12 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }}
   }}
 
-  async function applySelections(selections) {{
+  async function applySelections(payload) {{
+    const selections = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.selections)
+        ? payload.selections
+        : [];
     desiredSelections = normalizeAppliedSelections(selections);
     reconcileDesiredSelections();
   }}
@@ -683,8 +688,8 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       scheduleSelectionReconcile();
       return true;
     }},
-    async applySelections(selections) {{
-      await applySelections(Array.isArray(selections) ? selections : []);
+    async applySelections(payload) {{
+      await applySelections(payload);
       return true;
     }},
     async ping() {{
@@ -938,9 +943,19 @@ class ManagedBrowserPreviewManager:
         await self._invoke_bridge(tab.page, "deselect", xpath)
         return tab
 
-    async def apply_selections(self, browser_tab_id: str, selections: list[Any]) -> ManagedBrowserTab:
+    async def apply_selections(
+        self,
+        browser_tab_id: str,
+        selections: list[Any],
+        *,
+        reveal: bool = False,
+    ) -> ManagedBrowserTab:
         tab = self._get_tab(browser_tab_id)
-        await self._invoke_bridge(tab.page, "applySelections", selections)
+        await self._invoke_bridge(
+            tab.page,
+            "applySelections",
+            {"selections": selections, "reveal": reveal},
+        )
         return tab
 
     async def close_tab(self, browser_tab_id: str) -> None:

@@ -1997,6 +1997,7 @@ app.whenReady().then(() => {
     return sendPreviewCommand(event.sender.id, String(payload?.tabId || ''), {
       type: 'apply-selections',
       selections: Array.isArray(payload?.selections) ? payload.selections : [],
+      reveal: Boolean(payload?.reveal),
     })
   })
 
