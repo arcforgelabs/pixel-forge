@@ -20,32 +20,13 @@
   - no visible navigation change, or
   - apparent reload of the current page instead of returning to the previous page/state.
 
-### Why this is likely still happening
+### Root cause (found 2026-03-25)
 
-- The current implementation is closer to the right architecture, but browser navigation facts are still being observed through multiple event paths.
-- Different sites may rely on different navigation mechanisms:
-  - full document navigations
-  - same-document SPA navigations
-  - redirect/auth transitions
-  - nested frame transitions
-- The current committed-event coverage appears sufficient for some sites and insufficient for others.
+- `shell-preload.mjs` (controller context) was missing `goBack` and `goForward` IPC bindings in the `pixelForgeDesktop.preview` bridge.
+- `preview-preload.mjs` (mirror context) had them, which is why mirror targets worked.
+- In controller mode, `desktopPreviewRef.current?.goBack` evaluated to `undefined`, so the browser navigation branch was skipped and the code fell through to the URL history cursor fallback — which doesn't actually navigate the BrowserView.
+- Fix: added `goBack` and `goForward` bindings to `shell-preload.mjs`.
 
-### Next debugging target
+### Remaining concern
 
-- Reproduce in a maximized installed alpha shell on:
-  - `google.com`
-  - `fielddoc.arcforge.au`
-- Compare BrowserView event sequences for:
-  - `did-navigate`
-  - `did-navigate-in-page`
-  - `page-title-updated`
-  - any frame-level navigation events if needed
-- Inspect Electron `navigationHistory` state before and after the failing transition.
-- Confirm whether the failing site is navigating in the top frame, a child frame, or only mutating app state without producing the events we currently trust.
-
-### Likely fix direction
-
-- Keep Chromium as the only navigation source of truth.
-- Remove or further narrow any remaining duplicate location-reporting paths.
-- Expand browser event coverage only where real failing sites prove it is required.
-- Do not reintroduce React/browser-history replay as a fallback for embedded browser tabs.
+- Per-site inconsistency (e.g. google.com vs fielddoc.arcforge.au) may still exist due to different navigation event coverage (`did-navigate` vs `did-navigate-in-page` vs SPA-only state changes). Re-test after the preload fix lands to see if the per-site issue was a consequence of the missing bindings or a separate problem.

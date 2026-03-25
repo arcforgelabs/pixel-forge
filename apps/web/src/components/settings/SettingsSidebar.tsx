@@ -1088,25 +1088,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                           <div className="group/project-row flex items-center gap-1">
                             <button
                               onClick={() => {
-                                if (isActive || isStreaming) {
+                                if (isActive) {
                                   return;
                                 }
                                 void setProject({ path: project.path });
                               }}
-                              disabled={!isActive && isStreaming}
                               className={`
                                 flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
-                                transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-60
+                                transition-colors duration-100
                                 ${isActive
                                   ? "bg-primary/10 text-primary"
                                   : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                                 }
                               `}
-                              title={
-                                !isActive && isStreaming
-                                  ? "Finish the current Live Editor request before switching projects"
-                                  : project.path
-                              }
+                              title={project.path}
                             >
                               <span className="truncate flex-1 text-left">{project.name}</span>
                               {isActive && !isExpanded && (
@@ -1239,9 +1234,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                     }
 
                                     if (!isActive) {
-                                      if (isStreaming) {
-                                        return;
-                                      }
                                       void (async () => {
                                         await setProject({
                                           path: project.path,
@@ -1271,15 +1263,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 onClick={() => {
                                   void (async () => {
                                     if (!isActive) {
-                                      if (isStreaming) {
-                                        return;
-                                      }
                                       await setProject({ path: project.path });
                                     }
                                     await handleCreateProjectChat(true);
                                   })();
                                 }}
-                                disabled={isUpdatingChatTargets || (!isActive && isStreaming)}
+                                disabled={isUpdatingChatTargets}
                                 className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                                 title="Start a fresh chat. The real Agent Deck lane is created on first send."
                               >
