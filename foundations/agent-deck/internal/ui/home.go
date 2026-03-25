@@ -10830,18 +10830,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(countStyle.Render(fmt.Sprintf("%d user / %d assistant", ts.TotalUserTurns, ts.TotalAssistantTurns)))
 			b.WriteString("\n")
 
-			// Show "behind" indicator if the pane's interactive process
-			// has fewer turns than the JSONL transcript
-			if h.currentAnalytics != nil && h.analyticsSessionID == selected.ID {
-				paneTurns := h.currentAnalytics.TotalTurns
-				jsonlTurns := ts.TotalAssistantTurns
-				behind := jsonlTurns - paneTurns
-				if behind > 0 {
-					behindStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
-					b.WriteString(labelStyle.Render("Pane:    "))
-					b.WriteString(behindStyle.Render(fmt.Sprintf("%d turns behind — press R to refresh", behind)))
-					b.WriteString("\n")
-				}
+			// Show "behind" indicator when JSONL has activity newer than the
+			// session's last restart/access time (pane hasn't seen those turns).
+			if !ts.LastActivity.IsZero() && !selected.LastAccessedAt.IsZero() &&
+				ts.LastActivity.After(selected.LastAccessedAt.Add(2*time.Second)) {
+				behindStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+				b.WriteString(labelStyle.Render("Sync:    "))
+				b.WriteString(behindStyle.Render("new turns available — press R to refresh"))
+				b.WriteString("\n")
 			}
 
 			// Latest turn preview (truncated)

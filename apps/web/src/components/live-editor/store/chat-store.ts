@@ -153,6 +153,10 @@ interface ObservedAgentDeckTurnEvent {
   message?: string
   content?: string
   assistant_output?: string | null
+  turn_input?: {
+    prompt_text?: string
+    [key: string]: unknown
+  }
 }
 
 export type LiveEditorPanelTab = 'chat' | 'elements'
@@ -1248,6 +1252,24 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }
 
       switch (event.event_type) {
+        case 'turn_input': {
+          // Replay user prompt text when hydrating from historical events.
+          const promptText = event.turn_input?.prompt_text?.trim() || event.content?.trim()
+          if (!promptText) {
+            return currentState
+          }
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: `observed:input:${requestId}`,
+              role: 'user',
+              content: promptText,
+              timestamp: new Date(),
+              observedSessionId: agentDeckSessionId,
+            }),
+          }
+        }
+
         case 'turn_started': {
           nextMessages = removeObservedMessage(nextMessages, failureMessageId)
           return {
