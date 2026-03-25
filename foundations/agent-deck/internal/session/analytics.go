@@ -211,6 +211,92 @@ func ParseSessionJSONL(path string) (*SessionAnalytics, error) {
 	return analytics, scanner.Err()
 }
 
+// TurnSummary holds lightweight turn information for the preview panel.
+// Unlike SessionAnalytics (which focuses on tokens/cost), this focuses on
+// conversation content visibility for the observation-layer transport.
+type TurnSummary struct {
+	TotalUserTurns      int       `json:"total_user_turns"`
+	TotalAssistantTurns int       `json:"total_assistant_turns"`
+	LastUserPrompt      string    `json:"last_user_prompt"`
+	LastAssistantText   string    `json:"last_assistant_text"`
+	LastActivity        time.Time `json:"last_activity"`
+}
+
+// ParseSessionTurns reads a Claude JSONL transcript and returns a lightweight
+// turn summary. This is designed for the preview panel observation layer —
+// it extracts conversation content rather than token/cost metrics.
+func ParseSessionTurns(path string) (*TurnSummary, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	summary := &TurnSummary{}
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 256*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	for scanner.Scan() {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
+			continue
+		}
+
+		entryType, _ := raw["type"].(string)
+
+		// Track timestamp
+		if ts, ok := raw["timestamp"].(string); ok {
+			if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+				if t.After(summary.LastActivity) {
+					summary.LastActivity = t
+				}
+			}
+		}
+
+		msg, _ := raw["message"].(map[string]interface{})
+		if msg == nil {
+			continue
+		}
+		contentArr, _ := msg["content"].([]interface{})
+
+		switch entryType {
+		case "user":
+			summary.TotalUserTurns++
+			// Extract last user prompt text
+			for _, block := range contentArr {
+				b, _ := block.(map[string]interface{})
+				if b == nil {
+					continue
+				}
+				if b["type"] == "text" {
+					if text, ok := b["text"].(string); ok && text != "" {
+						summary.LastUserPrompt = text
+					}
+				}
+			}
+
+		case "assistant":
+			summary.TotalAssistantTurns++
+			// Extract last assistant text
+			for _, block := range contentArr {
+				b, _ := block.(map[string]interface{})
+				if b == nil {
+					continue
+				}
+				if b["type"] == "text" {
+					if text, ok := b["text"].(string); ok && text != "" {
+						summary.LastAssistantText = text
+					}
+				}
+			}
+		}
+	}
+
+	return summary, scanner.Err()
+}
+
 // CalculateBillingBlocks groups timestamps into billing windows.
 // Claude Code API bills in 5-hour windows. Each block represents a billing period.
 // Timestamps are sorted chronologically and grouped - a new block starts when

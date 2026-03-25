@@ -205,6 +205,13 @@ type Home struct {
 	geminiAnalyticsCache   map[string]*session.GeminiSessionAnalytics // TTL cache: sessionID -> analytics (Gemini)
 	analyticsCacheTime     map[string]time.Time                       // TTL cache: sessionID -> cache timestamp
 
+	// JSONL turn summary cache (observation-layer transport)
+	currentTurnSummary  *session.TurnSummary // Turn summary for selected session
+	turnSummaryID       string               // Session ID for current turn summary
+	turnSummaryCacheMu  sync.RWMutex         // Protects turn summary cache
+	turnSummaryCache    map[string]*session.TurnSummary
+	turnSummaryCacheTime map[string]time.Time
+
 	// State
 	cursor         int            // Selected item index in flatItems
 	viewOffset     int            // First visible item index (for scrolling)
@@ -520,6 +527,12 @@ type analyticsFetchedMsg struct {
 	err             error
 }
 
+type turnSummaryFetchedMsg struct {
+	sessionID string
+	summary   *session.TurnSummary
+	err       error
+}
+
 // MaintenanceCompleteMsg is the exported type for sending from main.go via p.Send()
 type MaintenanceCompleteMsg struct {
 	Result session.MaintenanceResult
@@ -693,6 +706,8 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		analyticsCache:            make(map[string]*session.SessionAnalytics),
 		geminiAnalyticsCache:      make(map[string]*session.GeminiSessionAnalytics),
 		analyticsCacheTime:        make(map[string]time.Time),
+		turnSummaryCache:          make(map[string]*session.TurnSummary),
+		turnSummaryCacheTime:      make(map[string]time.Time),
 		clearOnCompactSent:        make(map[string]time.Time),
 		launchingSessions:         make(map[string]time.Time),
 		resumingSessions:          make(map[string]time.Time),
@@ -2034,6 +2049,39 @@ func (h *Home) fetchAnalytics(inst *session.Instance) tea.Cmd {
 		}
 	}
 
+	return nil
+}
+
+// fetchTurnSummary returns a command that asynchronously reads JSONL turn info.
+// Follows the same async Bubble Tea pattern as fetchAnalytics.
+func (h *Home) fetchTurnSummary(inst *session.Instance) tea.Cmd {
+	if inst == nil || !session.IsClaudeCompatible(inst.Tool) {
+		return nil
+	}
+	sessionID := inst.ID
+	return func() tea.Msg {
+		jsonlPath := inst.GetJSONLPath()
+		if jsonlPath == "" {
+			return turnSummaryFetchedMsg{sessionID: sessionID}
+		}
+		summary, err := session.ParseSessionTurns(jsonlPath)
+		return turnSummaryFetchedMsg{
+			sessionID: sessionID,
+			summary:   summary,
+			err:       err,
+		}
+	}
+}
+
+// getCachedTurnSummary returns cached turn summary if fresh, nil otherwise.
+func (h *Home) getCachedTurnSummary(inst *session.Instance) *session.TurnSummary {
+	h.turnSummaryCacheMu.RLock()
+	cached, ok := h.turnSummaryCache[inst.ID]
+	cacheTime, hasCacheTime := h.turnSummaryCacheTime[inst.ID]
+	h.turnSummaryCacheMu.RUnlock()
+	if ok && hasCacheTime && time.Since(cacheTime) < 5*time.Second {
+		return cached
+	}
 	return nil
 }
 
@@ -3684,6 +3732,22 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			// JSONL turn summary fetch (observation-layer transport)
+			if session.IsClaudeCompatible(tickTool) {
+				cached := h.getCachedTurnSummary(inst)
+				if cached != nil {
+					if h.turnSummaryID != inst.ID {
+						h.currentTurnSummary = cached
+						h.turnSummaryID = inst.ID
+					}
+				} else {
+					cmds = append(cmds, h.fetchTurnSummary(inst))
+				}
+			} else if h.turnSummaryID == inst.ID {
+				h.currentTurnSummary = nil
+				h.turnSummaryID = ""
+			}
+
 			// Isolated workspace status check (lazy, 10s TTL)
 			if inst.IsIsolated() && inst.WorktreePath != "" {
 				h.worktreeDirtyMu.Lock()
@@ -3751,6 +3815,19 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			h.analyticsCacheMu.Unlock()
+		}
+		return h, nil
+
+	case turnSummaryFetchedMsg:
+		if msg.err == nil && msg.sessionID != "" {
+			h.turnSummaryCacheMu.Lock()
+			h.turnSummaryCacheTime[msg.sessionID] = time.Now()
+			h.turnSummaryCache[msg.sessionID] = msg.summary
+			h.turnSummaryCacheMu.Unlock()
+			if msg.sessionID == h.turnSummaryID || h.turnSummaryID == "" {
+				h.currentTurnSummary = msg.summary
+				h.turnSummaryID = msg.sessionID
+			}
 		}
 		return h, nil
 
@@ -10735,6 +10812,53 @@ func (h *Home) renderPreviewPane(width, height int) string {
 				Italic(true)
 			b.WriteString(loadingStyle.Render("Loading analytics..."))
 			b.WriteString("\n\n")
+		}
+	}
+
+	// JSONL Turns section (observation-layer transport)
+	if h.turnSummaryID == selected.ID && h.currentTurnSummary != nil {
+		ts := h.currentTurnSummary
+		if ts.TotalUserTurns > 0 || ts.TotalAssistantTurns > 0 {
+			turnsHeader := renderSectionDivider("Turns", width-4)
+			b.WriteString(turnsHeader)
+			b.WriteString("\n")
+
+			labelStyle := lipgloss.NewStyle().Foreground(ColorText)
+			countStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+
+			b.WriteString(labelStyle.Render("JSONL:   "))
+			b.WriteString(countStyle.Render(fmt.Sprintf("%d user / %d assistant", ts.TotalUserTurns, ts.TotalAssistantTurns)))
+			b.WriteString("\n")
+
+			// Show "behind" indicator if the pane's interactive process
+			// has fewer turns than the JSONL transcript
+			if h.currentAnalytics != nil && h.analyticsSessionID == selected.ID {
+				paneTurns := h.currentAnalytics.TotalTurns
+				jsonlTurns := ts.TotalAssistantTurns
+				behind := jsonlTurns - paneTurns
+				if behind > 0 {
+					behindStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+					b.WriteString(labelStyle.Render("Pane:    "))
+					b.WriteString(behindStyle.Render(fmt.Sprintf("%d turns behind — press R to refresh", behind)))
+					b.WriteString("\n")
+				}
+			}
+
+			// Latest turn preview (truncated)
+			if ts.LastUserPrompt != "" {
+				promptPreview := ts.LastUserPrompt
+				maxLen := width - 14
+				if maxLen < 20 {
+					maxLen = 20
+				}
+				if len(promptPreview) > maxLen {
+					promptPreview = promptPreview[:maxLen-3] + "..."
+				}
+				dimStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+				b.WriteString(labelStyle.Render("Latest:  "))
+				b.WriteString(dimStyle.Render(promptPreview))
+				b.WriteString("\n")
+			}
 		}
 	}
 
