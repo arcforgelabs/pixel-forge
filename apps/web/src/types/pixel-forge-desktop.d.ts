@@ -4,6 +4,9 @@ export interface PixelForgeBrowserPreviewResponse {
   target_url: string
   title: string
   snapshot_data_url: string | null
+  did_navigate?: boolean
+  can_go_back?: boolean
+  can_go_forward?: boolean
 }
 
 export interface PixelForgeDesktopLivePreviewInteractive {

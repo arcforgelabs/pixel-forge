@@ -192,6 +192,8 @@ export interface PreviewTab {
   mode: PreviewMode
   proxySessionId: string | null
   browserTabId: string | null
+  canGoBack?: boolean
+  canGoForward?: boolean
   frameSrc: string
   snapshotDataUrl: string | null
   localTarget: LocalTargetMeta | null
@@ -396,6 +398,8 @@ function createEmptyPreviewTab(index = 1): PreviewTab {
     mode: null,
     proxySessionId: null,
     browserTabId: null,
+    canGoBack: false,
+    canGoForward: false,
     frameSrc: 'about:blank',
     snapshotDataUrl: null,
     localTarget: null,
@@ -492,6 +496,8 @@ function restorePreviewTab(
     mode: tab.mode,
     proxySessionId: null,
     browserTabId: null,
+    canGoBack: false,
+    canGoForward: false,
     frameSrc: 'about:blank',
     snapshotDataUrl: null,
     localTarget: tab.localTarget

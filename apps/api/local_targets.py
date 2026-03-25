@@ -415,8 +415,14 @@ def _ensure_mirror_runtime(
     launch_source = _resolve_mirror_launch_source(source_root)
     log_dir = state_dir / "logs"
     managed_browser_dir = state_dir / "managed-browser"
+    isolated_shared_state_dir = state_dir
+    isolated_runtime_dir = state_dir / "runtime"
+    isolated_db_path = state_dir / "pixel-forge.db"
+    isolated_agent_deck_home = state_dir / "agent-deck"
     log_dir.mkdir(parents=True, exist_ok=True)
     managed_browser_dir.mkdir(parents=True, exist_ok=True)
+    isolated_runtime_dir.mkdir(parents=True, exist_ok=True)
+    isolated_agent_deck_home.mkdir(parents=True, exist_ok=True)
 
     if launch_source.layout == "installed":
         if not launch_source.frontend_dist:
@@ -503,9 +509,15 @@ def _ensure_mirror_runtime(
             "PIXEL_FORGE_RUNTIME_KIND": "mirror",
             "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": str(launch_source.root),
             "PIXEL_FORGE_TARGET_PROJECT_PATH": project_path,
+            "PIXEL_FORGE_SHARED_STATE_DIR": str(isolated_shared_state_dir),
+            "PIXEL_FORGE_RUNTIME_DIR": str(isolated_runtime_dir),
+            "PIXEL_FORGE_DB_PATH": str(isolated_db_path),
+            "PIXEL_FORGE_AGENT_DECK_HOME": str(isolated_agent_deck_home),
             "PIXEL_FORGE_API_PORT": str(api_port),
             "PIXEL_FORGE_WEB_PORT": str(api_port),
             "PIXEL_FORGE_WEB_HOST": web_host,
+            "PIXEL_FORGE_URL_HOST": web_host,
+            "PIXEL_FORGE_SHELL_URL": f"http://{web_host}:{api_port}",
             "PIXEL_FORGE_STATE_DIR": str(state_dir),
             "PIXEL_FORGE_MANAGED_BROWSER_DIR": str(managed_browser_dir),
             "PIXEL_FORGE_LOG_DIR": str(log_dir),

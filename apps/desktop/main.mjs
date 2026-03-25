@@ -1045,17 +1045,20 @@ function registerViewEvents(ownerContextId, tabId, view) {
     void loadPreviewUrl(ownerContextId, tabId, navigationUrl)
   })
 
-  view.webContents.on('did-finish-load', () => {
+  view.webContents.on('did-navigate', () => {
     const previewRecord = previewViews.get(previewKey)
     if (!previewRecord) {
       return
     }
-    sendPreviewEvent(ownerContextId, {
-      type: 'browser-location-changed',
-      browser_tab_id: tabId,
-      url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
-      title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
-    })
+    emitPreviewBrowserLocationChanged(ownerContextId, previewRecord)
+  })
+
+  view.webContents.on('did-navigate-in-page', () => {
+    const previewRecord = previewViews.get(previewKey)
+    if (!previewRecord) {
+      return
+    }
+    emitPreviewBrowserLocationChanged(ownerContextId, previewRecord)
   })
 
   view.webContents.on('page-title-updated', () => {
@@ -1063,12 +1066,7 @@ function registerViewEvents(ownerContextId, tabId, view) {
     if (!previewRecord) {
       return
     }
-    sendPreviewEvent(ownerContextId, {
-      type: 'browser-location-changed',
-      browser_tab_id: tabId,
-      url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
-      title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
-    })
+    emitPreviewBrowserLocationChanged(ownerContextId, previewRecord)
   })
 
   view.webContents.on('focus', () => {
@@ -1119,6 +1117,24 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function isTransientPreviewUrl(value) {
+  const normalizedValue = normalizeText(value)
+  if (!normalizedValue) {
+    return true
+  }
+
+  try {
+    const parsed = new URL(normalizedValue)
+    return (
+      parsed.protocol === 'chrome-error:'
+      || (parsed.protocol === 'chrome:' && parsed.hostname === 'chromewebdata')
+      || normalizedValue === 'about:blank'
+    )
+  } catch {
+    return false
+  }
 }
 
 function sanitizeBootstrapState(payload) {
@@ -1316,7 +1332,18 @@ function updatePreviewReportedLocation(previewRecord, url, title) {
     return
   }
 
-  previewRecord.reportedUrl = normalizeText(url) || null
+  const normalizedUrl = normalizeText(url)
+  if (!normalizedUrl) {
+    previewRecord.reportedUrl = null
+    previewRecord.reportedTitle = normalizeText(title) || null
+    return
+  }
+
+  if (isTransientPreviewUrl(normalizedUrl)) {
+    return
+  }
+
+  previewRecord.reportedUrl = normalizedUrl
   previewRecord.reportedTitle = normalizeText(title) || null
 }
 
@@ -1325,10 +1352,20 @@ function currentPreviewUrl(previewRecord, fallbackUrl = '') {
     previewRecord?.view?.webContents.getURL(),
     SHELL_URL,
   )
-  return previewRecord?.reportedUrl
-    || embeddedPdfState?.sourceUrl
-    || previewRecord?.view?.webContents.getURL()
-    || fallbackUrl
+  const currentViewUrl = normalizeText(previewRecord?.view?.webContents.getURL())
+  const safeViewUrl = isTransientPreviewUrl(currentViewUrl) ? '' : currentViewUrl
+  const safeFallbackUrl = isTransientPreviewUrl(fallbackUrl) ? '' : fallbackUrl
+  const reportedUrl = normalizeText(previewRecord?.reportedUrl)
+  if (previewRecord?.surfaceKind === 'pdf' || embeddedPdfState?.sourceUrl) {
+    return reportedUrl
+      || embeddedPdfState?.sourceUrl
+      || safeViewUrl
+      || safeFallbackUrl
+  }
+
+  return safeViewUrl
+    || reportedUrl
+    || safeFallbackUrl
 }
 
 function currentPreviewTitle(previewRecord, fallbackTitle = '') {
@@ -1343,14 +1380,72 @@ function currentPreviewTitle(previewRecord, fallbackTitle = '') {
     || fallbackTitle
 }
 
+function previewNavigationHistory(view) {
+  return view?.webContents?.navigationHistory || null
+}
+
+function previewCanGoBack(view) {
+  const history = previewNavigationHistory(view)
+  if (history?.canGoBack) {
+    return history.canGoBack()
+  }
+  return view?.webContents?.canGoBack?.() || false
+}
+
+function previewCanGoForward(view) {
+  const history = previewNavigationHistory(view)
+  if (history?.canGoForward) {
+    return history.canGoForward()
+  }
+  return view?.webContents?.canGoForward?.() || false
+}
+
+function previewGoBack(view) {
+  const history = previewNavigationHistory(view)
+  if (history?.goBack) {
+    history.goBack()
+    return
+  }
+  view?.webContents?.goBack?.()
+}
+
+function previewGoForward(view) {
+  const history = previewNavigationHistory(view)
+  if (history?.goForward) {
+    history.goForward()
+    return
+  }
+  view?.webContents?.goForward?.()
+}
+
+function emitPreviewBrowserLocationChanged(ownerContextId, previewRecord) {
+  const view = previewRecord?.view
+  if (!previewRecord || !view || view.webContents.isDestroyed()) {
+    return
+  }
+
+  sendPreviewEvent(ownerContextId, {
+    type: 'browser-location-changed',
+    browser_tab_id: previewRecord.tabId,
+    url: currentPreviewUrl(previewRecord, view.webContents.getURL()),
+    title: currentPreviewTitle(previewRecord, view.webContents.getURL()),
+    can_go_back: previewCanGoBack(view),
+    can_go_forward: previewCanGoForward(view),
+  })
+}
+
 function buildPreviewLoadResponse(previewRecord, fallbackUrl = '') {
   const targetUrl = currentPreviewUrl(previewRecord, fallbackUrl)
+  const view = previewRecord?.view
   return {
     mode: 'browser',
     browser_tab_id: previewRecord?.tabId || '',
     target_url: targetUrl,
     title: currentPreviewTitle(previewRecord, targetUrl),
     snapshot_data_url: null,
+    did_navigate: true,
+    can_go_back: previewCanGoBack(view),
+    can_go_forward: previewCanGoForward(view),
   }
 }
 
@@ -1487,16 +1582,19 @@ function navigatePreviewHistory(ownerContextId, tabId, direction) {
 
   const view = previewRecord.view
   const canNavigate = direction === 'back'
-    ? view.webContents.canGoBack()
-    : view.webContents.canGoForward()
+    ? previewCanGoBack(view)
+    : previewCanGoForward(view)
   if (canNavigate) {
     if (direction === 'back') {
-      view.webContents.goBack()
+      previewGoBack(view)
     } else {
-      view.webContents.goForward()
+      previewGoForward(view)
     }
   }
-  return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
+  return {
+    ...buildPreviewLoadResponse(previewRecord, view.webContents.getURL()),
+    did_navigate: canNavigate,
+  }
 }
 
 function sendPreviewCommand(ownerContextId, tabId, command) {
@@ -2153,6 +2251,12 @@ app.whenReady().then(() => {
     sendPreviewEvent(previewRecord.ownerContextId, {
       ...payload,
       browser_tab_id: previewRecord.tabId,
+      ...(payload?.type === 'browser-location-changed'
+        ? {
+            can_go_back: previewCanGoBack(previewRecord.view),
+            can_go_forward: previewCanGoForward(previewRecord.view),
+          }
+        : {}),
     })
   })
 

@@ -18,7 +18,7 @@ import {
   hasBlockingOverlay,
   useDesktopPreviewOverlayGuard,
 } from '@/hooks/useDesktopPreviewOverlayGuard'
-import { getDesktopApp, getDesktopOverlay, getDesktopPreview } from '@/lib/desktop-app'
+import { getDesktopApp, getDesktopPreview } from '@/lib/desktop-app'
 import { HTTP_BACKEND_URL, RUNTIME_KIND, WS_BACKEND_URL } from '@/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -81,6 +81,9 @@ interface BrowserPreviewLoadResponse {
   browser_tab_id: string
   title: string
   snapshot_data_url: string | null
+  can_go_back?: boolean
+  can_go_forward?: boolean
+  did_navigate?: boolean
 }
 
 interface LoadAppOptions {
@@ -163,6 +166,8 @@ interface BrowserPreviewEvent {
   browser_tab_id: string
   url?: string
   title?: string
+  can_go_back?: boolean
+  can_go_forward?: boolean
   snapshot_data_url?: string | null
   data?: Record<string, unknown>
 }
@@ -443,6 +448,8 @@ function createPreviewTab(url = '', title?: string | null, index?: number): Prev
     mode: null,
     proxySessionId: null,
     browserTabId: null,
+    canGoBack: false,
+    canGoForward: false,
     frameSrc: 'about:blank',
     snapshotDataUrl: null,
     localTarget: null,
@@ -510,7 +517,6 @@ export function LiveEditorPane() {
   const previewHostRef = useRef<HTMLDivElement | null>(null)
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(getDesktopPreview())
-  const desktopOverlayRef = useRef(getDesktopOverlay())
   const desktopAppRef = useRef(getDesktopApp())
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
@@ -687,8 +693,13 @@ export function LiveEditorPane() {
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
   const canLaunchSelfMirror = RUNTIME_KIND === 'controller'
   const isSelectionToolActive = activePreviewTool === 'select'
-  const canGoBack = urlHistoryCursor > 0
-  const canGoForward = urlHistoryCursor < urlHistory.length - 1
+  const activePreviewTabForNav = previewTabs.find((tab) => tab.id === activePreviewTabId) ?? previewTabs[0] ?? null
+  const canGoBack = activePreviewTabForNav?.mode === 'browser'
+    ? activePreviewTabForNav.canGoBack
+    : urlHistoryCursor > 0
+  const canGoForward = activePreviewTabForNav?.mode === 'browser'
+    ? activePreviewTabForNav.canGoForward
+    : urlHistoryCursor < urlHistory.length - 1
   const canUndoSelections = selectionUndoStack.length > 0
   const canRedoSelections = selectionRedoStack.length > 0
 
@@ -718,16 +729,40 @@ export function LiveEditorPane() {
       && activePreviewTab.browserTabId
       && desktopPreviewRef.current?.goBack
     ) {
-      setUrlHistoryCursor((c) => Math.max(0, c - 1))
-      urlNavRef.current = true
-      void desktopPreviewRef.current.goBack(activePreviewTab.id)
+      void (async () => {
+        try {
+          const response = await desktopPreviewRef.current?.goBack(activePreviewTab.id)
+          if (response?.did_navigate) {
+            setPreviewTabs((currentTabs) =>
+              currentTabs.map((entry) =>
+                entry.id === activePreviewTab.id
+                  ? {
+                      ...entry,
+                      canGoBack: Boolean(response.can_go_back),
+                      canGoForward: Boolean(response.can_go_forward),
+                    }
+                  : entry
+              )
+            )
+          }
+        } catch (error) {
+          console.warn('[live-editor] Embedded browser goBack failed', error)
+        }
+      })()
       return
     }
     setUrlHistoryCursor((c) => c - 1)
     setTargetUrl(prevUrl)
     urlNavRef.current = true
-    void loadAppRef.current?.(prevUrl)
-  }, [canGoBack, setTargetUrl, setUrlHistoryCursor, urlHistory, urlHistoryCursor])
+    void loadAppRef.current?.(prevUrl, { announceSuccess: false })
+  }, [
+    canGoBack,
+    setPreviewTabs,
+    setTargetUrl,
+    setUrlHistoryCursor,
+    urlHistory,
+    urlHistoryCursor,
+  ])
 
   const goForward = useCallback(() => {
     if (!canGoForward) return
@@ -740,17 +775,35 @@ export function LiveEditorPane() {
       && activePreviewTab.browserTabId
       && desktopPreviewRef.current?.goForward
     ) {
-      setUrlHistoryCursor((c) => Math.min(urlHistory.length - 1, c + 1))
-      urlNavRef.current = true
-      void desktopPreviewRef.current.goForward(activePreviewTab.id)
+      void (async () => {
+        try {
+          const response = await desktopPreviewRef.current?.goForward(activePreviewTab.id)
+          if (response?.did_navigate) {
+            setPreviewTabs((currentTabs) =>
+              currentTabs.map((entry) =>
+                entry.id === activePreviewTab.id
+                  ? {
+                      ...entry,
+                      canGoBack: Boolean(response.can_go_back),
+                      canGoForward: Boolean(response.can_go_forward),
+                    }
+                  : entry
+              )
+            )
+          }
+        } catch (error) {
+          console.warn('[live-editor] Embedded browser goForward failed', error)
+        }
+      })()
       return
     }
     setUrlHistoryCursor((c) => c + 1)
     setTargetUrl(nextUrl)
     urlNavRef.current = true
-    void loadAppRef.current?.(nextUrl)
+    void loadAppRef.current?.(nextUrl, { announceSuccess: false })
   }, [
     canGoForward,
+    setPreviewTabs,
     setTargetUrl,
     setUrlHistoryCursor,
     urlHistory,
@@ -1241,6 +1294,8 @@ export function LiveEditorPane() {
                 snapshotDataUrl: null,
                 proxySessionId: null,
                 browserTabId: null,
+                canGoBack: false,
+                canGoForward: false,
                 localTarget: null,
                 workspacePreview: null,
               }
@@ -1288,6 +1343,8 @@ export function LiveEditorPane() {
             title: getPreviewTabTitle(resolvedTargetUrl, data.title, index + 1),
             proxySessionId: null,
             browserTabId: data.browser_tab_id,
+            canGoBack: Boolean(data.can_go_back),
+            canGoForward: Boolean(data.can_go_forward),
             frameSrc: 'about:blank',
             snapshotDataUrl: data.snapshot_data_url,
             localTarget: null,
@@ -1462,34 +1519,8 @@ export function LiveEditorPane() {
       return
     }
 
-    const desktopOverlay = desktopOverlayRef.current
-    const anchor = urlHistoryAnchorRef.current
-    if (desktopOverlay && anchor) {
-      const rect = anchor.getBoundingClientRect()
-      const selectedUrl = await desktopOverlay.pickList({
-        anchorRect: {
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        },
-        items: scopedUrlHistory.map((url) => ({
-          value: url,
-          label: url,
-        })),
-        selectedValue: targetUrl,
-        width: Math.max(Math.round(rect.width), 420),
-        maxHeight: 280,
-      })
-      if (selectedUrl) {
-        setTargetUrl(selectedUrl)
-        await loadApp(selectedUrl)
-      }
-      return
-    }
-
     setShowUrlHistory((current) => !current)
-  }, [loadApp, scopedUrlHistory, setShowUrlHistory, setTargetUrl, targetUrl])
+  }, [scopedUrlHistory, setShowUrlHistory])
 
   const applyControllerUpdate = useCallback(async () => {
     const desktopApp = desktopAppRef.current
@@ -2241,6 +2272,8 @@ export function LiveEditorPane() {
                   snapshotDataUrl: null,
                   proxySessionId: null,
                   browserTabId: null,
+                  canGoBack: false,
+                  canGoForward: false,
                 }
               : entry
           )
@@ -2477,6 +2510,14 @@ export function LiveEditorPane() {
                 ...entry,
                 url: nextUrl,
                 title: getPreviewTabTitle(nextUrl, nextTitle, index + 1),
+                canGoBack:
+                  typeof payload.can_go_back === 'boolean'
+                    ? payload.can_go_back
+                    : entry.canGoBack,
+                canGoForward:
+                  typeof payload.can_go_forward === 'boolean'
+                    ? payload.can_go_forward
+                    : entry.canGoForward,
               }
             : entry
         )
@@ -2578,6 +2619,8 @@ export function LiveEditorPane() {
             ? {
                 ...entry,
                 browserTabId: null,
+                canGoBack: false,
+                canGoForward: false,
                 snapshotDataUrl: null,
                 mode: null,
               }

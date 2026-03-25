@@ -1,5 +1,7 @@
 const INTERNAL_PDF_VIEWER_PATH = '/internal/pdf-viewer'
 const PDF_FILENAME_RE = /\.pdf$/i
+const CHROMIUM_ERROR_PROTOCOL = 'chrome-error:'
+const CHROMIUM_ERROR_HOST = 'chromewebdata'
 
 function normalizeText(value: string | null | undefined): string {
   return String(value || '').trim()
@@ -11,6 +13,23 @@ function parseUrl(value: string): URL | null {
   } catch {
     return null
   }
+}
+
+function isRejectedPreviewUrl(value: string | null | undefined): boolean {
+  const normalizedValue = normalizeText(value)
+  if (!normalizedValue) {
+    return true
+  }
+
+  const parsed = parseUrl(normalizedValue)
+  if (!parsed) {
+    return false
+  }
+
+  return (
+    parsed.protocol === CHROMIUM_ERROR_PROTOCOL
+    || (parsed.protocol === 'chrome:' && parsed.hostname === CHROMIUM_ERROR_HOST)
+  )
 }
 
 export function isInternalPdfViewerUrl(value: string | null | undefined): boolean {
@@ -60,11 +79,21 @@ export function normalizePersistedPreviewUrl(
     return ''
   }
 
+  const normalizedFallback = normalizeText(fallbackUrl)
+  if (isRejectedPreviewUrl(normalizedValue)) {
+    return isRejectedPreviewUrl(normalizedFallback) ? '' : normalizedFallback
+  }
+
   if (!isInternalPdfViewerUrl(normalizedValue)) {
     return normalizedValue
   }
 
-  return embeddedPdfSourceUrl(normalizedValue) || normalizeText(fallbackUrl)
+  const embeddedSource = embeddedPdfSourceUrl(normalizedValue)
+  if (embeddedSource) {
+    return embeddedSource
+  }
+
+  return isRejectedPreviewUrl(normalizedFallback) ? '' : normalizedFallback
 }
 
 export function findLatestRecoverablePdfUrl(
