@@ -256,6 +256,128 @@ flowchart LR
   Runner --> Installed[Installed Controller Runtime<br/>~/.local/lib/pixel-forge]
 ```
 
+### Transport Observation Layer
+
+The transport layer follows a pure observation model. The JSONL session transcript is the single source of truth for conversation content. Multiple observers read it independently without mutual interference. The interactive Claude Code process in the Agent Deck pane is never disrupted by transport dispatch.
+
+#### Current Transport Architecture
+
+```mermaid
+flowchart TB
+  subgraph PF["Pixel Forge"]
+    UI[Chat UI] --> API[FastAPI Control Plane]
+    API --> Pack[Request Pack Assembly<br/>turn-input.json + @file refs]
+    Pack --> Dispatch[Native Transport Dispatch]
+  end
+
+  subgraph Transport["External Subprocess (fire-and-forget)"]
+    Dispatch --> Claude["claude -r &lt;sid&gt; -p &lt;prompt&gt;"]
+    Dispatch --> Codex["codex exec resume &lt;sid&gt;"]
+  end
+
+  subgraph Truth["Source of Truth"]
+    Claude --> JSONL[(JSONL Session Transcript<br/>~/.claude/projects/.../sid.jsonl)]
+    Codex --> JSONLC[(Codex Session JSONL<br/>~/.codex/sessions/.../sid.jsonl)]
+  end
+
+  subgraph Observers["Independent Observers (read-only)"]
+    JSONL --> PFStream[Pixel Forge JSONL Streaming<br/>stream_claude_jsonl / stream_codex_jsonl]
+    JSONL --> PFIngest[Pixel Forge Event Ingestion<br/>workstation_events]
+    JSONL --> ADOutput[Agent Deck Output Panel<br/>JSONL reader — to be built]
+    JSONL --> ADBadge[Agent Deck Unseen Turn Badge<br/>to be built]
+  end
+
+  subgraph Pane["Agent Deck Tmux Pane (undisturbed)"]
+    Interactive[Interactive Claude Code<br/>owns the terminal + user input]
+    Interactive -.->|in-memory only| PaneView[Pane displays turns<br/>it processed itself]
+    Refresh[User presses R — Restart] --> Resume["claude --resume &lt;sid&gt;"]
+    Resume --> JSONL
+    Resume --> PaneView
+  end
+
+  PFStream --> UI
+  PFIngest --> Kernel[(Workstation Events Kernel)]
+```
+
+#### Transport Data Flow (per turn)
+
+```mermaid
+sequenceDiagram
+  participant U as User (Pixel Forge)
+  participant PF as Pixel Forge API
+  participant Sub as External Subprocess
+  participant JSONL as JSONL Transcript
+  participant Stream as PF JSONL Streamer
+  participant WS as Browser WebSocket
+  participant Pane as AD Tmux Pane
+  participant AD as Agent Deck TUI
+
+  U->>PF: Send message + selections
+  PF->>PF: Create request pack (turn-input.json)
+  PF->>Sub: claude -r <sid> -p <prompt>
+  PF->>Stream: Start polling JSONL (concurrent)
+
+  Sub->>JSONL: Write user turn
+  Sub->>JSONL: Write assistant response (streaming)
+  Stream->>JSONL: Poll for new records (200ms)
+  Stream->>WS: Emit chunks to browser
+  Sub->>JSONL: Write tool calls + results
+  Stream->>WS: Emit tool use events
+  Sub->>JSONL: Write final response
+  Stream->>WS: Emit completion
+  Sub-->>PF: Exit (turn complete)
+
+  Note over Pane: Pane is undisturbed.<br/>User's typed text is safe.
+  Note over AD: Output panel reads JSONL<br/>and shows new turns.
+
+  U->>Pane: (Later) Press R to refresh
+  Pane->>JSONL: claude --resume <sid>
+  Pane->>Pane: Full conversation renders beautifully
+```
+
+#### Target Transport Architecture
+
+```mermaid
+flowchart TB
+  subgraph PF["Pixel Forge"]
+    UI[Chat UI] --> API[FastAPI Control Plane]
+    API --> Pack[Request Pack Assembly]
+    Pack --> Dispatch[Native Transport Dispatch]
+  end
+
+  subgraph Transport["External Subprocess"]
+    Dispatch --> Agent["claude -r / codex exec resume"]
+  end
+
+  subgraph Truth["Source of Truth"]
+    Agent --> JSONL[(JSONL Session Transcript)]
+  end
+
+  subgraph ADObserve["Agent Deck Observation Layer"]
+    JSONL --> ADPanel[Output Panel<br/>complete JSONL view]
+    JSONL --> ADBadge["Unseen Turn Badge<br/>'3 new turns from Pixel Forge'"]
+    JSONL --> ADStatus[Session Status<br/>detects external activity]
+  end
+
+  subgraph PFObserve["Pixel Forge Observation Layer"]
+    JSONL --> PFStream[JSONL Streamer → WebSocket]
+    JSONL --> PFIngest[Event Ingestion → workstation_events]
+    PFStream --> UI
+  end
+
+  subgraph Pane["Agent Deck Tmux Pane"]
+    Interactive[Interactive Claude Code<br/>operator's live surface]
+    Interactive -.->|user types here| Draft[Staged prompt text<br/>never cleared by system]
+    Refresh["User Refresh (R)"] --> Resume["--resume reloads JSONL"]
+    Resume --> Interactive
+  end
+
+  style Truth fill:#2d5016,stroke:#4a8028
+  style ADObserve fill:#1a3a5c,stroke:#2d6da3
+  style PFObserve fill:#1a3a5c,stroke:#2d6da3
+  style Pane fill:#3d2b1a,stroke:#6b4c2a
+```
+
 ### Current Controller Update Flow
 
 ```mermaid
