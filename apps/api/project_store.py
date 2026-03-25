@@ -782,6 +782,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         _migrate_legacy_instance_state(conn)
         conn.commit()
         _promote_legacy_attached_draft_sessions(conn)
+        # Migrate session bindings — use a subquery to pick only the most
+        # recently active session per agent_deck_session_id so the UNIQUE
+        # constraint on agent_deck_session_id is never violated when two
+        # chats happen to share a binding (e.g. from testing or rebinding).
         conn.execute(
             """
             INSERT INTO chat_session_bindings (
@@ -803,9 +807,17 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 agent_deck_tool,
                 created_at,
                 last_active
-            FROM sessions
+            FROM sessions s
             WHERE agent_deck_session_id IS NOT NULL
               AND TRIM(agent_deck_session_id) <> ''
+              AND s.rowid = (
+                  SELECT s2.rowid FROM sessions s2
+                  WHERE s2.agent_deck_session_id = s.agent_deck_session_id
+                    AND s2.agent_deck_session_id IS NOT NULL
+                    AND TRIM(s2.agent_deck_session_id) <> ''
+                  ORDER BY s2.last_active DESC
+                  LIMIT 1
+              )
             ON CONFLICT(chat_id) DO UPDATE SET
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
@@ -813,6 +825,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
                 updated_at = excluded.updated_at
+            ON CONFLICT(agent_deck_session_id) DO NOTHING
             """
         )
         conn.execute(
