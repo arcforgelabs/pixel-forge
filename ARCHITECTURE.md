@@ -335,7 +335,9 @@ sequenceDiagram
   Pane->>Pane: Full conversation renders beautifully
 ```
 
-#### Target Transport Architecture
+#### Stepping Stone: Agent Deck Observation Layer (buildable now)
+
+Agent Deck's Output panel reads the JSONL alongside `capture-pane` to show a complete conversation view including externally-dispatched turns. The tmux pane stays undisturbed. When the operator wants to take over, they press R (Restart) and the pane catches up.
 
 ```mermaid
 flowchart TB
@@ -376,6 +378,50 @@ flowchart TB
   style ADObserve fill:#1a3a5c,stroke:#2d6da3
   style PFObserve fill:#1a3a5c,stroke:#2d6da3
   style Pane fill:#3d2b1a,stroke:#6b4c2a
+```
+
+#### Target: Live JSONL-Driven Agent Pane
+
+The ideal end state is a tmux pane running the real agent app (Claude Code, Codex, etc.) where the native UI updates in real-time as the JSONL transcript changes — including turns dispatched by Pixel Forge externally. The operator can type, interrupt, use slash commands, queue messages, and use all native agent features. The JSONL is the real-time shared bus; the interactive UI is a live view on top of it.
+
+This requires one of two paths:
+
+- **Upstream path:** The agent app (Claude Code, Codex) natively watches its own JSONL transcript and re-renders when external turns appear, preserving the operator's input buffer. This is the cleanest solution but depends on upstream adoption.
+- **Custom renderer path:** Agent Deck provides a rendering process per agent type that watches the JSONL via fsnotify, renders in the agent's native visual style (yellow prompts, green responses, tool call formatting), accepts operator input, and dispatches turns via `claude -r <sid> -p`. Input and rendering are decoupled by design — the operator can type while the display updates.
+
+Either path uses the same data model: JSONL transcript as shared truth, external subprocess dispatch for Pixel Forge turns, and the pane as a live interactive surface with full native agent capabilities.
+
+```mermaid
+flowchart TB
+  subgraph PF["Pixel Forge"]
+    UI[Chat UI] --> API[FastAPI Control Plane]
+    API --> Pack[Request Pack Assembly]
+    Pack --> Dispatch[Native Transport Dispatch]
+  end
+
+  subgraph Transport["External Subprocess"]
+    Dispatch --> Agent["claude -r / codex exec resume"]
+  end
+
+  subgraph Truth["Source of Truth"]
+    Agent --> JSONL[(JSONL Session Transcript)]
+    PaneDispatch --> JSONL
+  end
+
+  subgraph Pane["Agent Deck Tmux Pane — Live JSONL View"]
+    JSONL -->|fsnotify / file watch| Renderer[Agent-Native Renderer<br/>real-time JSONL → beautiful UI]
+    Renderer --> Display[Live conversation display<br/>updates as JSONL changes]
+    Input[Operator input buffer<br/>type / slash commands / interrupt] --> PaneDispatch["Dispatch via agent CLI<br/>claude -r / codex exec resume"]
+    Input -.->|preserved during updates| Display
+  end
+
+  subgraph PFObserve["Pixel Forge Observation"]
+    JSONL --> PFStream[JSONL Streamer → WebSocket → Chat UI]
+  end
+
+  style Truth fill:#2d5016,stroke:#4a8028
+  style Pane fill:#1a3a5c,stroke:#2d6da3
+  style PFObserve fill:#1a3a5c,stroke:#2d6da3
 ```
 
 ### Current Controller Update Flow
