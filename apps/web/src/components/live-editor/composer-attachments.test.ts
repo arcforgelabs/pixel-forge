@@ -19,8 +19,10 @@ describe('composer-attachments', () => {
 
   it('converts large pasted text into an attachment threshold hit', () => {
     expect(shouldConvertPasteToAttachment('short note')).toBe(false)
-    expect(shouldConvertPasteToAttachment('x'.repeat(480))).toBe(true)
-    expect(shouldConvertPasteToAttachment('a\nb\nc\nd\ne\nf\ng\nh')).toBe(true)
+    expect(shouldConvertPasteToAttachment('x'.repeat(1200))).toBe(false)
+    expect(shouldConvertPasteToAttachment('x'.repeat(2200))).toBe(false)
+    expect(shouldConvertPasteToAttachment('x'.repeat(2400))).toBe(true)
+    expect(shouldConvertPasteToAttachment(Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n'))).toBe(false)
   })
 
   it('encodes plain text attachments as data urls', () => {

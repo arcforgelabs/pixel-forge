@@ -167,7 +167,7 @@ export function ChatMessages({
             ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
             : attachment.kind === 'image'
               ? 'border-sky-500/35 bg-sky-500/10 text-sky-100'
-              : 'border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground'
+              : 'border-white/10 bg-black/15 text-foreground'
 
           return (
             <span
@@ -193,7 +193,10 @@ export function ChatMessages({
         const pasteText = attachment.kind === 'paste' ? resolvePasteText(attachment) : ''
         const baseClassName = tone === 'assistant'
           ? 'border-border/40 bg-background/50 text-foreground'
-          : 'border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground'
+          : 'border-white/10 bg-black/15 text-foreground'
+        const pasteSurfaceClassName = tone === 'assistant'
+          ? 'bg-black/10 text-foreground/90 ring-1 ring-black/10'
+          : 'bg-black/25 text-foreground/95 ring-1 ring-white/5'
 
         if (attachment.kind === 'image') {
           const imageClassName = tone === 'assistant'
@@ -232,12 +235,12 @@ export function ChatMessages({
                 <button
                   type="button"
                   onClick={() => togglePasteExpanded(attachment.id)}
-                  className="shrink-0 rounded-md border border-current/20 px-2 py-1 text-[11px] font-medium opacity-80 transition-opacity hover:opacity-100"
+                  className="shrink-0 rounded-md border border-current/20 px-2 py-1 text-[11px] font-medium opacity-80 transition-opacity hover:bg-white/5 hover:opacity-100"
                 >
                   {isPasteExpanded ? 'Collapse' : 'Expand'}
                 </button>
               </div>
-              <pre className={`mt-2 overflow-hidden whitespace-pre-wrap break-words rounded-md bg-black/10 px-2 py-2 text-[11px] leading-relaxed ${isPasteExpanded ? '' : 'line-clamp-4'}`}>
+              <pre className={`mt-2 overflow-hidden whitespace-pre-wrap break-words rounded-md px-2 py-2 text-[11px] leading-relaxed ${pasteSurfaceClassName} ${isPasteExpanded ? '' : 'line-clamp-4'}`}>
                 {pasteText || attachment.name}
               </pre>
             </div>

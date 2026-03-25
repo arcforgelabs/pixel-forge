@@ -12,8 +12,9 @@ export interface ComposerTextPart<TAttachment extends InlineTokenAttachmentLike>
   attachment?: TAttachment
 }
 
-export const PASTE_BURST_CHAR_THRESHOLD = 480
-export const PASTE_BURST_LINE_THRESHOLD = 8
+// Codex's visible paste-burst UI is char-driven, not line-driven. Keep Pixel
+// Forge on the same shape so short structured pastes stay inline.
+export const PASTE_BURST_CHAR_THRESHOLD = 2400
 
 const ATTACHMENT_LABEL_PREFIX: Record<ComposerAttachmentKind, string> = {
   image: 'Image',
@@ -41,11 +42,7 @@ export function shouldConvertPasteToAttachment(text: string): boolean {
     return false
   }
 
-  const lineCount = normalized.split('\n').length
-  return (
-    normalized.length >= PASTE_BURST_CHAR_THRESHOLD
-    || lineCount >= PASTE_BURST_LINE_THRESHOLD
-  )
+  return normalized.length >= PASTE_BURST_CHAR_THRESHOLD
 }
 
 export function createPlainTextDataUrl(text: string): string {
