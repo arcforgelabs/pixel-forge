@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 	"github.com/asheshgoplani/agent-deck/internal/docker"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/send"
@@ -1871,6 +1872,15 @@ func (i *Instance) Start() error {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
 	}
 
+	// Set AGENTDECK_DIR so hook-handler writes events to the correct home
+	// (e.g. ~/.pixel-forge-alpha/agent-deck/hooks/ for alpha profile sessions
+	// instead of the default ~/.agent-deck/hooks/)
+	if adHome := agentdeckhome.DirOrTemp(); adHome != "" {
+		if err := i.tmuxSession.SetEnvironment("AGENTDECK_DIR", adHome); err != nil {
+			sessionLog.Warn("set_agentdeck_dir_failed", slog.String("error", err.Error()))
+		}
+	}
+
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
 	// sandbox and non-sandbox sessions). This replaces the previous approach of embedding
 	// "tmux set-environment" calls in the shell command string, which silently failed
@@ -1987,6 +1997,9 @@ func (i *Instance) StartWithMessage(message string) error {
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
+	}
+	if adHome := agentdeckhome.DirOrTemp(); adHome != "" {
+		_ = i.tmuxSession.SetEnvironment("AGENTDECK_DIR", adHome)
 	}
 
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
@@ -3931,6 +3944,9 @@ func (i *Instance) Restart() error {
 	// This enables real-time status updates via Stop/SessionStart hooks
 	if err := i.tmuxSession.SetEnvironment("AGENTDECK_INSTANCE_ID", i.ID); err != nil {
 		sessionLog.Warn("set_instance_id_failed", slog.String("error", err.Error()))
+	}
+	if adHome := agentdeckhome.DirOrTemp(); adHome != "" {
+		_ = i.tmuxSession.SetEnvironment("AGENTDECK_DIR", adHome)
 	}
 
 	// Propagate all known tool session IDs to the tmux environment (host-side).
