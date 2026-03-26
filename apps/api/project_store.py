@@ -118,9 +118,15 @@ def should_surface_session(
     if normalized_workspace_path != normalized_project_path:
         return True
 
-    # No AD binding, root workspace: only surface if there is meaningful
-    # editor state.  Detached sessions without content are empty shells —
-    # the AD session will appear as an adopted target if it still exists.
+    # Explicit chat-* sessions are always surfaced — they were created by
+    # the user through the chat flow and should remain visible even when
+    # temporarily detached from an AD session.
+    if normalized_thread_id.startswith("chat-"):
+        return True
+
+    # No AD binding, root workspace, non-chat thread: only surface if
+    # there is meaningful editor state.  Detached legacy sessions without
+    # content are empty shells.
     return _session_has_meaningful_editor_state(session)
 
 
