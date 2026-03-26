@@ -1402,6 +1402,25 @@ def _backfill_chat_history_from_jsonl(
     if marker is not None:
         return
 
+    # If PF already wrote turn events for this chat during a live send,
+    # those are authoritative — skip backfill to avoid duplicates.
+    existing_turns = list_workstation_events(
+        project_path, chat_id, limit=1,
+    )
+    has_real_turn_events = any(
+        e.event_type in ("turn_chunk", "turn_completed")
+        for e in existing_turns
+    )
+    if has_real_turn_events:
+        append_workstation_event(
+            project_path,
+            chat_id,
+            agent_deck_session_id=None,
+            event_type="backfill_completed",
+            payload={"skipped": True, "reason": "existing turn events found"},
+        )
+        return
+
     thread = get_live_editor_thread(chat_id)
     if thread is None or not thread.claude_session_id:
         return
