@@ -444,9 +444,12 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
-	// AGENTDECK_INSTANCE_ID is set as an inline env var so Claude's hook subprocesses
-	// can identify which agent-deck session they belong to.
-	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s ", i.ID)
+	// AGENTDECK_INSTANCE_ID and AGENTDECK_DIR are set as inline env vars so
+	// Claude's hook subprocesses can identify which session they belong to
+	// and write events to the correct agent-deck home (e.g. alpha profile).
+	// These must be inline (not tmux SetEnvironment) because hook subprocesses
+	// inherit Claude Code's process env, not the tmux session env.
+	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s ", i.ID, agentdeckhome.DirOrTemp())
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get options - either from instance or create defaults from config
@@ -533,9 +536,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 }
 
 // buildBashExportPrefix builds the export prefix used in bash -c commands.
-// It always exports AGENTDECK_INSTANCE_ID, and conditionally adds CLAUDE_CONFIG_DIR.
+// It always exports AGENTDECK_INSTANCE_ID and AGENTDECK_DIR, and conditionally adds CLAUDE_CONFIG_DIR.
 func (i *Instance) buildBashExportPrefix() string {
-	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; ", i.ID)
+	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_DIR=%s; ", i.ID, agentdeckhome.DirOrTemp())
 	if IsClaudeConfigDirExplicit() {
 		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDir())
 	}
@@ -736,8 +739,8 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 	}
 
 	envPrefix := i.buildEnvSourceCommand()
-	agentdeckEnvPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_TITLE=%q AGENTDECK_TOOL=%s ",
-		i.ID, i.Title, i.Tool)
+	agentdeckEnvPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s AGENTDECK_TITLE=%q AGENTDECK_TOOL=%s ",
+		i.ID, agentdeckhome.DirOrTemp(), i.Title, i.Tool)
 	envPrefix += agentdeckEnvPrefix
 
 	// If baseCommand is just "codex", handle specially
@@ -4003,9 +4006,9 @@ func (i *Instance) buildClaudeResumeCommand() string {
 		configDirPrefix = fmt.Sprintf("CLAUDE_CONFIG_DIR=%s ", configDir)
 	}
 
-	// AGENTDECK_INSTANCE_ID is set as an inline env var so hook subprocesses
-	// can identify which agent-deck session they belong to.
-	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s ", i.ID)
+	// AGENTDECK_INSTANCE_ID and AGENTDECK_DIR are set as inline env vars so
+	// hook subprocesses inherit the correct agent-deck home for this session.
+	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s ", i.ID, agentdeckhome.DirOrTemp())
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get per-session permission settings (falls back to config if not persisted)
