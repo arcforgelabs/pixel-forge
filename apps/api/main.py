@@ -1084,6 +1084,16 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
+    # Reuse an existing empty draft chat instead of creating a new one.
+    _, existing_chats = await _load_reconciled_project_chats(normalized_project_path)
+    for existing in existing_chats:
+        if (
+            existing.binding_state in ("detached", "unbound")
+            and not existing.last_user_message
+            and existing.thread_id.startswith("chat-")
+        ):
+            return serialize_project_chat(existing)
+
     thread_id = f"chat-{uuid4().hex[:12]}"
     draft_title = request.title.strip() if request.title and request.title.strip() else f"Chat {thread_id[:8]}"
 
