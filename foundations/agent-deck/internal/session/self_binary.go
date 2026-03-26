@@ -9,6 +9,7 @@ import (
 const (
 	AgentDeckExecutableEnvVar       = "AGENTDECK_EXECUTABLE"
 	LegacyAgentDeckExecutableEnvVar = "AGENT_DECK_EXECUTABLE"
+	agentDeckHookCommandShell       = "\"${AGENTDECK_EXECUTABLE:-${AGENT_DECK_EXECUTABLE:-agent-deck}}\" hook-handler"
 )
 
 var (
@@ -41,6 +42,10 @@ func preferredAgentDeckExecutable() string {
 	}
 
 	return ""
+}
+
+func preferredAgentDeckHookCommand() string {
+	return agentDeckHookCommandShell
 }
 
 func currentProcessAgentDeckExecutable() string {

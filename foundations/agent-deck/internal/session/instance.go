@@ -82,12 +82,12 @@ type Instance struct {
 	WorktreeBranch   string `json:"worktree_branch,omitempty"`    // Branch name in worktree
 	IsolationType    string `json:"isolation_type,omitempty"`     // "" or "worktree" = worktree, "clone" = reference clone
 
-	Command        string    `json:"command"`
-	Wrapper        string    `json:"wrapper,omitempty"` // Optional wrapper command with {command} placeholder
-	Tool           string    `json:"tool"`
-	Status         Status    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-	LastAccessedAt  time.Time `json:"last_accessed_at,omitempty"`   // When user last attached
+	Command         string    `json:"command"`
+	Wrapper         string    `json:"wrapper,omitempty"` // Optional wrapper command with {command} placeholder
+	Tool            string    `json:"tool"`
+	Status          Status    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastAccessedAt  time.Time `json:"last_accessed_at,omitempty"`  // When user last attached
 	LastRestartedAt time.Time `json:"last_restarted_at,omitempty"` // When session was last restarted (R key)
 
 	// Claude Code integration
@@ -450,6 +450,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 	// These must be inline (not tmux SetEnvironment) because hook subprocesses
 	// inherit Claude Code's process env, not the tmux session env.
 	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s ", i.ID, agentdeckhome.DirOrTemp())
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		instanceIDPrefix += fmt.Sprintf("AGENTDECK_EXECUTABLE=%q AGENT_DECK_EXECUTABLE=%q ", executable, executable)
+	}
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get options - either from instance or create defaults from config
@@ -539,6 +542,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 // It always exports AGENTDECK_INSTANCE_ID and AGENTDECK_DIR, and conditionally adds CLAUDE_CONFIG_DIR.
 func (i *Instance) buildBashExportPrefix() string {
 	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_DIR=%s; ", i.ID, agentdeckhome.DirOrTemp())
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		prefix += fmt.Sprintf("export AGENTDECK_EXECUTABLE=%q; export AGENT_DECK_EXECUTABLE=%q; ", executable, executable)
+	}
 	if IsClaudeConfigDirExplicit() {
 		prefix += fmt.Sprintf("export CLAUDE_CONFIG_DIR=%s; ", GetClaudeConfigDir())
 	}
@@ -741,6 +747,9 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 	envPrefix := i.buildEnvSourceCommand()
 	agentdeckEnvPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s AGENTDECK_TITLE=%q AGENTDECK_TOOL=%s ",
 		i.ID, agentdeckhome.DirOrTemp(), i.Title, i.Tool)
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		agentdeckEnvPrefix += fmt.Sprintf("AGENTDECK_EXECUTABLE=%q AGENT_DECK_EXECUTABLE=%q ", executable, executable)
+	}
 	envPrefix += agentdeckEnvPrefix
 
 	// If baseCommand is just "codex", handle specially
@@ -1884,6 +1893,12 @@ func (i *Instance) Start() error {
 			sessionLog.Warn("set_agentdeck_dir_failed", slog.String("error", err.Error()))
 		}
 	}
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		if err := i.tmuxSession.SetEnvironment("AGENTDECK_EXECUTABLE", executable); err != nil {
+			sessionLog.Warn("set_agentdeck_executable_failed", slog.String("error", err.Error()))
+		}
+		_ = i.tmuxSession.SetEnvironment("AGENT_DECK_EXECUTABLE", executable)
+	}
 
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
 	// sandbox and non-sandbox sessions). This replaces the previous approach of embedding
@@ -2004,6 +2019,10 @@ func (i *Instance) StartWithMessage(message string) error {
 	}
 	if adHome := agentdeckhome.DirOrTemp(); adHome != "" {
 		_ = i.tmuxSession.SetEnvironment("AGENTDECK_DIR", adHome)
+	}
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		_ = i.tmuxSession.SetEnvironment("AGENTDECK_EXECUTABLE", executable)
+		_ = i.tmuxSession.SetEnvironment("AGENT_DECK_EXECUTABLE", executable)
 	}
 
 	// Propagate tool session IDs into the tmux environment (host-side, works for both
@@ -4009,6 +4028,9 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	// AGENTDECK_INSTANCE_ID and AGENTDECK_DIR are set as inline env vars so
 	// hook subprocesses inherit the correct agent-deck home for this session.
 	instanceIDPrefix := fmt.Sprintf("AGENTDECK_INSTANCE_ID=%s AGENTDECK_DIR=%s ", i.ID, agentdeckhome.DirOrTemp())
+	if executable := preferredAgentDeckExecutable(); executable != "" {
+		instanceIDPrefix += fmt.Sprintf("AGENTDECK_EXECUTABLE=%q AGENT_DECK_EXECUTABLE=%q ", executable, executable)
+	}
 	configDirPrefix = instanceIDPrefix + configDirPrefix
 
 	// Get per-session permission settings (falls back to config if not persisted)

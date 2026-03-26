@@ -7,8 +7,42 @@ import (
 	"testing"
 )
 
+func configureHookExecutableForTest(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "agent-deck-current")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write test agent-deck executable: %v", err)
+	}
+	t.Setenv(AgentDeckExecutableEnvVar, binPath)
+	t.Setenv(LegacyAgentDeckExecutableEnvVar, "")
+	return preferredAgentDeckHookCommand()
+}
+
+func readClaudeHooksFromSettings(t *testing.T, configDir string) map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(configDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+	hooksRaw, ok := settings["hooks"]
+	if !ok {
+		t.Fatal("missing hooks key")
+	}
+	var hooks map[string]json.RawMessage
+	if err := json.Unmarshal(hooksRaw, &hooks); err != nil {
+		t.Fatalf("parse hooks: %v", err)
+	}
+	return hooks
+}
+
 func TestInjectClaudeHooks_Fresh(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	installed, err := InjectClaudeHooks(tmpDir)
 	if err != nil {
@@ -58,8 +92,8 @@ func TestInjectClaudeHooks_Fresh(t *testing.T) {
 	if len(matchers[0].Hooks) == 0 {
 		t.Fatal("SessionStart matcher has no hooks")
 	}
-	if matchers[0].Hooks[0].Command != agentDeckHookCommand {
-		t.Errorf("Hook command = %q, want %q", matchers[0].Hooks[0].Command, agentDeckHookCommand)
+	if matchers[0].Hooks[0].Command != expectedCommand {
+		t.Errorf("Hook command = %q, want %q", matchers[0].Hooks[0].Command, expectedCommand)
 	}
 	if !matchers[0].Hooks[0].Async {
 		t.Error("Hook should be async")
@@ -68,6 +102,7 @@ func TestInjectClaudeHooks_Fresh(t *testing.T) {
 
 func TestPreCompactHookIsSynchronous(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	if _, err := InjectClaudeHooks(tmpDir); err != nil {
 		t.Fatalf("InjectClaudeHooks failed: %v", err)
@@ -100,13 +135,14 @@ func TestPreCompactHookIsSynchronous(t *testing.T) {
 	if hook.Async {
 		t.Error("PreCompact hook must be synchronous (Async should be false)")
 	}
-	if hook.Command != agentDeckHookCommand {
-		t.Errorf("PreCompact hook command = %q, want %q", hook.Command, agentDeckHookCommand)
+	if hook.Command != expectedCommand {
+		t.Errorf("PreCompact hook command = %q, want %q", hook.Command, expectedCommand)
 	}
 }
 
 func TestInjectClaudeHooks_PreservesExisting(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	// Write existing settings with a custom setting and user hook
 	existing := map[string]json.RawMessage{
@@ -161,7 +197,7 @@ func TestInjectClaudeHooks_PreservesExisting(t *testing.T) {
 			if h.Command == "my-custom-hook" {
 				foundCustom = true
 			}
-			if h.Command == agentDeckHookCommand {
+			if h.Command == expectedCommand {
 				foundAgentDeck = true
 			}
 		}
@@ -177,6 +213,7 @@ func TestInjectClaudeHooks_PreservesExisting(t *testing.T) {
 
 func TestInjectClaudeHooks_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	// First install
 	installed1, err := InjectClaudeHooks(tmpDir)
@@ -219,7 +256,7 @@ func TestInjectClaudeHooks_Idempotent(t *testing.T) {
 	hookCount := 0
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if h.Command == agentDeckHookCommand {
+			if h.Command == expectedCommand {
 				hookCount++
 			}
 		}
@@ -231,6 +268,7 @@ func TestInjectClaudeHooks_Idempotent(t *testing.T) {
 
 func TestRemoveClaudeHooks(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 
 	// Install first
 	if _, err := InjectClaudeHooks(tmpDir); err != nil {
@@ -254,6 +292,7 @@ func TestRemoveClaudeHooks(t *testing.T) {
 
 func TestRemoveClaudeHooks_PreservesUserHooks(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	// Write settings with both user and agent-deck hooks
 	existing := map[string]json.RawMessage{
@@ -304,7 +343,7 @@ func TestRemoveClaudeHooks_PreservesUserHooks(t *testing.T) {
 			if h.Command == "my-custom-hook" {
 				foundCustom = true
 			}
-			if h.Command == agentDeckHookCommand {
+			if h.Command == expectedCommand || h.Command == "agent-deck hook-handler" {
 				foundAgentDeck = true
 			}
 		}
@@ -320,6 +359,7 @@ func TestRemoveClaudeHooks_PreservesUserHooks(t *testing.T) {
 
 func TestCheckClaudeHooksInstalled(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 
 	// Not installed yet
 	if CheckClaudeHooksInstalled(tmpDir) {
@@ -349,6 +389,7 @@ func TestCheckClaudeHooksInstalled(t *testing.T) {
 
 func TestNotificationMatcher(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 
 	if _, err := InjectClaudeHooks(tmpDir); err != nil {
 		t.Fatalf("InjectClaudeHooks failed: %v", err)
@@ -379,5 +420,56 @@ func TestNotificationMatcher(t *testing.T) {
 	}
 	if matchers[0].Matcher != "permission_prompt|elicitation_dialog" {
 		t.Errorf("Notification matcher = %q, want %q", matchers[0].Matcher, "permission_prompt|elicitation_dialog")
+	}
+}
+
+func TestInjectClaudeHooks_MigratesLegacyHookCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
+
+	existing := map[string]json.RawMessage{
+		"hooks": json.RawMessage(`{
+			"SessionStart": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"Stop": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"PermissionRequest": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"Notification": [{"matcher": "permission_prompt|elicitation_dialog", "hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"SessionEnd": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler", "async": true}]}],
+			"PreCompact": [{"hooks": [{"type": "command", "command": "agent-deck hook-handler"}]}]
+		}`),
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
+		t.Fatalf("seed settings.json: %v", err)
+	}
+
+	installed, err := InjectClaudeHooks(tmpDir)
+	if err != nil {
+		t.Fatalf("InjectClaudeHooks failed: %v", err)
+	}
+	if !installed {
+		t.Fatal("Expected legacy hook commands to be migrated")
+	}
+
+	hooks := readClaudeHooksFromSettings(t, tmpDir)
+	for event, raw := range hooks {
+		var matchers []claudeHookMatcher
+		if err := json.Unmarshal(raw, &matchers); err != nil {
+			t.Fatalf("parse %s hooks: %v", event, err)
+		}
+		foundCurrent := false
+		for _, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Command == expectedCommand {
+					foundCurrent = true
+				}
+				if hook.Command == "agent-deck hook-handler" {
+					t.Fatalf("expected legacy hook command to be removed from %s", event)
+				}
+			}
+		}
+		if !foundCurrent {
+			t.Fatalf("expected migrated hook command %q in %s", expectedCommand, event)
+		}
 	}
 }

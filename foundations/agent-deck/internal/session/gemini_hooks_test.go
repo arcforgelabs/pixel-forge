@@ -8,8 +8,30 @@ import (
 	"testing"
 )
 
+func readGeminiHooksFromSettings(t *testing.T, configDir string) map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(configDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+	hooksRaw, ok := settings["hooks"]
+	if !ok {
+		t.Fatal("missing hooks key")
+	}
+	var hooks map[string]json.RawMessage
+	if err := json.Unmarshal(hooksRaw, &hooks); err != nil {
+		t.Fatalf("parse hooks: %v", err)
+	}
+	return hooks
+}
+
 func TestInjectGeminiHooks_Fresh(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	installed, err := InjectGeminiHooks(tmpDir)
 	if err != nil {
@@ -40,14 +62,33 @@ func TestInjectGeminiHooks_Fresh(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing event hook: %s", cfg.Event)
 		}
-		if !geminiEventHasAgentDeckHook(raw) {
+		if !geminiEventHasCurrentAgentDeckHook(raw) {
 			t.Fatalf("event %s missing agent-deck hook", cfg.Event)
+		}
+	}
+	hooks = readGeminiHooksFromSettings(t, tmpDir)
+	for event, raw := range hooks {
+		var matchers []geminiHookMatcher
+		if err := json.Unmarshal(raw, &matchers); err != nil {
+			t.Fatalf("parse %s hooks: %v", event, err)
+		}
+		foundCurrent := false
+		for _, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Command == expectedCommand {
+					foundCurrent = true
+				}
+			}
+		}
+		if !foundCurrent {
+			t.Fatalf("expected hook command %q in %s", expectedCommand, event)
 		}
 	}
 }
 
 func TestInjectGeminiHooks_PreservesExistingSettings(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	orig := `{
   "theme": "dark",
@@ -84,10 +125,29 @@ func TestInjectGeminiHooks_PreservesExistingSettings(t *testing.T) {
 	if !strings.Contains(text, `"echo hi"`) {
 		t.Fatal("expected existing user hook preserved")
 	}
+	hooks := readGeminiHooksFromSettings(t, tmpDir)
+	foundCurrent := false
+	for _, raw := range hooks {
+		var matchers []geminiHookMatcher
+		if err := json.Unmarshal(raw, &matchers); err != nil {
+			t.Fatalf("parse hooks: %v", err)
+		}
+		for _, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Command == expectedCommand {
+					foundCurrent = true
+				}
+			}
+		}
+	}
+	if !foundCurrent {
+		t.Fatalf("expected hook command %q", expectedCommand)
+	}
 }
 
 func TestInjectGeminiHooks_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 
 	first, err := InjectGeminiHooks(tmpDir)
 	if err != nil {
@@ -108,6 +168,7 @@ func TestInjectGeminiHooks_Idempotent(t *testing.T) {
 
 func TestRemoveGeminiHooks(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 
 	if _, err := InjectGeminiHooks(tmpDir); err != nil {
 		t.Fatalf("inject failed: %v", err)
@@ -127,6 +188,7 @@ func TestRemoveGeminiHooks(t *testing.T) {
 
 func TestRemoveGeminiHooks_PreservesUserHooks(t *testing.T) {
 	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
 
 	seed := `{
   "hooks": {
@@ -157,13 +219,14 @@ func TestRemoveGeminiHooks_PreservesUserHooks(t *testing.T) {
 	if !strings.Contains(text, `"echo user"`) {
 		t.Fatal("expected user hook to remain")
 	}
-	if strings.Contains(text, `"agent-deck hook-handler"`) {
+	if strings.Contains(text, `"agent-deck hook-handler"`) || strings.Contains(text, expectedCommand) {
 		t.Fatal("expected agent-deck hook removed")
 	}
 }
 
 func TestCheckGeminiHooksInstalled(t *testing.T) {
 	tmpDir := t.TempDir()
+	configureHookExecutableForTest(t)
 	if CheckGeminiHooksInstalled(tmpDir) {
 		t.Fatal("expected not installed before inject")
 	}
@@ -172,5 +235,60 @@ func TestCheckGeminiHooksInstalled(t *testing.T) {
 	}
 	if !CheckGeminiHooksInstalled(tmpDir) {
 		t.Fatal("expected installed after inject")
+	}
+}
+
+func TestInjectGeminiHooks_MigratesLegacyHookCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
+
+	seed := `{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "agent-deck hook-handler" } ] }
+    ],
+    "BeforeAgent": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "agent-deck hook-handler" } ] }
+    ],
+    "AfterAgent": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "agent-deck hook-handler" } ] }
+    ],
+    "SessionEnd": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "agent-deck hook-handler" } ] }
+    ]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(seed), 0644); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+
+	installed, err := InjectGeminiHooks(tmpDir)
+	if err != nil {
+		t.Fatalf("InjectGeminiHooks failed: %v", err)
+	}
+	if !installed {
+		t.Fatal("expected legacy Gemini hooks to be migrated")
+	}
+
+	hooks := readGeminiHooksFromSettings(t, tmpDir)
+	for event, raw := range hooks {
+		var matchers []geminiHookMatcher
+		if err := json.Unmarshal(raw, &matchers); err != nil {
+			t.Fatalf("parse %s hooks: %v", event, err)
+		}
+		foundCurrent := false
+		for _, matcher := range matchers {
+			for _, hook := range matcher.Hooks {
+				if hook.Command == expectedCommand {
+					foundCurrent = true
+				}
+				if hook.Command == "agent-deck hook-handler" {
+					t.Fatalf("expected legacy hook command to be removed from %s", event)
+				}
+			}
+		}
+		if !foundCurrent {
+			t.Fatalf("expected migrated hook command %q in %s", expectedCommand, event)
+		}
 	}
 }

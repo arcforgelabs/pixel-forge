@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import main
+import live_editor_threads
+import project_store
+import workstation_events
 from agent_deck_bridge import (
     AgentDeckBridgeError,
     AgentDeckDeleteAssessment,
@@ -115,7 +119,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             agent_deck_session_title=f"Chat {expected_thread_id[:8]}",
             agent_deck_tool=None,
             agent_deck_session_status=None,
-            binding_state="detached",
+            binding_state="attached",
             workspace_kind="root",
             origin_kind="managed",
             created_at="2026-03-21T00:00:00Z",
@@ -154,6 +158,82 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(payload["thread_id"], expected_thread_id)
         self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
+
+
+class BackfillChatHistoryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.original_shared_state_dir = main.os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        project_store._DB_INITIALIZED = False
+        workstation_events._DB_INITIALIZED = False
+        live_editor_threads._DB_INITIALIZED = False
+
+        self.project_path = Path(self.tempdir.name) / "project"
+        self.workspace_path = self.project_path / ".agents" / "thread-a"
+        self.workspace_path.mkdir(parents=True)
+
+        project_store.upsert_project(str(self.project_path))
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-a",
+            backend="agent-deck",
+            workspace_path=str(self.workspace_path),
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="Chat thread-a",
+            agent_deck_tool="claude",
+        )
+        live_editor_threads.get_or_create_live_editor_thread(
+            str(self.project_path),
+            thread_id="thread-a",
+        )
+        live_editor_threads.update_live_editor_thread(
+            "thread-a",
+            workspace_path=str(self.workspace_path),
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="Chat thread-a",
+            claude_session_id="claude-session-a",
+        )
+
+    def tearDown(self) -> None:
+        if self.original_shared_state_dir is None:
+            main.os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
+        else:
+            main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+
+    def test_backfill_skips_when_primary_typed_turn_history_already_exists(self) -> None:
+        workstation_events.append_workstation_event(
+            str(self.project_path),
+            "thread-a",
+            agent_deck_session_id="deck-a",
+            event_type="turn_input",
+            payload={
+                "request_id": "request-1",
+                "prompt": "Inspect the current preview",
+            },
+        )
+
+        with patch.object(
+            main,
+            "claude_jsonl_path",
+            side_effect=AssertionError("backfill should not read JSONL when typed history exists"),
+        ):
+            main._backfill_chat_history_from_jsonl(
+                str(self.project_path),
+                "thread-a",
+            )
+
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-a",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "backfill_completed"],
+        )
+        self.assertEqual(events[-1].payload["skipped"], True)
+        self.assertEqual(events[-1].payload["reason"], "existing turn events found")
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
     def test_build_dispatch_prompt_uses_prompt_first_transport_with_native_file_refs(self) -> None:

@@ -113,6 +113,7 @@ from published_update_state import (
 from runtime_version import read_runtime_info
 from workstation_events import (
     append_workstation_event,
+    chat_has_typed_turn_events,
     chat_has_primary_workstation_events,
     get_chat_activity_snapshot,
     latest_workstation_event,
@@ -1087,10 +1088,11 @@ async def create_project_chat(
     # Reuse an existing empty draft chat instead of creating a new one.
     _, existing_chats = await _load_reconciled_project_chats(normalized_project_path)
     for existing in existing_chats:
+        thread_id = existing.thread_id or ""
         if (
             existing.binding_state in ("detached", "unbound")
-            and not existing.last_user_message
-            and existing.thread_id.startswith("chat-")
+            and thread_id.startswith("chat-")
+            and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
         ):
             return serialize_project_chat(existing)
 
@@ -1404,14 +1406,7 @@ def _backfill_chat_history_from_jsonl(
 
     # If PF already wrote turn events for this chat during a live send,
     # those are authoritative — skip backfill to avoid duplicates.
-    existing_turns = list_workstation_events(
-        project_path, chat_id, limit=1,
-    )
-    has_real_turn_events = any(
-        e.event_type in ("turn_chunk", "turn_completed")
-        for e in existing_turns
-    )
-    if has_real_turn_events:
+    if chat_has_typed_turn_events(project_path, chat_id):
         append_workstation_event(
             project_path,
             chat_id,

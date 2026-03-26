@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-// agentDeckHookCommand is the marker command used to identify agent-deck hooks in settings.json.
-const agentDeckHookCommand = "agent-deck hook-handler"
-
 // claudeHookEntry represents a single hook entry in Claude Code settings.
 type claudeHookEntry struct {
 	Type    string `json:"type"`
@@ -29,7 +26,7 @@ type claudeHookMatcher struct {
 func agentDeckHook(async bool) claudeHookEntry {
 	return claudeHookEntry{
 		Type:    "command",
-		Command: agentDeckHookCommand,
+		Command: preferredAgentDeckHookCommand(),
 		Async:   async,
 	}
 }
@@ -227,22 +224,34 @@ func hooksAlreadyInstalled(hooks map[string]json.RawMessage) bool {
 		if !ok {
 			return false
 		}
-		if !eventHasAgentDeckHook(raw) {
+		if !eventHasCurrentAgentDeckHook(raw) {
 			return false
 		}
 	}
 	return true
 }
 
-// eventHasAgentDeckHook checks if a hook event's matcher array contains our hook.
-func eventHasAgentDeckHook(raw json.RawMessage) bool {
+func isAgentDeckHookCommand(command string) bool {
+	normalized := strings.TrimSpace(command)
+	if normalized == "" || !strings.Contains(normalized, "hook-handler") {
+		return false
+	}
+	return strings.Contains(normalized, "agent-deck") ||
+		strings.Contains(normalized, "AGENTDECK_EXECUTABLE") ||
+		strings.Contains(normalized, "AGENT_DECK_EXECUTABLE")
+}
+
+// eventHasCurrentAgentDeckHook checks if a hook event's matcher array contains the
+// current canonical hook command for this runtime lane.
+func eventHasCurrentAgentDeckHook(raw json.RawMessage) bool {
 	var matchers []claudeHookMatcher
 	if err := json.Unmarshal(raw, &matchers); err != nil {
 		return false
 	}
+	currentCommand := preferredAgentDeckHookCommand()
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if strings.Contains(h.Command, agentDeckHookCommand) {
+			if strings.TrimSpace(h.Command) == currentCommand {
 				return true
 			}
 		}
@@ -261,19 +270,27 @@ func mergeHookEvent(existing json.RawMessage, matcher string, async bool) json.R
 		}
 	}
 
+	currentHook := agentDeckHook(async)
+
 	// Check if we already have a matcher entry with our hook
 	for i, m := range matchers {
 		if m.Matcher == matcher {
-			// Check if our hook is already in this matcher
+			replaced := false
+			nextHooks := make([]claudeHookEntry, 0, len(m.Hooks)+1)
 			for _, h := range m.Hooks {
-				if strings.Contains(h.Command, agentDeckHookCommand) {
-					// Already present
-					result, _ := json.Marshal(matchers)
-					return result
+				if isAgentDeckHookCommand(h.Command) {
+					if !replaced {
+						nextHooks = append(nextHooks, currentHook)
+						replaced = true
+					}
+					continue
 				}
+				nextHooks = append(nextHooks, h)
 			}
-			// Append our hook to existing matcher
-			matchers[i].Hooks = append(matchers[i].Hooks, agentDeckHook(async))
+			if !replaced {
+				nextHooks = append(nextHooks, currentHook)
+			}
+			matchers[i].Hooks = nextHooks
 			result, _ := json.Marshal(matchers)
 			return result
 		}
@@ -282,7 +299,7 @@ func mergeHookEvent(existing json.RawMessage, matcher string, async bool) json.R
 	// No matching matcher found; add a new one
 	newMatcher := claudeHookMatcher{
 		Matcher: matcher,
-		Hooks:   []claudeHookEntry{agentDeckHook(async)},
+		Hooks:   []claudeHookEntry{currentHook},
 	}
 	matchers = append(matchers, newMatcher)
 	result, _ := json.Marshal(matchers)
@@ -303,7 +320,7 @@ func removeAgentDeckFromEvent(raw json.RawMessage) (json.RawMessage, bool) {
 	for _, m := range matchers {
 		var hooks []claudeHookEntry
 		for _, h := range m.Hooks {
-			if strings.Contains(h.Command, agentDeckHookCommand) {
+			if isAgentDeckHookCommand(h.Command) {
 				removed = true
 				continue
 			}
