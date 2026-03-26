@@ -129,12 +129,22 @@ def reconcile_project_chats(
         if not should_surface_session(session, normalized_project_path):
             continue
 
-        matched_target = _match_target_for_session(
-            session,
-            visible_targets=visible_targets,
-            visible_targets_by_id=visible_targets_by_id,
-            used_target_ids=used_target_ids,
+        # Only attempt target matching when the session still holds an AD
+        # binding.  Detached sessions (agent_deck_session_id cleared on
+        # detach) must not claim targets — the target appears separately
+        # as an adopted entry instead.
+        has_ad_binding = (
+            isinstance(session.agent_deck_session_id, str)
+            and session.agent_deck_session_id.strip()
         )
+        matched_target = None
+        if has_ad_binding:
+            matched_target = _match_target_for_session(
+                session,
+                visible_targets=visible_targets,
+                visible_targets_by_id=visible_targets_by_id,
+                used_target_ids=used_target_ids,
+            )
         if matched_target is not None:
             used_target_ids.add(matched_target.id)
 

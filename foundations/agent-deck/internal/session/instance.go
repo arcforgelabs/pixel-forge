@@ -87,7 +87,8 @@ type Instance struct {
 	Tool           string    `json:"tool"`
 	Status         Status    `json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
-	LastAccessedAt time.Time `json:"last_accessed_at,omitempty"` // When user last attached
+	LastAccessedAt  time.Time `json:"last_accessed_at,omitempty"`   // When user last attached
+	LastRestartedAt time.Time `json:"last_restarted_at,omitempty"` // When session was last restarted (R key)
 
 	// Claude Code integration
 	ClaudeSessionID  string    `json:"claude_session_id,omitempty"`
@@ -3665,6 +3666,7 @@ func (i *Instance) Restart() error {
 
 		// Start as WAITING - will go GREEN on next tick if Claude shows busy indicator
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3696,6 +3698,7 @@ func (i *Instance) Restart() error {
 		WriteHookSessionAnchor(i.ID, i.GeminiSessionID)
 
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3746,6 +3749,7 @@ func (i *Instance) Restart() error {
 		}
 
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3802,6 +3806,7 @@ func (i *Instance) Restart() error {
 		WriteHookSessionAnchor(i.ID, i.CodexSessionID)
 
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3841,6 +3846,7 @@ func (i *Instance) Restart() error {
 		sessionLog.Info("restart_generic_respawn_succeeded", slog.String("tool", i.Tool))
 		i.loadCustomPatternsFromConfig() // Reload custom patterns
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3858,6 +3864,7 @@ func (i *Instance) Restart() error {
 		}
 
 		i.Status = StatusWaiting
+		i.LastRestartedAt = time.Now()
 		return nil
 	}
 
@@ -3974,6 +3981,7 @@ func (i *Instance) Restart() error {
 		i.Status = StatusIdle
 	}
 
+	i.LastRestartedAt = time.Now()
 	return nil
 }
 

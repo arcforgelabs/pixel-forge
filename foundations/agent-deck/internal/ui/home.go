@@ -23,6 +23,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/asheshgoplani/agent-deck/internal/agentdeckhome"
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
@@ -270,6 +271,9 @@ type Home struct {
 	cloneTargetBranchCache map[string]string
 	worktreeDirtyCacheTs   map[string]time.Time // sessionID -> cache timestamp
 	worktreeDirtyMu        sync.Mutex           // Protects dirty cache maps
+
+	// AGENTDECK_DIR env propagation cache (one-time per session)
+	agentDeckDirChecked map[string]bool // sessionID -> true if env already verified/set
 
 	// Memory management: periodic cache pruning
 	lastCachePrune time.Time
@@ -715,6 +719,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		forkingSessions:           make(map[string]time.Time),
 		lastLogActivity:           make(map[string]time.Time),
 		windowsCollapsed:          make(map[string]bool),
+		agentDeckDirChecked:       make(map[string]bool),
 		worktreeDirtyCache:        make(map[string]bool),
 		cloneBranchStateCache:     make(map[string]git.CloneBranchState),
 		cloneTargetBranchCache:    make(map[string]string),
@@ -3746,6 +3751,19 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if h.turnSummaryID == inst.ID {
 				h.currentTurnSummary = nil
 				h.turnSummaryID = ""
+			}
+
+			// Reverse-path: propagate AGENTDECK_DIR to existing sessions that
+			// were created before the env var was added to Start/Restart.
+			if session.IsClaudeCompatible(tickTool) && !h.agentDeckDirChecked[inst.ID] {
+				h.agentDeckDirChecked[inst.ID] = true
+				if ts := inst.GetTmuxSession(); ts != nil && ts.Exists() {
+					if envVal, err := ts.GetEnvironment("AGENTDECK_DIR"); err != nil || envVal == "" {
+						if adHome := agentdeckhome.DirOrTemp(); adHome != "" {
+							_ = ts.SetEnvironment("AGENTDECK_DIR", adHome)
+						}
+					}
+				}
 			}
 
 			// Isolated workspace status check (lazy, 10s TTL)
@@ -10831,9 +10849,14 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString("\n")
 
 			// Show "behind" indicator when JSONL has activity newer than the
-			// session's last restart/access time (pane hasn't seen those turns).
-			if !ts.LastActivity.IsZero() && !selected.LastAccessedAt.IsZero() &&
-				ts.LastActivity.After(selected.LastAccessedAt.Add(2*time.Second)) {
+			// session's last restart (pane hasn't seen those turns).
+			// Use LastRestartedAt (actual refresh), falling back to CreatedAt if never restarted.
+			behindRef := selected.LastRestartedAt
+			if behindRef.IsZero() {
+				behindRef = selected.CreatedAt
+			}
+			if !ts.LastActivity.IsZero() && !behindRef.IsZero() &&
+				ts.LastActivity.After(behindRef.Add(2*time.Second)) {
 				behindStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
 				b.WriteString(labelStyle.Render("Sync:    "))
 				b.WriteString(behindStyle.Render("new turns available — press R to refresh"))

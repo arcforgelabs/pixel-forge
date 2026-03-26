@@ -25,6 +25,8 @@ from agent_deck_bridge import (
     AgentDeckDeleteAssessment,
     AgentDeckSessionTarget,
     assess_agent_deck_delete_state,
+    claude_jsonl_path,
+    claude_jsonl_payloads_for_record,
     create_agent_deck_session_target,
     delete_agent_deck_session_target,
     get_agent_deck_session_activity,
@@ -113,6 +115,7 @@ from workstation_events import (
     append_workstation_event,
     chat_has_primary_workstation_events,
     get_chat_activity_snapshot,
+    latest_workstation_event,
     list_workstation_events,
     sync_chat_activity_event,
 )
@@ -1372,6 +1375,126 @@ async def get_project_chat_item_activity(
     }
 
 
+def _backfill_chat_history_from_jsonl(
+    project_path: str,
+    chat_id: str,
+) -> None:
+    """One-time backfill of Claude JSONL turns into workstation_events.
+
+    On reconnect the SSE replay only contains PF-managed turns.  Turns
+    that originated directly in Agent Deck are missing because the hook
+    ingestor writes them only while running.  This reads the underlying
+    Claude JSONL and fills in the gaps so the full conversation replays.
+    """
+    marker = latest_workstation_event(
+        project_path, chat_id, event_type="backfill_completed",
+    )
+    if marker is not None:
+        return
+
+    thread = get_live_editor_thread(chat_id)
+    if thread is None or not thread.claude_session_id:
+        return
+
+    session = get_project_session(project_path, chat_id)
+    if session is None:
+        return
+
+    jsonl_path = claude_jsonl_path(session.workspace_path, thread.claude_session_id)
+    if jsonl_path is None or not jsonl_path.exists():
+        jsonl_path = claude_jsonl_path(session.project_path, thread.claude_session_id)
+    if jsonl_path is None or not jsonl_path.exists():
+        return
+
+    records: list[dict] = []
+    try:
+        with jsonl_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                    if isinstance(rec, dict):
+                        records.append(rec)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return
+
+    if not records:
+        return
+
+    turn_index = 0
+    for rec in records:
+        rec_type = rec.get("type")
+
+        if rec_type == "user":
+            message = rec.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                user_text = content
+            elif isinstance(content, list):
+                parts = []
+                for block in content:
+                    if isinstance(block, str):
+                        parts.append(block)
+                    elif isinstance(block, dict) and block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                user_text = "\n".join(parts)
+            else:
+                continue
+
+            if not user_text.strip():
+                continue
+
+            turn_index += 1
+            request_id = f"backfill-{chat_id}-{turn_index}"
+            append_workstation_event(
+                project_path,
+                chat_id,
+                agent_deck_session_id=session.agent_deck_session_id,
+                event_type="turn_input",
+                payload={
+                    "request_id": request_id,
+                    "prompt": user_text.strip(),
+                    "source": "backfill",
+                },
+            )
+
+        elif rec_type == "assistant":
+            payloads = claude_jsonl_payloads_for_record(rec)
+            chunks = [
+                p["content"]
+                for p in payloads
+                if p.get("type") == "chunk" and p.get("content")
+            ]
+            if chunks:
+                request_id = f"backfill-{chat_id}-{turn_index}"
+                append_workstation_event(
+                    project_path,
+                    chat_id,
+                    agent_deck_session_id=session.agent_deck_session_id,
+                    event_type="turn_chunk",
+                    payload={
+                        "request_id": request_id,
+                        "content": "".join(chunks),
+                        "source": "backfill",
+                    },
+                )
+
+    if turn_index > 0:
+        append_workstation_event(
+            project_path,
+            chat_id,
+            agent_deck_session_id=session.agent_deck_session_id,
+            event_type="backfill_completed",
+            payload={
+                "turns_backfilled": turn_index,
+                "jsonl_path": str(jsonl_path),
+            },
+        )
+
+
 @app.get("/api/projects/{project_path:path}/chats/{chat_id}/events")
 async def stream_project_chat_events(
     project_path: str,
@@ -1386,6 +1509,8 @@ async def stream_project_chat_events(
         raise HTTPException(status_code=404, detail="Project path does not exist")
     if get_project_session(normalized_project_path, normalized_chat_id) is None:
         raise HTTPException(status_code=404, detail="Chat not found")
+
+    _backfill_chat_history_from_jsonl(normalized_project_path, normalized_chat_id)
 
     async def event_stream():
         last_event_id = 0

@@ -118,15 +118,9 @@ def should_surface_session(
     if normalized_workspace_path != normalized_project_path:
         return True
 
-    if normalized_thread_id.startswith("chat-"):
-        return True
-
-    if (
-        isinstance(session.agent_deck_session_title, str)
-        and session.agent_deck_session_title.strip()
-    ):
-        return True
-
+    # No AD binding, root workspace: only surface if there is meaningful
+    # editor state.  Detached sessions without content are empty shells —
+    # the AD session will appear as an adopted target if it still exists.
     return _session_has_meaningful_editor_state(session)
 
 
