@@ -295,6 +295,7 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 - `[unvalidated]` Self-edit rebuild resilience: the controller keeps the sibling target tab usable across repeated target rebuilds/restarts. Basis: target launch plumbing exists, but the restart/reconnect loop has not yet been hammered.
 - `[validated]` Pixel Forge now has a canonical root verification lane for fast iteration hardening. Basis: `pnpm verify` proves version sync, shell syntax, API/desktop/web checks, isolated install smoke, and staged controller-update apply/rollback smoke before the same lane is wired into CI.
 - `[planned]` Screenshot bootstrap will be migrated onto the same session control plane only after the Live Editor loop is proven superior there.
+- `[planned]` Agent Deck turn-summary freshness and any future Pixel Forge reverse-path latency reduction should move onto a proven event-driven wakeup path only after the new queued hook-event correctness lane is manually re-smoked. Basis: recent manual testing showed the old last-write-wins hook snapshot was the correctness failure for AD -> PF, while the remaining sluggishness is in the polling/caching refresh path and should be revisited separately instead of being conflated with hook correctness again.
 
 # Open Questions
 

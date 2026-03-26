@@ -231,6 +231,48 @@ func TestWriteHookStatus_StopDoesNotClearStickySession(t *testing.T) {
 	}
 }
 
+func TestWriteHookStatus_QueuesImmutableHookEvent(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	instanceID := "inst-queue"
+	writeHookStatus(instanceID, "running", "sess-4", "UserPromptSubmit")
+
+	entries, err := os.ReadDir(getHookEventsDir())
+	if err != nil {
+		t.Fatalf("read hook events dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("hook event file count = %d, want 1", len(entries))
+	}
+
+	data, err := os.ReadFile(filepath.Join(getHookEventsDir(), entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read queued hook event: %v", err)
+	}
+
+	var event queuedHookEventFile
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatalf("unmarshal queued hook event: %v", err)
+	}
+
+	if event.InstanceID != instanceID {
+		t.Fatalf("instance_id = %q, want %q", event.InstanceID, instanceID)
+	}
+	if event.Status != "running" {
+		t.Fatalf("status = %q, want running", event.Status)
+	}
+	if event.SessionID != "sess-4" {
+		t.Fatalf("session_id = %q, want sess-4", event.SessionID)
+	}
+	if event.Event != "UserPromptSubmit" {
+		t.Fatalf("event = %q, want UserPromptSubmit", event.Event)
+	}
+	if event.Timestamp == 0 {
+		t.Fatal("timestamp = 0, want non-zero")
+	}
+}
+
 func TestIsTerminalHookEvent(t *testing.T) {
 	tests := []struct {
 		event  string

@@ -30,6 +30,17 @@ type hookStatusFile struct {
 	Timestamp int64  `json:"ts"`
 }
 
+// queuedHookEventFile is the immutable per-hook event payload written to
+// ~/.agent-deck/hook-events/. Unlike hooks/{instance}.json, this is an event
+// queue surface rather than a last-write-wins status snapshot.
+type queuedHookEventFile struct {
+	InstanceID string `json:"instance_id"`
+	Status     string `json:"status"`
+	SessionID  string `json:"session_id,omitempty"`
+	Event      string `json:"event"`
+	Timestamp  int64  `json:"ts"`
+}
+
 // mapEventToStatus maps a Claude Code hook event to an agent-deck status string.
 // Status semantics in agent-deck:
 //   - "running" = Claude is actively processing (green)
@@ -147,10 +158,60 @@ func writeHookStatus(instanceID, status, sessionID, event string) {
 		return
 	}
 	_ = os.Rename(tmpPath, filePath)
+	writeQueuedHookEvent(instanceID, status, sessionID, event, statusFile.Timestamp)
 
 	// Clear sticky session mapping when the upstream session is explicitly ended.
 	if isTerminalHookEvent(event) {
 		session.ClearHookSessionAnchor(instanceID)
+	}
+}
+
+func writeQueuedHookEvent(instanceID, status, sessionID, event string, timestamp int64) {
+	if instanceID == "" || status == "" {
+		return
+	}
+
+	hookEventsDir := getHookEventsDir()
+	if err := os.MkdirAll(hookEventsDir, 0755); err != nil {
+		return
+	}
+
+	payload := queuedHookEventFile{
+		InstanceID: instanceID,
+		Status:     status,
+		SessionID:  strings.TrimSpace(sessionID),
+		Event:      event,
+		Timestamp:  timestamp,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	queueTimestamp := time.Now().UTC().UnixNano()
+
+	tmpFile, err := os.CreateTemp(
+		hookEventsDir,
+		fmt.Sprintf("%020d-%s-*.tmp", queueTimestamp, instanceID),
+	)
+	if err != nil {
+		return
+	}
+
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(jsonData); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return
+	}
+
+	finalPath := strings.TrimSuffix(tmpPath, ".tmp") + ".json"
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
 	}
 }
 
@@ -177,10 +238,18 @@ func getHooksDir() string {
 	return agentdeckhome.JoinOrTemp("hooks")
 }
 
+func getHookEventsDir() string {
+	return agentdeckhome.JoinOrTemp("hook-events")
+}
+
 // cleanStaleHookFiles removes hook status files older than 24 hours.
 func cleanStaleHookFiles() {
-	hooksDir := getHooksDir()
-	entries, err := os.ReadDir(hooksDir)
+	cleanStaleHookFilesInDir(getHooksDir())
+	cleanStaleHookFilesInDir(getHookEventsDir())
+}
+
+func cleanStaleHookFilesInDir(root string) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
 	}
@@ -196,7 +265,7 @@ func cleanStaleHookFiles() {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			_ = os.Remove(filepath.Join(hooksDir, entry.Name()))
+			_ = os.Remove(filepath.Join(root, entry.Name()))
 		}
 	}
 }

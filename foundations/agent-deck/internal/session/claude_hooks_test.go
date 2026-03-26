@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -471,5 +472,59 @@ func TestInjectClaudeHooks_MigratesLegacyHookCommand(t *testing.T) {
 		if !foundCurrent {
 			t.Fatalf("expected migrated hook command %q in %s", expectedCommand, event)
 		}
+	}
+}
+
+func TestInjectClaudeHooks_ReplacesMixedLegacyAndCurrentCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	expectedCommand := configureHookExecutableForTest(t)
+
+	existing := map[string]json.RawMessage{
+		"hooks": json.RawMessage(fmt.Sprintf(`{
+			"UserPromptSubmit": [{
+				"hooks": [
+					{"type": "command", "command": %q, "async": true},
+					{"type": "command", "command": "agent-deck hook-handler", "async": true}
+				]
+			}]
+		}`, expectedCommand)),
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
+		t.Fatalf("seed settings.json: %v", err)
+	}
+
+	installed, err := InjectClaudeHooks(tmpDir)
+	if err != nil {
+		t.Fatalf("InjectClaudeHooks failed: %v", err)
+	}
+	if !installed {
+		t.Fatal("Expected mixed hook commands to be normalized")
+	}
+
+	hooks := readClaudeHooksFromSettings(t, tmpDir)
+	raw, ok := hooks["UserPromptSubmit"]
+	if !ok {
+		t.Fatal("UserPromptSubmit hooks missing after normalization")
+	}
+
+	var matchers []claudeHookMatcher
+	if err := json.Unmarshal(raw, &matchers); err != nil {
+		t.Fatalf("parse UserPromptSubmit hooks: %v", err)
+	}
+
+	foundCurrent := 0
+	for _, matcher := range matchers {
+		for _, hook := range matcher.Hooks {
+			if hook.Command == expectedCommand {
+				foundCurrent++
+			}
+			if hook.Command == "agent-deck hook-handler" {
+				t.Fatal("expected legacy hook command to be removed")
+			}
+		}
+	}
+	if foundCurrent != 1 {
+		t.Fatalf("expected exactly one normalized hook command, found %d", foundCurrent)
 	}
 }

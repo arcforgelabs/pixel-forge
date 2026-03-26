@@ -249,14 +249,20 @@ func eventHasCurrentAgentDeckHook(raw json.RawMessage) bool {
 		return false
 	}
 	currentCommand := preferredAgentDeckHookCommand()
+	currentCount := 0
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
-			if strings.TrimSpace(h.Command) == currentCommand {
-				return true
+			normalized := strings.TrimSpace(h.Command)
+			if !isAgentDeckHookCommand(normalized) {
+				continue
 			}
+			if normalized != currentCommand {
+				return false
+			}
+			currentCount++
 		}
 	}
-	return false
+	return currentCount == 1
 }
 
 // mergeHookEvent adds agent-deck's hook to an existing event's matcher array.

@@ -70,6 +70,8 @@ class ClaudeTurnState:
     request_id: str
     claude_session_id: str
     assistant_output: str = ""
+    user_prompt: str | None = None
+    input_emitted: bool = False
 
 
 @dataclass(slots=True)
@@ -164,6 +166,71 @@ def _hook_status_message(event_name: str | None) -> str | None:
     return None
 
 
+def _extract_claude_user_prompt(record: dict[str, object]) -> str | None:
+    if record.get("type") != "user":
+        return None
+
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    content_blocks = message.get("content")
+    if not isinstance(content_blocks, list):
+        return None
+
+    parts: list[str] = []
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            normalized = text.strip()
+            if normalized:
+                parts.append(normalized)
+
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
+def _latest_claude_user_turn(
+    jsonl_path: Path | None,
+) -> tuple[int | None, str | None]:
+    if jsonl_path is None or not jsonl_path.exists():
+        return None, None
+
+    latest_offset: int | None = None
+    latest_prompt: str | None = None
+    offset = 0
+
+    try:
+        with jsonl_path.open("r", encoding="utf-8") as handle:
+            while True:
+                line = handle.readline()
+                if not line:
+                    break
+                offset = handle.tell()
+
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(record, dict):
+                    continue
+                if record.get("type") != "user":
+                    continue
+
+                latest_offset = offset
+                latest_prompt = _extract_claude_user_prompt(record)
+    except OSError:
+        return None, None
+
+    return latest_offset, latest_prompt
+
+
 class AgentDeckNativeEventIngestor:
     def __init__(
         self,
@@ -173,6 +240,10 @@ class AgentDeckNativeEventIngestor:
         self.poll_interval_seconds = poll_interval_seconds
         self._event_file_fingerprints: dict[str, tuple[int, int]] = {}
         self._hook_file_fingerprints: dict[str, tuple[int, int]] = {}
+        self._latest_handled_hook_signatures: dict[
+            str,
+            tuple[str | None, str | None, str | None, int],
+        ] = {}
         self._latest_hook_events: dict[str, AgentDeckNativeHookEvent] = {}
         self._claude_jsonl_cursors: dict[str, ClaudeJSONLCursor] = {}
         self._active_claude_turns: dict[str, ClaudeTurnState] = {}
@@ -189,6 +260,11 @@ class AgentDeckNativeEventIngestor:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def hook_events_dir(self) -> Path:
+        path = agent_deck_home_dir() / "hook-events"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     async def run(self) -> None:
         while True:
             await self.poll_once()
@@ -196,6 +272,7 @@ class AgentDeckNativeEventIngestor:
 
     async def poll_once(self) -> None:
         await self._poll_status_events()
+        await self._poll_hook_queue_events()
         await self._poll_hook_events()
         await self._poll_active_claude_turns()
         await self._poll_active_codex_turns()
@@ -209,12 +286,55 @@ class AgentDeckNativeEventIngestor:
         )
 
     async def _poll_hook_events(self) -> None:
-        await self._poll_json_files(
-            self.hooks_dir(),
-            self._hook_file_fingerprints,
-            self._read_hook_event,
-            self._ingest_hook_event,
-        )
+        seen_paths: set[str] = set()
+
+        for path in sorted(self.hooks_dir().glob("*.json")):
+            path_key = str(path)
+            seen_paths.add(path_key)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+
+            fingerprint = (stat.st_mtime_ns, stat.st_size)
+            if self._hook_file_fingerprints.get(path_key) == fingerprint:
+                continue
+
+            self._hook_file_fingerprints[path_key] = fingerprint
+            event = self._read_hook_event(path)
+            if event is None:
+                continue
+
+            event_signature = self._hook_event_signature(event)
+            if self._latest_handled_hook_signatures.get(event.agent_deck_session_id) == event_signature:
+                continue
+
+            await self._ingest_hook_event(event)
+            self._latest_handled_hook_signatures[event.agent_deck_session_id] = event_signature
+
+        stale_paths = set(self._hook_file_fingerprints) - seen_paths
+        for path_key in stale_paths:
+            self._hook_file_fingerprints.pop(path_key, None)
+
+    async def _poll_hook_queue_events(self) -> None:
+        for path in sorted(self.hook_events_dir().glob("*.json")):
+            event = self._read_hook_queue_event(path)
+            if event is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                continue
+            try:
+                await self._ingest_hook_event(event)
+                self._latest_handled_hook_signatures[
+                    event.agent_deck_session_id
+                ] = self._hook_event_signature(event)
+            finally:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
     async def _poll_json_files(
         self,
@@ -290,6 +410,39 @@ class AgentDeckNativeEventIngestor:
             timestamp=int(timestamp) if isinstance(timestamp, int) else 0,
         )
 
+    def _read_hook_queue_event(self, path: Path) -> AgentDeckNativeHookEvent | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        agent_deck_session_id = _normalized_text(payload.get("instance_id"))
+        if agent_deck_session_id is None:
+            return None
+
+        timestamp = payload.get("ts")
+        return AgentDeckNativeHookEvent(
+            agent_deck_session_id=agent_deck_session_id,
+            upstream_session_id=_normalized_text(payload.get("session_id")),
+            status=_normalized_text(payload.get("status")),
+            event=_normalized_text(payload.get("event")),
+            timestamp=int(timestamp) if isinstance(timestamp, int) else 0,
+        )
+
+    def _hook_event_signature(
+        self,
+        event: AgentDeckNativeHookEvent,
+    ) -> tuple[str | None, str | None, str | None, int]:
+        return (
+            event.upstream_session_id,
+            event.status,
+            event.event,
+            event.timestamp,
+        )
+
     async def _ingest_status_event(self, event: AgentDeckNativeStatusEvent) -> None:
         bound_sessions = list_sessions_by_agent_deck_session_id(event.session_id)
         if not bound_sessions:
@@ -353,22 +506,28 @@ class AgentDeckNativeEventIngestor:
                 claude_sessions,
                 event.upstream_session_id,
                 anchor_to_end=(event.event or "") != "UserPromptSubmit",
+                start_from_latest_user_turn=(event.event or "") == "UserPromptSubmit",
             )
 
         normalized_event = (event.event or "").strip()
         if normalized_event == "UserPromptSubmit" and claude_sessions:
             if event.upstream_session_id:
-                self._ensure_claude_cursor(
+                cursor = self._ensure_claude_cursor(
                     event.agent_deck_session_id,
                     claude_sessions,
                     event.upstream_session_id,
-                    anchor_to_end=True,
+                    anchor_to_end=False,
+                    start_from_latest_user_turn=True,
+                )
+                _, prompt_text = _latest_claude_user_turn(
+                    cursor.jsonl_path if cursor is not None else None,
                 )
                 self._ensure_active_claude_turn(
                     event.agent_deck_session_id,
                     claude_sessions,
                     event.upstream_session_id,
                     event.timestamp,
+                    prompt_text=prompt_text,
                 )
             return
 
@@ -542,6 +701,7 @@ class AgentDeckNativeEventIngestor:
         claude_session_id: str,
         *,
         anchor_to_end: bool,
+        start_from_latest_user_turn: bool = False,
     ) -> ClaudeJSONLCursor | None:
         if not sessions:
             return None
@@ -553,11 +713,16 @@ class AgentDeckNativeEventIngestor:
             return cursor
 
         offset = 0
-        if anchor_to_end and path is not None and path.exists():
+        if path is not None and path.exists():
             try:
-                offset = path.stat().st_size
+                file_size = path.stat().st_size
             except OSError:
-                offset = 0
+                file_size = 0
+            if start_from_latest_user_turn:
+                latest_user_offset, _ = _latest_claude_user_turn(path)
+                offset = latest_user_offset if latest_user_offset is not None else file_size
+            elif anchor_to_end:
+                offset = file_size
 
         cursor = ClaudeJSONLCursor(
             claude_session_id=claude_session_id,
@@ -573,17 +738,39 @@ class AgentDeckNativeEventIngestor:
         sessions: list[SessionRecord],
         claude_session_id: str,
         timestamp: int,
+        *,
+        prompt_text: str | None = None,
     ) -> ClaudeTurnState:
+        normalized_prompt = prompt_text.strip() if isinstance(prompt_text, str) else ""
+        prompt_text = normalized_prompt or None
+
         existing = self._active_claude_turns.get(agent_deck_session_id)
         if existing is not None and existing.claude_session_id == claude_session_id:
+            if prompt_text and not existing.input_emitted:
+                self._emit_claude_turn_input(
+                    sessions,
+                    request_id=existing.request_id,
+                    prompt_text=prompt_text,
+                )
+                existing.user_prompt = prompt_text
+                existing.input_emitted = True
             return existing
 
         request_id = f"offpath-claude-{agent_deck_session_id}-{timestamp or int(time.time())}"
         state = ClaudeTurnState(
             request_id=request_id,
             claude_session_id=claude_session_id,
+            user_prompt=prompt_text,
+            input_emitted=bool(prompt_text),
         )
         self._active_claude_turns[agent_deck_session_id] = state
+
+        if prompt_text:
+            self._emit_claude_turn_input(
+                sessions,
+                request_id=request_id,
+                prompt_text=prompt_text,
+            )
 
         for session in sessions:
             append_workstation_event(
@@ -601,6 +788,36 @@ class AgentDeckNativeEventIngestor:
             )
 
         return state
+
+    def _emit_claude_turn_input(
+        self,
+        sessions: list[SessionRecord],
+        *,
+        request_id: str,
+        prompt_text: str,
+    ) -> None:
+        normalized_prompt = prompt_text.strip()
+        if not normalized_prompt:
+            return
+
+        for session in sessions:
+            append_workstation_event(
+                session.project_path,
+                session.thread_id,
+                agent_deck_session_id=session.agent_deck_session_id,
+                event_type="turn_input",
+                payload={
+                    "request_id": request_id,
+                    "agent_deck_session_id": session.agent_deck_session_id,
+                    "agent_deck_session_title": session.agent_deck_session_title,
+                    "agent_deck_tool": session.agent_deck_tool,
+                    "workspace_path": session.workspace_path,
+                    "content": normalized_prompt,
+                    "turn_input": {
+                        "prompt_text": normalized_prompt,
+                    },
+                },
+            )
 
     async def _sync_claude_turn_output(
         self,
@@ -627,9 +844,20 @@ class AgentDeckNativeEventIngestor:
             sessions,
             claude_session_id,
             anchor_to_end=(turn_state is None and not allow_backfill_start),
+            start_from_latest_user_turn=(turn_state is None and allow_backfill_start),
         )
         if cursor is None or cursor.jsonl_path is None:
             return
+
+        _, latest_user_prompt = _latest_claude_user_turn(cursor.jsonl_path)
+        if turn_state is not None and latest_user_prompt and not turn_state.input_emitted:
+            self._emit_claude_turn_input(
+                sessions,
+                request_id=turn_state.request_id,
+                prompt_text=latest_user_prompt,
+            )
+            turn_state.user_prompt = latest_user_prompt
+            turn_state.input_emitted = True
 
         next_offset, payloads = read_claude_jsonl_payloads(
             cursor.jsonl_path,
@@ -651,6 +879,7 @@ class AgentDeckNativeEventIngestor:
                 sessions,
                 claude_session_id,
                 hook_event.timestamp if hook_event is not None else int(time.time()),
+                prompt_text=latest_user_prompt,
             )
 
         for chunk in text_chunks:

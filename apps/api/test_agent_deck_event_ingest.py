@@ -44,6 +44,8 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.events_dir.mkdir(parents=True)
         self.hooks_dir = Path(self.tempdir.name) / "agent-deck" / "hooks"
         self.hooks_dir.mkdir(parents=True)
+        self.hook_events_dir = Path(self.tempdir.name) / "agent-deck" / "hook-events"
+        self.hook_events_dir.mkdir(parents=True)
 
     def tearDown(self) -> None:
         if self.original_shared_state_dir is None:
@@ -91,6 +93,29 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         (self.hooks_dir / f"{instance_id}.json").write_text(
             json.dumps(
                 {
+                    "status": status,
+                    "session_id": session_id,
+                    "event": event,
+                    "ts": timestamp,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _write_hook_queue_event(
+        self,
+        *,
+        name: str,
+        instance_id: str,
+        session_id: str,
+        status: str,
+        event: str,
+        timestamp: int,
+    ) -> None:
+        (self.hook_events_dir / name).write_text(
+            json.dumps(
+                {
+                    "instance_id": instance_id,
                     "status": status,
                     "session_id": session_id,
                     "event": event,
@@ -241,6 +266,81 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[2].payload["request_id"], request_id)
         self.assertEqual(events[2].payload["assistant_output"], "Hello from Claude")
+
+    async def test_poll_once_consumes_queued_hook_events_for_fast_claude_turns(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-fast-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-fast-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-fast-claude",
+            agent_deck_session_title="fast claude",
+            agent_deck_tool="claude",
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            "claude-session-fast",
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Checking from Agent Deck"}]}}',
+                    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fast Claude reply"}]}}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self._write_hook_queue_event(
+            name="0001-user-prompt.json",
+            instance_id="deck-fast-claude",
+            session_id="claude-session-fast",
+            status="running",
+            event="UserPromptSubmit",
+            timestamp=1711111111,
+        )
+        self._write_hook_queue_event(
+            name="0002-stop.json",
+            instance_id="deck-fast-claude",
+            session_id="claude-session-fast",
+            status="waiting",
+            event="Stop",
+            timestamp=1711111112,
+        )
+        self._write_hook_event(
+            instance_id="deck-fast-claude",
+            session_id="claude-session-fast",
+            status="waiting",
+            event="Stop",
+            timestamp=1711111112,
+        )
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-fast-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "turn_started", "turn_chunk", "turn_completed"],
+        )
+        request_id = events[0].payload["request_id"]
+        self.assertEqual(events[0].payload["turn_input"]["prompt_text"], "Checking from Agent Deck")
+        self.assertEqual(events[1].payload["request_id"], request_id)
+        self.assertEqual(events[2].payload["request_id"], request_id)
+        self.assertEqual(events[2].payload["content"], "Fast Claude reply")
+        self.assertEqual(events[3].payload["request_id"], request_id)
+        self.assertEqual(events[3].payload["assistant_output"], "Fast Claude reply")
+        self.assertFalse(any(self.hook_events_dir.glob("*.json")))
 
     async def test_poll_once_emits_codex_turn_events_from_hooks_and_jsonl(self) -> None:
         codex_session_id = "11111111-1111-4111-8111-111111111111"
