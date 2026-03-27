@@ -18,11 +18,19 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.original_shared_state_dir = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        self.original_db_path = os.environ.get("PIXEL_FORGE_DB_PATH")
+        self.original_agent_deck_home = os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME")
         self.original_claude_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
         self.original_codex_home = os.environ.get("CODEX_HOME")
+        self.original_agentdeck_dir = os.environ.get("AGENTDECK_DIR")
+        self.original_agent_deck_dir = os.environ.get("AGENT_DECK_DIR")
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
+        os.environ["PIXEL_FORGE_AGENT_DECK_HOME"] = str(Path(self.tempdir.name) / "agent-deck")
         os.environ["CLAUDE_CONFIG_DIR"] = str(Path(self.tempdir.name) / "claude-config")
         os.environ["CODEX_HOME"] = str(Path(self.tempdir.name) / "codex-home")
+        os.environ["AGENTDECK_DIR"] = str(Path(self.tempdir.name) / "agent-deck")
+        os.environ["AGENT_DECK_DIR"] = str(Path(self.tempdir.name) / "agent-deck")
         project_store._DB_INITIALIZED = False
         workstation_events._DB_INITIALIZED = False
 
@@ -52,6 +60,14 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
         else:
             os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        if self.original_db_path is None:
+            os.environ.pop("PIXEL_FORGE_DB_PATH", None)
+        else:
+            os.environ["PIXEL_FORGE_DB_PATH"] = self.original_db_path
+        if self.original_agent_deck_home is None:
+            os.environ.pop("PIXEL_FORGE_AGENT_DECK_HOME", None)
+        else:
+            os.environ["PIXEL_FORGE_AGENT_DECK_HOME"] = self.original_agent_deck_home
         if self.original_claude_config_dir is None:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
         else:
@@ -60,6 +76,14 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("CODEX_HOME", None)
         else:
             os.environ["CODEX_HOME"] = self.original_codex_home
+        if self.original_agentdeck_dir is None:
+            os.environ.pop("AGENTDECK_DIR", None)
+        else:
+            os.environ["AGENTDECK_DIR"] = self.original_agentdeck_dir
+        if self.original_agent_deck_dir is None:
+            os.environ.pop("AGENT_DECK_DIR", None)
+        else:
+            os.environ["AGENT_DECK_DIR"] = self.original_agent_deck_dir
 
     def _write_status_event(
         self,
@@ -341,6 +365,121 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[3].payload["request_id"], request_id)
         self.assertEqual(events[3].payload["assistant_output"], "Fast Claude reply")
         self.assertFalse(any(self.hook_events_dir.glob("*.json")))
+
+    async def test_poll_once_emits_transcript_only_cli_turns_without_hooks(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-transcript-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-transcript-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-transcript-claude",
+            agent_deck_session_title="transcript claude",
+            agent_deck_tool="claude",
+        )
+
+        session_id = "claude-session-transcript"
+        (self.hooks_dir / "deck-transcript-claude.sid").write_text(
+            session_id,
+            encoding="utf-8",
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            session_id,
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text("", encoding="utf-8")
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"<channel source=\\"plugin:pixel-forge-channel:pixel-forge-channel\\" request_id=\\"req-1\\">\\nPixel Forge live smoke probe from installed alpha lane\\n</channel>"}]}}',
+                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Pixel Forge channel probe received — installed alpha lane is live and connected."}]}}',
+                    '{"type":"system","entrypoint":"cli","subtype":"stop_hook_summary"}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-transcript-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(
+            events[0].payload["turn_input"]["prompt_text"],
+            "Pixel Forge live smoke probe from installed alpha lane",
+        )
+        self.assertEqual(
+            events[2].payload["content"],
+            "Pixel Forge channel probe received — installed alpha lane is live and connected.",
+        )
+        self.assertEqual(
+            events[3].payload["assistant_output"],
+            "Pixel Forge channel probe received — installed alpha lane is live and connected.",
+        )
+
+    async def test_poll_once_ignores_transcript_only_sdk_cli_turns(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-sdk-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-sdk-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-sdk-claude",
+            agent_deck_session_title="sdk claude",
+            agent_deck_tool="claude",
+        )
+
+        session_id = "claude-session-sdk"
+        (self.hooks_dir / "deck-sdk-claude.sid").write_text(
+            session_id,
+            encoding="utf-8",
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            session_id,
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text("", encoding="utf-8")
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","entrypoint":"sdk-cli","message":{"role":"user","content":[{"type":"text","text":"Request pack prompt from Pixel Forge"}]}}',
+                    '{"type":"assistant","entrypoint":"sdk-cli","message":{"role":"assistant","content":[{"type":"text","text":"Canonical Pixel Forge reply"}]}}',
+                    '{"type":"system","entrypoint":"sdk-cli","subtype":"stop_hook_summary"}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-sdk-claude",
+        )
+        self.assertEqual(events, [])
 
     async def test_poll_once_emits_codex_turn_events_from_hooks_and_jsonl(self) -> None:
         codex_session_id = "11111111-1111-4111-8111-111111111111"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,10 @@ SETTLED_SESSION_STATUSES = {
     "idle",
     "waiting",
 }
+CHANNEL_WRAPPER_RE = re.compile(
+    r"^\s*<channel\b[^>]*>\s*(.*?)\s*</channel>\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -195,14 +200,35 @@ def _extract_claude_user_prompt(record: dict[str, object]) -> str | None:
     return "\n\n".join(parts)
 
 
+def _normalize_observed_claude_prompt(prompt_text: str | None) -> str | None:
+    if not isinstance(prompt_text, str):
+        return None
+
+    normalized = prompt_text.strip()
+    if not normalized:
+        return None
+
+    match = CHANNEL_WRAPPER_RE.fullmatch(normalized)
+    if match is not None:
+        normalized = match.group(1).strip()
+
+    return normalized or None
+
+
+def _should_emit_transcript_user_prompt(entrypoint: str | None) -> bool:
+    normalized_entrypoint = (entrypoint or "").strip().lower()
+    return normalized_entrypoint != "sdk-cli"
+
+
 def _latest_claude_user_turn(
     jsonl_path: Path | None,
-) -> tuple[int | None, str | None]:
+) -> tuple[int | None, str | None, str | None]:
     if jsonl_path is None or not jsonl_path.exists():
-        return None, None
+        return None, None, None
 
     latest_offset: int | None = None
     latest_prompt: str | None = None
+    latest_entrypoint: str | None = None
     offset = 0
 
     try:
@@ -224,11 +250,14 @@ def _latest_claude_user_turn(
                     continue
 
                 latest_offset = offset
-                latest_prompt = _extract_claude_user_prompt(record)
+                latest_prompt = _normalize_observed_claude_prompt(
+                    _extract_claude_user_prompt(record),
+                )
+                latest_entrypoint = _normalized_text(record.get("entrypoint"))
     except OSError:
-        return None, None
+        return None, None, None
 
-    return latest_offset, latest_prompt
+    return latest_offset, latest_prompt, latest_entrypoint
 
 
 class AgentDeckNativeEventIngestor:
@@ -519,9 +548,11 @@ class AgentDeckNativeEventIngestor:
                     anchor_to_end=False,
                     start_from_latest_user_turn=True,
                 )
-                _, prompt_text = _latest_claude_user_turn(
+                _, prompt_text, prompt_entrypoint = _latest_claude_user_turn(
                     cursor.jsonl_path if cursor is not None else None,
                 )
+                if not _should_emit_transcript_user_prompt(prompt_entrypoint):
+                    return
                 self._ensure_active_claude_turn(
                     event.agent_deck_session_id,
                     claude_sessions,
@@ -615,10 +646,17 @@ class AgentDeckNativeEventIngestor:
                 )
 
     async def _poll_active_claude_turns(self) -> None:
-        for agent_deck_session_id in list(self._active_claude_turns):
+        tracked_session_ids = set(self._active_claude_turns)
+        tracked_session_ids.update(self._claude_jsonl_cursors)
+        tracked_session_ids.update(self._latest_hook_events)
+        for path in self.hooks_dir().glob("*.sid"):
+            tracked_session_ids.add(path.stem)
+
+        for agent_deck_session_id in tracked_session_ids:
             bound_sessions = self._bound_claude_sessions(agent_deck_session_id)
             if not bound_sessions:
                 self._active_claude_turns.pop(agent_deck_session_id, None)
+                self._claude_jsonl_cursors.pop(agent_deck_session_id, None)
                 continue
             await self._sync_claude_turn_output(
                 agent_deck_session_id,
@@ -719,7 +757,7 @@ class AgentDeckNativeEventIngestor:
             except OSError:
                 file_size = 0
             if start_from_latest_user_turn:
-                latest_user_offset, _ = _latest_claude_user_turn(path)
+                latest_user_offset, _, _ = _latest_claude_user_turn(path)
                 offset = latest_user_offset if latest_user_offset is not None else file_size
             elif anchor_to_end:
                 offset = file_size
@@ -837,6 +875,8 @@ class AgentDeckNativeEventIngestor:
             cursor = self._claude_jsonl_cursors.get(agent_deck_session_id)
             claude_session_id = cursor.claude_session_id if cursor is not None else None
         if not claude_session_id:
+            claude_session_id = self._read_hook_session_anchor(agent_deck_session_id)
+        if not claude_session_id:
             return
 
         cursor = self._ensure_claude_cursor(
@@ -849,8 +889,15 @@ class AgentDeckNativeEventIngestor:
         if cursor is None or cursor.jsonl_path is None:
             return
 
-        _, latest_user_prompt = _latest_claude_user_turn(cursor.jsonl_path)
-        if turn_state is not None and latest_user_prompt and not turn_state.input_emitted:
+        _, latest_user_prompt, latest_user_entrypoint = _latest_claude_user_turn(
+            cursor.jsonl_path,
+        )
+        if (
+            turn_state is not None
+            and latest_user_prompt
+            and not turn_state.input_emitted
+            and _should_emit_transcript_user_prompt(latest_user_entrypoint)
+        ):
             self._emit_claude_turn_input(
                 sessions,
                 request_id=turn_state.request_id,
@@ -865,42 +912,80 @@ class AgentDeckNativeEventIngestor:
             seen_uuids=cursor.seen_uuids,
         )
         cursor.offset = next_offset
-        text_chunks = [
-            payload.get("content")
-            for payload in payloads
-            if payload.get("type") == "chunk" and isinstance(payload.get("content"), str)
-        ]
-        if not text_chunks:
+        if not payloads:
             return
 
-        if turn_state is None:
-            turn_state = self._ensure_active_claude_turn(
-                agent_deck_session_id,
-                sessions,
-                claude_session_id,
-                hook_event.timestamp if hook_event is not None else int(time.time()),
-                prompt_text=latest_user_prompt,
-            )
+        fallback_prompt = (
+            latest_user_prompt
+            if _should_emit_transcript_user_prompt(latest_user_entrypoint)
+            else None
+        )
 
-        for chunk in text_chunks:
-            if not isinstance(chunk, str) or not chunk:
-                continue
-            turn_state.assistant_output += chunk
-            for session in sessions:
-                append_workstation_event(
-                    session.project_path,
-                    session.thread_id,
-                    agent_deck_session_id=session.agent_deck_session_id,
-                    event_type="turn_chunk",
-                    payload={
-                        "request_id": turn_state.request_id,
-                        "agent_deck_session_id": session.agent_deck_session_id,
-                        "agent_deck_session_title": session.agent_deck_session_title,
-                        "agent_deck_tool": session.agent_deck_tool,
-                        "workspace_path": session.workspace_path,
-                        "content": chunk,
-                    },
+        for payload in payloads:
+            payload_type = _normalized_text(payload.get("type"))
+            if payload_type == "user_prompt":
+                prompt_text = _normalize_observed_claude_prompt(
+                    _normalized_text(payload.get("content")),
                 )
+                if not prompt_text:
+                    continue
+                if not _should_emit_transcript_user_prompt(
+                    _normalized_text(payload.get("entrypoint")),
+                ):
+                    continue
+                if turn_state is not None and turn_state.assistant_output:
+                    self._complete_claude_turn(
+                        agent_deck_session_id,
+                        sessions,
+                    )
+                    turn_state = None
+                turn_state = self._ensure_active_claude_turn(
+                    agent_deck_session_id,
+                    sessions,
+                    claude_session_id,
+                    hook_event.timestamp if hook_event is not None else int(time.time()),
+                    prompt_text=prompt_text,
+                )
+                continue
+
+            if payload_type == "chunk":
+                chunk = _normalized_text(payload.get("content"))
+                if not chunk:
+                    continue
+                if turn_state is None:
+                    if not fallback_prompt:
+                        continue
+                    turn_state = self._ensure_active_claude_turn(
+                        agent_deck_session_id,
+                        sessions,
+                        claude_session_id,
+                        hook_event.timestamp if hook_event is not None else int(time.time()),
+                        prompt_text=fallback_prompt,
+                    )
+                turn_state.assistant_output += chunk
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_chunk",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "content": chunk,
+                        },
+                    )
+                continue
+
+            if payload_type == "turn_stop" and turn_state is not None:
+                self._complete_claude_turn(
+                    agent_deck_session_id,
+                    sessions,
+                )
+                turn_state = None
 
     def _ensure_codex_cursor(
         self,

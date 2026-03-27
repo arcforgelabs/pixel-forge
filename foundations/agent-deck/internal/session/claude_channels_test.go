@@ -17,6 +17,7 @@ func TestBuildClaudeCommand_WithChannelSpikeFlags(t *testing.T) {
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "server:pixel-forge-channel")
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_DEVELOPMENT", "1")
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_MCP_CONFIG", `{"mcpServers":{"pixel-forge-channel":{"command":"node","args":["/abs/server.mjs"]}}}`)
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_AUTO_CONFIRM", "")
 
 	cmd := inst.buildClaudeCommand("claude")
 
@@ -43,6 +44,7 @@ func TestBuildClaudeResumeCommand_WithChannelSpikeFlags(t *testing.T) {
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "server:pixel-forge-channel")
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_DEVELOPMENT", "1")
 	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_MCP_CONFIG", "/abs/channel.json")
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_AUTO_CONFIRM", "")
 
 	cmd := inst.buildClaudeResumeCommand()
 
@@ -95,5 +97,17 @@ func TestBuildClaudeCommand_AutoConfirmsDevelopmentChannelsThroughWrapper(t *tes
 	}
 	if strings.Contains(cmd, "--channels plugin:pixel-forge-channel@arc-forge") {
 		t.Fatalf("development wrapper path must not include --channels, got: %s", cmd)
+	}
+}
+
+func TestClaudeChannelsEnabled(t *testing.T) {
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "")
+	if ClaudeChannelsEnabled() {
+		t.Fatal("expected channels to be disabled when entry is empty")
+	}
+
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "plugin:pixel-forge-channel@arc-forge")
+	if !ClaudeChannelsEnabled() {
+		t.Fatal("expected channels to be enabled when entry is set")
 	}
 }

@@ -125,7 +125,9 @@ The thing Pixel Forge bypasses is the already-running interactive pane process, 
 - Typed `turn_input`, `turn_started`, `turn_chunk`, and `turn_completed` events on the shared kernel for Pixel Forge-managed and off-path/manual Claude turns.
 - Agent Deck hook-event queue ingestion into Pixel Forge so off-path Claude replies show up in Pixel Forge without manual refresh.
 - Event-driven transcript freshness in Agent Deck via exact JSONL wakeups plus a quiet-window debounce.
+- Transcript fallback in Pixel Forge for direct Claude `entrypoint:"cli"` off-path turns: when hook parity is missing, the ingest path now derives user-style `turn_input` plus completion from the transcript itself, while still suppressing `entrypoint:"sdk-cli"` records so Pixel Forge request-pack turns do not double-render.
 - Automatic safe catch-up for the native Claude pane through the existing restart/respawn lane when the session is behind and the prompt is empty.
+- Channel-enabled Claude panes now explicitly skip that respawn catch-up lane and rely on live Channel ingress plus observation-surface freshness instead, because real operator use showed that forcing respawn there caused repeated flashing/frozen UX while the underlying session kept progressing.
 
 ### What We Tried And Ruled Out
 
@@ -288,7 +290,7 @@ Validated local spike in this repo:
 Conclusion:
 - official/plugin-backed Channels remain end-to-end validated
 - the smallest repo-local bare `server:` route is now implemented in this repo and transport-valid
-- on Claude Code `2.1.85` it still stops at the allowlist gate, so it is not yet a practical replacement for restart/resume
+- on Claude Code `2.1.85` the bare `server:` route still stops at the allowlist gate, so by itself it is not yet a practical replacement for restart/resume
 
 Validated plugin-backed local spike:
 - Extended the same spike into a real local plugin:

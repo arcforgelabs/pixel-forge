@@ -207,11 +207,12 @@ type Home struct {
 	analyticsCacheTime     map[string]time.Time                       // TTL cache: sessionID -> cache timestamp
 
 	// JSONL turn summary cache (observation-layer transport)
-	currentTurnSummary   *session.TurnSummary // Turn summary for selected session
-	turnSummaryID        string               // Session ID for current turn summary
-	turnSummaryCacheMu   sync.RWMutex         // Protects turn summary cache
-	turnSummaryCache     map[string]*session.TurnSummary
-	turnSummaryCacheTime map[string]time.Time
+	currentTurnSummary      *session.TurnSummary // Turn summary for selected session
+	turnSummaryID           string               // Session ID for current turn summary
+	turnSummaryCacheMu      sync.RWMutex         // Protects turn summary cache and transcript touch timestamps
+	turnSummaryCache        map[string]*session.TurnSummary
+	turnSummaryCacheTime    map[string]time.Time
+	recentTranscriptTouchAt map[string]time.Time
 
 	// State
 	cursor         int            // Selected item index in flatItems
@@ -721,6 +722,7 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		analyticsCacheTime:        make(map[string]time.Time),
 		turnSummaryCache:          make(map[string]*session.TurnSummary),
 		turnSummaryCacheTime:      make(map[string]time.Time),
+		recentTranscriptTouchAt:   make(map[string]time.Time),
 		transcriptQuietTimers:     make(map[string]*time.Timer),
 		lastAutoCatchUpActivity:   make(map[string]time.Time),
 		autoCatchUpInFlight:       make(map[string]bool),
@@ -10877,6 +10879,16 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			b.WriteString(countStyle.Render(fmt.Sprintf("%d user / %d assistant", ts.TotalUserTurns, ts.TotalAssistantTurns)))
 			b.WriteString("\n")
 
+			h.turnSummaryCacheMu.RLock()
+			observedAt := h.recentTranscriptTouchAt[selected.ID]
+			h.turnSummaryCacheMu.RUnlock()
+			if !observedAt.IsZero() && time.Since(observedAt) < 30*time.Second {
+				observedStyle := lipgloss.NewStyle().Foreground(ColorGreen)
+				b.WriteString(labelStyle.Render("Observed: "))
+				b.WriteString(observedStyle.Render("turn landed " + formatRelativeTime(observedAt)))
+				b.WriteString("\n")
+			}
+
 			// Show "behind" indicator when JSONL has activity newer than the
 			// session's last restart (pane hasn't seen those turns).
 			// Use LastRestartedAt (actual refresh), falling back to CreatedAt if never restarted.
@@ -10884,11 +10896,21 @@ func (h *Home) renderPreviewPane(width, height int) string {
 			if behindRef.IsZero() {
 				behindRef = selected.CreatedAt
 			}
+			hasLiveChannelIngress := session.IsClaudeCompatible(selected.Tool) && session.ClaudeChannelsEnabled()
 			if !ts.LastActivity.IsZero() && !behindRef.IsZero() &&
 				ts.LastActivity.After(behindRef.Add(2*time.Second)) {
 				behindStyle := lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
 				b.WriteString(labelStyle.Render("Sync:    "))
-				b.WriteString(behindStyle.Render("new turns available — press R to refresh"))
+				if hasLiveChannelIngress {
+					b.WriteString(behindStyle.Render("live channel ingress active"))
+				} else {
+					b.WriteString(behindStyle.Render("new turns available — press R to refresh"))
+				}
+				b.WriteString("\n")
+			} else if hasLiveChannelIngress {
+				liveSyncStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+				b.WriteString(labelStyle.Render("Sync:    "))
+				b.WriteString(liveSyncStyle.Render("live channel ingress active"))
 				b.WriteString("\n")
 			}
 

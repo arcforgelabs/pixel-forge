@@ -692,6 +692,28 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             live_editor_threads.get_live_editor_thread(legacy_thread_id)
         )
 
+    def test_list_project_sessions_hides_cross_project_bound_sessions(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        other_project_path = Path(self.tempdir.name) / "other-project"
+        project_path.mkdir(parents=True)
+        other_project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        project_store.upsert_session(
+            str(project_path),
+            thread_id="chat-stale-cross-project",
+            backend="agent-deck",
+            workspace_path=str(other_project_path),
+            agent_deck_session_id="deck-cross-project",
+            agent_deck_session_title="old cross-project session",
+            agent_deck_tool="claude",
+            editor_state={"draftAgentType": "claude"},
+        )
+
+        sessions = project_store.list_project_sessions(str(project_path))
+
+        self.assertEqual(sessions, [])
+
 
 if __name__ == "__main__":
     unittest.main()

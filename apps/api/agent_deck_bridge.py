@@ -4,7 +4,9 @@ import asyncio
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Awaitable, Callable
 from uuid import uuid4
@@ -166,6 +168,22 @@ def _session_belongs_to_project(project_path: str, session_path: str) -> bool:
     )
 
 
+def _session_matches_project_context(
+    project_path: str,
+    *,
+    session_path: str,
+    group_path: str | None = None,
+) -> bool:
+    if _session_belongs_to_project(project_path, session_path):
+        return True
+    if _normalized_text(group_path) != _group_path(project_path):
+        return False
+
+    normalized_project_path = _normalize_path(project_path)
+    normalized_session_path = _normalize_path(session_path)
+    return _is_descendant_path(normalized_project_path, normalized_session_path)
+
+
 def _clone_name(session_title: str) -> str:
     normalized = re.sub(r"[^a-z0-9-]+", "-", session_title.lower()).strip("-")
     return normalized or uuid4().hex[:8]
@@ -184,6 +202,59 @@ def _thread_rebind_workspace_path(
     if not _session_belongs_to_project(normalized_project_path, normalized_workspace_path):
         return None
     return normalized_workspace_path
+
+
+@lru_cache(maxsize=16)
+def _resolve_runtime_executable(binary_name: str) -> str:
+    normalized_binary_name = binary_name.strip()
+    if not normalized_binary_name:
+        raise AgentDeckBridgeError("Executable name is required")
+
+    direct_match = shutil.which(normalized_binary_name)
+    if direct_match:
+        return direct_match
+
+    search_paths: list[str] = []
+    seen_paths: set[str] = set()
+
+    def append_path(path_value: str | Path | None) -> None:
+        if path_value is None:
+            return
+        normalized_path = str(path_value).strip()
+        if not normalized_path or normalized_path in seen_paths:
+            return
+        seen_paths.add(normalized_path)
+        search_paths.append(normalized_path)
+
+    for path_value in os.environ.get("PATH", "").split(os.pathsep):
+        append_path(path_value)
+
+    home = Path.home()
+    for extra_path in (
+        home / ".local" / "bin",
+        home / "bin",
+        home / ".bun" / "bin",
+        home / ".cargo" / "bin",
+    ):
+        append_path(extra_path)
+
+    nvm_versions_root = home / ".nvm" / "versions" / "node"
+    if nvm_versions_root.is_dir():
+        for version_dir in sorted(
+            (entry for entry in nvm_versions_root.iterdir() if entry.is_dir()),
+            key=lambda entry: entry.name,
+            reverse=True,
+        ):
+            append_path(version_dir / "bin")
+
+    if search_paths:
+        resolved = shutil.which(normalized_binary_name, path=os.pathsep.join(search_paths))
+        if resolved:
+            return resolved
+
+    raise AgentDeckBridgeError(
+        f"Executable `{normalized_binary_name}` is not available in the Pixel Forge service environment"
+    )
 
 
 async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str]:
@@ -539,7 +610,11 @@ async def _list_project_session_targets(
         if not isinstance(session_path, str) or not session_path.strip():
             continue
 
-        if not _session_belongs_to_project(project_path, session_path):
+        if not _session_matches_project_context(
+            project_path,
+            session_path=session_path,
+            group_path=_normalized_text(entry.get("group")),
+        ):
             continue
 
         if not include_acpx_backed and _is_acpx_backed_payload(entry):
@@ -1311,6 +1386,34 @@ def _flatten_tool_content(value: object) -> str:
     return str(value)
 
 
+def _claude_user_text_for_record(record: dict[str, object]) -> str | None:
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return None
+    if message.get("role") != "user":
+        return None
+
+    content_blocks = message.get("content")
+    if not isinstance(content_blocks, list):
+        return None
+
+    parts: list[str] = []
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            normalized = text.strip()
+            if normalized:
+                parts.append(normalized)
+
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 def claude_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str, object]]:
     payloads: list[dict[str, object]] = []
     record_type = record.get("type")
@@ -1344,14 +1447,26 @@ def claude_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str
                 )
         return payloads
 
+    if record_type == "system":
+        if record.get("subtype") == "stop_hook_summary":
+            payloads.append({"type": "turn_stop"})
+        return payloads
+
     if record_type != "user":
         return payloads
 
-    message = record.get("message")
-    if not isinstance(message, dict):
-        return payloads
+    prompt_text = _claude_user_text_for_record(record)
+    if prompt_text:
+        payloads.append(
+            {
+                "type": "user_prompt",
+                "content": prompt_text,
+                "entrypoint": record.get("entrypoint"),
+            }
+        )
 
-    content_blocks = message.get("content")
+    message = record.get("message")
+    content_blocks = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content_blocks, list):
         return payloads
 
@@ -1659,8 +1774,9 @@ async def send_native_claude_prompt_reliably(
     project_path: str,
     prompt: str,
 ) -> None:
+    claude_executable = _resolve_runtime_executable("claude")
     cmd = [
-        "claude",
+        claude_executable,
         *_claude_resume_identifier_args(session_info),
         "-p",
         prompt,
@@ -1695,8 +1811,9 @@ async def send_native_codex_prompt_reliably(
             f"Codex session `{session_info.agent_deck_session_title}` is missing a native session ID"
         )
 
+    codex_executable = _resolve_runtime_executable("codex")
     cmd = [
-        "codex",
+        codex_executable,
         "exec",
         "resume",
         session_info.codex_session_id,

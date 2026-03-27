@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	transcriptQuietWindow = 1200 * time.Millisecond
+	transcriptQuietWindow = 500 * time.Millisecond
 	autoCatchUpGrace      = 2 * time.Second
 )
 
@@ -47,6 +47,7 @@ func (h *Home) handleTranscriptTouched(sessionID, path string) {
 
 	h.turnSummaryCacheMu.Lock()
 	delete(h.turnSummaryCacheTime, sessionID)
+	h.recentTranscriptTouchAt[sessionID] = time.Now()
 	h.turnSummaryCacheMu.Unlock()
 
 	h.transcriptQuietMu.Lock()
@@ -139,6 +140,10 @@ func (h *Home) maybeAutoCatchUpLivePane(sessionID string, summary *session.TurnS
 	}
 
 	content := tmux.StripANSI(rawPane)
+	if usesClaudeChannelIngress(inst, content) {
+		uiLog.Debug("auto_catchup_skip_live_channel_ingress", slog.String("session_id", sessionID))
+		return
+	}
 	promptText, hasPrompt := send.CurrentPromptForTool(inst.Tool, content)
 	status := inst.GetStatusThreadSafe()
 	if err := inst.UpdateStatus(); err != nil {
@@ -206,6 +211,16 @@ func (h *Home) maybeAutoCatchUpLivePane(sessionID string, summary *session.TurnS
 	h.cachedStatusCounts.valid.Store(false)
 	h.refreshSessionRenderSnapshot(nil)
 	uiLog.Debug("auto_catchup_restart_succeeded", slog.String("session_id", sessionID))
+}
+
+func usesClaudeChannelIngress(inst *session.Instance, paneContent string) bool {
+	if inst == nil || !session.IsClaudeCompatible(inst.Tool) {
+		return false
+	}
+	if strings.Contains(paneContent, "Listening for channel messages from:") {
+		return true
+	}
+	return session.ClaudeChannelsEnabled()
 }
 
 func catchUpReference(inst *session.Instance) time.Time {

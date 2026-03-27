@@ -116,3 +116,26 @@ func TestShouldAutoCatchUpLivePane(t *testing.T) {
 		})
 	}
 }
+
+func TestUsesClaudeChannelIngress(t *testing.T) {
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "")
+	claude := &session.Instance{Tool: "claude"}
+	if usesClaudeChannelIngress(claude, "") {
+		t.Fatal("expected plain claude session without env or banner to skip live ingress detection")
+	}
+
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "plugin:pixel-forge-channel@arc-forge")
+	if !usesClaudeChannelIngress(claude, "") {
+		t.Fatal("expected configured claude channels to count as live ingress")
+	}
+
+	t.Setenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY", "")
+	if !usesClaudeChannelIngress(claude, "Listening for channel messages from: plugin:pixel-forge-channel@arc-forge") {
+		t.Fatal("expected visible channel banner to count as live ingress")
+	}
+
+	codex := &session.Instance{Tool: "codex"}
+	if usesClaudeChannelIngress(codex, "Listening for channel messages from: plugin:pixel-forge-channel@arc-forge") {
+		t.Fatal("did not expect non-claude session to count as claude live ingress")
+	}
+}

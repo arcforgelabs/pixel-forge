@@ -13,6 +13,8 @@ import re
 import selectors
 import signal
 import subprocess
+import fcntl
+import struct
 import sys
 import termios
 import tty
@@ -43,13 +45,37 @@ def main() -> int:
         old_tty = termios.tcgetattr(sys.stdin.fileno())
         tty.setraw(sys.stdin.fileno())
 
+    def sync_window_size() -> None:
+        if not sys.stdin.isatty():
+            return
+        try:
+            packed = fcntl.ioctl(
+                sys.stdin.fileno(),
+                termios.TIOCGWINSZ,
+                struct.pack("HHHH", 0, 0, 0, 0),
+            )
+            rows, cols, xpixels, ypixels = struct.unpack("HHHH", packed)
+            if rows <= 0 or cols <= 0:
+                return
+            fcntl.ioctl(
+                master_fd,
+                termios.TIOCSWINSZ,
+                struct.pack("HHHH", rows, cols, xpixels, ypixels),
+            )
+        except OSError:
+            return
+
     def forward_signal(signum: int, _frame: object) -> None:
+        if signum == signal.SIGWINCH:
+            sync_window_size()
         try:
             child.send_signal(signum)
         except ProcessLookupError:
             pass
 
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    sync_window_size()
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH):
         signal.signal(sig, forward_signal)
 
     selector = selectors.DefaultSelector()

@@ -18,6 +18,7 @@ import {
 } from '@/lib/preview-url'
 import type {
   DraftWorkspaceMode,
+  LiveEditorSessionMeta,
   PersistedPreviewTab,
   PersistedThreadEditorState,
   PersistedWorkspacePreviewMeta,
@@ -638,7 +639,7 @@ function buildPersistedEditorState(
 }
 
 function createThreadStateFromSession(
-  session: ProjectSessionRecord,
+  session: LiveEditorSessionMeta,
   fallbackUrl?: string | null
 ): ThreadChatState {
   return {
@@ -2165,12 +2166,16 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
     activateThread: (threadKey) => {
       const nextThreadKey = threadKey?.trim() || createDraftThreadKey()
+      const existingSession = resolveThreadSession(nextThreadKey)
+      const previewUrl = useSessionStore.getState().previewUrl
       set((state) => {
         const nextThreadStates = state.threadStates[nextThreadKey]
           ? state.threadStates
           : {
               ...state.threadStates,
-              [nextThreadKey]: createEmptyThreadState(),
+              [nextThreadKey]: existingSession
+                ? createThreadStateFromSession(existingSession, previewUrl)
+                : createEmptyThreadState(),
             }
         return createStoreState(nextThreadKey, nextThreadStates)
       })
@@ -2415,7 +2420,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           agent_type: agentType,
         }
 
-        if (!boundSession?.threadId && !targetAgentDeckSessionId) {
+        if (!boundSession?.agentDeckSessionId && !targetAgentDeckSessionId) {
           payload.workspace_mode = workspaceMode
         }
 

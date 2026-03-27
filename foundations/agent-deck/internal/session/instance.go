@@ -607,6 +607,10 @@ func (i *Instance) buildClaudeChannelFlags() []string {
 	return flags
 }
 
+func ClaudeChannelsEnabled() bool {
+	return strings.TrimSpace(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY")) != ""
+}
+
 func (i *Instance) wrapClaudeDevelopmentChannelCommand(command string) string {
 	if !i.shouldAutoConfirmClaudeDevelopmentChannels() {
 		return command

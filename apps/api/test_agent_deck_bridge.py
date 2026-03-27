@@ -301,6 +301,32 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
             cwd="/tmp/project",
         )
 
+
+class AgentDeckBridgeExecutableResolutionTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        agent_deck_bridge._resolve_runtime_executable.cache_clear()
+
+    def test_resolve_runtime_executable_falls_back_to_nvm_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = Path(tempdir)
+            version_bin = home / ".nvm" / "versions" / "node" / "v24.11.1" / "bin"
+            version_bin.mkdir(parents=True)
+            codex_path = version_bin / "codex"
+            codex_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            codex_path.chmod(0o755)
+
+            with (
+                patch.dict(agent_deck_bridge.os.environ, {"PATH": "/usr/bin:/bin"}, clear=False),
+                patch.object(agent_deck_bridge.Path, "home", return_value=home),
+                patch.object(agent_deck_bridge.shutil, "which", side_effect=lambda name, path=None: str(codex_path) if name == "codex" and path and str(version_bin) in path else None),
+            ):
+                resolved = agent_deck_bridge._resolve_runtime_executable("codex")
+
+        self.assertEqual(resolved, str(codex_path))
+
+
+class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
+
     async def test_send_agent_deck_prompt_reliably_surfaces_agent_deck_errors(self) -> None:
         run_command = AsyncMock(return_value=(1, "", "agent not ready after 30s"))
 
@@ -429,6 +455,71 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([session.id for session in sessions], ["deck-root"])
         self.assertEqual(run_mock.await_count, 2)
+
+    async def test_list_project_sessions_includes_group_owned_root_outside_path(self) -> None:
+        async def run_command(args, cwd=None):
+            if args[:2] == ["ls", "-json"]:
+                return (
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": "deck-group-owned",
+                                "title": "test",
+                                "path": "/tmp",
+                                "group": "pixel-forge/project",
+                                "tool": "claude",
+                                "command": "claude",
+                                "status": "waiting",
+                                "created_at": "2026-03-27T00:00:00Z",
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            raise AssertionError(f"Unexpected agent-deck command: {args!r} cwd={cwd!r}")
+
+        with patch.object(
+            agent_deck_bridge,
+            "_run_agent_deck_command",
+            side_effect=run_command,
+        ):
+            sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual([session.id for session in sessions], ["deck-group-owned"])
+        self.assertEqual(sessions[0].path, "/tmp")
+
+    async def test_list_project_sessions_excludes_group_owned_unrelated_path(self) -> None:
+        async def run_command(args, cwd=None):
+            if args[:2] == ["ls", "-json"]:
+                return (
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": "deck-group-stale",
+                                "title": "stale",
+                                "path": "/elsewhere/unrelated",
+                                "group": "pixel-forge/project",
+                                "tool": "claude",
+                                "command": "claude",
+                                "status": "waiting",
+                                "created_at": "2026-03-27T00:00:00Z",
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            raise AssertionError(f"Unexpected agent-deck command: {args!r} cwd={cwd!r}")
+
+        with patch.object(
+            agent_deck_bridge,
+            "_run_agent_deck_command",
+            side_effect=run_command,
+        ):
+            sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual(sessions, [])
 
 
 class AgentDeckBridgeCloseoutPromptTest(unittest.TestCase):

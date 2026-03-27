@@ -473,6 +473,63 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('hydrates saved draft intent when activating a persisted unbound chat thread', () => {
+    useSessionStore.setState({
+      projectPath: '/tmp/example-project',
+      defaultAgentType: 'claude',
+      projectSessions: [
+        {
+          id: 1,
+          projectPath: '/tmp/example-project',
+          workspacePath: '/tmp/example-project',
+          threadId: 'chat-root',
+          backend: 'agent-deck',
+          agentDeckSessionId: null,
+          agentDeckSessionTitle: 'Chat chat-roo',
+          agentDeckTool: null,
+          editorState: {
+            draftAgentType: 'codex',
+            draftWorkspaceMode: 'root',
+            activePreviewTool: null,
+            targetUrl: '',
+            activeTab: 'chat',
+            viewportMode: 'fluid',
+            showUrlHistory: false,
+            previewTabs: [],
+            activePreviewTabId: null,
+            urlHistory: [],
+            urlHistoryCursor: -1,
+          },
+          createdAt: '2026-03-20T00:00:00Z',
+          lastActive: '2026-03-20T00:00:00Z',
+          requestId: null,
+        },
+      ],
+      liveEditorSession: null,
+    })
+
+    useLiveEditorStore.getState().activateThread('chat-root')
+
+    expect(useLiveEditorStore.getState().draftAgentType).toBe('codex')
+    expect(useLiveEditorStore.getState().draftWorkspaceMode).toBe('root')
+
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Use the canonical root')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+      message: 'Use the canonical root',
+      agent_type: 'codex',
+      workspace_mode: 'root',
+      thread_id: 'chat-root',
+    })
+  })
+
   it('rehydrates stale internal pdf viewer urls back to the source pdf url', () => {
     useSessionStore.setState({
       projectSessions: [

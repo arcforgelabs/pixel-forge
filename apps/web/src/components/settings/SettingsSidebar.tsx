@@ -750,6 +750,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
   async function handleCreateProjectChat(startFreshThread = false) {
     const currentProjectPath = projectPath;
+    const activeDraftState = useLiveEditorStore.getState().getActiveThreadState();
+    const activeLiveEditorSession = useSessionStore.getState().liveEditorSession;
+    const shouldCarryDraftIntent =
+      !activeLiveEditorSession?.agentDeckSessionId
+      && !activeDraftState.targetAgentDeckSessionId;
     let emptyThreadKey: string | null = null;
     if (startFreshThread) {
       emptyThreadKey = Object.entries(threadStates).find(
@@ -787,7 +792,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       }
     }
     try {
-      const created = await createProjectChatSession({ agentType: defaultAgentType });
+      const created = await createProjectChatSession({
+        agentType: shouldCarryDraftIntent
+          ? activeDraftState.draftAgentType
+          : defaultAgentType,
+        workspaceMode: shouldCarryDraftIntent
+          ? activeDraftState.draftWorkspaceMode
+          : "clone",
+      });
       if (
         startFreshThread
         && emptyThreadKey

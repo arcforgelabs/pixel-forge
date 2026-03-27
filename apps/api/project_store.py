@@ -90,12 +90,40 @@ def _session_has_meaningful_editor_state(session: SessionRecord) -> bool:
     return False
 
 
+def _clone_root(project_path: str) -> str:
+    return os.path.join(normalize_project_path(project_path), ".agents")
+
+
+def _is_descendant_path(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def _workspace_matches_project_context(
+    workspace_path: str,
+    project_path: str,
+) -> bool:
+    normalized_workspace_path = normalize_project_path(workspace_path)
+    normalized_project_path = normalize_project_path(project_path)
+    if normalized_workspace_path == normalized_project_path:
+        return True
+    return _is_descendant_path(
+        normalized_workspace_path,
+        _clone_root(normalized_project_path),
+    )
+
+
 def should_surface_session(
     session: SessionRecord,
     project_path: str,
 ) -> bool:
-    normalized_workspace_path = normalize_project_path(session.workspace_path)
     normalized_project_path = normalize_project_path(project_path)
+    workspace_matches_project = _workspace_matches_project_context(
+        session.workspace_path,
+        normalized_project_path,
+    )
     normalized_thread_id = (
         session.thread_id.strip()
         if isinstance(session.thread_id, str) and session.thread_id.strip()
@@ -104,7 +132,7 @@ def should_surface_session(
 
     if (
         normalized_thread_id.startswith("draft-")
-        and normalized_workspace_path == normalized_project_path
+        and normalize_project_path(session.workspace_path) == normalized_project_path
         and not (
             isinstance(session.agent_deck_session_id, str)
             and session.agent_deck_session_id.strip()
@@ -112,10 +140,13 @@ def should_surface_session(
     ):
         return False
 
+    if not workspace_matches_project:
+        return False
+
     if session.agent_deck_session_id:
         return True
 
-    if normalized_workspace_path != normalized_project_path:
+    if normalize_project_path(session.workspace_path) != normalized_project_path:
         return True
 
     # Explicit chat-* sessions are always surfaced — they were created by
