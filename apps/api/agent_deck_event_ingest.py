@@ -22,6 +22,7 @@ from workstation_events import (
     append_workstation_event,
     latest_workstation_event,
     normalize_workstation_event_payload,
+    request_has_terminal_workstation_event,
 )
 
 
@@ -179,12 +180,15 @@ def _extract_claude_user_prompt(record: dict[str, object]) -> str | None:
     if not isinstance(message, dict):
         return None
 
-    content_blocks = message.get("content")
-    if not isinstance(content_blocks, list):
+    content_value = message.get("content")
+    if isinstance(content_value, str):
+        normalized = content_value.strip()
+        return normalized or None
+    if not isinstance(content_value, list):
         return None
 
     parts: list[str] = []
-    for block in content_blocks:
+    for block in content_value:
         if not isinstance(block, dict):
             continue
         if block.get("type") != "text":
@@ -534,7 +538,7 @@ class AgentDeckNativeEventIngestor:
                 event.agent_deck_session_id,
                 claude_sessions,
                 event.upstream_session_id,
-                anchor_to_end=(event.event or "") != "UserPromptSubmit",
+                anchor_to_end=(event.event or "") not in {"UserPromptSubmit", "Stop", "SessionEnd"},
                 start_from_latest_user_turn=(event.event or "") == "UserPromptSubmit",
             )
 
@@ -658,10 +662,11 @@ class AgentDeckNativeEventIngestor:
                 self._active_claude_turns.pop(agent_deck_session_id, None)
                 self._claude_jsonl_cursors.pop(agent_deck_session_id, None)
                 continue
+            latest_event = self._latest_hook_events.get(agent_deck_session_id)
             await self._sync_claude_turn_output(
                 agent_deck_session_id,
                 bound_sessions,
-                allow_backfill_start=False,
+                allow_backfill_start=(latest_event is not None and (latest_event.event or "") in {"Stop", "SessionEnd"}),
             )
 
     async def _poll_active_codex_turns(self) -> None:
@@ -748,6 +753,11 @@ class AgentDeckNativeEventIngestor:
         cursor = self._claude_jsonl_cursors.get(agent_deck_session_id)
         if cursor is not None and cursor.claude_session_id == claude_session_id:
             cursor.jsonl_path = path
+            if path is not None and path.exists():
+                if start_from_latest_user_turn:
+                    latest_user_offset, _, _ = _latest_claude_user_turn(path)
+                    if latest_user_offset is not None and latest_user_offset > cursor.offset:
+                        cursor.offset = latest_user_offset
             return cursor
 
         offset = 0
@@ -879,6 +889,14 @@ class AgentDeckNativeEventIngestor:
         if not claude_session_id:
             return
 
+        request_id_hint = (
+            f"offpath-claude-{agent_deck_session_id}-{hook_event.timestamp}"
+            if turn_state is None
+            and allow_backfill_start
+            and hook_event is not None
+            and hook_event.timestamp
+            else None
+        )
         cursor = self._ensure_claude_cursor(
             agent_deck_session_id,
             sessions,
@@ -887,6 +905,22 @@ class AgentDeckNativeEventIngestor:
             start_from_latest_user_turn=(turn_state is None and allow_backfill_start),
         )
         if cursor is None or cursor.jsonl_path is None:
+            return
+        if (
+            request_id_hint
+            and all(
+                request_has_terminal_workstation_event(
+                    session.project_path,
+                    session.thread_id,
+                    request_id_hint,
+                )
+                for session in sessions
+            )
+        ):
+            try:
+                cursor.offset = cursor.jsonl_path.stat().st_size
+            except OSError:
+                pass
             return
 
         _, latest_user_prompt, latest_user_entrypoint = _latest_claude_user_turn(

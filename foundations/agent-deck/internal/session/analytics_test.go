@@ -130,6 +130,25 @@ func TestParseJSONL(t *testing.T) {
 	assert.Equal(t, 1, editCalls)
 }
 
+func TestParseSessionTurns_HandlesStringContentEntries(t *testing.T) {
+	dir := t.TempDir()
+	jsonlPath := filepath.Join(dir, "session.jsonl")
+
+	jsonl := `{"type":"user","timestamp":"2026-03-27T13:20:43.018Z","message":{"role":"user","content":"checking if this works"}}
+{"type":"assistant","timestamp":"2026-03-27T13:20:47.907Z","message":{"role":"assistant","content":[{"type":"text","text":"It works. How can I help?"}]}}`
+
+	err := os.WriteFile(jsonlPath, []byte(jsonl), 0644)
+	require.NoError(t, err)
+
+	summary, err := ParseSessionTurns(jsonlPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, summary.TotalUserTurns)
+	assert.Equal(t, 1, summary.TotalAssistantTurns)
+	assert.Equal(t, "checking if this works", summary.LastUserPrompt)
+	assert.Equal(t, "It works. How can I help?", summary.LastAssistantText)
+}
+
 func TestParseJSONL_WithTimestamps(t *testing.T) {
 	dir := t.TempDir()
 	jsonlPath := filepath.Join(dir, "session.jsonl")

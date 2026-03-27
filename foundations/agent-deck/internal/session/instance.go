@@ -2015,6 +2015,7 @@ func (i *Instance) Start() error {
 	// This runs in background and captures the session ID once Codex creates it
 	if i.Tool == "codex" {
 		go i.detectCodexSessionAsync()
+		go i.ensureInteractiveReadyAsync()
 	}
 
 	return nil
@@ -2135,7 +2136,31 @@ func (i *Instance) StartWithMessage(message string) error {
 		return i.sendMessageWhenReady(message)
 	}
 
+	if i.Tool == "codex" {
+		go i.ensureInteractiveReadyAsync()
+	}
+
 	return nil
+}
+
+func (i *Instance) ensureInteractiveReadyAsync() {
+	if i == nil || i.tmuxSession == nil {
+		return
+	}
+	if err := send.WaitForAgentReady(i.tmuxSession, i.Tool); err != nil {
+		sessionLog.Debug(
+			"interactive_ready_prime_failed",
+			slog.String("tool", i.Tool),
+			slog.String("session", i.Title),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	sessionLog.Debug(
+		"interactive_ready_prime_succeeded",
+		slog.String("tool", i.Tool),
+		slog.String("session", i.Title),
+	)
 }
 
 // sendMessageWhenReady waits for the agent to be ready and sends the message

@@ -126,8 +126,11 @@ The thing Pixel Forge bypasses is the already-running interactive pane process, 
 - Agent Deck hook-event queue ingestion into Pixel Forge so off-path Claude replies show up in Pixel Forge without manual refresh.
 - Event-driven transcript freshness in Agent Deck via exact JSONL wakeups plus a quiet-window debounce.
 - Transcript fallback in Pixel Forge for direct Claude `entrypoint:"cli"` off-path turns: when hook parity is missing, the ingest path now derives user-style `turn_input` plus completion from the transcript itself, while still suppressing `entrypoint:"sdk-cli"` records so Pixel Forge request-pack turns do not double-render.
+- That fallback now also matches the real March 27, 2026 Claude transcript shape: plain-string user `message.content` plus a stop-snapshot-only hook file (`event:"Stop"`) are enough to backfill the complete off-path turn into Pixel Forge without a full queued hook sequence.
+- That stop-snapshot fallback is now restart-idempotent too: once Pixel Forge has already recorded a terminal event for the stable off-path request id derived from the lingering `Stop` snapshot, a later service boot fast-forwards past that same transcript segment instead of replaying the whole off-path turn again.
 - Automatic safe catch-up for the native Claude pane through the existing restart/respawn lane when the session is behind and the prompt is empty.
 - Channel-enabled Claude panes now explicitly skip that respawn catch-up lane and rely on live Channel ingress plus observation-surface freshness instead, because real operator use showed that forcing respawn there caused repeated flashing/frozen UX while the underlying session kept progressing.
+- Fresh blank-start Codex sessions in the installed alpha lane now clear the update/trust interstitial and land at a real prompt. That improves readiness, but it does not change the current Codex transport asymmetry: Pixel Forge still delivers warm turns through `codex exec resume`, so the visible pane is not yet a truthful repaint surface for externally-dispatched Codex turns.
 
 ### What We Tried And Ruled Out
 

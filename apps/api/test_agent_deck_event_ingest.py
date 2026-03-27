@@ -366,6 +366,72 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[3].payload["assistant_output"], "Fast Claude reply")
         self.assertFalse(any(self.hook_events_dir.glob("*.json")))
 
+    async def test_stop_snapshot_backfill_is_idempotent_across_ingestor_restart(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-stop-idempotent"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-stop-idempotent",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-stop-idempotent",
+            agent_deck_session_title="stop idempotent",
+            agent_deck_tool="claude",
+        )
+
+        session_id = "claude-session-stop-idempotent"
+        (self.hooks_dir / "deck-stop-idempotent.sid").write_text(
+            session_id,
+            encoding="utf-8",
+        )
+        self._write_hook_event(
+            instance_id="deck-stop-idempotent",
+            session_id=session_id,
+            status="waiting",
+            event="Stop",
+            timestamp=1711112222,
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            session_id,
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":"checking if this works"}}',
+                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"It works. How can I help?"}]}}',
+                    '{"type":"system","entrypoint":"cli","subtype":"stop_hook_summary"}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+
+        restarted_ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await restarted_ingestor.poll_once()
+
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-stop-idempotent",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(
+            events[0].payload["turn_input"]["prompt_text"],
+            "checking if this works",
+        )
+        self.assertEqual(events[2].payload["content"], "It works. How can I help?")
+        self.assertEqual(events[3].payload["assistant_output"], "It works. How can I help?")
+
     async def test_poll_once_emits_transcript_only_cli_turns_without_hooks(self) -> None:
         claude_workspace_path = self.project_path / ".agents" / "thread-transcript-claude"
         claude_workspace_path.mkdir(parents=True)
@@ -430,6 +496,69 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             events[3].payload["assistant_output"],
             "Pixel Forge channel probe received — installed alpha lane is live and connected.",
         )
+
+    async def test_poll_once_backfills_cli_turns_from_stop_snapshot_only(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-stop-only-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-stop-only-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-stop-only-claude",
+            agent_deck_session_title="stop only claude",
+            agent_deck_tool="claude",
+        )
+
+        session_id = "claude-session-stop-only"
+        (self.hooks_dir / "deck-stop-only-claude.sid").write_text(
+            session_id,
+            encoding="utf-8",
+        )
+        (self.hooks_dir / "deck-stop-only-claude.json").write_text(
+            json.dumps(
+                {
+                    "status": "waiting",
+                    "session_id": session_id,
+                    "event": "Stop",
+                    "ts": 1774617647,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            session_id,
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":"checking if this works"}}',
+                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"It works. How can I help?"}]}}',
+                    '{"type":"system","entrypoint":"cli","subtype":"stop_hook_summary"}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-stop-only-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(events[0].payload["turn_input"]["prompt_text"], "checking if this works")
+        self.assertEqual(events[2].payload["content"], "It works. How can I help?")
+        self.assertEqual(events[3].payload["assistant_output"], "It works. How can I help?")
 
     async def test_poll_once_ignores_transcript_only_sdk_cli_turns(self) -> None:
         claude_workspace_path = self.project_path / ".agents" / "thread-sdk-claude"

@@ -313,6 +313,37 @@ def chat_has_primary_workstation_events(project_path: str, chat_id: str) -> bool
     return row is not None
 
 
+def request_has_terminal_workstation_event(
+    project_path: str,
+    chat_id: str,
+    request_id: str,
+) -> bool:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    normalized_request_id = request_id.strip()
+    if not normalized_chat_id or not normalized_request_id:
+        return False
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+              AND event_type IN ('turn_completed', 'turn_failed')
+              AND json_extract(payload_json, '$.request_id') = ?
+            LIMIT 1
+            """,
+            (
+                normalized_project_path,
+                normalized_chat_id,
+                normalized_request_id,
+            ),
+        ).fetchone()
+    return row is not None
+
+
 def _is_missing_session_error(error: BaseException | str) -> bool:
     message = str(error).lower()
     return (

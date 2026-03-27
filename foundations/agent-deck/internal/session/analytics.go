@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -259,11 +260,19 @@ func ParseSessionTurns(path string) (*TurnSummary, error) {
 		if msg == nil {
 			continue
 		}
-		contentArr, _ := msg["content"].([]interface{})
+		contentValue := msg["content"]
 
 		switch entryType {
 		case "user":
 			summary.TotalUserTurns++
+			if contentText, ok := contentValue.(string); ok {
+				contentText = strings.TrimSpace(contentText)
+				if contentText != "" {
+					summary.LastUserPrompt = contentText
+				}
+				continue
+			}
+			contentArr, _ := contentValue.([]interface{})
 			// Extract last user prompt text
 			for _, block := range contentArr {
 				b, _ := block.(map[string]interface{})
@@ -279,6 +288,14 @@ func ParseSessionTurns(path string) (*TurnSummary, error) {
 
 		case "assistant":
 			summary.TotalAssistantTurns++
+			if contentText, ok := contentValue.(string); ok {
+				contentText = strings.TrimSpace(contentText)
+				if contentText != "" {
+					summary.LastAssistantText = contentText
+				}
+				continue
+			}
+			contentArr, _ := contentValue.([]interface{})
 			// Extract last assistant text
 			for _, block := range contentArr {
 				b, _ := block.(map[string]interface{})

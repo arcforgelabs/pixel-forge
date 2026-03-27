@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -1616,6 +1617,33 @@ def get_project(project_path: str) -> ProjectRecord | None:
 
 def list_projects() -> list[ProjectRecord]:
     with _connect() as conn:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        stale_temp_paths: list[str] = []
+        for row in conn.execute("SELECT path FROM projects").fetchall():
+            project_path = row["path"]
+            try:
+                resolved_path = Path(project_path).expanduser().resolve(strict=False)
+            except OSError:
+                continue
+            if resolved_path.exists():
+                continue
+            try:
+                is_temp_project = os.path.commonpath([str(resolved_path), str(temp_root)]) == str(temp_root)
+            except ValueError:
+                is_temp_project = False
+            if is_temp_project:
+                stale_temp_paths.append(project_path)
+
+        if stale_temp_paths:
+            conn.executemany(
+                """
+                DELETE FROM projects
+                WHERE path = ?
+                """,
+                ((path,) for path in stale_temp_paths),
+            )
+            conn.commit()
+
         rows = conn.execute(
             """
             SELECT path, name, output_mode, custom_output_path, created_at, last_opened

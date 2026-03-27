@@ -500,6 +500,8 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
     def test_list_projects_preserves_creation_order_after_reopening(self) -> None:
         first_project_path = Path(self.tempdir.name) / "first-project"
         second_project_path = Path(self.tempdir.name) / "second-project"
+        first_project_path.mkdir(parents=True)
+        second_project_path.mkdir(parents=True)
         project_store.upsert_project(str(first_project_path))
         project_store.upsert_project(str(second_project_path))
 
@@ -533,6 +535,18 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             temp_projects,
             [str(first_project_path), str(second_project_path)],
         )
+
+    def test_list_projects_prunes_missing_temp_projects(self) -> None:
+        existing_project_path = Path(self.tempdir.name) / "project"
+        existing_project_path.mkdir(parents=True)
+        project_store.upsert_project(str(existing_project_path))
+
+        missing_temp_path = Path(self.tempdir.name) / "stale-project"
+        project_store.upsert_project(str(missing_temp_path))
+
+        listed_paths = [project.path for project in project_store.list_projects()]
+        self.assertIn(str(existing_project_path), listed_paths)
+        self.assertNotIn(str(missing_temp_path), listed_paths)
 
     def test_list_project_sessions_preserves_creation_order_after_activity_updates(self) -> None:
         project_path = Path(self.tempdir.name) / "project"

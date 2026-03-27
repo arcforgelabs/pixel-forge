@@ -1393,12 +1393,15 @@ def _claude_user_text_for_record(record: dict[str, object]) -> str | None:
     if message.get("role") != "user":
         return None
 
-    content_blocks = message.get("content")
-    if not isinstance(content_blocks, list):
+    content_value = message.get("content")
+    if isinstance(content_value, str):
+        normalized = content_value.strip()
+        return normalized or None
+    if not isinstance(content_value, list):
         return None
 
     parts: list[str] = []
-    for block in content_blocks:
+    for block in content_value:
         if not isinstance(block, dict):
             continue
         if block.get("type") != "text":
