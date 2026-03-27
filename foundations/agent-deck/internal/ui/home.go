@@ -207,10 +207,10 @@ type Home struct {
 	analyticsCacheTime     map[string]time.Time                       // TTL cache: sessionID -> cache timestamp
 
 	// JSONL turn summary cache (observation-layer transport)
-	currentTurnSummary  *session.TurnSummary // Turn summary for selected session
-	turnSummaryID       string               // Session ID for current turn summary
-	turnSummaryCacheMu  sync.RWMutex         // Protects turn summary cache
-	turnSummaryCache    map[string]*session.TurnSummary
+	currentTurnSummary   *session.TurnSummary // Turn summary for selected session
+	turnSummaryID        string               // Session ID for current turn summary
+	turnSummaryCacheMu   sync.RWMutex         // Protects turn summary cache
+	turnSummaryCache     map[string]*session.TurnSummary
 	turnSummaryCacheTime map[string]time.Time
 
 	// State
@@ -281,6 +281,15 @@ type Home struct {
 	// Hook-based status detection (Claude Code lifecycle hooks)
 	hookWatcher        *session.StatusFileWatcher
 	pendingHooksPrompt bool // True if user should be prompted to install hooks
+
+	// Event-driven transcript observation for fast turn freshness and safe
+	// external-turn catch-up when the pane is idle.
+	transcriptWatcher       *session.TranscriptFileWatcher
+	transcriptQuietMu       sync.Mutex
+	transcriptQuietTimers   map[string]*time.Timer
+	autoCatchUpMu           sync.Mutex
+	lastAutoCatchUpActivity map[string]time.Time
+	autoCatchUpInFlight     map[string]bool
 
 	// Context-% based /clear for conductor sessions with clear_on_compact
 	clearOnCompactSent map[string]time.Time // instanceID -> last /clear send time (debounce)
@@ -712,6 +721,9 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 		analyticsCacheTime:        make(map[string]time.Time),
 		turnSummaryCache:          make(map[string]*session.TurnSummary),
 		turnSummaryCacheTime:      make(map[string]time.Time),
+		transcriptQuietTimers:     make(map[string]*time.Timer),
+		lastAutoCatchUpActivity:   make(map[string]time.Time),
+		autoCatchUpInFlight:       make(map[string]bool),
 		clearOnCompactSent:        make(map[string]time.Time),
 		launchingSessions:         make(map[string]time.Time),
 		resumingSessions:          make(map[string]time.Time),
@@ -908,6 +920,16 @@ func NewHomeWithProfileAndMode(profile string) *Home {
 				h.pendingHooksPrompt = true
 			}
 		}
+	}
+
+	transcriptWatcher, err := session.NewTranscriptFileWatcher(func(sessionID, path string) {
+		h.handleTranscriptTouched(sessionID, path)
+	})
+	if err != nil {
+		uiLog.Warn("transcript_watcher_init_failed", slog.String("error", err.Error()))
+	} else {
+		h.transcriptWatcher = transcriptWatcher
+		go transcriptWatcher.Start()
 	}
 
 	// Start system theme watcher if configured
@@ -2349,6 +2371,8 @@ func (h *Home) backgroundStatusUpdate() {
 		}
 	}
 
+	h.syncTranscriptWatcher(instances)
+
 	// Proactive context-% monitoring: send /clear before auto-compact triggers
 	// For conductor sessions with clear_on_compact enabled, check cached analytics
 	for _, inst := range instances {
@@ -2957,6 +2981,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h.refreshSessionRenderSnapshot(msg.instances)
 			// Invalidate status counts cache
 			h.cachedStatusCounts.valid.Store(false)
+			h.syncTranscriptWatcher(msg.instances)
 			// Sync group tree with loaded data
 			if h.groupTree.GroupCount() == 0 {
 				// Initial load - use stored groups if available
@@ -5883,6 +5908,10 @@ func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 		if h.hookWatcher != nil {
 			h.hookWatcher.Stop()
 		}
+		if h.transcriptWatcher != nil {
+			h.transcriptWatcher.Stop()
+		}
+		h.stopTranscriptQuietTimers()
 		// Close storage watcher
 		if h.storageWatcher != nil {
 			h.storageWatcher.Close()

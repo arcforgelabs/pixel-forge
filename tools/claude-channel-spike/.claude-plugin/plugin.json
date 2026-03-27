@@ -1,0 +1,17 @@
+{
+  "name": "pixel-forge-channel",
+  "version": "0.0.1",
+  "description": "Local Pixel Forge Claude channel ingress spike for testing native live session wakeups.",
+  "keywords": [
+    "pixel-forge",
+    "channel",
+    "mcp",
+    "claude"
+  ],
+  "mcpServers": "./.mcp.json",
+  "channels": [
+    {
+      "server": "pixel-forge-channel"
+    }
+  ]
+}

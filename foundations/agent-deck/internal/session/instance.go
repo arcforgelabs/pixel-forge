@@ -418,6 +418,7 @@ func extractGroupPath(projectPath string) string {
 func (i *Instance) buildClaudeCommand(baseCommand string) string {
 	envPrefix := i.buildEnvSourceCommand()
 	cmd := i.buildClaudeCommandWithMessage(baseCommand, "")
+	cmd = i.wrapClaudeDevelopmentChannelCommand(cmd)
 	return envPrefix + cmd
 }
 
@@ -576,11 +577,71 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 			flags = append(flags, "--teammate-mode tmux")
 		}
 	}
+	flags = append(flags, i.buildClaudeChannelFlags()...)
 
 	if len(flags) == 0 {
 		return ""
 	}
 	return " " + strings.Join(flags, " ")
+}
+
+func (i *Instance) buildClaudeChannelFlags() []string {
+	var flags []string
+
+	mcpConfig := strings.TrimSpace(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_MCP_CONFIG"))
+	if mcpConfig != "" {
+		flags = append(flags, "--mcp-config "+strconv.Quote(mcpConfig))
+	}
+
+	channelEntry := strings.TrimSpace(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY"))
+	if channelEntry == "" {
+		return flags
+	}
+
+	if envBoolEnabled(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_DEVELOPMENT")) {
+		flags = append(flags, "--dangerously-load-development-channels "+channelEntry)
+		return flags
+	}
+
+	flags = append(flags, "--channels "+channelEntry)
+	return flags
+}
+
+func (i *Instance) wrapClaudeDevelopmentChannelCommand(command string) string {
+	if !i.shouldAutoConfirmClaudeDevelopmentChannels() {
+		return command
+	}
+
+	wrapperPath := preferredClaudeDevChannelWrapper()
+	if wrapperPath == "" {
+		sessionLog.Warn("claude_dev_channel_wrapper_missing")
+		return command
+	}
+
+	return fmt.Sprintf(
+		`python3 %s -- /bin/bash -lc %s`,
+		strconv.Quote(wrapperPath),
+		strconv.Quote(command),
+	)
+}
+
+func (i *Instance) shouldAutoConfirmClaudeDevelopmentChannels() bool {
+	if !envBoolEnabled(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_DEVELOPMENT")) {
+		return false
+	}
+	if !envBoolEnabled(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_AUTO_CONFIRM")) {
+		return false
+	}
+	return strings.TrimSpace(os.Getenv("AGENTDECK_CLAUDE_CHANNEL_ENTRY")) != ""
+}
+
+func envBoolEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 // buildGeminiCommand builds the gemini command with session capture
@@ -4059,17 +4120,23 @@ func (i *Instance) buildClaudeResumeCommand() string {
 	} else if allowDangerousMode {
 		dangerousFlag = " --allow-dangerously-skip-permissions"
 	}
+	channelFlags := ""
+	if flags := i.buildClaudeChannelFlags(); len(flags) > 0 {
+		channelFlags = " " + strings.Join(flags, " ")
+	}
 
 	// CLAUDE_SESSION_ID is propagated via host-side SetEnvironment (SyncSessionIDsToTmux)
 	// after the tmux session is restarted. No inline tmux set-environment in the shell string
 	// (which silently fails inside Docker sandbox containers).
 	if useResume {
-		return fmt.Sprintf("%s%s --resume %s%s",
-			configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+		return i.wrapClaudeDevelopmentChannelCommand(fmt.Sprintf("%s%s --resume %s%s%s",
+			configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag, channelFlags,
+		))
 	}
 	// Session was never interacted with - use --session-id to create fresh session.
-	return fmt.Sprintf("%s%s --session-id %s%s",
-		configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag)
+	return i.wrapClaudeDevelopmentChannelCommand(fmt.Sprintf("%s%s --session-id %s%s%s",
+		configDirPrefix, claudeCmd, i.ClaudeSessionID, dangerousFlag, channelFlags,
+	))
 }
 
 // SetGeminiModel sets the Gemini model for this session and triggers a restart if running.
@@ -4236,6 +4303,7 @@ func (i *Instance) buildClaudeForkCommandForTarget(target *Instance, opts *Claud
 	if err != nil {
 		return "", err
 	}
+	cmd = target.wrapClaudeDevelopmentChannelCommand(cmd)
 
 	return cmd, nil
 }

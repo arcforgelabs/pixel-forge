@@ -5,6 +5,8 @@ package send
 
 import (
 	"strings"
+
+	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
 // HasUnsentPastedPrompt detects Claude's composer marker for a pasted-but-unsent prompt.
@@ -139,11 +141,58 @@ func CurrentComposerPrompt(content string) (string, bool) {
 	return "", false
 }
 
+// CurrentPromptForTool extracts the visible prompt/input content for a specific
+// tool. This is used for safe background catch-up checks where we must not
+// clobber an operator's unsent input.
+func CurrentPromptForTool(tool, content string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "codex":
+		return currentCodexPrompt(content)
+	default:
+		return CurrentComposerPrompt(content)
+	}
+}
+
 // HasCurrentComposerPrompt returns true if a composer prompt is visible in the
 // terminal pane content.
 func HasCurrentComposerPrompt(content string) bool {
 	_, ok := CurrentComposerPrompt(content)
 	return ok
+}
+
+func currentCodexPrompt(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	if len(lines) > 120 {
+		lines = lines[len(lines)-120:]
+	}
+
+	for i := len(lines) - 1; i >= 0; i-- {
+		clean := strings.TrimSpace(tmux.StripANSI(lines[i]))
+		clean = strings.ReplaceAll(clean, "\u00a0", " ")
+		if clean == "" {
+			continue
+		}
+
+		if clean == "Continue?" || strings.HasPrefix(clean, "Continue?") {
+			return "Continue?", true
+		}
+		if clean == "codex>" {
+			return "", true
+		}
+		if strings.HasPrefix(clean, "codex> ") {
+			return NormalizePromptText(strings.TrimSpace(strings.TrimPrefix(clean, "codex>"))), true
+		}
+		if clean == "›" || clean == "❯" {
+			return "", true
+		}
+		for _, marker := range []string{"› ", "❯ "} {
+			if strings.HasPrefix(clean, marker) {
+				return NormalizePromptText(strings.TrimSpace(strings.TrimPrefix(clean, marker))), true
+			}
+		}
+	}
+
+	return "", false
 }
 
 // HasUnsentComposerPrompt detects when the message text is still present in the

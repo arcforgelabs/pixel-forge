@@ -8,6 +8,11 @@ if [[ -f "$SCRIPT_DIR/alpha-env.sh" ]]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/alpha-env.sh"
 fi
+CHANNEL_ENV_FILE="${PIXEL_FORGE_CLAUDE_CHANNEL_ENV_FILE:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge-alpha}/claude-channel-spike.env}"
+if [[ -f "$CHANNEL_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CHANNEL_ENV_FILE"
+fi
 FOUNDATION_ROOT="${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-$REPO_ROOT/foundations/agent-deck}"
 BUILD_DIR="$FOUNDATION_ROOT/build"
 DEFAULT_BUILD_BIN="$BUILD_DIR/agent-deck"

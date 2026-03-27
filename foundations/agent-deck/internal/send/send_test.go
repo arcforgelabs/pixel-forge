@@ -130,6 +130,58 @@ func TestHasCurrentComposerPrompt(t *testing.T) {
 	}
 }
 
+func TestCurrentPromptForTool_Codex(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+		ok      bool
+	}{
+		{
+			name:    "empty codex prompt",
+			content: "status line\ncodex>\n",
+			want:    "",
+			ok:      true,
+		},
+		{
+			name:    "typed codex prompt",
+			content: "status line\ncodex> explain this file\n",
+			want:    "explain this file",
+			ok:      true,
+		},
+		{
+			name:    "continue confirmation",
+			content: "Continue?\n[y/N]\n",
+			want:    "Continue?",
+			ok:      true,
+		},
+		{
+			name:    "fallback chevron prompt",
+			content: "› summarize recent changes\n",
+			want:    "summarize recent changes",
+			ok:      true,
+		},
+		{
+			name:    "no codex prompt",
+			content: "plain output only\n",
+			want:    "",
+			ok:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := CurrentPromptForTool("codex", tt.content)
+			if ok != tt.ok {
+				t.Fatalf("CurrentPromptForTool(codex) ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("CurrentPromptForTool(codex) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParsePromptFromComposerBlock(t *testing.T) {
 	lines := []string{
 		"❯ hello world",

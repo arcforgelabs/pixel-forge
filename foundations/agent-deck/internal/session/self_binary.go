@@ -10,6 +10,7 @@ const (
 	AgentDeckExecutableEnvVar       = "AGENTDECK_EXECUTABLE"
 	LegacyAgentDeckExecutableEnvVar = "AGENT_DECK_EXECUTABLE"
 	agentDeckHookCommandShell       = "\"${AGENTDECK_EXECUTABLE:-${AGENT_DECK_EXECUTABLE:-agent-deck}}\" hook-handler"
+	claudeDevChannelWrapperName     = "claude_dev_channel_wrapper.py"
 )
 
 var (
@@ -48,6 +49,10 @@ func preferredAgentDeckHookCommand() string {
 	return agentDeckHookCommandShell
 }
 
+func preferredClaudeDevChannelWrapper() string {
+	return preferredAgentDeckScript(claudeDevChannelWrapperName)
+}
+
 func currentProcessAgentDeckExecutable() string {
 	resolved := resolvedCurrentExecutable()
 	if resolved == "" {
@@ -57,6 +62,31 @@ func currentProcessAgentDeckExecutable() string {
 	base := strings.ToLower(filepath.Base(resolved))
 	if strings.HasPrefix(base, "agent-deck") {
 		return resolved
+	}
+
+	return ""
+}
+
+func preferredAgentDeckScript(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return ""
+	}
+
+	candidates := []string{}
+	if exe := preferredAgentDeckExecutable(); exe != "" {
+		baseDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(baseDir, "scripts", filename),
+			filepath.Join(baseDir, "..", "scripts", filename),
+		)
+	}
+
+	for _, candidate := range candidates {
+		resolved := normalizeExecutablePath(candidate)
+		if resolved != "" && executableExists(resolved) {
+			return resolved
+		}
 	}
 
 	return ""
