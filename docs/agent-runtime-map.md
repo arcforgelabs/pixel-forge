@@ -131,6 +131,7 @@ The thing Pixel Forge bypasses is the already-running interactive pane process, 
 - Automatic safe catch-up for the native Claude pane through the existing restart/respawn lane when the session is behind and the prompt is empty.
 - Channel-enabled Claude panes now explicitly skip that respawn catch-up lane and rely on live Channel ingress plus observation-surface freshness instead, because real operator use showed that forcing respawn there caused repeated flashing/frozen UX while the underlying session kept progressing.
 - Fresh blank-start Codex sessions in the installed alpha lane now clear the update/trust interstitial and land at a real prompt. That improves readiness, but it does not change the current Codex transport asymmetry: Pixel Forge still delivers warm turns through `codex exec resume`, so the visible pane is not yet a truthful repaint surface for externally-dispatched Codex turns.
+- Codex now looks materially more promising than Claude for a future native bridge because the official runtime surface is more open and protocol-shaped. The installed CLI exposes `app-server`, `resume`, and `--remote`; `codex app-server generate-json-schema` and `generate-ts` emit first-party thread/turn protocol types like `ThreadStartParams`, `ThreadResumeParams`, `TurnStartParams`, `AgentMessageDeltaNotification`, and `TurnCompletedNotification`. That points to a better long-term Codex seam: one dedicated Codex adapter speaking the official Codex thread/turn protocol while Agent Deck hosts the real Codex UI.
 
 ### What We Tried And Ruled Out
 
@@ -440,15 +441,16 @@ This closes the simple Remote Control adoption hypothesis: the bridge-managed se
 
 ### Cross-Agent Comparison
 
-| Feature | Claude Code v2.1.85 | Codex CLI v0.116.0 | Gemini CLI v0.34.0 |
+| Feature | Claude Code v2.1.85 | Codex CLI v0.117.0 | Gemini CLI v0.34.0 |
 |---------|---------------------|---------------------|---------------------|
 | Session format | JSONL (user/assistant records) | JSONL (Responses API protocol) | Single JSON (messages array) |
-| Headless into existing session | YES (`-r <sid> -p`) | NO (exec = new session) | NO (-p = new session) |
+| Headless into existing session | YES (`-r <sid> -p`) | PARTIAL (`resume <thread>` plus open app-server protocol) | NO (-p = new session) |
 | File watching own transcript | No | No | No |
 | Hooks | 8 event types, mature | Under development, disabled | 6 event types, mature |
-| Resume for catch-up | `--resume <sid>` | `codex resume <sid>` | `--resume <sid>` |
+| Resume for catch-up | `--resume <sid>` | `codex resume <thread>` | `--resume <sid>` |
+| Official live ingress / bridge surface | Channels and bridge-backed worker SSE | Open app-server + remote TUI + typed thread/turn protocol | None proven yet |
 
-**Key asymmetry**: Claude is the only runtime that supports external turn injection into existing sessions. Codex and Gemini headless modes always create new sessions.
+**Key asymmetry**: Claude is the only runtime in this repo that already has a validated in-place live ingress for the ordinary running pane. Codex now appears easier to integrate cleanly in the next phase because it exposes a more open first-party control surface (`app-server` + remote TUI + typed thread/turn protocol), but that lane has not yet been wired into Pixel Forge. Gemini still looks the weakest of the three from a native-ingress point of view.
 
 **Reusable across all agents**: tmux session management, restart/resume catch-up, fsnotify transcript watching, prompt detection, hook-based status sidecar.
 
@@ -459,4 +461,5 @@ This closes the simple Remote Control adoption hypothesis: the bridge-managed se
 1. **Default-vs-opt-in decision**: The local plugin route is now bundled and deployable on individual accounts, so the open product question is no longer packaging. It is whether the dev-bypass + wrapper lane should remain opt-in or become Pixel Forge's default Claude install path.
 2. **Fallback comparison against `tmux send-keys`**: Keep the comparison honest. `tmux send-keys` is still the only universal native-UI fallback across agents, but it is input replay with race conditions, prompt-state ambiguity, and pane-focus quirks. Channels stay preferable wherever a sanctioned ingress is actually usable.
 3. **Upstream watch**: The `internalEventReader`/`internalEventWriter` pair and the bridge infrastructure prove Anthropic has internal session-sync primitives. Track whether these become externally accessible.
-4. **Cross-agent transcript watch**: Extend `transcript_sync.go` to watch Codex rollout files and Gemini JSON files, not just Claude JSONL. This gives all agents event-driven stale detection and automated catch-up.
+4. **Codex-native bridge spike**: Build a dedicated Codex adapter spike around the official app-server and remote-TUI surfaces instead of deepening `codex exec resume` or mixing Codex logic into Claude's channel lane.
+5. **Cross-agent transcript watch**: Extend `transcript_sync.go` to watch Codex rollout files and Gemini JSON files, not just Claude JSONL. This gives all agents event-driven stale detection and automated catch-up where no stronger native ingress exists.

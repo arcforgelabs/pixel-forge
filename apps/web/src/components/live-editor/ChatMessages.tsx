@@ -15,6 +15,7 @@ import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
 import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, X } from 'lucide-react'
 import { splitTextWithInlineAttachments } from './composer-attachments'
+import toast from 'react-hot-toast'
 
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
@@ -70,6 +71,7 @@ export function ChatMessages({
   onLoadPreviewUpdate,
 }: ChatMessagesProps) {
   const {
+    replayMessageIntoNewChat,
     messages,
     isStreaming,
     currentStreamContent,
@@ -109,6 +111,26 @@ export function ChatMessages({
       await navigator.clipboard.writeText(lightboxImage.dataUrl)
     }
   }, [lightboxImage])
+
+  const copyMessage = useCallback(async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content)
+      toast.success('Copied prompt')
+    } catch {
+      toast.error('Failed to copy prompt')
+    }
+  }, [])
+
+  const replayMessage = useCallback(async (messageId: string) => {
+    try {
+      await replayMessageIntoNewChat(messageId)
+      toast.success('Prepared a fresh chat with the same prompt and selections')
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to replay this prompt'
+      )
+    }
+  }, [replayMessageIntoNewChat])
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -355,7 +377,7 @@ export function ChatMessages({
               <div
                 className={`forge-msg-enter ${
                   msg.role === 'user'
-                    ? 'max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-foreground ring-1 ring-primary/20'
+                    ? 'group/message max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-foreground ring-1 ring-primary/20'
                     : 'max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30'
                 }`}
               >
@@ -383,6 +405,32 @@ export function ChatMessages({
                   </div>
                 ) : (
                   <div className="space-y-3">
+                    <div className="flex justify-end gap-1 opacity-0 transition-opacity duration-100 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void copyMessage(msg.content)
+                        }}
+                        className="rounded-md border border-white/10 bg-black/10 p-1 text-foreground/80 transition-colors hover:bg-black/20 hover:text-foreground"
+                        title="Copy prompt"
+                        aria-label="Copy prompt"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                      {msg.replayDraft && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void replayMessage(msg.id)
+                          }}
+                          className="rounded-md border border-white/10 bg-black/10 p-1 text-foreground/80 transition-colors hover:bg-black/20 hover:text-foreground"
+                          title="Replay into a fresh chat"
+                          aria-label="Replay into a fresh chat"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
                     {msg.content && (
                       renderInlineUserContent(msg.content, msg.attachments)
                     )}

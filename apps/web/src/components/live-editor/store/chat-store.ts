@@ -78,6 +78,7 @@ export interface ChatMessage {
   canApplyControllerUpdate?: boolean
   canLoadPreviewUpdate?: boolean
   observedSessionId?: string | null
+  replayDraft?: ReplayDraftSnapshot
 }
 
 export interface SelectedElement extends SelectionRecord {
@@ -86,6 +87,19 @@ export interface SelectedElement extends SelectionRecord {
 
 interface PendingOutboundMessage {
   payload: Record<string, unknown>
+}
+
+interface ComposerSeed {
+  content: string
+  attachments: ChatAttachment[]
+}
+
+interface ReplayDraftSnapshot {
+  projectPath: string | null
+  editorState: PersistedThreadEditorState
+  selectedElements: SelectedElement[]
+  content: string
+  attachments: ChatAttachment[]
 }
 
 interface ObservedAgentDeckActivity {
@@ -228,6 +242,7 @@ export interface ThreadEditorState {
 type StateSetterValue<T> = T | ((current: T) => T)
 
 export interface ThreadChatState {
+  projectPath: string | null
   messages: ChatMessage[]
   isStreaming: boolean
   currentStreamContent: string
@@ -239,6 +254,7 @@ export interface ThreadChatState {
   ws: WebSocket | null
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
+  pendingComposerSeed: ComposerSeed | null
   targetAgentDeckSessionId: string | null
   draftAgentType: string
   draftWorkspaceMode: DraftWorkspaceMode
@@ -258,6 +274,7 @@ export interface ThreadChatState {
 }
 
 interface ActiveThreadViewState {
+  projectPath: string | null
   messages: ChatMessage[]
   isStreaming: boolean
   currentStreamContent: string
@@ -269,6 +286,7 @@ interface ActiveThreadViewState {
   ws: WebSocket | null
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
+  pendingComposerSeed: ComposerSeed | null
   targetAgentDeckSessionId: string | null
   draftAgentType: string
   draftWorkspaceMode: DraftWorkspaceMode
@@ -312,6 +330,8 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   disconnect: (threadKey?: string | null) => void
   disconnectAll: () => void
   sendMessage: (content: string, attachments?: ChatAttachment[]) => void
+  replayMessageIntoNewChat: (messageId: string) => Promise<void>
+  consumePendingComposerSeed: (threadKey?: string | null) => ComposerSeed | null
   clearMessages: () => void
   newSession: (targetAgentDeckSessionId?: string | null) => void
   removeThread: (threadKey: string | null | undefined, fallbackThreadKey?: string | null) => void
@@ -376,6 +396,10 @@ function getDefaultDraftAgentType(): string {
   return normalizeDraftAgentType(useSessionStore.getState().defaultAgentType)
 }
 
+function getCurrentProjectPathSnapshot(): string | null {
+  return useSessionStore.getState().projectPath?.trim() || null
+}
+
 function createDraftThreadKey(): string {
   return `draft-${generateId()}`
 }
@@ -393,6 +417,16 @@ function cloneSelectedElement(element: SelectedElement): SelectedElement {
 
 function cloneSelectionState(elements: SelectedElement[]): SelectedElement[] {
   return elements.map(cloneSelectedElement)
+}
+
+function cloneChatAttachment(attachment: ChatAttachment): ChatAttachment {
+  return {
+    ...attachment,
+  }
+}
+
+function cloneChatAttachments(attachments: ChatAttachment[] | undefined): ChatAttachment[] {
+  return (attachments ?? []).map(cloneChatAttachment)
 }
 
 function createEmptyPreviewTab(index = 1): PreviewTab {
@@ -463,8 +497,9 @@ function pushUndoSnapshot(
   return nextHistory.slice(-MAX_SELECTION_HISTORY)
 }
 
-function createEmptyThreadState(): ThreadChatState {
+function createEmptyThreadState(projectPath: string | null = getCurrentProjectPathSnapshot()): ThreadChatState {
   return {
+    projectPath,
     messages: [],
     isStreaming: false,
     currentStreamContent: '',
@@ -476,6 +511,7 @@ function createEmptyThreadState(): ThreadChatState {
     ws: null,
     connected: false,
     queuedMessages: [],
+    pendingComposerSeed: null,
     targetAgentDeckSessionId: null,
     selectedElements: [],
     selectionUndoStack: [],
@@ -638,12 +674,26 @@ function buildPersistedEditorState(
   }
 }
 
+function buildReplayDraftSnapshot(
+  threadState: ThreadChatState,
+  content: string,
+  attachments: ChatAttachment[] | undefined
+): ReplayDraftSnapshot {
+  return {
+    projectPath: threadState.projectPath,
+    editorState: buildPersistedEditorState(threadState),
+    selectedElements: cloneSelectionState(threadState.selectedElements),
+    content,
+    attachments: cloneChatAttachments(attachments),
+  }
+}
+
 function createThreadStateFromSession(
   session: LiveEditorSessionMeta,
   fallbackUrl?: string | null
 ): ThreadChatState {
   return {
-    ...createEmptyThreadState(),
+    ...createEmptyThreadState(session.projectPath?.trim() || null),
     targetAgentDeckSessionId: session.agentDeckSessionId ?? null,
     ...createThreadEditorStateFromPersisted(session.editorState, fallbackUrl),
   }
@@ -696,6 +746,7 @@ function buildActiveThreadViewState(
   threadState: ThreadChatState
 ): ActiveThreadViewState {
   return {
+    projectPath: threadState.projectPath,
     messages: threadState.messages,
     isStreaming: threadState.isStreaming,
     currentStreamContent: threadState.currentStreamContent,
@@ -707,6 +758,7 @@ function buildActiveThreadViewState(
     ws: threadState.ws,
     connected: threadState.connected,
     queuedMessages: threadState.queuedMessages,
+    pendingComposerSeed: threadState.pendingComposerSeed,
     targetAgentDeckSessionId: threadState.targetAgentDeckSessionId,
     draftAgentType: threadState.draftAgentType,
     draftWorkspaceMode: threadState.draftWorkspaceMode,
@@ -1560,6 +1612,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const syncSessionRecord = (
     payload: {
+      projectPath: string | null
       threadId: string
       backend: string
       workspacePath: string | null
@@ -1572,6 +1625,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   ) => {
     const sessionStore = useSessionStore.getState()
     const session = {
+      projectPath: payload.projectPath,
       threadId: payload.threadId,
       backend: payload.backend,
       workspacePath: payload.workspacePath,
@@ -1596,12 +1650,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const persistThreadSessionNow = async (threadKey: string) => {
     const sessionStore = useSessionStore.getState()
-    const projectPath = sessionStore.projectPath
+    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
+    const projectPath =
+      threadState.projectPath?.trim() || sessionStore.projectPath?.trim() || null
     if (!projectPath) {
       return
     }
-
-    const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
     const boundSession = resolveThreadSession(threadKey)
     if (!shouldPersistThreadState(threadState, boundSession)) {
       return
@@ -1615,6 +1669,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       ? sessionStore.agentDeckTargets.find((target) => target.id === targetAgentDeckSessionId) ?? null
       : null
     const savedSession = await sessionStore.persistProjectSession({
+      projectPath,
       threadId: threadKey,
       backend: boundSession?.backend ?? 'agent-deck',
       workspacePath:
@@ -1641,6 +1696,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
     if (savedSession && get().activeThreadKey === resolvedThreadKey) {
       useSessionStore.getState().setLiveEditorSession({
+        projectPath: savedSession.projectPath,
         threadId: savedSession.threadId,
         backend: savedSession.backend,
         workspacePath: savedSession.workspacePath,
@@ -1859,6 +1915,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             threadKeyRef = migrateThreadState(threadKeyRef, nextThreadId)
             syncSessionRecord(
               {
+                projectPath:
+                  getThreadStateSnapshot(get().threadStates, threadKeyRef).projectPath
+                  ?? getCurrentProjectPathSnapshot(),
                 threadId: nextThreadId,
                 backend: data.backend || 'agent-deck',
                 workspacePath: data.workspace_path ?? null,
@@ -1896,6 +1955,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         case 'complete': {
           const threadState = getThreadStateSnapshot(get().threadStates, threadKeyRef)
           const wasActiveThread = get().activeThreadKey === threadKeyRef
+          const threadProjectPath =
+            threadState.projectPath?.trim() || getCurrentProjectPathSnapshot()
           const nextThreadId =
             typeof data.session_id === 'string' && data.session_id
               ? data.session_id
@@ -1919,6 +1980,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           if (nextThreadId) {
             syncSessionRecord(
               {
+                projectPath:
+                  getThreadStateSnapshot(get().threadStates, threadKeyRef).projectPath
+                  ?? threadProjectPath,
                 threadId: nextThreadId,
                 backend: data.backend || 'agent-deck',
                 workspacePath: resolvedWorkspacePath,
@@ -1944,7 +2008,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               ? data.self_edit_scope
               : null
           const cloneWorkspaceBound = isCloneWorkspaceBound({
-            projectPath: sessionState.projectPath,
+            projectPath: threadProjectPath,
             workspacePath: resolvedWorkspacePath,
           })
           const canLoadPreviewUpdate = selfEditScope === 'preview'
@@ -2020,9 +2084,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           }
 
           if (canLoadPreviewUpdate) {
-            if (sessionState.projectPath && resolvedWorkspacePath) {
+            if (threadProjectPath && resolvedWorkspacePath) {
               void stagePreviewUpdateNotice({
-                projectPath: sessionState.projectPath,
+                projectPath: threadProjectPath,
                 workspacePath: resolvedWorkspacePath,
                 previewUrl: getThreadPreviewUrl(threadKeyRef),
                 activeMode: sessionState.activeMode,
@@ -2033,9 +2097,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               })
             }
           } else if (canStageControllerUpdate) {
-            if (sessionState.projectPath) {
+            if (threadProjectPath) {
               void stageControllerUpdateNotice({
-                projectPath: sessionState.projectPath,
+                projectPath: threadProjectPath,
                 previewUrl: getThreadPreviewUrl(threadKeyRef),
                 activeMode: sessionState.activeMode,
                 requestId,
@@ -2201,6 +2265,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         clearTimeout(timer)
       }
       threadPersistenceTimers.clear()
+      stopObservedThreadStreaming()
+
+      const currentThreadStates = get().threadStates
+      for (const threadKey of Object.keys(currentThreadStates)) {
+        closeThreadSocket(threadKey, true)
+      }
 
       const nextThreadStates: Record<string, ThreadChatState> = {}
       const preferredThreadKey = activeThreadKey?.trim() || projectSessions[0]?.threadId || null
@@ -2215,7 +2285,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       if (Object.keys(nextThreadStates).length === 0) {
         const draftThreadKey = preferredThreadKey || createDraftThreadKey()
         nextThreadStates[draftThreadKey] = {
-          ...createEmptyThreadState(),
+          ...createEmptyThreadState(getCurrentProjectPathSnapshot()),
           ...createThreadEditorStateFromPersisted(null, previewUrl),
         }
       }
@@ -2278,13 +2348,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const { buildSelectionPayload, getProjectPath } = get()
       const trimmedContent = content.trim()
       const hasAttachments = attachments.length > 0
-      const projectPath = getProjectPath()
+      const sessionProjectPath = getProjectPath()
 
       if (!trimmedContent && !hasAttachments) {
         return
       }
 
-      if (!projectPath) {
+      if (!sessionProjectPath) {
         appendSystemError(
           activeThreadKey,
           'No project path configured. Please select a project first.'
@@ -2309,6 +2379,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         || buildAttachmentSummary(attachments)
       const sessionState = useSessionStore.getState()
       const boundSession = resolveThreadSession(activeThreadKey)
+      const projectPath =
+        activeThreadState.projectPath?.trim() || sessionProjectPath
+      if (
+        activeThreadState.projectPath?.trim()
+        && sessionProjectPath
+        && activeThreadState.projectPath.trim() !== sessionProjectPath
+      ) {
+        appendSystemError(
+          activeThreadKey,
+          'This draft belongs to a different project. Reopen the correct chat or replay the prompt into a fresh chat for this project.'
+        )
+        return
+      }
       const targetAgentDeckSessionId =
         boundSession?.agentDeckSessionId
         ?? activeThreadState.targetAgentDeckSessionId
@@ -2339,6 +2422,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             content: userVisibleContent,
             attachments: hasAttachments ? attachments : undefined,
             timestamp: new Date(),
+            replayDraft: buildReplayDraftSnapshot(
+              activeThreadState,
+              trimmedContent,
+              attachments
+            ),
           },
         ],
         isStreaming: true,
@@ -2467,6 +2555,85 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       })()
     },
 
+    replayMessageIntoNewChat: async (messageId) => {
+      const activeThreadKey = get().activeThreadKey
+      const sourceThreadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+      const sourceMessage = sourceThreadState.messages.find((message) => message.id === messageId)
+      if (!sourceMessage || sourceMessage.role !== 'user' || !sourceMessage.replayDraft) {
+        throw new Error('That prompt can no longer be replayed.')
+      }
+
+      const replayDraft = sourceMessage.replayDraft
+      const sessionStore = useSessionStore.getState()
+      const targetProjectPath =
+        replayDraft.projectPath?.trim() || sessionStore.projectPath?.trim() || null
+      if (!targetProjectPath) {
+        throw new Error('Project path is required to replay this prompt.')
+      }
+
+      if (sessionStore.projectPath?.trim() !== targetProjectPath) {
+        await sessionStore.setProject({ path: targetProjectPath })
+      }
+
+      const created = await useSessionStore.getState().createProjectChatSession({
+        agentType:
+          replayDraft.editorState.draftAgentType
+          ?? sourceThreadState.draftAgentType
+          ?? useSessionStore.getState().defaultAgentType,
+        workspaceMode:
+          replayDraft.editorState.draftWorkspaceMode
+          ?? sourceThreadState.draftWorkspaceMode
+          ?? 'clone',
+      })
+
+      if (!created.threadId) {
+        throw new Error('Failed to create a fresh chat for replay.')
+      }
+
+      const createdSession = useSessionStore.getState().projectSessions.find(
+        (session) => session.threadId === created.threadId
+      ) ?? null
+      if (createdSession) {
+        useSessionStore.getState().switchToThread(createdSession)
+      }
+      get().activateThread(created.threadId)
+
+      updateThreadState(created.threadId, (threadState) => ({
+        ...threadState,
+        projectPath: targetProjectPath,
+        targetAgentDeckSessionId: null,
+        selectedElements: cloneSelectionState(replayDraft.selectedElements),
+        selectionUndoStack: [],
+        selectionRedoStack: [],
+        pendingComposerSeed: {
+          content: replayDraft.content,
+          attachments: cloneChatAttachments(replayDraft.attachments),
+        },
+        ...createThreadEditorStateFromPersisted(replayDraft.editorState),
+      }))
+
+      scheduleThreadPersistence(created.threadId, 0)
+    },
+
+    consumePendingComposerSeed: (threadKey) => {
+      const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
+      const existingSeed = getThreadStateSnapshot(
+        get().threadStates,
+        resolvedThreadKey
+      ).pendingComposerSeed
+      if (!existingSeed) {
+        return null
+      }
+      updateThreadState(resolvedThreadKey, (threadState) => ({
+        ...threadState,
+        pendingComposerSeed: null,
+      }))
+      return {
+        content: existingSeed.content,
+        attachments: cloneChatAttachments(existingSeed.attachments),
+      }
+    },
+
     clearMessages: () => {
       updateThreadState(get().activeThreadKey, (threadState) =>
         resetThreadRuntimeState(threadState, {
@@ -2479,7 +2646,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     newSession: (targetAgentDeckSessionId = null) => {
       const nextDraftKey = createDraftThreadKey()
       const nextThreadState = {
-        ...createEmptyThreadState(),
+        ...createEmptyThreadState(getCurrentProjectPathSnapshot()),
         targetAgentDeckSessionId: targetAgentDeckSessionId?.trim() || null,
       }
       useSessionStore.getState().clearLiveEditorSession()

@@ -233,6 +233,60 @@ describe("session-store thread switching", () => {
     expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 
+  it("does not merge a late session update into the wrong active project", () => {
+    useSessionStore.setState({
+      projectPath: "/tmp/active-project",
+      projectSessions: [
+        createProjectSession({
+          projectPath: "/tmp/active-project",
+          threadId: "thread-active",
+          workspacePath: "/tmp/active-project/.agents/thread-active",
+          agentDeckSessionId: "deck-session-active",
+        }),
+      ],
+      projectSessionsByProject: {
+        "/tmp/active-project": [
+          createProjectSession({
+            projectPath: "/tmp/active-project",
+            threadId: "thread-active",
+            workspacePath: "/tmp/active-project/.agents/thread-active",
+            agentDeckSessionId: "deck-session-active",
+          }),
+        ],
+      },
+      projectChats: [],
+      projectChatsByProject: {},
+    });
+
+    useSessionStore.getState().upsertProjectSession({
+      projectPath: "/tmp/other-project",
+      threadId: "thread-other",
+      backend: "agent-deck",
+      workspacePath: "/tmp/other-project/.agents/thread-other",
+      agentDeckSessionId: "deck-session-other",
+      agentDeckSessionTitle: "pixel-forge-thread-other",
+      agentDeckTool: "claude",
+      requestId: "request-other",
+      editorState: null,
+    });
+
+    expect(
+      useSessionStore.getState().projectSessions.map((session) => session.threadId)
+    ).toEqual(["thread-active"]);
+    expect(
+      useSessionStore
+        .getState()
+        .projectSessionsByProject["/tmp/other-project"]
+        ?.map((session) => session.threadId)
+    ).toEqual(["thread-other"]);
+    expect(
+      useSessionStore
+        .getState()
+        .projectChatsByProject["/tmp/other-project"]
+        ?.map((chat) => chat.threadId)
+    ).toEqual(["thread-other"]);
+  });
+
   it("restores the preferred project thread from the persisted default profile", async () => {
     await useSessionStore.getState().hydrateProjects();
     await useSessionStore.getState().setProject({

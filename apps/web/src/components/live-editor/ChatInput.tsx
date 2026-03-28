@@ -82,8 +82,11 @@ export function ChatInput() {
     paste: 0,
   })
   const {
+    activeThreadKey,
     sendMessage,
     isStreaming,
+    pendingComposerSeed,
+    consumePendingComposerSeed,
     selectedElements,
     targetAgentDeckSessionId,
     draftAgentType,
@@ -169,6 +172,13 @@ export function ChatInput() {
       image: 0,
       file: 0,
       paste: 0,
+    }
+  }
+
+  function syncAttachmentOrdinalsFromAttachments(nextAttachments: ChatAttachment[]) {
+    resetAttachmentOrdinals()
+    for (const attachment of nextAttachments) {
+      attachmentOrdinalRef.current[attachment.kind] += 1
     }
   }
 
@@ -301,6 +311,19 @@ export function ChatInput() {
     }
     setActiveSkillIndex(0)
   }, [activeSkillTokenKey, dismissedSkillToken])
+
+  useEffect(() => {
+    const seed = consumePendingComposerSeed(activeThreadKey)
+    if (!seed) {
+      return
+    }
+
+    setInput(seed.content)
+    setAttachments(seed.attachments)
+    syncAttachmentOrdinalsFromAttachments(seed.attachments)
+    setCaretIndex(seed.content.length)
+    focusTextareaAt(seed.content.length)
+  }, [activeThreadKey, consumePendingComposerSeed, pendingComposerSeed])
 
   // Close agent picker on outside click
   useEffect(() => {

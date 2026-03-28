@@ -615,6 +615,153 @@ describe('live editor selection history', () => {
     ).toBeNull()
   })
 
+  it('replays a user prompt into a fresh chat with the same selections and preview state', async () => {
+    const sourceThreadKey = useLiveEditorStore.getState().activeThreadKey
+    const sourceSelection = createSelection('one')
+    const sourceSelectedElement = {
+      ...sourceSelection,
+      timestamp: new Date(),
+    }
+    const sourceAttachment = {
+      id: 'attachment-1',
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      dataUrl: 'data:text/plain;base64,bm90ZXM=',
+      kind: 'file' as const,
+      label: 'File #1',
+      inlineToken: '[File #1]',
+    }
+    const createdSession = {
+      id: 7,
+      projectPath: '/tmp/example-project',
+      workspacePath: '/tmp/example-project',
+      threadId: 'chat-replayed',
+      backend: 'agent-deck',
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: 'Chat chat-repl',
+      agentDeckTool: null,
+      editorState: {
+        activePreviewTool: null,
+        targetUrl: '',
+        activeTab: 'chat' as const,
+        viewportMode: 'fluid' as const,
+        showUrlHistory: false,
+        previewTabs: [],
+        activePreviewTabId: null,
+        urlHistory: [],
+        urlHistoryCursor: -1,
+      },
+      createdAt: '2026-03-21T00:00:00Z',
+      lastActive: '2026-03-21T00:00:00Z',
+      requestId: null,
+    }
+    const createChatSpy = vi.fn(async () => {
+      useSessionStore.setState((state) => ({
+        projectSessions: [...state.projectSessions, createdSession],
+      }))
+      return {
+        id: 'chat-replayed',
+        projectPath: '/tmp/example-project',
+        title: 'Chat chat-repl',
+        threadId: 'chat-replayed',
+        workspacePath: '/tmp/example-project',
+        backend: 'agent-deck',
+        agentDeckSessionId: null,
+        agentDeckSessionTitle: 'Chat chat-repl',
+        agentDeckTool: null,
+        agentDeckSessionStatus: null,
+        bindingState: 'detached' as const,
+        workspaceKind: 'root' as const,
+        originKind: 'managed' as const,
+        createdAt: '2026-03-21T00:00:00Z',
+        lastActive: '2026-03-21T00:00:00Z',
+      }
+    })
+
+    useSessionStore.setState({
+      createProjectChatSession: createChatSpy as never,
+    })
+
+    setActiveThreadState({
+      projectPath: '/tmp/example-project',
+      draftAgentType: 'codex',
+      draftWorkspaceMode: 'root',
+      selectedElements: [sourceSelectedElement],
+      targetUrl: 'http://thread-one.localhost:3000',
+      activePreviewTabId: 'tab-one',
+      previewTabs: [
+        {
+          id: 'tab-one',
+          url: 'http://thread-one.localhost:3000',
+          title: 'Thread One',
+          mode: 'browser',
+          proxySessionId: null,
+          browserTabId: 'browser-tab-one',
+          frameSrc: 'about:blank',
+          snapshotDataUrl: null,
+          localTarget: null,
+          workspacePreview: null,
+        },
+      ],
+      messages: [
+        {
+          id: 'msg-user',
+          role: 'user',
+          content: 'Replay this [File #1]',
+          attachments: [sourceAttachment],
+          timestamp: new Date(),
+          replayDraft: {
+            projectPath: '/tmp/example-project',
+            editorState: {
+              draftAgentType: 'codex',
+              draftWorkspaceMode: 'root',
+              activePreviewTool: null,
+              targetUrl: 'http://thread-one.localhost:3000',
+              activeTab: 'chat',
+              viewportMode: 'desktop',
+              showUrlHistory: false,
+              previewTabs: [
+                {
+                  id: 'tab-one',
+                  url: 'http://thread-one.localhost:3000',
+                  title: 'Thread One',
+                  mode: 'browser',
+                  localTarget: null,
+                  workspacePreview: null,
+                },
+              ],
+              activePreviewTabId: 'tab-one',
+              urlHistory: ['http://thread-one.localhost:3000'],
+              urlHistoryCursor: 0,
+            },
+            selectedElements: [sourceSelectedElement],
+            content: 'Replay this [File #1]',
+            attachments: [sourceAttachment],
+          },
+        },
+      ],
+    })
+
+    await useLiveEditorStore.getState().replayMessageIntoNewChat('msg-user')
+
+    expect(createChatSpy).toHaveBeenCalledWith({
+      agentType: 'codex',
+      workspaceMode: 'root',
+    })
+    expect(useLiveEditorStore.getState().activeThreadKey).toBe('chat-replayed')
+    expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual(['one'])
+    expect(useLiveEditorStore.getState().previewTabs[0]?.url).toBe('http://thread-one.localhost:3000')
+
+    const composerSeed = useLiveEditorStore
+      .getState()
+      .consumePendingComposerSeed('chat-replayed')
+    expect(composerSeed).toMatchObject({
+      content: 'Replay this [File #1]',
+      attachments: [{ id: 'attachment-1' }],
+    })
+    expect(useLiveEditorStore.getState().threadStates[sourceThreadKey]).toBeTruthy()
+  })
+
   it('hydrates attached Agent Deck snapshot output into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
       targetAgentDeckSessionId: 'deck-session-a',
