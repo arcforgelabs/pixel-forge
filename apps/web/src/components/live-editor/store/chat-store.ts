@@ -29,7 +29,10 @@ import type {
   PixelForgeDesktopPreviewTool,
   PixelForgePendingPreviewUpdate,
 } from '@/types/pixel-forge-desktop'
-import { useSessionStore } from '../../../store/session-store'
+import {
+  selectActiveProjectSessions,
+  useSessionStore,
+} from '../../../store/session-store'
 import {
   buildSelectionArtifacts,
   type SelectionRecord,
@@ -998,6 +1001,7 @@ async function stagePreviewUpdateNotice(options: {
 export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   const threadPersistenceTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let observedThreadKey: string | null = null
+  let observedThreadFromNow = false
   let observedThreadEventSource: EventSource | null = null
   const observedThreadHasPrimaryEvents = new Set<string>()
 
@@ -1009,7 +1013,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     if (sessionState.liveEditorSession?.threadId === threadKey) {
       return sessionState.liveEditorSession
     }
-    return sessionState.projectSessions.find((session) => session.threadId === threadKey) ?? null
+    return selectActiveProjectSessions(sessionState).find(
+      (session) => session.threadId === threadKey
+    ) ?? null
   }
 
   const syncActiveThreadTargetSelection = (threadKey: string | null | undefined) => {
@@ -1064,6 +1070,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     )
     return !currentHasNonObservedMessages && !threadState.isStreaming && !threadState.currentRequestId
   }
+
+  const canObserveThreadEvents = (threadState: ThreadChatState) =>
+    !threadState.isStreaming && !threadState.currentRequestId
 
   const upsertObservedMessage = (
     messages: ChatMessage[],
@@ -1168,7 +1177,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
-      if (!canHydrateObservedThread(currentState)) {
+      if (!canObserveThreadEvents(currentState)) {
         return currentState
       }
 
@@ -1221,7 +1230,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
-      if (!canHydrateObservedThread(currentState)) {
+      if (!canObserveThreadEvents(currentState)) {
         return currentState
       }
 
@@ -1278,7 +1287,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
-      if (!canHydrateObservedThread(currentState)) {
+      if (!canObserveThreadEvents(currentState)) {
         return currentState
       }
 
@@ -1423,13 +1432,17 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       observedThreadHasPrimaryEvents.delete(observedThreadKey)
     }
     observedThreadKey = null
+    observedThreadFromNow = false
     if (observedThreadEventSource) {
       observedThreadEventSource.close()
       observedThreadEventSource = null
     }
   }
 
-  const startObservedAgentDeckActivityStream = (threadKey: string) => {
+  const startObservedAgentDeckActivityStream = (
+    threadKey: string,
+    options?: { fromNow?: boolean }
+  ) => {
     const sessionStore = useSessionStore.getState()
     const projectPath = sessionStore.projectPath
     const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
@@ -1439,43 +1452,47 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       boundSession?.agentDeckSessionId
       ?? threadState.targetAgentDeckSessionId
       ?? null
+    const fromNow = options?.fromNow === true
 
     if (!projectPath || !chatId || !agentDeckSessionId || typeof EventSource === 'undefined') {
       stopObservedThreadStreaming()
       return
     }
 
-    const hasNonObservedMessages = threadState.messages.some(
-      (message) => !message.observedSessionId
-    )
-    if (
-      hasNonObservedMessages
-      || threadState.isStreaming
-      || threadState.currentRequestId
-    ) {
+    if (!canObserveThreadEvents(threadState)) {
       stopObservedThreadStreaming()
       return
     }
 
     stopObservedThreadStreaming()
-    observedThreadHasPrimaryEvents.delete(threadKey)
-    updateThreadState(threadKey, (currentState) => {
-      if (!canHydrateObservedThread(currentState)) {
-        return currentState
-      }
-      const nextMessages = currentState.messages.filter((message) => !message.observedSessionId)
-      if (nextMessages.length === currentState.messages.length) {
-        return currentState
-      }
-      return {
-        ...currentState,
-        messages: nextMessages,
-      }
-    })
+    if (!fromNow) {
+      observedThreadHasPrimaryEvents.delete(threadKey)
+      updateThreadState(threadKey, (currentState) => {
+        if (!canHydrateObservedThread(currentState)) {
+          return currentState
+        }
+        const nextMessages = currentState.messages.filter((message) => !message.observedSessionId)
+        if (nextMessages.length === currentState.messages.length) {
+          return currentState
+        }
+        return {
+          ...currentState,
+          messages: nextMessages,
+        }
+      })
+    }
     observedThreadKey = threadKey
+    observedThreadFromNow = fromNow
+
+    const eventStreamUrl = new URL(
+      `${HTTP_BACKEND_URL}/api/projects/${encodeURIComponent(projectPath)}/chats/${encodeURIComponent(chatId)}/events`
+    )
+    if (fromNow) {
+      eventStreamUrl.searchParams.set('from_now', '1')
+    }
 
     const eventSource = new EventSource(
-      `${HTTP_BACKEND_URL}/api/projects/${encodeURIComponent(projectPath)}/chats/${encodeURIComponent(chatId)}/events`,
+      eventStreamUrl.toString(),
       { withCredentials: true }
     )
     observedThreadEventSource = eventSource
@@ -1547,21 +1564,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       (message) => !message.observedSessionId
     )
 
-    if (
-      !agentDeckSessionId
-      || hasNonObservedMessages
-      || threadState.isStreaming
-      || threadState.currentRequestId
-    ) {
+    if (!agentDeckSessionId || !canObserveThreadEvents(threadState)) {
       stopObservedThreadStreaming()
       return
     }
 
-    if (observedThreadKey === activeThreadKey && observedThreadEventSource) {
+    const fromNow = hasNonObservedMessages
+
+    if (
+      observedThreadKey === activeThreadKey
+      && observedThreadEventSource
+      && observedThreadFromNow === fromNow
+    ) {
       return
     }
 
-    startObservedAgentDeckActivityStream(activeThreadKey)
+    startObservedAgentDeckActivityStream(activeThreadKey, { fromNow })
   }
 
   const closeThreadSocket = (threadKey: string, silent = true) => {
@@ -2397,7 +2415,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         ?? activeThreadState.targetAgentDeckSessionId
         ?? null
       const conflictingThread = targetAgentDeckSessionId
-        ? sessionState.projectSessions.find(
+        ? selectActiveProjectSessions(sessionState).find(
             (session) =>
               session.threadId !== activeThreadKey
               && session.agentDeckSessionId === targetAgentDeckSessionId
@@ -2590,7 +2608,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         throw new Error('Failed to create a fresh chat for replay.')
       }
 
-      const createdSession = useSessionStore.getState().projectSessions.find(
+      const createdSession = selectActiveProjectSessions(useSessionStore.getState()).find(
         (session) => session.threadId === created.threadId
       ) ?? null
       if (createdSession) {

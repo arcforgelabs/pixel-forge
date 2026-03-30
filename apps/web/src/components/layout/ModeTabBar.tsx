@@ -1,4 +1,4 @@
-import { useSessionStore } from "@/store/session-store";
+import { selectActiveProjectChats, useSessionStore } from "@/store/session-store";
 import { IS_TARGET_MODE } from "@/config";
 import { PanelLeft } from "lucide-react";
 
@@ -9,9 +9,9 @@ export function ModeTabBar() {
     settingsSidebarOpen,
     toggleSettingsSidebar,
     liveEditorSession,
-    projectChats,
     selectedAgentDeckTargetId,
   } = useSessionStore();
+  const projectChats = useSessionStore(selectActiveProjectChats);
 
   const activeChatTitle =
     (

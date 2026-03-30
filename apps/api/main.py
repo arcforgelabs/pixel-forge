@@ -117,6 +117,7 @@ from workstation_events import (
     chat_has_primary_workstation_events,
     get_chat_activity_snapshot,
     latest_workstation_event,
+    latest_workstation_event_id,
     list_workstation_events,
     sync_chat_activity_event,
 )
@@ -1524,6 +1525,7 @@ async def stream_project_chat_events(
     project_path: str,
     chat_id: str,
     request: Request,
+    from_now: bool = False,
 ):
     normalized_project_path = normalize_project_path(project_path)
     normalized_chat_id = chat_id.strip()
@@ -1537,7 +1539,14 @@ async def stream_project_chat_events(
     _backfill_chat_history_from_jsonl(normalized_project_path, normalized_chat_id)
 
     async def event_stream():
-        last_event_id = 0
+        last_event_id = (
+            latest_workstation_event_id(
+                normalized_project_path,
+                normalized_chat_id,
+            )
+            if from_now
+            else 0
+        )
         while True:
             if await request.is_disconnected():
                 break

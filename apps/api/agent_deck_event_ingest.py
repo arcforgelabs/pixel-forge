@@ -43,6 +43,18 @@ CHANNEL_WRAPPER_RE = re.compile(
     r"^\s*<channel\b[^>]*>\s*(.*?)\s*</channel>\s*$",
     re.DOTALL | re.IGNORECASE,
 )
+COMMAND_MESSAGE_WRAPPER_RE = re.compile(
+    r"^\s*<command-message\b[^>]*>\s*(.*?)\s*</command-message>\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+COMMAND_MESSAGE_TAG_RE = re.compile(
+    r"<command-message\b[^>]*>\s*(.*?)\s*</command-message>",
+    re.DOTALL | re.IGNORECASE,
+)
+COMMAND_NAME_TAG_RE = re.compile(
+    r"<command-name\b[^>]*>.*?</command-name>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -215,6 +227,14 @@ def _normalize_observed_claude_prompt(prompt_text: str | None) -> str | None:
     match = CHANNEL_WRAPPER_RE.fullmatch(normalized)
     if match is not None:
         normalized = match.group(1).strip()
+
+    normalized = COMMAND_NAME_TAG_RE.sub("", normalized).strip()
+
+    match = COMMAND_MESSAGE_WRAPPER_RE.fullmatch(normalized)
+    if match is not None:
+        normalized = match.group(1).strip()
+    else:
+        normalized = COMMAND_MESSAGE_TAG_RE.sub(lambda found: found.group(1).strip(), normalized).strip()
 
     return normalized or None
 

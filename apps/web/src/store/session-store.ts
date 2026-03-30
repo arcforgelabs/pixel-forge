@@ -176,11 +176,7 @@ interface SessionStore {
 
   // Server-backed project/session state
   recentProjects: SavedProject[];
-  // Active-project projections. The per-project maps remain the registry truth.
-  projectSessions: ProjectSessionRecord[];
   projectSessionsByProject: Record<string, ProjectSessionRecord[]>;
-  // Active-project projections. The per-project maps remain the registry truth.
-  projectChats: ProjectChatRecord[];
   projectChatsByProject: Record<string, ProjectChatRecord[]>;
   profileState: ProfileStateRecord | null;
   profileLoaded: boolean;
@@ -618,37 +614,41 @@ function setProjectChatsForPath(
   };
 }
 
-function getProjectSessionsSnapshot(
-  state: Pick<
-    SessionStore,
-    "projectPath" | "projectSessions" | "projectSessionsByProject"
-  >,
-  projectPath: string | null
+const EMPTY_PROJECT_SESSIONS: ProjectSessionRecord[] = [];
+const EMPTY_PROJECT_CHATS: ProjectChatRecord[] = [];
+
+export function selectProjectSessionsForPath(
+  state: Pick<SessionStore, "projectSessionsByProject">,
+  projectPath: string | null | undefined
 ): ProjectSessionRecord[] {
   if (!projectPath) {
-    return [];
+    return EMPTY_PROJECT_SESSIONS;
   }
 
-  if (projectPath === state.projectPath) {
-    return state.projectSessions;
-  }
-
-  return state.projectSessionsByProject[projectPath] ?? [];
+  return state.projectSessionsByProject[projectPath] ?? EMPTY_PROJECT_SESSIONS;
 }
 
-function getProjectChatsSnapshot(
-  state: Pick<SessionStore, "projectPath" | "projectChats" | "projectChatsByProject">,
-  projectPath: string | null
+export function selectActiveProjectSessions(
+  state: Pick<SessionStore, "projectPath" | "projectSessionsByProject">
+): ProjectSessionRecord[] {
+  return selectProjectSessionsForPath(state, state.projectPath);
+}
+
+export function selectProjectChatsForPath(
+  state: Pick<SessionStore, "projectChatsByProject">,
+  projectPath: string | null | undefined
 ): ProjectChatRecord[] {
   if (!projectPath) {
-    return [];
+    return EMPTY_PROJECT_CHATS;
   }
 
-  if (projectPath === state.projectPath) {
-    return state.projectChats;
-  }
+  return state.projectChatsByProject[projectPath] ?? EMPTY_PROJECT_CHATS;
+}
 
-  return state.projectChatsByProject[projectPath] ?? [];
+export function selectActiveProjectChats(
+  state: Pick<SessionStore, "projectPath" | "projectChatsByProject">
+): ProjectChatRecord[] {
+  return selectProjectChatsForPath(state, state.projectPath);
 }
 
 function mergeSessionIntoProjectMap(
@@ -1102,9 +1102,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Server-backed project/session state
   recentProjects: [],
-  projectSessions: [],
   projectSessionsByProject: {},
-  projectChats: [],
   projectChatsByProject: {},
   profileState: null,
   profileLoaded: false,
@@ -1283,13 +1281,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       liveEditorSession: currentSession,
       selectedAgentDeckTargetId: currentSession?.agentDeckSessionId ?? null,
       recentProjects: mergeProject(currentState.recentProjects, updatedProject),
-      projectSessions: hydratedSessions,
       projectSessionsByProject: setProjectSessionsForPath(
         currentState.projectSessionsByProject,
         savedProject.path,
         hydratedSessions
       ),
-      projectChats,
       projectChatsByProject: setProjectChatsForPath(
         currentState.projectChatsByProject,
         savedProject.path,
@@ -1324,7 +1320,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set((state) => {
       const resolvedProjectPath =
         session.projectPath?.trim() || state.projectPath?.trim() || null;
-      const projectChatsForProject = getProjectChatsSnapshot(
+      const projectChatsForProject = selectProjectChatsForPath(
         state,
         resolvedProjectPath
       );
@@ -1339,15 +1335,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
             mergedChat
           )
         : projectChatsForProject;
-      const isActiveProject = resolvedProjectPath === state.projectPath;
-      const nextProjectChats = mergedChat
-        ? mergeProjectChat(state.projectChats, mergedChat)
-        : state.projectChats;
 
       return {
-        projectSessions: isActiveProject
-          ? mergeSession(state.projectSessions, resolvedProjectPath, session)
-          : state.projectSessions,
         projectSessionsByProject: mergeSessionIntoProjectMap(
           state.projectSessionsByProject,
           resolvedProjectPath,
@@ -1356,7 +1345,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, session),
         ...(mergedChat
           ? {
-              projectChats: isActiveProject ? nextProjectChats : state.projectChats,
               projectChatsByProject: setProjectChatsForPath(
                 state.projectChatsByProject,
                 resolvedProjectPath,
@@ -1401,31 +1389,22 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         : liveEditorSession;
 
     set((state) => {
-      const isActiveProject = resolvedProjectPath === state.projectPath;
-      const currentProjectSessions =
-        state.projectSessionsByProject[resolvedProjectPath] ?? [];
-      const baseProjectSessions = removeSessionByThreadId(
-        isActiveProject ? state.projectSessions : currentProjectSessions,
-        promotedFromThreadId
+      const currentProjectSessions = selectProjectSessionsForPath(
+        state,
+        resolvedProjectPath
       );
-      const baseProjectSessionsForMap = removeSessionByThreadId(
+      const baseProjectSessions = removeSessionByThreadId(
         currentProjectSessions,
         promotedFromThreadId
       );
       const baseProjectChats = removeProjectChatByThreadId(
-        isActiveProject
-          ? state.projectChats
-          : state.projectChatsByProject[resolvedProjectPath] ?? [],
-        promotedFromThreadId
-      );
-      const baseProjectChatsForMap = removeProjectChatByThreadId(
-        state.projectChatsByProject[resolvedProjectPath] ?? [],
+        selectProjectChatsForPath(state, resolvedProjectPath),
         promotedFromThreadId
       );
       const mergedChat = projectChatFromSession(
         resolvedProjectPath,
         savedSession,
-        baseProjectChatsForMap
+        baseProjectChats
       );
       const nextProjectChats = mergedChat
         ? mergeProjectChat(baseProjectChats, mergedChat)
@@ -1433,14 +1412,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
       return {
         liveEditorSession: nextLiveEditorSession,
-        projectSessions: isActiveProject
-          ? mergeSession(baseProjectSessions, resolvedProjectPath, savedSession)
-          : state.projectSessions,
         projectSessionsByProject: mergeSessionIntoProjectMap(
           setProjectSessionsForPath(
             state.projectSessionsByProject,
             resolvedProjectPath,
-            baseProjectSessionsForMap
+            baseProjectSessions
           ),
           resolvedProjectPath,
           savedSession
@@ -1448,7 +1424,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         agentDeckTargets: ensureAgentDeckTargetPresent(state.agentDeckTargets, savedSession),
         ...(mergedChat
           ? {
-              projectChats: isActiveProject ? nextProjectChats : state.projectChats,
               projectChatsByProject: setProjectChatsForPath(
                 state.projectChatsByProject,
                 resolvedProjectPath,
@@ -1469,10 +1444,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       liveEditorSession: session,
       selectedAgentDeckTargetId:
         session?.agentDeckSessionId ?? state.selectedAgentDeckTargetId,
-      projectSessions:
-        resolvedProjectPath === state.projectPath
-          ? mergeSession(state.projectSessions, resolvedProjectPath, session)
-          : state.projectSessions,
       projectSessionsByProject: mergeSessionIntoProjectMap(
         state.projectSessionsByProject,
         resolvedProjectPath,
@@ -1549,7 +1520,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     const targetProjectPath = normalizedRequestedProjectPath ?? projectPath;
 
     if (!targetProjectPath) {
-      set({ projectSessions: [], liveEditorSession: null });
+      set({ liveEditorSession: null });
       return [];
     }
 
@@ -1598,7 +1569,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       : null;
 
     set((state) => ({
-      projectSessions: sessions,
       projectSessionsByProject: setProjectSessionsForPath(
         state.projectSessionsByProject,
         targetProjectPath,
@@ -1619,7 +1589,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     const targetProjectPath = normalizedRequestedProjectPath ?? projectPath;
 
     if (!targetProjectPath) {
-      set({ projectChats: [] });
       return [];
     }
 
@@ -1636,7 +1605,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     }
 
     set((state) => ({
-      projectChats: chats,
       projectChatsByProject: setProjectChatsForPath(
         state.projectChatsByProject,
         targetProjectPath,
@@ -1659,7 +1627,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         fetchAgentDeckTargets(projectPath),
         fetchProjectChats(projectPath).catch((error) => {
           console.error("[session-store] Failed to load project chats:", error);
-          return get().projectChats;
+          return selectActiveProjectChats(get());
         }),
       ]);
       const nextLiveEditorSession = detachUnavailableAgentDeckSession(
@@ -1674,7 +1642,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         ?? (selectedAgentDeckTargetId && targets.some((target) => target.id === selectedAgentDeckTargetId)
           ? selectedAgentDeckTargetId
           : null);
-      const nextProjectSessions = get().projectSessions.map((session) =>
+      const nextProjectSessions = selectActiveProjectSessions(get()).map((session) =>
         detachUnavailableAgentDeckSession(session, targets)
       );
 
@@ -1684,13 +1652,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         selectedAgentDeckTargetId:
           nextLiveEditorSession?.agentDeckSessionId ?? nextSelectedTargetId,
         agentDeckTargetsLoading: false,
-        projectSessions: nextProjectSessions,
         projectSessionsByProject: setProjectSessionsForPath(
           state.projectSessionsByProject,
           projectPath,
           nextProjectSessions
         ),
-        projectChats: nextProjectChats,
         projectChatsByProject: setProjectChatsForPath(
           state.projectChatsByProject,
           projectPath,
@@ -1741,7 +1707,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       const createdSession = projectSessionFromProjectChat(created);
       set((state) => {
         const nextProjectChats = mergeProjectChat(
-          state.projectChatsByProject[projectPath] ?? [],
+          selectProjectChatsForPath(state, projectPath),
           created
         );
         return {
@@ -1759,9 +1725,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
                 liveEditorSession
               )
             : state.agentDeckTargets,
-          projectSessions: createdSession
-            ? mergeSession(state.projectSessions, projectPath, createdSession)
-            : state.projectSessions,
           projectSessionsByProject: createdSession
             ? mergeSessionIntoProjectMap(
                 state.projectSessionsByProject,
@@ -1769,7 +1732,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
                 createdSession
               )
             : state.projectSessionsByProject,
-          projectChats: mergeProjectChat(state.projectChats, created),
           projectChatsByProject: setProjectChatsForPath(
             state.projectChatsByProject,
             projectPath,
@@ -1800,7 +1762,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       const nextProjectChats = shouldRefreshProjectChats
         ? await fetchProjectChats(projectPath).catch((error) => {
             console.error("[session-store] Failed to load project chats:", error);
-            return get().projectChats;
+            return selectActiveProjectChats(get());
           })
         : null;
       set((state) => ({
@@ -1815,7 +1777,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         ),
         ...(nextProjectChats
           ? {
-              projectChats: nextProjectChats,
               projectChatsByProject: setProjectChatsForPath(
                 state.projectChatsByProject,
                 projectPath,
@@ -1848,8 +1809,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       outputMode: "scratch",
       customOutputPath: null,
       lastSavedFile: null,
-      projectSessions: [],
-      projectChats: [],
       agentDeckTargets: [],
       agentDeckTargetsLoading: false,
       selectedAgentDeckTargetId: null,

@@ -6,7 +6,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSessionStore } from '@/store/session-store'
+import {
+  selectActiveProjectChats,
+  selectActiveProjectSessions,
+  useSessionStore,
+} from '@/store/session-store'
 import {
   Dialog,
   DialogContent,
@@ -494,8 +498,6 @@ export function LiveEditorPane() {
     previewUrl,
     activeMode,
     liveEditorSession,
-    projectSessions,
-    projectChats,
     agentDeckTargets,
     createAgentDeckTargetSession,
     refreshProjectChats,
@@ -504,6 +506,8 @@ export function LiveEditorPane() {
     setPendingPreviewUpdate,
     setPreviewUrl,
   } = useSessionStore()
+  const projectSessions = useSessionStore(selectActiveProjectSessions)
+  const projectChats = useSessionStore(selectActiveProjectChats)
 
   const targetUrlRef = useRef(previewUrl || '')
   const previewTabsRef = useRef<PreviewTab[]>([])

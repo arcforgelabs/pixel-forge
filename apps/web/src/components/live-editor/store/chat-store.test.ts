@@ -5,7 +5,10 @@ import {
   type ThreadChatState,
   useLiveEditorStore,
 } from './chat-store'
-import { useSessionStore } from '@/store/session-store'
+import {
+  selectActiveProjectSessions,
+  useSessionStore,
+} from '@/store/session-store'
 
 function createSelection(
   id: string,
@@ -131,6 +134,10 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
   })
 }
 
+function getActiveProjectSessions() {
+  return selectActiveProjectSessions(useSessionStore.getState())
+}
+
 describe('live editor selection history', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', MockWebSocket as unknown as typeof WebSocket)
@@ -162,7 +169,7 @@ describe('live editor selection history', () => {
       liveEditorSession: null,
       activeMode: 'live-editor',
       recentProjects: [],
-      projectSessions: [],
+      projectSessionsByProject: {},
       agentDeckTargets: [],
       agentDeckTargetsLoading: false,
       projectsLoaded: true,
@@ -406,41 +413,43 @@ describe('live editor selection history', () => {
 
   it('hydrates persisted preview state from the shared session store', () => {
     useSessionStore.setState({
-      projectSessions: [
-        {
-          id: 1,
-          projectPath: '/tmp/example-project',
-          workspacePath: '/tmp/example-project/.agents/thread-a',
-          threadId: 'thread-a',
-          backend: 'agent-deck',
-          agentDeckSessionId: 'deck-session-a',
-          agentDeckSessionTitle: 'pixel-forge-thread-a',
-          agentDeckTool: 'codex',
-          editorState: {
-            activePreviewTool: null,
-            targetUrl: 'https://claude.ai/new',
-            activeTab: 'elements',
-            viewportMode: 'desktop',
-            showUrlHistory: false,
-            previewTabs: [
-              {
-                id: 'tab-a',
-                url: 'https://claude.ai/new',
-                title: 'Claude',
-                mode: 'browser',
-                localTarget: null,
-                workspacePreview: null,
-              },
-            ],
-            activePreviewTabId: 'tab-a',
-            urlHistory: ['https://claude.ai/new'],
-            urlHistoryCursor: 0,
+      projectSessionsByProject: {
+        '/tmp/example-project': [
+          {
+            id: 1,
+            projectPath: '/tmp/example-project',
+            workspacePath: '/tmp/example-project/.agents/thread-a',
+            threadId: 'thread-a',
+            backend: 'agent-deck',
+            agentDeckSessionId: 'deck-session-a',
+            agentDeckSessionTitle: 'pixel-forge-thread-a',
+            agentDeckTool: 'codex',
+            editorState: {
+              activePreviewTool: null,
+              targetUrl: 'https://claude.ai/new',
+              activeTab: 'elements',
+              viewportMode: 'desktop',
+              showUrlHistory: false,
+              previewTabs: [
+                {
+                  id: 'tab-a',
+                  url: 'https://claude.ai/new',
+                  title: 'Claude',
+                  mode: 'browser',
+                  localTarget: null,
+                  workspacePreview: null,
+                },
+              ],
+              activePreviewTabId: 'tab-a',
+              urlHistory: ['https://claude.ai/new'],
+              urlHistoryCursor: 0,
+            },
+            createdAt: '2026-03-20T00:00:00Z',
+            lastActive: '2026-03-20T00:00:00Z',
+            requestId: null,
           },
-          createdAt: '2026-03-20T00:00:00Z',
-          lastActive: '2026-03-20T00:00:00Z',
-          requestId: null,
-        },
-      ],
+        ],
+      },
       liveEditorSession: {
         threadId: 'thread-a',
         backend: 'agent-deck',
@@ -453,7 +462,7 @@ describe('live editor selection history', () => {
     })
 
     useLiveEditorStore.getState().hydrateProjectThreads({
-      projectSessions: useSessionStore.getState().projectSessions,
+      projectSessions: getActiveProjectSessions(),
       activeThreadKey: 'thread-a',
       previewUrl: null,
     })
@@ -477,34 +486,36 @@ describe('live editor selection history', () => {
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
       defaultAgentType: 'claude',
-      projectSessions: [
-        {
-          id: 1,
-          projectPath: '/tmp/example-project',
-          workspacePath: '/tmp/example-project',
-          threadId: 'chat-root',
-          backend: 'agent-deck',
-          agentDeckSessionId: null,
-          agentDeckSessionTitle: 'Chat chat-roo',
-          agentDeckTool: null,
-          editorState: {
-            draftAgentType: 'codex',
-            draftWorkspaceMode: 'root',
-            activePreviewTool: null,
-            targetUrl: '',
-            activeTab: 'chat',
-            viewportMode: 'fluid',
-            showUrlHistory: false,
-            previewTabs: [],
-            activePreviewTabId: null,
-            urlHistory: [],
-            urlHistoryCursor: -1,
+      projectSessionsByProject: {
+        '/tmp/example-project': [
+          {
+            id: 1,
+            projectPath: '/tmp/example-project',
+            workspacePath: '/tmp/example-project',
+            threadId: 'chat-root',
+            backend: 'agent-deck',
+            agentDeckSessionId: null,
+            agentDeckSessionTitle: 'Chat chat-roo',
+            agentDeckTool: null,
+            editorState: {
+              draftAgentType: 'codex',
+              draftWorkspaceMode: 'root',
+              activePreviewTool: null,
+              targetUrl: '',
+              activeTab: 'chat',
+              viewportMode: 'fluid',
+              showUrlHistory: false,
+              previewTabs: [],
+              activePreviewTabId: null,
+              urlHistory: [],
+              urlHistoryCursor: -1,
+            },
+            createdAt: '2026-03-20T00:00:00Z',
+            lastActive: '2026-03-20T00:00:00Z',
+            requestId: null,
           },
-          createdAt: '2026-03-20T00:00:00Z',
-          lastActive: '2026-03-20T00:00:00Z',
-          requestId: null,
-        },
-      ],
+        ],
+      },
       liveEditorSession: null,
     })
 
@@ -532,44 +543,46 @@ describe('live editor selection history', () => {
 
   it('rehydrates stale internal pdf viewer urls back to the source pdf url', () => {
     useSessionStore.setState({
-      projectSessions: [
-        {
-          id: 1,
-          projectPath: '/tmp/example-project',
-          workspacePath: '/tmp/example-project/.agents/thread-a',
-          threadId: 'thread-a',
-          backend: 'agent-deck',
-          agentDeckSessionId: 'deck-session-a',
-          agentDeckSessionTitle: 'pixel-forge-thread-a',
-          agentDeckTool: 'codex',
-          editorState: {
-            activePreviewTool: null,
-            targetUrl: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
-            activeTab: 'elements',
-            viewportMode: 'desktop',
-            showUrlHistory: false,
-            previewTabs: [
-              {
-                id: 'tab-a',
-                url: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
-                title: 'Pixel Forge (alpha)',
-                mode: 'browser',
-                localTarget: null,
-                workspacePreview: null,
-              },
-            ],
-            activePreviewTabId: 'tab-a',
-            urlHistory: [
-              'file:///tmp/quote.pdf',
-              'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
-            ],
-            urlHistoryCursor: 1,
+      projectSessionsByProject: {
+        '/tmp/example-project': [
+          {
+            id: 1,
+            projectPath: '/tmp/example-project',
+            workspacePath: '/tmp/example-project/.agents/thread-a',
+            threadId: 'thread-a',
+            backend: 'agent-deck',
+            agentDeckSessionId: 'deck-session-a',
+            agentDeckSessionTitle: 'pixel-forge-thread-a',
+            agentDeckTool: 'codex',
+            editorState: {
+              activePreviewTool: null,
+              targetUrl: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+              activeTab: 'elements',
+              viewportMode: 'desktop',
+              showUrlHistory: false,
+              previewTabs: [
+                {
+                  id: 'tab-a',
+                  url: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+                  title: 'Pixel Forge (alpha)',
+                  mode: 'browser',
+                  localTarget: null,
+                  workspacePreview: null,
+                },
+              ],
+              activePreviewTabId: 'tab-a',
+              urlHistory: [
+                'file:///tmp/quote.pdf',
+                'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+              ],
+              urlHistoryCursor: 1,
+            },
+            createdAt: '2026-03-20T00:00:00Z',
+            lastActive: '2026-03-20T00:00:00Z',
+            requestId: null,
           },
-          createdAt: '2026-03-20T00:00:00Z',
-          lastActive: '2026-03-20T00:00:00Z',
-          requestId: null,
-        },
-      ],
+        ],
+      },
       liveEditorSession: {
         threadId: 'thread-a',
         backend: 'agent-deck',
@@ -582,7 +595,7 @@ describe('live editor selection history', () => {
     })
 
     useLiveEditorStore.getState().hydrateProjectThreads({
-      projectSessions: useSessionStore.getState().projectSessions,
+      projectSessions: getActiveProjectSessions(),
       activeThreadKey: 'thread-a',
       previewUrl: null,
     })
@@ -657,7 +670,13 @@ describe('live editor selection history', () => {
     }
     const createChatSpy = vi.fn(async () => {
       useSessionStore.setState((state) => ({
-        projectSessions: [...state.projectSessions, createdSession],
+        projectSessionsByProject: {
+          ...state.projectSessionsByProject,
+          '/tmp/example-project': [
+            ...selectActiveProjectSessions(state),
+            createdSession,
+          ],
+        },
       }))
       return {
         id: 'chat-replayed',
@@ -906,6 +925,109 @@ describe('live editor selection history', () => {
         {
           role: 'assistant',
           content: 'Continuing existing Agent Deck work...',
+          observedSessionId: 'deck-session-a',
+        },
+      ])
+    })
+  })
+
+  it('tails future observed Agent Deck turns into active Pixel Forge chat history', async () => {
+    const threadId = useLiveEditorStore.getState().activeThreadKey
+    setActiveThreadState({
+      targetAgentDeckSessionId: 'deck-session-a',
+      messages: [
+        {
+          id: 'msg-local-user',
+          role: 'user',
+          content: 'Already sent from Pixel Forge',
+          timestamp: new Date(),
+        },
+        {
+          id: 'msg-local-assistant',
+          role: 'assistant',
+          content: 'Existing Pixel Forge reply',
+          timestamp: new Date(),
+        },
+      ],
+    })
+
+    useLiveEditorStore.getState().activateThread(threadId)
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+    expect(stream?.url).toContain('/events?from_now=1')
+
+    stream?.emitEvent('turn_input', {
+      id: 10,
+      event_type: 'turn_input',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-offpath-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+      turn_input: {
+        prompt_text: 'Sent directly from Agent Deck',
+      },
+    })
+    stream?.emitEvent('turn_started', {
+      id: 11,
+      event_type: 'turn_started',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-offpath-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+    })
+    stream?.emitEvent('turn_chunk', {
+      id: 12,
+      event_type: 'turn_chunk',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-offpath-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+      content: 'Observed reply',
+    })
+    stream?.emitEvent('turn_completed', {
+      id: 13,
+      event_type: 'turn_completed',
+      chat_id: threadId,
+      thread_id: threadId,
+      request_id: 'request-offpath-1',
+      agent_deck_session_id: 'deck-session-a',
+      agent_deck_session_title: 'manual claude',
+      agent_deck_tool: 'claude',
+      workspace_path: '/tmp/example-project',
+      assistant_output: 'Observed reply',
+    })
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          id: 'msg-local-user',
+          role: 'user',
+          content: 'Already sent from Pixel Forge',
+        },
+        {
+          id: 'msg-local-assistant',
+          role: 'assistant',
+          content: 'Existing Pixel Forge reply',
+        },
+        {
+          id: 'observed:input:request-offpath-1',
+          role: 'user',
+          content: 'Sent directly from Agent Deck',
+          observedSessionId: 'deck-session-a',
+        },
+        {
+          id: 'observed:turn:request-offpath-1',
+          role: 'assistant',
+          content: 'Observed reply',
           observedSessionId: 'deck-session-a',
         },
       ])

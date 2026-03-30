@@ -269,6 +269,32 @@ def latest_workstation_event(
     return _row_to_event_record(row)
 
 
+def latest_workstation_event_id(
+    project_path: str,
+    chat_id: str,
+) -> int:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    if not normalized_chat_id:
+        return 0
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COALESCE(MAX(id), 0) AS latest_id
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+            """,
+            (normalized_project_path, normalized_chat_id),
+        ).fetchone()
+
+    if row is None:
+        return 0
+    value = row["latest_id"]
+    return int(value) if isinstance(value, int) else 0
+
+
 def chat_has_typed_turn_events(project_path: str, chat_id: str) -> bool:
     normalized_project_path = normalize_project_path(project_path)
     normalized_chat_id = chat_id.strip()

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectSessionRecord } from "./session-store";
-import { useSessionStore } from "./session-store";
+import {
+  selectActiveProjectChats,
+  selectActiveProjectSessions,
+  useSessionStore,
+} from "./session-store";
 
 function createProjectSession(
   overrides: Partial<ProjectSessionRecord> = {}
@@ -20,6 +24,14 @@ function createProjectSession(
     requestId: "request-a",
     ...overrides,
   };
+}
+
+function getActiveProjectSessions() {
+  return selectActiveProjectSessions(useSessionStore.getState());
+}
+
+function getActiveProjectChats() {
+  return selectActiveProjectChats(useSessionStore.getState());
 }
 
 describe("session-store thread switching", () => {
@@ -170,9 +182,7 @@ describe("session-store thread switching", () => {
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
       liveEditorSession: null,
-      projectSessions: [],
       projectSessionsByProject: {},
-      projectChats: [],
       projectChatsByProject: {},
       profileState: null,
       profileLoaded: false,
@@ -236,14 +246,6 @@ describe("session-store thread switching", () => {
   it("does not merge a late session update into the wrong active project", () => {
     useSessionStore.setState({
       projectPath: "/tmp/active-project",
-      projectSessions: [
-        createProjectSession({
-          projectPath: "/tmp/active-project",
-          threadId: "thread-active",
-          workspacePath: "/tmp/active-project/.agents/thread-active",
-          agentDeckSessionId: "deck-session-active",
-        }),
-      ],
       projectSessionsByProject: {
         "/tmp/active-project": [
           createProjectSession({
@@ -254,7 +256,6 @@ describe("session-store thread switching", () => {
           }),
         ],
       },
-      projectChats: [],
       projectChatsByProject: {},
     });
 
@@ -271,7 +272,7 @@ describe("session-store thread switching", () => {
     });
 
     expect(
-      useSessionStore.getState().projectSessions.map((session) => session.threadId)
+      getActiveProjectSessions().map((session) => session.threadId)
     ).toEqual(["thread-active"]);
     expect(
       useSessionStore
@@ -403,12 +404,12 @@ describe("session-store thread switching", () => {
       agentDeckSessionTitle: null,
       agentDeckTool: null,
     });
-    expect(useSessionStore.getState().projectSessions[0]).toMatchObject({
+    expect(getActiveProjectSessions()[0]).toMatchObject({
       threadId: "thread-a",
       agentDeckSessionId: null,
       agentDeckTool: null,
     });
-    expect(useSessionStore.getState().projectChats[0]).toMatchObject({
+    expect(getActiveProjectChats()[0]).toMatchObject({
       threadId: "thread-a",
       bindingState: "detached",
       agentDeckSessionId: "dead-session-a",
@@ -574,7 +575,7 @@ describe("session-store thread switching", () => {
 
     const state = useSessionStore.getState();
     expect(state.projectPath).toBe("/tmp/example-project");
-    expect(state.projectSessions[0]).toMatchObject({
+    expect(getActiveProjectSessions()[0]).toMatchObject({
       projectPath: "/tmp/example-project",
       threadId: "thread-a",
     });
@@ -632,13 +633,11 @@ describe("session-store chat creation", () => {
 
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
-      projectChats: [],
       projectChatsByProject: {},
       agentDeckTargets: [],
       selectedAgentDeckTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
-      projectSessions: [],
       projectSessionsByProject: {},
     });
   });
@@ -661,7 +660,7 @@ describe("session-store chat creation", () => {
       workspacePath: "/tmp/example-project",
       bindingState: "detached",
     });
-    expect(state.projectChats[0]).toMatchObject({
+    expect(getActiveProjectChats()[0]).toMatchObject({
       id: "thread-b",
       title: "pixel-forge-thread-b",
       threadId: "thread-b",
@@ -671,7 +670,7 @@ describe("session-store chat creation", () => {
       id: "thread-b",
       title: "pixel-forge-thread-b",
     });
-    expect(state.projectSessions[0]).toMatchObject({
+    expect(getActiveProjectSessions()[0]).toMatchObject({
       threadId: "thread-b",
       workspacePath: "/tmp/example-project",
       agentDeckSessionId: null,
@@ -730,9 +729,7 @@ describe("session-store project chat visibility", () => {
   beforeEach(() => {
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
-      projectChats: [],
       projectChatsByProject: {},
-      projectSessions: [],
       projectSessionsByProject: {},
       agentDeckTargets: [],
       selectedAgentDeckTargetId: null,
@@ -753,7 +750,7 @@ describe("session-store project chat visibility", () => {
     });
 
     const state = useSessionStore.getState();
-    expect(state.projectChats[0]).toMatchObject({
+    expect(getActiveProjectChats()[0]).toMatchObject({
       id: "thread-live",
       threadId: "thread-live",
       title: "Live chat",
@@ -779,7 +776,7 @@ describe("session-store project chat visibility", () => {
     });
 
     const state = useSessionStore.getState();
-    expect(state.projectChats).toHaveLength(0);
+    expect(getActiveProjectChats()).toHaveLength(0);
     expect(state.projectChatsByProject["/tmp/example-project"]).toBeUndefined();
   });
 
@@ -821,28 +818,28 @@ describe("session-store project chat visibility", () => {
 
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
-      projectChats: [firstChat, secondChat],
       projectChatsByProject: {
         "/tmp/example-project": [firstChat, secondChat],
       },
-      projectSessions: [
-        createProjectSession({
-          threadId: "thread-a",
-          workspacePath: "/tmp/example-project/.agents/thread-a",
-          agentDeckSessionId: "deck-a",
-          agentDeckSessionTitle: "Chat A",
-          requestId: "request-a",
-        }),
-        createProjectSession({
-          id: 2,
-          threadId: "thread-b",
-          workspacePath: "/tmp/example-project/.agents/thread-b",
-          agentDeckSessionId: "deck-b",
-          agentDeckSessionTitle: "Chat B",
-          requestId: "request-b",
-        }),
-      ],
-      projectSessionsByProject: {},
+      projectSessionsByProject: {
+        "/tmp/example-project": [
+          createProjectSession({
+            threadId: "thread-a",
+            workspacePath: "/tmp/example-project/.agents/thread-a",
+            agentDeckSessionId: "deck-a",
+            agentDeckSessionTitle: "Chat A",
+            requestId: "request-a",
+          }),
+          createProjectSession({
+            id: 2,
+            threadId: "thread-b",
+            workspacePath: "/tmp/example-project/.agents/thread-b",
+            agentDeckSessionId: "deck-b",
+            agentDeckSessionTitle: "Chat B",
+            requestId: "request-b",
+          }),
+        ],
+      },
     });
 
     useSessionStore.getState().upsertProjectSession({
@@ -855,16 +852,15 @@ describe("session-store project chat visibility", () => {
       requestId: "request-b",
     });
 
-    const state = useSessionStore.getState();
-    expect(state.projectChats.map((chat) => chat.threadId)).toEqual([
+    expect(getActiveProjectChats().map((chat) => chat.threadId)).toEqual([
       "thread-a",
       "thread-b",
     ]);
-    expect(state.projectSessions.map((session) => session.threadId)).toEqual([
+    expect(getActiveProjectSessions().map((session) => session.threadId)).toEqual([
       "thread-a",
       "thread-b",
     ]);
-    expect(state.projectChats[1]).toMatchObject({
+    expect(getActiveProjectChats()[1]).toMatchObject({
       threadId: "thread-b",
       title: "Chat B",
       agentDeckSessionTitle: "Chat B refreshed",
@@ -938,11 +934,9 @@ describe("session-store project chat visibility", () => {
         agentDeckTool: "claude",
         requestId: null,
       },
-      projectSessions: [draftSession],
       projectSessionsByProject: {
         "/tmp/example-project": [draftSession],
       },
-      projectChats: [draftChat],
       projectChatsByProject: {
         "/tmp/example-project": [draftChat],
       },
@@ -963,10 +957,10 @@ describe("session-store project chat visibility", () => {
       threadId: "chat-promoted",
       agentDeckSessionId: "deck-live",
     });
-    expect(useSessionStore.getState().projectSessions.map((session) => session.threadId)).toEqual([
+    expect(getActiveProjectSessions().map((session) => session.threadId)).toEqual([
       "chat-promoted",
     ]);
-    expect(useSessionStore.getState().projectChats.map((chat) => chat.threadId)).toEqual([
+    expect(getActiveProjectChats().map((chat) => chat.threadId)).toEqual([
       "chat-promoted",
     ]);
   });
@@ -1042,9 +1036,7 @@ describe("session-store project ordering", () => {
           lastOpened: "2026-03-20T00:00:00Z",
         },
       ],
-      projectSessions: [],
       projectSessionsByProject: {},
-      projectChats: [],
       projectChatsByProject: {},
       agentDeckTargets: [],
       selectedAgentDeckTargetId: null,
@@ -1123,7 +1115,6 @@ describe("createAgentDeckTargetSession", () => {
 
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
-      projectChats: [existingChat],
       projectChatsByProject: {
         "/tmp/example-project": [existingChat],
       },
@@ -1131,7 +1122,6 @@ describe("createAgentDeckTargetSession", () => {
       selectedAgentDeckTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
-      projectSessions: [],
       projectSessionsByProject: {},
     });
   });
@@ -1157,8 +1147,8 @@ describe("createAgentDeckTargetSession", () => {
       id: "deck-thread-a",
       path: "/tmp/example-project/.agents/pixel-forge-thread-a",
     });
-    expect(state.projectChats).toHaveLength(1);
-    expect(state.projectChats[0]).toMatchObject({
+    expect(getActiveProjectChats()).toHaveLength(1);
+    expect(getActiveProjectChats()[0]).toMatchObject({
       id: "thread-a",
       title: "Existing chat",
     });

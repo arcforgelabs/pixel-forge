@@ -497,6 +497,63 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
             "Pixel Forge channel probe received — installed alpha lane is live and connected.",
         )
 
+    async def test_poll_once_normalizes_command_wrapped_cli_user_prompt(self) -> None:
+        claude_workspace_path = self.project_path / ".agents" / "thread-command-claude"
+        claude_workspace_path.mkdir(parents=True)
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-command-claude",
+            backend="agent-deck",
+            origin_kind="adopted",
+            workspace_path=str(claude_workspace_path),
+            agent_deck_session_id="deck-command-claude",
+            agent_deck_session_title="command claude",
+            agent_deck_tool="claude",
+        )
+
+        session_id = "claude-session-command"
+        (self.hooks_dir / "deck-command-claude.sid").write_text(
+            session_id,
+            encoding="utf-8",
+        )
+
+        jsonl_path = agent_deck_event_ingest.claude_jsonl_path(
+            str(claude_workspace_path),
+            session_id,
+        )
+        assert jsonl_path is not None
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text("", encoding="utf-8")
+
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        await ingestor.poll_once()
+
+        jsonl_path.write_text(
+            "\n".join(
+                [
+                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"<command-name>/frontend-design</command-name>\\n<command-message>Trace the selected profile issue</command-message>"}]}}',
+                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Tracing now."}]}}',
+                    '{"type":"system","entrypoint":"cli","subtype":"stop_hook_summary"}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-command-claude",
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["turn_input", "turn_started", "turn_chunk", "turn_completed"],
+        )
+        self.assertEqual(
+            events[0].payload["turn_input"]["prompt_text"],
+            "Trace the selected profile issue",
+        )
+
     async def test_poll_once_backfills_cli_turns_from_stop_snapshot_only(self) -> None:
         claude_workspace_path = self.project_path / ".agents" / "thread-stop-only-claude"
         claude_workspace_path.mkdir(parents=True)

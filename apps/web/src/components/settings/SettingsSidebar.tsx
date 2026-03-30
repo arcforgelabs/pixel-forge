@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { type ProjectChatRecord, useSessionStore } from "@/store/session-store";
+import {
+  selectActiveProjectChats,
+  selectActiveProjectSessions,
+  selectProjectChatsForPath,
+  selectProjectSessionsForPath,
+  type ProjectChatRecord,
+  useSessionStore,
+} from "@/store/session-store";
 import { useLiveEditorStore } from "@/components/live-editor/store/chat-store";
 import { Settings } from "@/types";
 import { Switch } from "@/components/ui/switch";
@@ -203,9 +210,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     switchMode,
     projectPath,
     liveEditorSession,
-    projectSessions,
-    projectChats,
     projectChatsByProject,
+    projectSessionsByProject,
     agentDeckTargetsLoading,
     refreshProjectSessions,
     refreshProjectChats,
@@ -238,6 +244,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     dismissedControllerUpdateId,
     setDismissedControllerUpdateId,
   } = useSessionStore();
+  const projectSessions = useSessionStore(selectActiveProjectSessions);
+  const projectChats = useSessionStore(selectActiveProjectChats);
 
   const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [expandedProjectPaths, setExpandedProjectPaths] = useState<string[]>([]);
@@ -614,7 +622,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
   function applyDeletedChatState(item: ChatSidebarActionItem, wasActiveChat: boolean) {
     const sessionStore = useSessionStore.getState();
-    const fallbackSession = sessionStore.projectSessions[0] ?? null;
+    const fallbackSession = selectActiveProjectSessions(sessionStore)[0] ?? null;
 
     if (item.threadId) {
       removeThread(item.threadId, fallbackSession?.threadId ?? null);
@@ -774,10 +782,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         }
 
         const refreshedSessionStore = useSessionStore.getState();
-        const visibleDraftSession = refreshedSessionStore.projectSessions.find(
+        const visibleDraftSession = selectActiveProjectSessions(refreshedSessionStore).find(
           (session) => session.threadId === emptyThreadKey
         ) ?? null;
-        const visibleDraftChat = refreshedSessionStore.projectChats.find(
+        const visibleDraftChat = selectActiveProjectChats(refreshedSessionStore).find(
           (chat) => chat.threadId === emptyThreadKey
         ) ?? null;
 
@@ -811,9 +819,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         if (!created.threadId) {
           throw new Error("Created chat is missing its draft thread.");
         }
-        const createdThread = useSessionStore
-          .getState()
-          .projectSessions.find((session) => session.threadId === created.threadId);
+        const createdThread = selectActiveProjectSessions(useSessionStore.getState()).find(
+          (session) => session.threadId === created.threadId
+        );
         if (!createdThread) {
           throw new Error("Created chat is missing its saved draft state.");
         }
@@ -851,7 +859,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   function focusProjectChat(chat: ProjectChatRecord): "switched" | "reopened" | "draft" {
     const activeSessionStore = useSessionStore.getState();
     const claimedThread = chat.threadId
-      ? activeSessionStore.projectSessions.find(
+      ? selectActiveProjectSessions(activeSessionStore).find(
           (session) => session.threadId === chat.threadId
         ) ?? null
       : null;
@@ -1092,8 +1100,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                       const isExpanded = expandedProjectPaths.includes(project.path);
                       const isLoadingProjectChats = loadingProjectPaths.includes(project.path);
                       const chats =
-                        projectChatsByProject[project.path]
-                        ?? (isActive ? projectChats : []);
+                        selectProjectChatsForPath(
+                          { projectChatsByProject },
+                          project.path
+                        );
+                      const projectSessionsForRow = selectProjectSessionsForPath(
+                        { projectSessionsByProject },
+                        project.path
+                      );
 
                       return (
                         <div key={project.path}>
@@ -1210,7 +1224,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                             <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
                               {chats.map((chat) => {
                                 const claimedThread = chat.threadId
-                                  ? projectSessions.find(
+                                  ? projectSessionsForRow.find(
                                       (session) => session.threadId === chat.threadId
                                     ) ?? null
                                   : null;
