@@ -2762,6 +2762,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
         session_info.tool == "claude"
         and session_info.claude_session_id
         and not queue_onto_busy_session
+        and not session_info.tmux_session
     ):
         turn_wait_task = asyncio.create_task(
             send_native_claude_prompt_reliably(
@@ -2776,6 +2777,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
         and session_info.codex_session_id
         and session_info.jsonl_path
         and not queue_onto_busy_session
+        and not session_info.tmux_session
     ):
         turn_wait_task = asyncio.create_task(
             send_native_codex_prompt_reliably(

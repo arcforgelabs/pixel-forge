@@ -833,13 +833,6 @@ class AgentDeckNativeEventIngestor:
         )
         self._active_claude_turns[agent_deck_session_id] = state
 
-        if prompt_text:
-            self._emit_claude_turn_input(
-                sessions,
-                request_id=request_id,
-                prompt_text=prompt_text,
-            )
-
         for session in sessions:
             append_workstation_event(
                 session.project_path,
@@ -853,6 +846,13 @@ class AgentDeckNativeEventIngestor:
                     "agent_deck_tool": session.agent_deck_tool,
                     "workspace_path": session.workspace_path,
                 },
+            )
+
+        if prompt_text:
+            self._emit_claude_turn_input(
+                sessions,
+                request_id=request_id,
+                prompt_text=prompt_text,
             )
 
         return state
