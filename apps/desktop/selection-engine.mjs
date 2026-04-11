@@ -2354,6 +2354,70 @@ function normalizeRegion(value) {
     return false
   }
 
+  // Disabled form controls (<button disabled>, <input disabled>, etc.) do
+  // not dispatch `click` events in Chromium — and neither do their
+  // descendants (an SVG icon inside a disabled button, etc.). That breaks
+  // the click-driven selection path for elements a host site has
+  // intentionally deactivated. Mousedown still fires for the same
+  // elements, so we mirror the click handler on mousedown whenever the
+  // hit element (or a form-control ancestor) matches :disabled.
+  //
+  // The ancestor walk is intentionally scoped to click-receiving form
+  // controls. A :disabled <fieldset> propagates :disabled to its form
+  // descendants, but plain content inside that fieldset still dispatches
+  // clicks — so we must not hijack those via the fieldset itself.
+  //
+  // `aria-disabled="true"` is also intentionally excluded: those elements
+  // still dispatch clicks normally and would double-fire through both
+  // paths.
+  function findClickSuppressedElement(element) {
+    if (!(element instanceof Element)) return null
+    if (typeof element.closest !== 'function') return null
+    try {
+      const ancestor = element.closest('button, input, select, textarea')
+      if (!ancestor) return null
+      return ancestor.matches(':disabled') ? ancestor : null
+    } catch {
+      return null
+    }
+  }
+
+  async function handleMouseDown(event) {
+    if (!selectMode) return
+    if (event.button !== 0) return
+    if (!(event.target instanceof Element)) return
+    if (event.target.hasAttribute('data-pixel-forge-injected')) return
+
+    // elementFromPoint bypasses any target-rewriting that browsers do when
+    // the original cursor position lands on a non-interactive descendant,
+    // so we trust it over event.target for the resolution step.
+    const hitElement = document.elementFromPoint(event.clientX, event.clientY)
+    const resolved =
+      findClickSuppressedElement(hitElement) ||
+      findClickSuppressedElement(event.target)
+    if (!resolved) return
+
+    // Prime the hover target so handleClick's `currentTarget.element` path
+    // prefers the resolved disabled element even if event.target was
+    // rewritten to an ancestor.
+    lastPointerElement = resolved
+    hoverClientX = event.clientX
+    hoverClientY = event.clientY
+    refreshHoverTargetFromPointer()
+
+    // Reuse the click pipeline for consistency (promotion, PDF adapters,
+    // range selection, etc.). handleClick only reads MouseEvent properties
+    // that are shared by mousedown, so passing the raw mousedown event is
+    // safe — and its preventDefault() conveniently blocks the native focus
+    // transfer that mousedown would otherwise trigger.
+    await handleClick(event)
+
+    // Best-effort: swallow any synthetic click that might still fire if
+    // this path ran against a non-disabled target (e.g. an :disabled
+    // match that nonetheless re-enabled itself before click dispatch).
+    suppressClickUntil = Date.now() + 250
+  }
+
   async function handleMouseUp(event) {
     if (!selectMode || !(event.target instanceof Element)) {
       return
@@ -2488,6 +2552,7 @@ function normalizeRegion(value) {
   }
 
   document.addEventListener('mousemove', handleMouseMove, true)
+  document.addEventListener('mousedown', handleMouseDown, true)
   document.addEventListener('mouseup', handleMouseUp, true)
   document.addEventListener('click', handleClick, true)
   document.addEventListener('keydown', handleKeyDown, true)
