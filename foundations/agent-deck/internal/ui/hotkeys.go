@@ -19,6 +19,7 @@ const (
 	hotkeyMCPManager      = "mcp_manager"
 	hotkeySkillsManager   = "skills_manager"
 	hotkeyTogglePreview   = "toggle_preview"
+	hotkeyToggleAutoCopy  = "toggle_auto_copy"
 	hotkeyMarkUnread      = "mark_unread"
 	hotkeyToggleYolo      = "toggle_yolo"
 	hotkeyQuickFork       = "quick_fork"
@@ -52,6 +53,7 @@ var hotkeyActionOrder = []string{
 	hotkeyMCPManager,
 	hotkeySkillsManager,
 	hotkeyTogglePreview,
+	hotkeyToggleAutoCopy,
 	hotkeyMarkUnread,
 	hotkeyToggleYolo,
 	hotkeyQuickFork,
@@ -85,6 +87,7 @@ var defaultHotkeyBindings = map[string]string{
 	hotkeyMCPManager:      "m",
 	hotkeySkillsManager:   "s",
 	hotkeyTogglePreview:   "v",
+	hotkeyToggleAutoCopy:  "C",
 	hotkeyMarkUnread:      "u",
 	hotkeyToggleYolo:      "y",
 	hotkeyQuickFork:       "f",

@@ -141,6 +141,7 @@ func (h *HelpOverlay) View() string {
 	mcpKey := h.key(hotkeyMCPManager, "m")
 	skillsKey := h.key(hotkeySkillsManager, "s")
 	previewKey := h.key(hotkeyTogglePreview, "v")
+	autoCopyKey := h.key(hotkeyToggleAutoCopy, "C")
 	unreadKey := h.key(hotkeyMarkUnread, "u")
 	copyKey := h.key(hotkeyCopyOutput, "c")
 	sendKey := h.key(hotkeySendOutput, "x")
@@ -188,6 +189,7 @@ func (h *HelpOverlay) View() string {
 				{mcpKey, "MCP Manager (Claude/Gemini)"},
 				{skillsKey, "Skills Manager (Claude)"},
 				{previewKey, "Toggle preview mode (output/stats/both)"},
+				{autoCopyKey, "Toggle tmux auto-copy on select"},
 				{unreadKey, "Mark unread"},
 				{reorderKeys, "Reorder up/down"},
 				{forkKeys, "Fork session (Claude only)"},

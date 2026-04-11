@@ -20,6 +20,10 @@ func TestResolveHotkeysOverridesAndUnbinds(t *testing.T) {
 	if got := bindings[hotkeyRestart]; got != defaultHotkeyBindings[hotkeyRestart] {
 		t.Fatalf("restart binding = %q, want %q", got, defaultHotkeyBindings[hotkeyRestart])
 	}
+
+	if got := bindings[hotkeyToggleAutoCopy]; got != defaultHotkeyBindings[hotkeyToggleAutoCopy] {
+		t.Fatalf("toggle_auto_copy binding = %q, want %q", got, defaultHotkeyBindings[hotkeyToggleAutoCopy])
+	}
 }
 
 func TestResolveHotkeysPrefersCanonicalNameOverLegacyRename(t *testing.T) {

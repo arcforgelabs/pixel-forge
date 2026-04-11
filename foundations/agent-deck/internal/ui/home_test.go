@@ -1113,6 +1113,64 @@ func TestSessionClosedMsgUsesConfiguredRestartHint(t *testing.T) {
 	}
 }
 
+func TestHandleMainKey_ToggleAutoCopyPersistsConfig(t *testing.T) {
+	origHome := os.Getenv("HOME")
+	tmpHome := t.TempDir()
+	os.Setenv("HOME", tmpHome)
+	session.ClearUserConfigCache()
+	defer func() {
+		os.Setenv("HOME", origHome)
+		session.ClearUserConfigCache()
+	}()
+
+	configDir := filepath.Join(tmpHome, ".agent-deck")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() failed: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[tmux]\nset_clipboard = true\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	home := NewHome()
+	model, _ := home.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	h, ok := model.(*Home)
+	if !ok {
+		t.Fatal("handleMainKey should return *Home")
+	}
+	if h.err == nil {
+		t.Fatal("expected toggle confirmation message")
+	}
+	if !strings.Contains(h.err.Error(), "auto-copy on select: OFF") {
+		t.Fatalf("unexpected confirmation message %q", h.err.Error())
+	}
+
+	cfg, err := session.ReloadUserConfig()
+	if err != nil {
+		t.Fatalf("ReloadUserConfig() failed: %v", err)
+	}
+	if cfg.Tmux.GetSetClipboard() {
+		t.Fatal("set_clipboard should be false after Shift+C toggle")
+	}
+
+	model, _ = h.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	h, ok = model.(*Home)
+	if !ok {
+		t.Fatal("second handleMainKey should return *Home")
+	}
+	if h.err == nil || !strings.Contains(h.err.Error(), "auto-copy on select: ON") {
+		t.Fatalf("unexpected second confirmation message %v", h.err)
+	}
+
+	cfg, err = session.ReloadUserConfig()
+	if err != nil {
+		t.Fatalf("ReloadUserConfig() after second toggle failed: %v", err)
+	}
+	if !cfg.Tmux.GetSetClipboard() {
+		t.Fatal("set_clipboard should be true after second Shift+C toggle")
+	}
+}
+
 func TestDeleteAndCloseSessionUseDistinctActions(t *testing.T) {
 	home := NewHome()
 	home.width = 100

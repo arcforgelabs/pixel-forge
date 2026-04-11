@@ -22,6 +22,7 @@ const (
 	SettingClaudeConfigDir
 	SettingGeminiYoloMode
 	SettingCodexYoloMode
+	SettingTmuxSetClipboard
 	SettingCheckForUpdates
 	SettingAutoUpdate
 	SettingLogMaxSize
@@ -36,7 +37,7 @@ const (
 )
 
 // Total number of navigable settings.
-const settingsCount = 17
+const settingsCount = 18
 
 // SettingsPanel displays and edits user configuration
 type SettingsPanel struct {
@@ -59,6 +60,7 @@ type SettingsPanel struct {
 	claudeConfigIsScope bool // true = profile override, false = global [claude]
 	geminiYoloMode      bool
 	codexYoloMode       bool
+	setClipboard        bool
 	checkForUpdates     bool
 	autoUpdate          bool
 	logMaxSizeMB        int
@@ -215,6 +217,9 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 	// Codex settings
 	s.codexYoloMode = config.Codex.YoloMode
 
+	// Tmux settings
+	s.setClipboard = config.Tmux.GetSetClipboard()
+
 	// Update settings
 	s.checkForUpdates = config.Updates.CheckEnabled
 	s.autoUpdate = config.Updates.AutoUpdate
@@ -344,6 +349,7 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 		config.Tools = s.originalConfig.Tools
 		config.MCPPool = s.originalConfig.MCPPool
 		config.Docker = s.originalConfig.Docker
+		config.Tmux = s.originalConfig.Tmux
 		config.Preview.ShowNotes = s.originalConfig.Preview.ShowNotes
 		config.Preview.NotesOutputSplit = s.originalConfig.Preview.NotesOutputSplit
 		config.Preview.Analytics = s.originalConfig.Preview.Analytics
@@ -353,6 +359,10 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 			config.Claude.ConfigDir = s.originalConfig.Claude.ConfigDir
 		}
 	}
+
+	// Tmux settings
+	setClipboard := s.setClipboard
+	config.Tmux.SetClipboard = &setClipboard
 
 	// Apply profile-specific Claude override after original profile map is restored.
 	if s.claudeConfigIsScope && s.profile != "" {
@@ -487,6 +497,10 @@ func (s *SettingsPanel) toggleValue() bool {
 
 	case SettingCodexYoloMode:
 		s.codexYoloMode = !s.codexYoloMode
+		return true
+
+	case SettingTmuxSetClipboard:
+		s.setClipboard = !s.setClipboard
 		return true
 
 	case SettingCheckForUpdates:
@@ -688,6 +702,16 @@ func (s *SettingsPanel) View() string {
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n\n")
 
+	// TMUX
+	content.WriteString(sectionStyle.Render("TMUX"))
+	content.WriteString("\n")
+
+	line = s.renderCheckbox("Auto-copy on select", s.setClipboard) + " - Copy selected tmux text to system clipboard"
+	if s.cursor == int(SettingTmuxSetClipboard) {
+		line = highlightStyle.Render(line)
+	}
+	content.WriteString("  " + labelStyle.Render(line) + "\n\n")
+
 	// UPDATES
 	content.WriteString(sectionStyle.Render("UPDATES"))
 	content.WriteString("\n")
@@ -823,17 +847,18 @@ func (s *SettingsPanel) View() string {
 			12, // SettingClaudeConfigDir
 			15, // SettingGeminiYoloMode
 			18, // SettingCodexYoloMode
-			21, // SettingCheckForUpdates
-			22, // SettingAutoUpdate
-			25, // SettingLogMaxSize
-			25, // SettingLogMaxLines (shares line with LogMaxSize)
-			26, // SettingRemoveOrphans
-			29, // SettingGlobalSearchEnabled
-			30, // SettingSearchTier
-			31, // SettingRecentDays
-			34, // SettingShowOutput
-			35, // SettingShowAnalytics
-			38, // SettingMaintenanceEnabled
+			21, // SettingTmuxSetClipboard
+			24, // SettingCheckForUpdates
+			25, // SettingAutoUpdate
+			28, // SettingLogMaxSize
+			28, // SettingLogMaxLines (shares line with LogMaxSize)
+			29, // SettingRemoveOrphans
+			32, // SettingGlobalSearchEnabled
+			33, // SettingSearchTier
+			34, // SettingRecentDays
+			37, // SettingShowOutput
+			38, // SettingShowAnalytics
+			41, // SettingMaintenanceEnabled
 		}
 		cursorLine := cursorToLine[s.cursor]
 

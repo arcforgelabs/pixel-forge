@@ -91,6 +91,68 @@ func TestSession_SetInjectStatusLine(t *testing.T) {
 	sess.SetInjectStatusLine(true)
 }
 
+func TestSession_SetSetClipboard(t *testing.T) {
+	sess := NewSession("test", "/tmp")
+
+	if !sess.setClipboard {
+		t.Fatal("new tmux session should default setClipboard to true")
+	}
+
+	sess.SetSetClipboard(false)
+	if sess.setClipboard {
+		t.Fatal("SetSetClipboard(false) should disable auto-copy")
+	}
+
+	sess.SetSetClipboard(true)
+	if !sess.setClipboard {
+		t.Fatal("SetSetClipboard(true) should enable auto-copy")
+	}
+}
+
+func TestSetClipboardForAllAgentDeckSessions(t *testing.T) {
+	skipIfNoTmuxServer(t)
+
+	sessionNames := []string{
+		"agentdeck_test_clipboard_" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		"agentdeck_test_clipboard_" + fmt.Sprintf("%d", time.Now().UnixNano()+1),
+	}
+
+	for _, sessionName := range sessionNames {
+		if err := exec.Command("tmux", "new-session", "-d", "-s", sessionName).Run(); err != nil {
+			t.Fatalf("Failed to create test session %s: %v", sessionName, err)
+		}
+		defer func(name string) {
+			_ = exec.Command("tmux", "kill-session", "-t", name).Run()
+		}(sessionName)
+	}
+
+	if err := SetClipboardForAllAgentDeckSessions(false); err != nil {
+		t.Fatalf("SetClipboardForAllAgentDeckSessions(false): %v", err)
+	}
+	for _, sessionName := range sessionNames {
+		out, err := exec.Command("tmux", "show-options", "-t", sessionName, "-v", "set-clipboard").Output()
+		if err != nil {
+			t.Fatalf("show-options %s: %v", sessionName, err)
+		}
+		if got := strings.TrimSpace(string(out)); got != "off" {
+			t.Fatalf("%s set-clipboard = %q, want off", sessionName, got)
+		}
+	}
+
+	if err := SetClipboardForAllAgentDeckSessions(true); err != nil {
+		t.Fatalf("SetClipboardForAllAgentDeckSessions(true): %v", err)
+	}
+	for _, sessionName := range sessionNames {
+		out, err := exec.Command("tmux", "show-options", "-t", sessionName, "-v", "set-clipboard").Output()
+		if err != nil {
+			t.Fatalf("show-options %s: %v", sessionName, err)
+		}
+		if got := strings.TrimSpace(string(out)); got != "on" {
+			t.Fatalf("%s set-clipboard = %q, want on", sessionName, got)
+		}
+	}
+}
+
 func TestSession_InjectStatusLine_ReconnectSession(t *testing.T) {
 	sess := ReconnectSessionLazy("test_sess", "Test", "/tmp", "echo hi", "waiting")
 	// Default should be true

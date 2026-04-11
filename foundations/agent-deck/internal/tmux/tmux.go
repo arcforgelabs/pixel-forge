@@ -608,6 +608,11 @@ type Session struct {
 	// When false, the status bar configuration is skipped entirely.
 	// Default: true (set via SetInjectStatusLine from user config)
 	injectStatusLine bool
+
+	// setClipboard controls whether tmux auto-copies text selections to the system
+	// clipboard while mouse mode is enabled.
+	// Default: true (set via SetSetClipboard from user config)
+	setClipboard bool
 }
 
 type envCacheEntry struct {
@@ -712,6 +717,13 @@ func (s *Session) SetInjectStatusLine(inject bool) {
 	s.injectStatusLine = inject
 }
 
+// SetSetClipboard controls whether tmux auto-copies selections to the system clipboard.
+func (s *Session) SetSetClipboard(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setClipboard = enabled
+}
+
 // LogFile returns the path to this session's log file
 // Logs are stored in ~/.agent-deck/logs/<session-name>.log
 func (s *Session) LogFile() string {
@@ -738,6 +750,7 @@ func NewSession(name, workDir string) *Session {
 		lastStableStatus: "waiting",
 		toolDetectExpiry: 30 * time.Second, // Re-detect tool every 30 seconds
 		injectStatusLine: true,             // Default: inject status bar
+		setClipboard:     true,             // Default: auto-copy selection on
 		// stateTracker and promptDetector will be created lazily on first status check
 	}
 }
@@ -759,6 +772,7 @@ func ReconnectSession(tmuxName, displayName, workDir, command string) *Session {
 		lastStableStatus: "waiting",
 		toolDetectExpiry: 30 * time.Second,
 		injectStatusLine: true,  // Default: inject status bar
+		setClipboard:     true,  // Default: auto-copy selection on
 		configured:       false, // Will be set to true after configuration
 		// stateTracker and promptDetector will be created lazily on first status check
 	}
@@ -826,6 +840,7 @@ func ReconnectSessionLazy(tmuxName, displayName, workDir, command string, previo
 		lastStableStatus: "waiting",
 		toolDetectExpiry: 30 * time.Second,
 		injectStatusLine: true,  // Default: inject status bar
+		setClipboard:     true,  // Default: auto-copy selection on
 		configured:       false, // Explicitly mark as not configured
 	}
 
@@ -1135,15 +1150,17 @@ func (s *Session) Start(command string) error {
 	//
 	// Note: remain-on-exit is NOT set here — it is only enabled for sandbox sessions
 	// via OptionOverrides to avoid changing behaviour for non-sandbox sessions.
-	_ = exec.Command("tmux",
+	startupArgs := []string{
 		"set-option", "-t", s.Name, "window-style", "default", ";",
 		"set-option", "-t", s.Name, "window-active-style", "default", ";",
 		"set-option", "-t", s.Name, "mouse", "on", ";",
 		"set-option", "-t", s.Name, "-q", "allow-passthrough", "on", ";",
-		"set-option", "-t", s.Name, "set-clipboard", "on", ";",
+		"set-option", "-t", s.Name, "set-clipboard", map[bool]string{true: "on", false: "off"}[s.setClipboard], ";",
 		"set-option", "-t", s.Name, "history-limit", "10000", ";",
 		"set-option", "-t", s.Name, "escape-time", "10", ";",
-		"set", "-asq", "terminal-features", ",*:hyperlinks").Run()
+		"set", "-asq", "terminal-features", ",*:hyperlinks",
+	}
+	_ = exec.Command("tmux", startupArgs...).Run()
 
 	// Apply user-specified tmux option overrides from config (after defaults).
 	// These are batched into a single call when multiple overrides are present.
@@ -1324,12 +1341,14 @@ func (s *Session) EnableMouseMode() error {
 	// - escape-time 10: Fast Vim/editor responsiveness (default 500ms is too slow)
 	//
 	// Uses -q flag where supported to silently ignore on older tmux versions
-	enhanceCmd := exec.Command("tmux",
-		"set-option", "-t", s.Name, "set-clipboard", "on", ";",
+	enhanceArgs := []string{
+		"set-option", "-t", s.Name, "set-clipboard", map[bool]string{true: "on", false: "off"}[s.setClipboard], ";",
 		"set-option", "-t", s.Name, "-q", "allow-passthrough", "on", ";",
 		"set-option", "-t", s.Name, "history-limit", "10000", ";",
 		"set-option", "-t", s.Name, "escape-time", "10", ";",
-		"set", "-asq", "terminal-features", ",*:hyperlinks")
+		"set", "-asq", "terminal-features", ",*:hyperlinks",
+	}
+	enhanceCmd := exec.Command("tmux", enhanceArgs...)
 	// Ignore errors - all these are non-fatal enhancements
 	// Older tmux versions may not support some options
 	_ = enhanceCmd.Run()
@@ -3762,6 +3781,29 @@ func RefreshStatusBarImmediate() error {
 		_ = exec.Command("tmux", "refresh-client", "-S", "-t", parts[0]).Run()
 	}
 	return nil
+}
+
+// SetSessionClipboard updates tmux set-clipboard for one session.
+func SetSessionClipboard(sessionName string, enabled bool) error {
+	return exec.Command("tmux", "set-option", "-t", sessionName, "set-clipboard", map[bool]string{true: "on", false: "off"}[enabled]).Run()
+}
+
+// SetClipboardForAllAgentDeckSessions updates tmux set-clipboard for all running
+// agent-deck sessions. Best-effort: it continues across failures and returns the
+// first error encountered, if any.
+func SetClipboardForAllAgentDeckSessions(enabled bool) error {
+	sessions, err := ListAgentDeckSessions()
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+	for _, sessionName := range sessions {
+		if err := SetSessionClipboard(sessionName, enabled); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // GetAttachedSessions returns the names of tmux sessions that have real clients attached.

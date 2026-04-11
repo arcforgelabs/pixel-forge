@@ -1761,6 +1761,53 @@ func (h *Home) clearError() {
 	h.errTime = time.Time{}
 }
 
+func (h *Home) applyTmuxSetClipboardToRunningSessions(enabled bool) {
+	_ = tmux.SetClipboardForAllAgentDeckSessions(enabled)
+
+	h.instancesMu.RLock()
+	defer h.instancesMu.RUnlock()
+
+	for _, inst := range h.instances {
+		if inst == nil {
+			continue
+		}
+		tmuxSess := inst.GetTmuxSession()
+		if tmuxSess == nil {
+			continue
+		}
+		tmuxSess.SetSetClipboard(enabled)
+	}
+}
+
+func (h *Home) persistTmuxSetClipboard(enabled bool) error {
+	config, err := session.LoadUserConfig()
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		config = &session.UserConfig{}
+	}
+
+	next := *config
+	next.Tmux = config.Tmux
+	next.Tools = config.Tools
+	next.MCPs = config.MCPs
+	next.Profiles = config.Profiles
+	setClipboard := enabled
+	next.Tmux.SetClipboard = &setClipboard
+
+	if err := session.SaveUserConfig(&next); err != nil {
+		return err
+	}
+	if _, err := session.ReloadUserConfig(); err != nil {
+		return err
+	}
+
+	h.settingsPanel.setClipboard = enabled
+	h.applyTmuxSetClipboardToRunningSessions(enabled)
+	return nil
+}
+
 // cleanupExpiredAnimations removes expired entries from an animation map
 // Returns list of IDs that were removed (for logging/debugging if needed)
 func (h *Home) cleanupExpiredAnimations(
@@ -4200,13 +4247,20 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var shouldSave bool
 			h.settingsPanel, cmd, shouldSave = h.settingsPanel.Update(msg)
 			if shouldSave {
+				previousSetClipboard := h.settingsPanel.originalConfig != nil && h.settingsPanel.originalConfig.Tmux.GetSetClipboard()
 				config := h.settingsPanel.GetConfig()
 				if err := session.SaveUserConfig(config); err != nil {
 					h.err = err
 					h.errTime = time.Now()
+					return h, nil
 				}
 				_, _ = session.ReloadUserConfig()
+				h.settingsPanel.originalConfig = config
 				h.reloadHotkeysFromConfig()
+				if previousSetClipboard != config.Tmux.GetSetClipboard() {
+					h.applyTmuxSetClipboardToRunningSessions(config.Tmux.GetSetClipboard())
+					h.setError(fmt.Errorf("auto-copy on select: %s", strings.ToUpper(map[bool]string{true: "on", false: "off"}[config.Tmux.GetSetClipboard()])))
+				}
 
 				// Apply theme changes live
 				h.stopThemeWatcher()
@@ -5579,6 +5633,24 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return h, h.copySessionOutput(item.Session)
 			}
 		}
+		return h, nil
+
+	case "C", "shift+c":
+		config, err := session.LoadUserConfig()
+		if err != nil {
+			h.setError(err)
+			return h, nil
+		}
+		enabled := true
+		if config != nil {
+			enabled = config.Tmux.GetSetClipboard()
+		}
+		enabled = !enabled
+		if err := h.persistTmuxSetClipboard(enabled); err != nil {
+			h.setError(fmt.Errorf("failed to toggle auto-copy on select: %w", err))
+			return h, nil
+		}
+		h.setError(fmt.Errorf("auto-copy on select: %s", strings.ToUpper(map[bool]string{true: "on", false: "off"}[enabled])))
 		return h, nil
 
 	case "x":
@@ -8834,6 +8906,9 @@ func (h *Home) renderHelpBarCompact() string {
 	if key := h.actionKey(hotkeySearch); key != "" {
 		globalParts = append(globalParts, globalStyle.Render(key))
 	}
+	if key := h.actionKey(hotkeyToggleAutoCopy); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key))
+	}
 	if key := h.actionKey(hotkeySettings); key != "" {
 		globalParts = append(globalParts, globalStyle.Render(key))
 	}
@@ -9071,6 +9146,9 @@ func (h *Home) renderHelpBarFull() string {
 	globalParts := []string{globalStyle.Render("↑↓ Nav")}
 	if key := h.actionKey(hotkeySearch); key != "" {
 		globalParts = append(globalParts, globalStyle.Render(key+" Search"))
+	}
+	if key := h.actionKey(hotkeyToggleAutoCopy); key != "" {
+		globalParts = append(globalParts, globalStyle.Render(key+" AutoCopy"))
 	}
 	globalParts = append(globalParts, globalStyle.Render("G Global"))
 	if key := h.actionKey(hotkeySettings); key != "" {

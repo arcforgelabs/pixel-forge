@@ -881,6 +881,7 @@ func (m *MCPDef) HasAutoStartServer() bool {
 //
 //	[tmux]
 //	inject_status_line = false
+//	set_clipboard = false
 //	options = { "allow-passthrough" = "all", "history-limit" = "50000" }
 type TmuxSettings struct {
 	// InjectStatusLine controls whether agent-deck injects a custom status line
@@ -890,6 +891,12 @@ type TmuxSettings struct {
 	// runtime stops mutating global tmux options.
 	// Default: true (nil = use default true)
 	InjectStatusLine *bool `toml:"inject_status_line"`
+
+	// SetClipboard controls whether tmux auto-copies text selections to the system
+	// clipboard when mouse mode is enabled. When false, agent-deck will leave
+	// auto-copy disabled for sessions it configures.
+	// Default: true (nil = use default true)
+	SetClipboard *bool `toml:"set_clipboard"`
 
 	// Options is a map of tmux option names to values.
 	// These are passed to `tmux set-option -t <session>` after defaults.
@@ -902,6 +909,14 @@ func (t TmuxSettings) GetInjectStatusLine() bool {
 		return true
 	}
 	return *t.InjectStatusLine
+}
+
+// GetSetClipboard returns whether tmux should auto-copy selections, defaulting to true.
+func (t TmuxSettings) GetSetClipboard() bool {
+	if t.SetClipboard == nil {
+		return true
+	}
+	return *t.SetClipboard
 }
 
 // DockerSettings defines Docker sandbox configuration.
@@ -1818,6 +1833,10 @@ auto_cleanup = true
 # agent-deck stops mutating the global tmux notification bar / number key bindings
 # Default: true (agent-deck injects its own status bar with session info)
 # inject_status_line = false
+# set_clipboard controls whether selecting text in tmux auto-copies it to the
+# system clipboard when mouse mode is enabled
+# Default: true
+# set_clipboard = false
 # Override tmux options applied to every session (applied after defaults)
 # options = { "allow-passthrough" = "all", "history-limit" = "50000" }
 

@@ -10,6 +10,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func setSettingsPanelHotkeyConfigForTest(t *testing.T, tomlBody string) {
 	t.Helper()
 
@@ -69,6 +73,9 @@ func TestSettingsPanel_LoadConfig(t *testing.T) {
 			DangerousMode: &dangerousModeBool,
 			ConfigDir:     "~/.claude-work",
 		},
+		Tmux: session.TmuxSettings{
+			SetClipboard: boolPtr(false),
+		},
 		Updates: session.UpdateSettings{
 			CheckEnabled: false,
 			AutoUpdate:   true,
@@ -98,6 +105,9 @@ func TestSettingsPanel_LoadConfig(t *testing.T) {
 	}
 	if panel.checkForUpdates {
 		t.Error("checkForUpdates should be false")
+	}
+	if panel.setClipboard {
+		t.Error("setClipboard should be false")
 	}
 	if !panel.autoUpdate {
 		t.Error("autoUpdate should be true")
@@ -247,6 +257,7 @@ func TestSettingsPanel_GetConfig(t *testing.T) {
 	panel.selectedTool = 2 // opencode
 	panel.dangerousMode = true
 	panel.claudeConfigDir = "~/.claude-custom"
+	panel.setClipboard = false
 	panel.checkForUpdates = false
 	panel.autoUpdate = true
 	panel.logMaxSizeMB = 15
@@ -266,6 +277,9 @@ func TestSettingsPanel_GetConfig(t *testing.T) {
 	}
 	if config.Claude.ConfigDir != "~/.claude-custom" {
 		t.Errorf("ConfigDir: got %q, want %q", config.Claude.ConfigDir, "~/.claude-custom")
+	}
+	if config.Tmux.GetSetClipboard() {
+		t.Error("Tmux.SetClipboard should be false")
 	}
 	if config.Updates.CheckEnabled {
 		t.Error("CheckEnabled should be false")
@@ -632,6 +646,8 @@ func TestSettingsPanel_View_Visible(t *testing.T) {
 		"Gemini",
 		"CLAUDE",
 		"Dangerous mode",
+		"TMUX",
+		"Auto-copy on select",
 		"UPDATES",
 		"LOGS",
 		"GLOBAL SEARCH",
@@ -806,6 +822,47 @@ func TestSettingsPanel_PreviewSettings_Toggle(t *testing.T) {
 	}
 	if panel.showAnalytics == initialAnalytics {
 		t.Error("Show Analytics should have toggled")
+	}
+}
+
+func TestSettingsPanel_TmuxSetClipboard_Toggle(t *testing.T) {
+	panel := NewSettingsPanel()
+	panel.Show()
+
+	panel.cursor = int(SettingTmuxSetClipboard)
+	initialValue := panel.setClipboard
+
+	_, _, changed := panel.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if !changed {
+		t.Error("tmux clipboard toggle should report changed=true")
+	}
+	if panel.setClipboard == initialValue {
+		t.Error("tmux clipboard toggle should have changed")
+	}
+}
+
+func TestSettingsPanel_GetConfig_PreservesTmuxOptions(t *testing.T) {
+	panel := NewSettingsPanel()
+	panel.setClipboard = false
+	panel.originalConfig = &session.UserConfig{
+		Tmux: session.TmuxSettings{
+			InjectStatusLine: boolPtr(false),
+			Options: map[string]string{
+				"history-limit": "50000",
+			},
+		},
+	}
+
+	config := panel.GetConfig()
+
+	if config.Tmux.GetSetClipboard() {
+		t.Error("Tmux.SetClipboard should be false")
+	}
+	if config.Tmux.GetInjectStatusLine() {
+		t.Error("Tmux.InjectStatusLine should remain false")
+	}
+	if got := config.Tmux.Options["history-limit"]; got != "50000" {
+		t.Errorf("Tmux option history-limit = %q, want %q", got, "50000")
 	}
 }
 
