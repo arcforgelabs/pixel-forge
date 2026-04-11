@@ -269,6 +269,10 @@ interface SessionStore {
   settingsSidebarOpen: boolean;
   toggleSettingsSidebar: () => void;
 
+  // Full-page Settings surface (transient; not persisted across reloads)
+  viewingSettings: boolean;
+  setViewingSettings: (viewing: boolean) => void;
+
   // Helpers
   getCurrentProjectUrls: () => string[];
   setRuntimeInfo: (runtimeInfo: ControllerRuntimeInfo) => void;
@@ -1155,6 +1159,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set((state) => ({ settingsSidebarOpen: !state.settingsSidebarOpen }));
   },
 
+  // Full-page Settings surface
+  viewingSettings: false,
+  setViewingSettings: (viewing: boolean) => {
+    set({ viewingSettings: viewing });
+  },
+
   hydrateProjects: async () => {
     set({ projectsLoading: true });
     try {
@@ -1461,7 +1471,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   switchMode: (mode) => {
-    set({ activeMode: mode });
+    set({ activeMode: mode, viewingSettings: false });
     void get()
       .persistProfileState({ activeMode: mode })
       .catch((error) => {

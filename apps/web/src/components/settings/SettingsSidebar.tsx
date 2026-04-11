@@ -1,4 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   selectActiveProjectChats,
   selectActiveProjectSessions,
@@ -13,12 +20,6 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import {
   Select,
   SelectContent,
@@ -243,6 +244,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     pendingControllerUpdate,
     dismissedControllerUpdateId,
     setDismissedControllerUpdateId,
+    viewingSettings,
+    setViewingSettings,
   } = useSessionStore();
   const projectSessions = useSessionStore(selectActiveProjectSessions);
   const projectChats = useSessionStore(selectActiveProjectChats);
@@ -250,7 +253,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
   const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [expandedProjectPaths, setExpandedProjectPaths] = useState<string[]>([]);
   const [loadingProjectPaths, setLoadingProjectPaths] = useState<string[]>([]);
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
   const [isRefreshingChatTargets, setIsRefreshingChatTargets] = useState(false);
   const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
@@ -376,7 +378,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
             };
 
   useEffect(() => {
-    if (!settingsDialogOpen || skillsLoaded || skillsLoading) {
+    if (!viewingSettings || skillsLoaded || skillsLoading) {
       return;
     }
 
@@ -386,7 +388,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         error instanceof Error ? error.message : "Failed to load runtime skills"
       );
     });
-  }, [refreshSkills, settingsDialogOpen, skillsLoaded, skillsLoading]);
+  }, [refreshSkills, viewingSettings, skillsLoaded, skillsLoading]);
 
   useEffect(() => {
     if (!projectPath) {
@@ -1001,10 +1003,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
       },
     },
   ];
-  const defaultSettingsSections =
-    activeMode === "live-editor"
-      ? ["application", "live-editor", "general"]
-      : ["application", "screenshot", "general"];
+  const modeTabValue: "screenshot" | "live-editor" =
+    activeMode === "live-editor" ? "live-editor" : "screenshot";
+
+  const [settingsPortalTarget, setSettingsPortalTarget] =
+    useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    setSettingsPortalTarget(document.getElementById("pf-settings-pane-root"));
+  }, []);
 
   return (
     <>
@@ -1332,11 +1341,16 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
           {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Settings button at bottom — opens dialog */}
+          {/* Settings button at bottom — opens full-page settings */}
           <div className="border-t border-border/30 px-2 py-2">
             <button
-              onClick={() => setSettingsDialogOpen(true)}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150 active:scale-[0.99] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+              onClick={() => setViewingSettings(!viewingSettings)}
+              aria-pressed={viewingSettings}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150 active:scale-[0.99] ${
+                viewingSettings
+                  ? "bg-muted/60 text-foreground"
+                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+              }`}
             >
               <SettingsIcon className="h-4 w-4" />
               <span>Settings</span>
@@ -1476,31 +1490,76 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
         </DialogContent>
       </Dialog>
 
-      {/* Settings Dialog */}
-      <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-        <DialogContent className="flex max-h-[min(88vh,56rem)] flex-col overflow-hidden p-0 sm:max-w-md">
-          <DialogHeader className="border-b border-border/40 px-6 py-4">
-            <DialogTitle>Settings</DialogTitle>
-          </DialogHeader>
-
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="px-6 py-4">
-              <Accordion
-                type="multiple"
-                defaultValue={defaultSettingsSections}
-                className="space-y-3"
-              >
-                <AccordionItem
-                  value="application"
-                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
+      {/* Full-page Settings surface, portaled into the main content area */}
+      {viewingSettings && settingsPortalTarget
+        ? createPortal(
+            <div className="flex h-full flex-col bg-background">
+              <div className="flex items-start justify-between gap-4 border-b border-border/40 px-8 py-5">
+                <div>
+                  <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                    Settings
+                  </h1>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Control the Pixel Forge runtime, live editor lanes, and installed skills.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setViewingSettings(false)}
+                  aria-label="Close settings"
                 >
-                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
-                    <span className="flex items-center gap-2">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <Tabs
+                defaultValue="application"
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <div className="border-b border-border/30 px-8 pt-4">
+                  <TabsList className="bg-transparent p-0 h-auto gap-1">
+                    <TabsTrigger
+                      value="application"
+                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                    >
                       <RefreshCw className="h-3.5 w-3.5" />
                       Application
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-3 pb-3">
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value={modeTabValue}
+                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                    >
+                      {modeTabValue === "live-editor" ? (
+                        <Radio className="h-3.5 w-3.5" />
+                      ) : (
+                        <Layers className="h-3.5 w-3.5" />
+                      )}
+                      {modeTabValue === "live-editor" ? "Live Editor" : "Screenshot"}
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="skills"
+                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                      Skills
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="general"
+                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                    >
+                      <Palette className="h-3.5 w-3.5" />
+                      General
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="mx-auto w-full max-w-5xl px-8 py-6">
+                    <TabsContent
+                      value="application"
+                      className="mt-0 space-y-4"
+                    >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Controller Version</p>
@@ -1687,44 +1746,23 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     later, the staged controller build will still be available here.
                   </p>
                 )}
-                  </AccordionContent>
-                </AccordionItem>
+                    </TabsContent>
 
-                {/* Screenshot settings */}
-                {activeMode === "screenshot" && (
-                  <AccordionItem
-                    value="screenshot"
-                    className="rounded-lg border border-border/60 bg-muted/10 px-3"
-                  >
-                    <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
-                      <span className="flex items-center gap-2">
-                        <Layers className="h-3.5 w-3.5" />
-                        Screenshot
-                      </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-3">
+                    <TabsContent
+                      value="screenshot"
+                      className="mt-0 space-y-4"
+                    >
                       <OutputSettingsSection
                         stack={settings.generatedCodeConfig}
                         setStack={setStack}
                         shouldDisableUpdates={shouldDisableStackUpdates}
                       />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
+                    </TabsContent>
 
-                {/* Live Editor settings */}
-                {activeMode === "live-editor" && (
-                  <AccordionItem
-                    value="live-editor"
-                    className="rounded-lg border border-border/60 bg-muted/10 px-3"
-                  >
-                    <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
-                      <span className="flex items-center gap-2">
-                        <Radio className="h-3.5 w-3.5" />
-                        Live Editor
-                      </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="space-y-3 pb-3">
+                    <TabsContent
+                      value="live-editor"
+                      className="mt-0 space-y-3"
+                    >
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Connection</span>
@@ -1911,21 +1949,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     New Chat
                   </Button>
                 </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
+                    </TabsContent>
 
-                <AccordionItem
-                  value="installed-skills"
-                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
-                >
-                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
-                    <span className="flex items-center gap-2">
-                      <BookOpen className="h-3.5 w-3.5" />
-                      Installed Skills
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-3 pb-3">
+                    <TabsContent
+                      value="skills"
+                      className="mt-0 space-y-4"
+                    >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-foreground">Runtime skill homes</p>
@@ -2048,65 +2077,62 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     ))}
                   </div>
                 </div>
-                  </AccordionContent>
-                </AccordionItem>
+                    </TabsContent>
 
-                <AccordionItem
-                  value="general"
-                  className="rounded-lg border border-border/60 bg-muted/10 px-3"
-                >
-                  <AccordionTrigger className="py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:no-underline">
-                    <span className="flex items-center gap-2">
-                      <Palette className="h-3.5 w-3.5" />
-                      General
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-3 pb-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Default Agent</Label>
-                <Select
-                  value={defaultAgentType}
-                  onValueChange={(value) => setDefaultAgentType(value)}
-                >
-                  <SelectTrigger className="h-8 w-[140px] text-xs">
-                    {defaultAgentType === "claude"
-                      ? "Claude Code"
-                      : defaultAgentType === "codex"
-                        ? "Codex"
-                        : capitalize(defaultAgentType)}
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="claude">Claude Code</SelectItem>
-                    <SelectItem value="codex">Codex</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                New chats start on this agent until the first send binds a real backend lane.
-              </p>
+                    <TabsContent
+                      value="general"
+                      className="mt-0 space-y-4"
+                    >
+                      <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label className="text-sm font-medium">Default Agent</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              New chats start on this agent until the first send binds a real backend lane.
+                            </p>
+                          </div>
+                          <Select
+                            value={defaultAgentType}
+                            onValueChange={(value) => setDefaultAgentType(value)}
+                          >
+                            <SelectTrigger className="h-9 w-[160px] text-xs">
+                              {defaultAgentType === "claude"
+                                ? "Claude Code"
+                                : defaultAgentType === "codex"
+                                  ? "Codex"
+                                  : capitalize(defaultAgentType)}
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="claude">Claude Code</SelectItem>
+                              <SelectItem value="codex">Codex</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-              <div className="flex items-center justify-between">
-                <Label htmlFor="dialog-image-gen" className="text-sm">
-                  DALL-E Image Generation
-                </Label>
-                <Switch
-                  id="dialog-image-gen"
-                  checked={settings.isImageGenerationEnabled}
-                  onCheckedChange={() =>
-                    setSettings((s) => ({
-                      ...s,
-                      isImageGenerationEnabled: !s.isImageGenerationEnabled,
-                    }))
-                  }
-                />
-              </div>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-            </div>
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
+                        <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                          <Label htmlFor="settings-page-image-gen" className="text-sm font-medium">
+                            DALL-E Image Generation
+                          </Label>
+                          <Switch
+                            id="settings-page-image-gen"
+                            checked={settings.isImageGenerationEnabled}
+                            onCheckedChange={() =>
+                              setSettings((s) => ({
+                                ...s,
+                                isImageGenerationEnabled: !s.isImageGenerationEnabled,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    </TabsContent>
+                  </div>
+                </ScrollArea>
+              </Tabs>
+            </div>,
+            settingsPortalTarget
+          )
+        : null}
     </>
   );
 }

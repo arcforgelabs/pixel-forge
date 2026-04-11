@@ -77,6 +77,7 @@ function App() {
     sessionId,
     projectPath,
     activeMode,
+    viewingSettings,
     projectsLoaded,
     profileState,
     profileLoaded,
@@ -741,7 +742,11 @@ function App() {
         )}
 
         {/* Both panes rendered, visibility toggled to preserve state */}
-        <div className={`flex-1 min-h-0 overflow-auto ${activeMode === "screenshot" ? "" : "hidden"}`}>
+        <div
+          className={`flex-1 min-h-0 overflow-auto ${
+            !viewingSettings && activeMode === "screenshot" ? "" : "hidden"
+          }`}
+        >
           <div className="py-2">
             {appState === AppState.INITIAL && (
               <StartPane
@@ -756,9 +761,19 @@ function App() {
           </div>
         </div>
 
-        <div className={`flex-1 min-h-0 overflow-hidden ${activeMode === "live-editor" ? "" : "hidden"}`}>
+        <div
+          className={`flex-1 min-h-0 overflow-hidden ${
+            !viewingSettings && activeMode === "live-editor" ? "" : "hidden"
+          }`}
+        >
           <LiveEditorPane />
         </div>
+
+        {/* Settings page — full-width surface; SettingsSidebar portals its content here. */}
+        <div
+          id="pf-settings-pane-root"
+          className={`flex-1 min-h-0 overflow-hidden ${viewingSettings ? "" : "hidden"}`}
+        />
       </main>
     </div>
   );
