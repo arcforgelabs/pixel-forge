@@ -2778,6 +2778,63 @@ export function LiveEditorPane() {
 
   return (
     <div className="flex h-full overflow-hidden">
+      <div className="flex basis-1/3 min-w-[300px] flex-shrink-0 flex-col overflow-hidden border-r border-border bg-card/50">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value === 'elements' ? 'elements' : 'chat')}
+          className="flex h-full flex-col overflow-hidden"
+        >
+          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
+            <TabsTrigger value="chat" className="gap-1.5 text-xs">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Chat
+            </TabsTrigger>
+            <TabsTrigger value="elements" className="gap-1.5 text-xs">
+              <Layers className="h-3.5 w-3.5" />
+              Elements
+              {selectedElements.length > 0 && (
+                <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                  {selectedElements.length}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <div className="mt-2 flex flex-1 min-h-0 flex-col overflow-hidden">
+            <TabsContent
+              value="chat"
+              className="m-0 min-h-0 flex-1 min-w-0 overflow-hidden"
+            >
+              <div className="flex h-full flex-col overflow-hidden">
+                <ChatMessages
+                  onRefreshPreview={() => void refreshApp()}
+                  onLoadPreviewUpdate={() => void loadUpdatedPixelForgePreview()}
+                  onApplyControllerUpdate={() => void applyControllerUpdate()}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent
+              value="elements"
+              className="m-0 min-h-0 flex-1 overflow-hidden p-3"
+            >
+              <SelectedElementsList
+                onClearAll={handleClearElements}
+                onRemoveElement={handleRemoveElement}
+                onUndo={handleUndoSelections}
+                onRedo={handleRedoSelections}
+                canUndo={canUndoSelections}
+                canRedo={canRedoSelections}
+              />
+            </TabsContent>
+          </div>
+        </Tabs>
+
+        <div className={activeTab === 'chat' ? 'block' : 'hidden'}>
+          <ChatInput />
+        </div>
+      </div>
+
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="border-b border-border bg-card/60 backdrop-blur-sm">
           <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
@@ -3075,63 +3132,6 @@ export function LiveEditorPane() {
               )}
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="flex w-[clamp(320px,26vw,420px)] min-w-[300px] max-w-[42vw] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-card/50">
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value === 'elements' ? 'elements' : 'chat')}
-          className="flex h-full flex-col overflow-hidden"
-        >
-          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
-            <TabsTrigger value="chat" className="gap-1.5 text-xs">
-              <MessageSquare className="h-3.5 w-3.5" />
-              Chat
-            </TabsTrigger>
-            <TabsTrigger value="elements" className="gap-1.5 text-xs">
-              <Layers className="h-3.5 w-3.5" />
-              Elements
-              {selectedElements.length > 0 && (
-                <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
-                  {selectedElements.length}
-                </span>
-              )}
-            </TabsTrigger>
-          </TabsList>
-
-          <div className="mt-2 flex flex-1 min-h-0 flex-col overflow-hidden">
-            <TabsContent
-              value="chat"
-              className="m-0 min-h-0 flex-1 min-w-0 overflow-hidden"
-            >
-              <div className="flex h-full flex-col overflow-hidden">
-                <ChatMessages
-                  onRefreshPreview={() => void refreshApp()}
-                  onLoadPreviewUpdate={() => void loadUpdatedPixelForgePreview()}
-                  onApplyControllerUpdate={() => void applyControllerUpdate()}
-                />
-              </div>
-            </TabsContent>
-
-            <TabsContent
-              value="elements"
-              className="m-0 min-h-0 flex-1 overflow-hidden p-3"
-            >
-              <SelectedElementsList
-                onClearAll={handleClearElements}
-                onRemoveElement={handleRemoveElement}
-                onUndo={handleUndoSelections}
-                onRedo={handleRedoSelections}
-                canUndo={canUndoSelections}
-                canRedo={canRedoSelections}
-              />
-            </TabsContent>
-          </div>
-        </Tabs>
-
-        <div className={activeTab === 'chat' ? 'block' : 'hidden'}>
-          <ChatInput />
         </div>
       </div>
 
