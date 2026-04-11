@@ -33,6 +33,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { capitalize } from "@/lib/utils";
 import { compareSemver, formatVersionLabel } from "@/lib/semver";
 import OutputSettingsSection from "./OutputSettingsSection";
+import ProjectSettingsPane from "./ProjectSettingsPane";
 import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
@@ -200,10 +201,11 @@ interface AgentDeckSurfaceResponse {
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
-  onOpenProjectSelector: () => void;
+  onOpenWorkspacePicker: () => void;
+  isOpeningWorkspace?: boolean;
 }
 
-export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }: Props) {
+export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, isOpeningWorkspace }: Props) {
   const {
     settingsSidebarOpen,
     toggleSettingsSidebar,
@@ -246,6 +248,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
     setDismissedControllerUpdateId,
     viewingSettings,
     setViewingSettings,
+    projectSettingsPath,
+    setProjectSettingsPath,
   } = useSessionStore();
   const projectSessions = useSessionStore(selectActiveProjectSessions);
   const projectChats = useSessionStore(selectActiveProjectChats);
@@ -1004,12 +1008,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
 
   const [settingsPortalTarget, setSettingsPortalTarget] =
     useState<HTMLElement | null>(null);
+  const [projectSettingsPortalTarget, setProjectSettingsPortalTarget] =
+    useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
     setSettingsPortalTarget(document.getElementById("pf-settings-pane-root"));
+    setProjectSettingsPortalTarget(
+      document.getElementById("pf-project-settings-pane-root")
+    );
   }, []);
+
+  const projectSettingsProject = projectSettingsPath
+    ? visibleProjects.find((project) => project.path === projectSettingsPath) ?? null
+    : null;
 
   return (
     <>
@@ -1178,6 +1191,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    setProjectActionMenuOpenPath(null);
+                                    setProjectSettingsPath(project.path);
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60"
+                                >
+                                  <SettingsIcon className="h-4 w-4" />
+                                  <span>Project Settings</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
                                     void handleCloseProject(
                                       project.path,
                                       project.name,
@@ -1314,12 +1338,19 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
                     {/* Add new project */}
                     <button
                       onClick={() => {
-                        onOpenProjectSelector();
-                        setProjectsExpanded(false);
+                        onOpenWorkspacePicker();
                       }}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 border-t border-border/20 mt-1 pt-2"
+                      disabled={isOpeningWorkspace}
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 border-t border-border/20 mt-1 pt-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      + New project
+                      {isOpeningWorkspace ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        "+ New project"
+                      )}
                     </button>
                   </div>
                 )}
@@ -2127,6 +2158,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               </Tabs>
             </div>,
             settingsPortalTarget
+          )
+        : null}
+
+      {/* Full-page Project Settings surface, portaled into the main content area */}
+      {projectSettingsPath && projectSettingsProject && projectSettingsPortalTarget
+        ? createPortal(
+            <ProjectSettingsPane
+              project={projectSettingsProject}
+              onClose={() => setProjectSettingsPath(null)}
+            />,
+            projectSettingsPortalTarget
           )
         : null}
     </>

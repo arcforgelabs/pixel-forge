@@ -21,7 +21,6 @@ import StartPane from "./components/start-pane/StartPane";
 import { Commit } from "./components/commits/types";
 import { createCommit } from "./components/commits/utils";
 // GenerateFromText removed — screenshot workflow sidebar no longer rendered
-import ProjectSelector from "./components/project-selector/ProjectSelector";
 import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import ControllerUpdateApplyOverlay from "./components/layout/ControllerUpdateApplyOverlay";
@@ -78,6 +77,7 @@ function App() {
     projectPath,
     activeMode,
     viewingSettings,
+    projectSettingsPath,
     projectsLoaded,
     profileState,
     profileLoaded,
@@ -91,8 +91,7 @@ function App() {
     switchMode,
   } = useSessionStore();
 
-  // Project selector state - show on first load if no project is set
-  const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [isBrowsingForWorkspace, setIsBrowsingForWorkspace] = useState(false);
   const [desktopBootstrapState, setDesktopBootstrapState] =
     useState<PixelForgeDesktopBootstrapState | null>(null);
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
@@ -369,12 +368,10 @@ function App() {
       persistProfile: false,
     })
       .then(() => {
-        setShowProjectSelector(false);
         switchMode(profileState?.activeMode === "live-editor" ? "live-editor" : "screenshot");
       })
       .catch((error) => {
         console.error("[app] Failed to restore default profile state:", error);
-        setShowProjectSelector(true);
       });
   }, [
     desktopBootstrapLoaded,
@@ -397,22 +394,36 @@ function App() {
     });
   }, [projectPath, projectsLoaded, setProject]);
 
-  // Show project selector on first render if no project is configured
-  useEffect(() => {
-    const hasRestorableProfileProject =
-      RUNTIME_KIND === "controller"
-      && !!profileState?.activeProjectPath?.trim()
-      && !desktopBootstrapState;
-    if (
-      projectsLoaded &&
-      profileLoaded &&
-      appState === AppState.INITIAL &&
-      !projectPath &&
-      !hasRestorableProfileProject
-    ) {
-      setShowProjectSelector(true);
+  const browseAndOpenWorkspace = async () => {
+    if (isBrowsingForWorkspace) {
+      return;
     }
-  }, [appState, desktopBootstrapState, profileLoaded, profileState, projectPath, projectsLoaded]);
+    setIsBrowsingForWorkspace(true);
+    try {
+      const response = await fetch(`${HTTP_BACKEND_URL}/browse/directory`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initial_path: projectPath ?? undefined,
+        }),
+      });
+      const result: { cancelled?: boolean; path?: string; message?: string } =
+        await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || `HTTP ${response.status}`);
+      }
+      if (result.cancelled || !result.path) {
+        return;
+      }
+      await setProject({ path: result.path });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to open folder picker"
+      );
+    } finally {
+      setIsBrowsingForWorkspace(false);
+    }
+  };
 
   // Settings
   const [settings, setSettings] = usePersistedState<Settings>(
@@ -702,22 +713,18 @@ function App() {
     setAppState(AppState.CODE_READY);
   }
 
+  const showMainContent = !viewingSettings && !projectSettingsPath;
+
   return (
     <div className="dark:bg-background dark:text-foreground flex flex-row h-screen overflow-hidden">
-      {/* Project Selector Modal */}
-      <ProjectSelector
-        open={showProjectSelector}
-        onOpenChange={setShowProjectSelector}
-        mirrorStartupState={RUNTIME_KIND === "dev"}
-      />
-
       {/* Settings drawer - pushes main content */}
       <SettingsSidebar
         settings={settings}
         setSettings={setSettings}
-        onOpenProjectSelector={() => {
-          setShowProjectSelector(true);
+        onOpenWorkspacePicker={() => {
+          void browseAndOpenWorkspace();
         }}
+        isOpeningWorkspace={isBrowsingForWorkspace}
       />
 
       {/* Main content */}
@@ -726,17 +733,18 @@ function App() {
         <ModeTabBar />
         <ControllerUpdateNotice />
         <ControllerUpdateApplyOverlay />
-        {RUNTIME_KIND === "dev" && (
+        {RUNTIME_KIND === "dev" && !projectPath && (
           <div className="shrink-0 border-b border-border/40 bg-card/20 px-3 py-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="gap-2"
-              onClick={() => setShowProjectSelector(true)}
+              onClick={() => void browseAndOpenWorkspace()}
+              disabled={isBrowsingForWorkspace}
             >
               <FolderOpen className="h-4 w-4" />
-              Open Workspace Dialog
+              {isBrowsingForWorkspace ? "Opening..." : "Open Workspace"}
             </Button>
           </div>
         )}
@@ -744,7 +752,7 @@ function App() {
         {/* Both panes rendered, visibility toggled to preserve state */}
         <div
           className={`flex-1 min-h-0 overflow-auto ${
-            !viewingSettings && activeMode === "screenshot" ? "" : "hidden"
+            showMainContent && activeMode === "screenshot" ? "" : "hidden"
           }`}
         >
           <div className="py-2">
@@ -763,7 +771,7 @@ function App() {
 
         <div
           className={`flex-1 min-h-0 overflow-hidden ${
-            !viewingSettings && activeMode === "live-editor" ? "" : "hidden"
+            showMainContent && activeMode === "live-editor" ? "" : "hidden"
           }`}
         >
           <LiveEditorPane />
@@ -772,7 +780,13 @@ function App() {
         {/* Settings page — full-width surface; SettingsSidebar portals its content here. */}
         <div
           id="pf-settings-pane-root"
-          className={`flex-1 min-h-0 overflow-hidden ${viewingSettings ? "" : "hidden"}`}
+          className={`flex-1 min-h-0 overflow-hidden ${viewingSettings && !projectSettingsPath ? "" : "hidden"}`}
+        />
+
+        {/* Project settings page — full-width surface; SettingsSidebar portals its content here. */}
+        <div
+          id="pf-project-settings-pane-root"
+          className={`flex-1 min-h-0 overflow-hidden ${projectSettingsPath ? "" : "hidden"}`}
         />
       </main>
     </div>

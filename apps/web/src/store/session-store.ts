@@ -273,6 +273,10 @@ interface SessionStore {
   viewingSettings: boolean;
   setViewingSettings: (viewing: boolean) => void;
 
+  // Per-project settings full-page surface (holds the target project path)
+  projectSettingsPath: string | null;
+  setProjectSettingsPath: (path: string | null) => void;
+
   // Helpers
   getCurrentProjectUrls: () => string[];
   setRuntimeInfo: (runtimeInfo: ControllerRuntimeInfo) => void;
@@ -1162,7 +1166,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Full-page Settings surface
   viewingSettings: false,
   setViewingSettings: (viewing: boolean) => {
-    set({ viewingSettings: viewing });
+    set({ viewingSettings: viewing, projectSettingsPath: viewing ? null : get().projectSettingsPath });
+  },
+
+  projectSettingsPath: null,
+  setProjectSettingsPath: (path) => {
+    set({
+      projectSettingsPath: path,
+      viewingSettings: path ? false : get().viewingSettings,
+    });
   },
 
   hydrateProjects: async () => {
