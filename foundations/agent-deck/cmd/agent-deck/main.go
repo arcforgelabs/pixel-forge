@@ -585,6 +585,8 @@ func reorderArgsForFlagParsing(args []string) []string {
 		"--sandbox-image":  true,
 		"--ssh":            true,
 		"--remote-path":    true,
+		"--model":          true,
+		"--effort":         true,
 	}
 
 	var flags []string

@@ -24,6 +24,62 @@ CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 
+# Allowlists for agent model + thinking-effort overrides plumbed from the
+# Pixel Forge chat composer through to agent-deck launch. These values end
+# up as argv elements on `agent-deck launch`, not inside a shell string —
+# the agent-deck CLI then stores them on the session's ToolOptions. We
+# still validate them here so an unexpected value gets silently dropped
+# (treated as "use tool defaults") rather than forwarded to the tool and
+# causing a surprising failure.
+CLAUDE_MODEL_ALLOWLIST = frozenset({
+    "opus",
+    "sonnet",
+    "haiku",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+})
+CLAUDE_EFFORT_ALLOWLIST = frozenset({"low", "medium", "high", "max"})
+CODEX_MODEL_ALLOWLIST = frozenset({"gpt-5.4", "gpt-5.3", "gpt-5.2"})
+CODEX_EFFORT_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+
+
+def _resolve_agent_model_effort_args(
+    agent_type: str,
+    agent_model: str | None,
+    agent_thinking: str | None,
+) -> list[str]:
+    """Return the `--model`/`--effort` argv fragment for `agent-deck launch`.
+
+    These flags get set on the session's ToolOptions (ClaudeOptions.Model /
+    ClaudeOptions.Effort / CodexOptions.Model / CodexOptions.ReasoningEffort)
+    rather than smuggled through a `{command}` wrapper. The wrapper path is
+    broken for Claude specifically because Pixel Forge wraps the claude
+    command inside `python3 dev_channel_wrapper.py -- /bin/bash -lc "…"` —
+    any wrapper-appended flags land OUTSIDE that quoted envelope and bash
+    swallows them as positional parameters instead of passing them to
+    claude.
+    """
+    tool = (agent_type or "claude").strip().lower()
+    model = (agent_model or "").strip()
+    thinking = (agent_thinking or "").strip()
+
+    if tool == "claude":
+        model_allowed = CLAUDE_MODEL_ALLOWLIST
+        effort_allowed = CLAUDE_EFFORT_ALLOWLIST
+    elif tool == "codex":
+        model_allowed = CODEX_MODEL_ALLOWLIST
+        effort_allowed = CODEX_EFFORT_ALLOWLIST
+    else:
+        return []
+
+    args: list[str] = []
+    if model and model in model_allowed:
+        args.extend(["--model", model])
+    if thinking and thinking in effort_allowed:
+        args.extend(["--effort", thinking])
+    return args
+
 
 @dataclass(slots=True)
 class AgentDeckSessionInfo:
@@ -473,9 +529,10 @@ async def _launch_new_session(
     agent_type: str = "claude",
     workspace_mode: str = "clone",
     workspace_path: str | None = None,
+    agent_model: str | None = None,
+    agent_thinking: str | None = None,
 ) -> dict[str, object]:
     normalized_agent_type = agent_type.strip().lower() or "claude"
-    tool_arg = f"-c={normalized_agent_type}"
     launch_path = (
         _normalize_path(workspace_path)
         if isinstance(workspace_path, str) and workspace_path.strip()
@@ -487,8 +544,18 @@ async def _launch_new_session(
         "-no-wait",
         f"-t={session_title}",
         f"-g={_group_path(project_path)}",
-        tool_arg,
+        f"-c={normalized_agent_type}",
     ]
+    # Route model/effort through agent-deck's ToolOptions rather than a
+    # `-cmd` wrapper string. The wrapper approach is broken for Claude
+    # because the dev-channel wrap envelopes the claude command inside
+    # `bash -lc "…"` and any wrapper-appended flags land outside the
+    # quoted envelope where bash swallows them as positional parameters.
+    args.extend(
+        _resolve_agent_model_effort_args(
+            normalized_agent_type, agent_model, agent_thinking
+        )
+    )
     if workspace_mode == "clone":
         args.append(f"-clone={_clone_name(session_title)}")
     args.append(launch_path)
@@ -1275,6 +1342,8 @@ async def ensure_agent_deck_session(
     workspace_mode: str = "clone",
     *,
     target_agent_deck_session_id: str | None = None,
+    agent_model: str | None = None,
+    agent_thinking: str | None = None,
 ) -> AgentDeckSessionInfo:
     payload: dict[str, object]
     rebind_workspace_path = _thread_rebind_workspace_path(project_path, thread)
@@ -1326,6 +1395,8 @@ async def ensure_agent_deck_session(
                     agent_type=agent_type,
                     workspace_mode=launch_workspace_mode,
                     workspace_path=rebind_workspace_path,
+                    agent_model=agent_model,
+                    agent_thinking=agent_thinking,
                 )
             else:
                 raise
@@ -1345,6 +1416,8 @@ async def ensure_agent_deck_session(
                 agent_type=agent_type,
                 workspace_mode=launch_workspace_mode,
                 workspace_path=rebind_workspace_path,
+                agent_model=agent_model,
+                agent_thinking=agent_thinking,
             )
     else:
         payload = await _launch_new_session(
@@ -1353,6 +1426,8 @@ async def ensure_agent_deck_session(
             agent_type=agent_type,
             workspace_mode=launch_workspace_mode,
             workspace_path=rebind_workspace_path,
+            agent_model=agent_model,
+            agent_thinking=agent_thinking,
         )
 
     if persisted_thread_title:

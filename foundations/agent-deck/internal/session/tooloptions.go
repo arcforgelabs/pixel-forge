@@ -29,6 +29,12 @@ type ClaudeOptions struct {
 	UseChrome bool `json:"use_chrome,omitempty"`
 	// UseTeammateMode adds --teammate-mode tmux flag
 	UseTeammateMode bool `json:"use_teammate_mode,omitempty"`
+	// Model overrides the Claude model alias or full name (for example
+	// "sonnet" or "claude-sonnet-4-6"). Emitted as `--model <value>`.
+	Model string `json:"model,omitempty"`
+	// Effort sets the thinking effort level. Valid values are low, medium,
+	// high, max. Emitted as `--effort <value>`.
+	Effort string `json:"effort,omitempty"`
 
 	// Transient fields for worktree/clone fork (not persisted)
 	WorkDir          string `json:"-"`
@@ -70,6 +76,12 @@ func (o *ClaudeOptions) ToArgs() []string {
 	if o.UseTeammateMode {
 		args = append(args, "--teammate-mode", "tmux")
 	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--effort", o.Effort)
+	}
 
 	return args
 }
@@ -89,6 +101,12 @@ func (o *ClaudeOptions) ToArgsForFork() []string {
 	}
 	if o.UseTeammateMode {
 		args = append(args, "--teammate-mode", "tmux")
+	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--effort", o.Effort)
 	}
 
 	return args
@@ -113,6 +131,10 @@ type CodexOptions struct {
 	YoloMode *bool `json:"yolo_mode,omitempty"`
 	// Model overrides the Codex model (for example "gpt-5.4")
 	Model string `json:"model,omitempty"`
+	// ReasoningEffort overrides Codex's reasoning-effort level. Valid
+	// values mirror the Codex config key: minimal, low, medium, high,
+	// xhigh. Emitted as `-c model_reasoning_effort=<value>`.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // ToolName returns "codex"
@@ -125,6 +147,9 @@ func (o *CodexOptions) ToArgs() []string {
 	var args []string
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
+	}
+	if o.ReasoningEffort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+o.ReasoningEffort)
 	}
 	if o.YoloMode != nil && *o.YoloMode {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")

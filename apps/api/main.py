@@ -3488,6 +3488,8 @@ async def live_editor_chat(websocket: WebSocket):
             preview_url = data.get("preview_url", "")
             live_preview = data.get("live_preview")
             agent_type = data.get("agent_type", "claude")
+            agent_model = data.get("agent_model")
+            agent_thinking = data.get("agent_thinking")
             workspace_mode = data.get("workspace_mode", "clone")
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
 
@@ -3575,6 +3577,12 @@ async def live_editor_chat(websocket: WebSocket):
                         target_agent_deck_session_id
                         if isinstance(target_agent_deck_session_id, str)
                         else None
+                    ),
+                    agent_model=(
+                        agent_model if isinstance(agent_model, str) else None
+                    ),
+                    agent_thinking=(
+                        agent_thinking if isinstance(agent_thinking, str) else None
                     ),
                 )
                 _assert_agent_deck_lane_available(

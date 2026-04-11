@@ -332,7 +332,12 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   connect: (endpoint?: string) => void
   disconnect: (threadKey?: string | null) => void
   disconnectAll: () => void
-  sendMessage: (content: string, attachments?: ChatAttachment[]) => void
+  sendMessage: (
+    content: string,
+    attachments?: ChatAttachment[],
+    agentModel?: string | null,
+    agentThinking?: string | null,
+  ) => void
   replayMessageIntoNewChat: (messageId: string) => Promise<void>
   consumePendingComposerSeed: (threadKey?: string | null) => ComposerSeed | null
   clearMessages: () => void
@@ -2357,7 +2362,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       })
     },
 
-    sendMessage: (content, attachments = []) => {
+    sendMessage: (
+      content,
+      attachments = [],
+      agentModel: string | null = null,
+      agentThinking: string | null = null,
+    ) => {
       const activeThreadKey = get().activeThreadKey
       const activeThreadState = getThreadStateSnapshot(
         get().threadStates,
@@ -2524,6 +2534,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           element_context: elementContext,
           preview_url: previewUrl || '',
           agent_type: agentType,
+        }
+
+        if (typeof agentModel === 'string' && agentModel.trim().length > 0) {
+          payload.agent_model = agentModel.trim()
+        }
+
+        if (typeof agentThinking === 'string' && agentThinking.trim().length > 0) {
+          payload.agent_thinking = agentThinking.trim()
         }
 
         if (!boundSession?.agentDeckSessionId && !targetAgentDeckSessionId) {

@@ -41,6 +41,80 @@ function formatAgentLabel(agentType: string | null | undefined): string {
   return agentType || 'Agent'
 }
 
+interface AgentModelOption {
+  value: string
+  label: string
+}
+
+// Claude uses `--model opus|sonnet|haiku|...` (aliases resolve to latest).
+// Codex uses `-m gpt-5.x`.
+const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
+  claude: [
+    { value: 'opus', label: 'Opus (latest)' },
+    { value: 'sonnet', label: 'Sonnet (latest)' },
+    { value: 'haiku', label: 'Haiku (latest)' },
+  ],
+  codex: [
+    { value: 'gpt-5.4', label: 'GPT 5.4' },
+    { value: 'gpt-5.3', label: 'GPT 5.3' },
+    { value: 'gpt-5.2', label: 'GPT 5.2' },
+  ],
+}
+
+// Claude uses `--effort low|medium|high|max`.
+// Codex uses `-c model_reasoning_effort=minimal|low|medium|high|xhigh`.
+const AGENT_THINKING_OPTIONS: Record<string, AgentModelOption[]> = {
+  claude: [
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'max', label: 'Max' },
+  ],
+  codex: [
+    { value: 'minimal', label: 'Minimal' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'Extra High' },
+  ],
+}
+
+function getAgentModelOptions(agentType: string | null | undefined): AgentModelOption[] {
+  if (!agentType) {
+    return []
+  }
+  return AGENT_MODEL_OPTIONS[agentType] ?? []
+}
+
+function getAgentThinkingOptions(agentType: string | null | undefined): AgentModelOption[] {
+  if (!agentType) {
+    return []
+  }
+  return AGENT_THINKING_OPTIONS[agentType] ?? []
+}
+
+function formatAgentModelLabel(
+  agentType: string | null | undefined,
+  model: string | null,
+): string {
+  if (!model) {
+    return 'Default model'
+  }
+  const match = getAgentModelOptions(agentType).find((option) => option.value === model)
+  return match?.label ?? model
+}
+
+function formatAgentThinkingLabel(
+  agentType: string | null | undefined,
+  thinking: string | null,
+): string {
+  if (!thinking) {
+    return 'Default thinking'
+  }
+  const match = getAgentThinkingOptions(agentType).find((option) => option.value === thinking)
+  return match?.label ?? thinking
+}
+
 function formatWorkspaceModeLabel(workspaceMode: string | null | undefined): string {
   return workspaceMode === 'root' ? 'Root' : 'Clone'
 }
@@ -71,10 +145,16 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
+  const [showModelPicker, setShowModelPicker] = useState(false)
+  const [showThinkingPicker, setShowThinkingPicker] = useState(false)
+  const [draftAgentModels, setDraftAgentModels] = useState<Record<string, string | null>>({})
+  const [draftAgentThinking, setDraftAgentThinking] = useState<Record<string, string | null>>({})
   const [caretIndex, setCaretIndex] = useState(0)
   const [activeSkillIndex, setActiveSkillIndex] = useState(0)
   const [dismissedSkillToken, setDismissedSkillToken] = useState<string | null>(null)
   const agentPickerRef = useRef<HTMLDivElement>(null)
+  const modelPickerRef = useRef<HTMLDivElement>(null)
+  const thinkingPickerRef = useRef<HTMLDivElement>(null)
   const desktopAppRef = useRef(getDesktopApp())
   const attachmentOrdinalRef = useRef<Record<'image' | 'file' | 'paste', number>>({
     image: 0,
@@ -118,6 +198,18 @@ export function ChatInput() {
     liveEditorSession?.agentDeckSessionId || targetAgentDeckSessionId
   )
   const showDraftWorkspaceModeControl = !agentSelectionLocked
+  const agentModelOptions = getAgentModelOptions(effectiveAgentType)
+  const activeAgentModel = effectiveAgentType
+    ? draftAgentModels[effectiveAgentType] ?? null
+    : null
+  const hasAgentModelOptions = agentModelOptions.length > 0
+  const modelSelectionDisabled = agentSelectionLocked || !hasAgentModelOptions
+  const agentThinkingOptions = getAgentThinkingOptions(effectiveAgentType)
+  const activeAgentThinking = effectiveAgentType
+    ? draftAgentThinking[effectiveAgentType] ?? null
+    : null
+  const hasAgentThinkingOptions = agentThinkingOptions.length > 0
+  const thinkingSelectionDisabled = agentSelectionLocked || !hasAgentThinkingOptions
   const activeSkillMatch = findSkillAutocompleteMatch(input, caretIndex)
   const activeSkillTokenKey = activeSkillMatch
     ? `${activeSkillMatch.start}:${activeSkillMatch.end}:${activeSkillMatch.query}`
@@ -225,7 +317,7 @@ export function ChatInput() {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
-    sendMessage(input.trim(), attachments)
+    sendMessage(input.trim(), attachments, activeAgentModel, activeAgentThinking)
     setInput('')
     setAttachments([])
     resetAttachmentOrdinals()
@@ -336,6 +428,67 @@ export function ChatInput() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showAgentPicker])
+
+  // Close model picker on outside click
+  useEffect(() => {
+    if (!showModelPicker) return
+    const handler = (e: MouseEvent) => {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showModelPicker])
+
+  // Close thinking picker on outside click
+  useEffect(() => {
+    if (!showThinkingPicker) return
+    const handler = (e: MouseEvent) => {
+      if (thinkingPickerRef.current && !thinkingPickerRef.current.contains(e.target as Node)) {
+        setShowThinkingPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showThinkingPicker])
+
+  // If the effective agent changes and the persisted model selection is no
+  // longer valid for that agent, drop it so the next send falls back to default.
+  useEffect(() => {
+    if (!effectiveAgentType) return
+    const current = draftAgentModels[effectiveAgentType]
+    if (!current) return
+    const stillValid = AGENT_MODEL_OPTIONS[effectiveAgentType]?.some(
+      (option) => option.value === current
+    )
+    if (!stillValid) {
+      setDraftAgentModels((prev) => {
+        if (!(effectiveAgentType in prev)) return prev
+        const next = { ...prev }
+        delete next[effectiveAgentType]
+        return next
+      })
+    }
+  }, [effectiveAgentType, draftAgentModels])
+
+  // Same stale-cleanup for thinking effort.
+  useEffect(() => {
+    if (!effectiveAgentType) return
+    const current = draftAgentThinking[effectiveAgentType]
+    if (!current) return
+    const stillValid = AGENT_THINKING_OPTIONS[effectiveAgentType]?.some(
+      (option) => option.value === current
+    )
+    if (!stillValid) {
+      setDraftAgentThinking((prev) => {
+        if (!(effectiveAgentType in prev)) return prev
+        const next = { ...prev }
+        delete next[effectiveAgentType]
+        return next
+      })
+    }
+  }, [effectiveAgentType, draftAgentThinking])
 
   // Focus textarea on mount with delay to handle iframe focus conflicts
   useEffect(() => {
@@ -748,7 +901,7 @@ export function ChatInput() {
                   }
                   setShowAgentPicker((v) => !v)
                 }}
-                className="h-7 px-1 rounded-lg rounded-l-none border-l border-border/20"
+                className="h-7 px-1 rounded-none border-l border-border/20"
                 disabled={agentSelectionLocked}
                 title={
                   agentSelectionLocked
@@ -780,6 +933,164 @@ export function ChatInput() {
                     >
                       {agent.label}
                       {effectiveAgentType === agent.value && (
+                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Model selector */}
+            <div className="relative" ref={modelPickerRef}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  if (modelSelectionDisabled) {
+                    return
+                  }
+                  setShowModelPicker((v) => !v)
+                }}
+                className="h-7 px-1 rounded-none border-l border-border/20"
+                disabled={modelSelectionDisabled}
+                title={
+                  agentSelectionLocked
+                    ? `Model is locked for this live lane`
+                    : hasAgentModelOptions
+                      ? `Model: ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)}`
+                      : `No models configured for ${formatAgentLabel(effectiveAgentType)}`
+                }
+              >
+                <span className="px-1 text-[11px] font-medium">
+                  {formatAgentModelLabel(effectiveAgentType, activeAgentModel)}
+                </span>
+                <ChevronUp
+                  className={`h-3 w-3 transition-transform ${showModelPicker ? 'rotate-180' : ''}`}
+                />
+              </Button>
+              {showModelPicker && hasAgentModelOptions && (
+                <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!effectiveAgentType) return
+                      setDraftAgentModels((prev) => {
+                        if (!(effectiveAgentType in prev)) return prev
+                        const next = { ...prev }
+                        delete next[effectiveAgentType]
+                        return next
+                      })
+                      setShowModelPicker(false)
+                    }}
+                    className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                      activeAgentModel === null ? 'text-primary font-medium' : 'text-foreground'
+                    }`}
+                  >
+                    Default model
+                    {activeAgentModel === null && (
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                    )}
+                  </button>
+                  {agentModelOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        if (!effectiveAgentType) return
+                        setDraftAgentModels((prev) => ({
+                          ...prev,
+                          [effectiveAgentType]: option.value,
+                        }))
+                        setShowModelPicker(false)
+                      }}
+                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        activeAgentModel === option.value
+                          ? 'text-primary font-medium'
+                          : 'text-foreground'
+                      }`}
+                    >
+                      {option.label}
+                      {activeAgentModel === option.value && (
+                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Thinking-effort selector */}
+            <div className="relative" ref={thinkingPickerRef}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  if (thinkingSelectionDisabled) {
+                    return
+                  }
+                  setShowThinkingPicker((v) => !v)
+                }}
+                className="h-7 px-1 rounded-lg rounded-l-none border-l border-border/20"
+                disabled={thinkingSelectionDisabled}
+                title={
+                  agentSelectionLocked
+                    ? 'Thinking effort is locked for this live lane'
+                    : hasAgentThinkingOptions
+                      ? `Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`
+                      : `No thinking levels configured for ${formatAgentLabel(effectiveAgentType)}`
+                }
+              >
+                <span className="px-1 text-[11px] font-medium">
+                  {formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}
+                </span>
+                <ChevronUp
+                  className={`h-3 w-3 transition-transform ${showThinkingPicker ? 'rotate-180' : ''}`}
+                />
+              </Button>
+              {showThinkingPicker && hasAgentThinkingOptions && (
+                <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!effectiveAgentType) return
+                      setDraftAgentThinking((prev) => {
+                        if (!(effectiveAgentType in prev)) return prev
+                        const next = { ...prev }
+                        delete next[effectiveAgentType]
+                        return next
+                      })
+                      setShowThinkingPicker(false)
+                    }}
+                    className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                      activeAgentThinking === null ? 'text-primary font-medium' : 'text-foreground'
+                    }`}
+                  >
+                    Default thinking
+                    {activeAgentThinking === null && (
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                    )}
+                  </button>
+                  {agentThinkingOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        if (!effectiveAgentType) return
+                        setDraftAgentThinking((prev) => ({
+                          ...prev,
+                          [effectiveAgentType]: option.value,
+                        }))
+                        setShowThinkingPicker(false)
+                      }}
+                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        activeAgentThinking === option.value
+                          ? 'text-primary font-medium'
+                          : 'text-foreground'
+                      }`}
+                    >
+                      {option.label}
+                      {activeAgentThinking === option.value && (
                         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
                       )}
                     </button>

@@ -578,6 +578,18 @@ func (i *Instance) buildClaudeExtraFlags(opts *ClaudeOptions) string {
 		if opts.UseTeammateMode {
 			flags = append(flags, "--teammate-mode tmux")
 		}
+		// Model/Effort land here (not in a user-supplied Wrapper) so they
+		// end up inside the raw claude command string before
+		// wrapClaudeDevelopmentChannelCommand envelops it in `bash -lc "…"`.
+		// If they were appended via a user wrapper they would land OUTSIDE
+		// the quoted envelope and bash would swallow them as positional
+		// parameters instead of passing them to claude.
+		if opts.Model != "" {
+			flags = append(flags, "--model", opts.Model)
+		}
+		if opts.Effort != "" {
+			flags = append(flags, "--effort", opts.Effort)
+		}
 	}
 	flags = append(flags, i.buildClaudeChannelFlags()...)
 

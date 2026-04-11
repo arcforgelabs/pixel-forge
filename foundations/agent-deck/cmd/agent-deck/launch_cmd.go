@@ -54,6 +54,12 @@ func handleLaunch(profile string, args []string) {
 	// Resume session flag
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume")
 
+	// Model / thinking-effort overrides. These route into the detected
+	// tool's ToolOptions so the flags end up on the raw tool command
+	// BEFORE any wrapping (e.g. Claude's dev-channel bash -lc envelope).
+	modelOverride := fs.String("model", "", "Override the tool model (Claude: alias like 'sonnet' or full name; Codex: e.g. 'gpt-5.4')")
+	effortOverride := fs.String("effort", "", "Override the thinking effort (Claude: low|medium|high|max; Codex reasoning_effort: minimal|low|medium|high|xhigh)")
+
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck launch [path] [options]")
 		fmt.Println()
@@ -346,6 +352,43 @@ func handleLaunch(profile string, args []string) {
 		opts.SessionMode = "resume"
 		opts.ResumeSessionID = *resumeSession
 		_ = newInstance.SetClaudeOptions(opts)
+	}
+
+	// Apply model / effort overrides. These must be set on the tool's
+	// ToolOptions (not smuggled through a {command} wrapper) so they land
+	// inside the raw claude/codex command string before any outer
+	// wrapping — see instance.buildClaudeExtraFlags for the Claude path.
+	trimmedModel := strings.TrimSpace(*modelOverride)
+	trimmedEffort := strings.TrimSpace(*effortOverride)
+	if trimmedModel != "" || trimmedEffort != "" {
+		switch newInstance.Tool {
+		case "claude":
+			opts := newInstance.GetClaudeOptions()
+			if opts == nil {
+				userConfig, _ := session.LoadUserConfig()
+				opts = session.NewClaudeOptions(userConfig)
+			}
+			if trimmedModel != "" {
+				opts.Model = trimmedModel
+			}
+			if trimmedEffort != "" {
+				opts.Effort = trimmedEffort
+			}
+			_ = newInstance.SetClaudeOptions(opts)
+		case "codex":
+			opts := newInstance.GetCodexOptions()
+			if opts == nil {
+				userConfig, _ := session.LoadUserConfig()
+				opts = session.NewCodexOptions(userConfig)
+			}
+			if trimmedModel != "" {
+				opts.Model = trimmedModel
+			}
+			if trimmedEffort != "" {
+				opts.ReasoningEffort = trimmedEffort
+			}
+			_ = newInstance.SetCodexOptions(opts)
+		}
 	}
 
 	// Add to instances and save
