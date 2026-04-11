@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronUp, FileText, Paperclip, Send, X } from 'lucide-react'
+import { Bot, Brain, ChevronUp, Cpu, FileText, Paperclip, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
@@ -842,14 +842,14 @@ export function ChatInput() {
             })}
           </div>
         )}
-        <div className="flex justify-between items-center px-3 pb-3">
-          <div className="flex items-center gap-2">
+        <div className="flex justify-between items-center gap-2 px-3 pb-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <Button
               type="button"
               size="sm"
               variant="ghost"
               onClick={() => fileInputRef.current?.click()}
-              className="h-8 gap-1 px-2"
+              className="h-8 shrink-0 gap-1 px-2"
               title="Attach reference files"
             >
               <Paperclip className="h-4 w-4" />
@@ -859,8 +859,20 @@ export function ChatInput() {
                 </span>
               )}
             </Button>
+            {effectiveAgentType && (
+              <div
+                className="min-w-0 truncate text-[10px] leading-none text-muted-foreground/70"
+                title={`${formatAgentLabel(effectiveAgentType)} · ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)} · ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`}
+              >
+                {formatAgentLabel(effectiveAgentType)}
+                <span className="mx-1 text-muted-foreground/40">·</span>
+                {formatAgentModelLabel(effectiveAgentType, activeAgentModel)}
+                <span className="mx-1 text-muted-foreground/40">·</span>
+                {formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               type="submit"
               size="sm"
@@ -901,18 +913,17 @@ export function ChatInput() {
                   }
                   setShowAgentPicker((v) => !v)
                 }}
-                className="h-7 px-1 rounded-none border-l border-border/20"
+                className="h-7 px-1.5 rounded-none border-l border-border/20"
                 disabled={agentSelectionLocked}
                 title={
                   agentSelectionLocked
                     ? `Agent is locked to ${formatAgentLabel(effectiveAgentType)} for this live lane`
                     : `Agent: ${formatAgentLabel(effectiveAgentType)}`
                 }
+                aria-label={`Agent: ${formatAgentLabel(effectiveAgentType)}`}
                 >
-                <span className="px-1 text-[11px] font-medium">
-                  {formatAgentLabel(effectiveAgentType)}
-                </span>
-                <ChevronUp className={`h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
+                <Bot className="h-3.5 w-3.5" />
+                <ChevronUp className={`ml-0.5 h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
               </Button>
               {showAgentPicker && (
                 <div className="absolute bottom-full right-0 mb-1 w-40 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
@@ -952,7 +963,7 @@ export function ChatInput() {
                   }
                   setShowModelPicker((v) => !v)
                 }}
-                className="h-7 px-1 rounded-none border-l border-border/20"
+                className="h-7 px-1.5 rounded-none border-l border-border/20"
                 disabled={modelSelectionDisabled}
                 title={
                   agentSelectionLocked
@@ -961,12 +972,11 @@ export function ChatInput() {
                       ? `Model: ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)}`
                       : `No models configured for ${formatAgentLabel(effectiveAgentType)}`
                 }
+                aria-label={`Model: ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)}`}
               >
-                <span className="px-1 text-[11px] font-medium">
-                  {formatAgentModelLabel(effectiveAgentType, activeAgentModel)}
-                </span>
+                <Cpu className="h-3.5 w-3.5" />
                 <ChevronUp
-                  className={`h-3 w-3 transition-transform ${showModelPicker ? 'rotate-180' : ''}`}
+                  className={`ml-0.5 h-3 w-3 transition-transform ${showModelPicker ? 'rotate-180' : ''}`}
                 />
               </Button>
               {showModelPicker && hasAgentModelOptions && (
@@ -1031,7 +1041,7 @@ export function ChatInput() {
                   }
                   setShowThinkingPicker((v) => !v)
                 }}
-                className="h-7 px-1 rounded-lg rounded-l-none border-l border-border/20"
+                className="h-7 px-1.5 rounded-lg rounded-l-none border-l border-border/20"
                 disabled={thinkingSelectionDisabled}
                 title={
                   agentSelectionLocked
@@ -1040,12 +1050,11 @@ export function ChatInput() {
                       ? `Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`
                       : `No thinking levels configured for ${formatAgentLabel(effectiveAgentType)}`
                 }
+                aria-label={`Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`}
               >
-                <span className="px-1 text-[11px] font-medium">
-                  {formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}
-                </span>
+                <Brain className="h-3.5 w-3.5" />
                 <ChevronUp
-                  className={`h-3 w-3 transition-transform ${showThinkingPicker ? 'rotate-180' : ''}`}
+                  className={`ml-0.5 h-3 w-3 transition-transform ${showThinkingPicker ? 'rotate-180' : ''}`}
                 />
               </Button>
               {showThinkingPicker && hasAgentThinkingOptions && (
