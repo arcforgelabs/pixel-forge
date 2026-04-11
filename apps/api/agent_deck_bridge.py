@@ -1971,7 +1971,7 @@ async def type_agent_deck_prompt(
 async def wait_for_agent_deck_turn_completion(
     session_info: AgentDeckSessionInfo,
     *,
-    startup_timeout_seconds: float = 20.0,
+    startup_timeout_seconds: float = 60.0,
     completion_timeout_seconds: float = 600.0,
     poll_interval_seconds: float = 0.5,
 ) -> None:

@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
 import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
-import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { splitTextWithInlineAttachments } from './composer-attachments'
 import toast from 'react-hot-toast'
 
@@ -72,6 +72,7 @@ export function ChatMessages({
 }: ChatMessagesProps) {
   const {
     replayMessageIntoNewChat,
+    retryMessageInCurrentChat,
     messages,
     isStreaming,
     currentStreamContent,
@@ -131,6 +132,16 @@ export function ChatMessages({
       )
     }
   }, [replayMessageIntoNewChat])
+
+  const retryMessage = useCallback(async (messageId: string) => {
+    try {
+      await retryMessageInCurrentChat(messageId)
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to retry this request'
+      )
+    }
+  }, [retryMessageInCurrentChat])
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -371,6 +382,35 @@ export function ChatMessages({
                       Load Updated Pixel Forge
                     </Button>
                   )}
+                  {msg.systemTone === 'error' && msg.replayDraft && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={isStreaming}
+                        onClick={() => {
+                          void retryMessage(msg.id)
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/60 hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Retry in this chat with the same selections"
+                        aria-label="Retry in this chat"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void replayMessage(msg.id)
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/60 hover:bg-destructive/20"
+                        title="Replay into a fresh chat"
+                        aria-label="Replay into a fresh chat"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Replay in new chat
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : msg.role === 'user' ? (
@@ -399,18 +439,33 @@ export function ChatMessages({
                     Copy
                   </button>
                   {msg.replayDraft && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void replayMessage(msg.id)
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted/60 hover:text-foreground"
-                      title="Replay into a fresh chat"
-                      aria-label="Replay into a fresh chat"
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                      Replay
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        disabled={isStreaming}
+                        onClick={() => {
+                          void retryMessage(msg.id)
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Retry in this chat"
+                        aria-label="Retry in this chat"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void replayMessage(msg.id)
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted/60 hover:text-foreground"
+                        title="Replay into a fresh chat"
+                        aria-label="Replay into a fresh chat"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Replay
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

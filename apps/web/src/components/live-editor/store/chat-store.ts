@@ -339,6 +339,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
     agentThinking?: string | null,
   ) => void
   replayMessageIntoNewChat: (messageId: string) => Promise<void>
+  retryMessageInCurrentChat: (messageId: string) => Promise<void>
   consumePendingComposerSeed: (threadKey?: string | null) => ComposerSeed | null
   clearMessages: () => void
   newSession: (targetAgentDeckSessionId?: string | null) => void
@@ -694,6 +695,33 @@ function buildReplayDraftSnapshot(
     content,
     attachments: cloneChatAttachments(attachments),
   }
+}
+
+function cloneReplayDraftSnapshot(
+  draft: ReplayDraftSnapshot | undefined
+): ReplayDraftSnapshot | undefined {
+  if (!draft) {
+    return undefined
+  }
+  return {
+    projectPath: draft.projectPath,
+    editorState: draft.editorState,
+    selectedElements: cloneSelectionState(draft.selectedElements),
+    content: draft.content,
+    attachments: cloneChatAttachments(draft.attachments),
+  }
+}
+
+function findLastUserReplayDraft(
+  messages: ChatMessage[]
+): ReplayDraftSnapshot | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]
+    if (candidate.role === 'user' && candidate.replayDraft) {
+      return candidate.replayDraft
+    }
+  }
+  return undefined
 }
 
 function createThreadStateFromSession(
@@ -1414,6 +1442,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         case 'turn_failed': {
           const failureText = event.message?.trim() || 'Observed Agent Deck turn failed.'
           nextMessages = removeObservedMessage(nextMessages, statusMessageId)
+          const replayDraft = cloneReplayDraftSnapshot(findLastUserReplayDraft(nextMessages))
           return {
             ...currentState,
             messages: upsertObservedMessage(nextMessages, {
@@ -1423,6 +1452,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               timestamp: new Date(),
               systemTone: 'error',
               observedSessionId: agentDeckSessionId,
+              replayDraft,
             }),
           }
         }
@@ -1751,25 +1781,29 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   }
 
   const appendSystemError = (threadKey: string, message: string) => {
-    updateThreadState(threadKey, (threadState) => ({
-      ...threadState,
-      messages: [
-        ...threadState.messages,
-        {
-          id: generateId(),
-          role: 'system',
-          content: message,
-          timestamp: new Date(),
-          systemTone: 'error',
-        },
-      ],
-      isStreaming: false,
-      currentStreamContent: '',
-      pendingAssistantAttachments: [],
-      currentStatusMessage: '',
-      currentSelectionCount: 0,
-      currentRequestId: null,
-    }))
+    updateThreadState(threadKey, (threadState) => {
+      const replayDraft = cloneReplayDraftSnapshot(findLastUserReplayDraft(threadState.messages))
+      return {
+        ...threadState,
+        messages: [
+          ...threadState.messages,
+          {
+            id: generateId(),
+            role: 'system',
+            content: message,
+            timestamp: new Date(),
+            systemTone: 'error',
+            replayDraft,
+          },
+        ],
+        isStreaming: false,
+        currentStreamContent: '',
+        pendingAssistantAttachments: [],
+        currentStatusMessage: '',
+        currentSelectionCount: threadState.selectedElements.length,
+        currentRequestId: null,
+      }
+    })
   }
 
   const connectThread = (
@@ -2134,21 +2168,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           break
         }
 
-        case 'error':
-          updateThreadState(threadKeyRef, (threadState) =>
-            resetThreadRuntimeState(threadState, {
-              messages: [
-                ...threadState.messages,
-                {
-                  id: generateId(),
-                  role: 'assistant',
-                  content: `Error: ${data.message}`,
-                  timestamp: new Date(),
-                },
-              ],
-            })
-          )
+        case 'error': {
+          const errorMessage =
+            typeof data.message === 'string' && data.message.trim()
+              ? data.message
+              : 'Live Editor request failed.'
+          appendSystemError(threadKeyRef, errorMessage)
           break
+        }
 
         case 'status':
           updateThreadState(threadKeyRef, (threadState) => ({
@@ -2595,7 +2622,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const sourceThreadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
       const sourceMessage = sourceThreadState.messages.find((message) => message.id === messageId)
-      if (!sourceMessage || sourceMessage.role !== 'user' || !sourceMessage.replayDraft) {
+      if (!sourceMessage || !sourceMessage.replayDraft) {
         throw new Error('That prompt can no longer be replayed.')
       }
 
@@ -2649,6 +2676,41 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }))
 
       scheduleThreadPersistence(created.threadId, 0)
+    },
+
+    retryMessageInCurrentChat: async (messageId) => {
+      const activeThreadKey = get().activeThreadKey
+      const sourceThreadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+      const sourceMessage = sourceThreadState.messages.find((message) => message.id === messageId)
+      if (!sourceMessage || !sourceMessage.replayDraft) {
+        throw new Error('That request can no longer be retried.')
+      }
+
+      if (sourceThreadState.isStreaming) {
+        throw new Error('Live Editor is still processing the previous request.')
+      }
+
+      const replayDraft = sourceMessage.replayDraft
+      const restoredEditorState = createThreadEditorStateFromPersisted(replayDraft.editorState)
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        selectedElements: cloneSelectionState(replayDraft.selectedElements),
+        selectionUndoStack: pushUndoSnapshot(
+          threadState.selectionUndoStack,
+          threadState.selectedElements
+        ),
+        selectionRedoStack: [],
+        draftAgentType: restoredEditorState.draftAgentType,
+        draftWorkspaceMode: restoredEditorState.draftWorkspaceMode,
+      }))
+
+      scheduleThreadPersistence(activeThreadKey, 0)
+
+      get().sendMessage(
+        replayDraft.content,
+        cloneChatAttachments(replayDraft.attachments),
+      )
     },
 
     consumePendingComposerSeed: (threadKey) => {
