@@ -373,64 +373,10 @@ export function ChatMessages({
                   )}
                 </div>
               </div>
-            ) : (
-              <div
-                className={`forge-msg-enter ${
-                  msg.role === 'user'
-                    ? 'group/message max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-foreground ring-1 ring-primary/20'
-                    : 'max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30'
-                }`}
-              >
-                {msg.role === 'assistant' ? (
+            ) : msg.role === 'user' ? (
+              <div className="forge-msg-enter flex max-w-[calc(100%-1.5rem)] min-w-0 flex-col items-end gap-1.5">
+                <div className="min-w-0 max-w-full overflow-hidden rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-foreground ring-1 ring-primary/20">
                   <div className="space-y-2">
-                    {msg.content && (
-                      <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                      </div>
-                    )}
-                    {msg.attachments && msg.attachments.length > 0 && (
-                      renderAttachmentGallery(msg.attachments, 'assistant')
-                    )}
-                    {msg.isRemoteComplete && onRefreshPreview && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
-                        onClick={onRefreshPreview}
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        Refresh Preview
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex justify-end gap-1 opacity-0 transition-opacity duration-100 group-hover/message:opacity-100 group-focus-within/message:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void copyMessage(msg.content)
-                        }}
-                        className="rounded-md border border-white/10 bg-black/10 p-1 text-foreground/80 transition-colors hover:bg-black/20 hover:text-foreground"
-                        title="Copy prompt"
-                        aria-label="Copy prompt"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </button>
-                      {msg.replayDraft && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void replayMessage(msg.id)
-                          }}
-                          className="rounded-md border border-white/10 bg-black/10 p-1 text-foreground/80 transition-colors hover:bg-black/20 hover:text-foreground"
-                          title="Replay into a fresh chat"
-                          aria-label="Replay into a fresh chat"
-                        >
-                          <RefreshCw className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
                     {msg.content && (
                       renderInlineUserContent(msg.content, msg.attachments)
                     )}
@@ -438,7 +384,59 @@ export function ChatMessages({
                       renderAttachmentGallery(msg.attachments, 'user')
                     )}
                   </div>
-                )}
+                </div>
+                <div className="flex items-center gap-1 pr-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void copyMessage(msg.content)
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted/60 hover:text-foreground"
+                    title="Copy prompt"
+                    aria-label="Copy prompt"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </button>
+                  {msg.replayDraft && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void replayMessage(msg.id)
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted/60 hover:text-foreground"
+                      title="Replay into a fresh chat"
+                      aria-label="Replay into a fresh chat"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Replay
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="forge-msg-enter max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30">
+                <div className="space-y-2">
+                  {msg.content && (
+                    <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
+                  )}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    renderAttachmentGallery(msg.attachments, 'assistant')
+                  )}
+                  {msg.isRemoteComplete && onRefreshPreview && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
+                      onClick={onRefreshPreview}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Refresh Preview
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </div>
