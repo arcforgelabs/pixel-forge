@@ -908,11 +908,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenProjectSelector }
               Live
             </span>
           )}
-          {item.lastActiveLabel && (
-            <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">
-              {item.lastActiveLabel}
-            </span>
-          )}
+
           {item.isActive && (
             <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
           )}
