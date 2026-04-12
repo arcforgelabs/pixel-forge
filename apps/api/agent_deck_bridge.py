@@ -1968,6 +1968,9 @@ async def type_agent_deck_prompt(
             )
 
 
+JSONL_IDLE_COMPLETION_SECONDS = 60.0
+
+
 async def wait_for_agent_deck_turn_completion(
     session_info: AgentDeckSessionInfo,
     *,
@@ -1978,31 +1981,78 @@ async def wait_for_agent_deck_turn_completion(
     loop = asyncio.get_running_loop()
     startup_deadline = loop.time() + startup_timeout_seconds
     completion_deadline = loop.time() + completion_timeout_seconds
-    saw_running = False
+    status_saw_running = False
     settled_polls = 0
+
+    # Tmux-hosted native sessions (the default since b4bd714 routed prompts
+    # through Agent Deck CLI when a tmux target exists) don't always update
+    # Agent Deck's session `status` field when the embedded agent starts
+    # processing. The JSONL file the agent writes is a more reliable signal:
+    # any growth past its baseline size means the agent received and began
+    # handling the prompt. We use JSONL growth as an alternate startup signal
+    # and JSONL idleness as a fallback completion signal when the status
+    # field never transitions.
+    jsonl_path = session_info.jsonl_path
+    jsonl_last_size: int | None = None
+    if jsonl_path is not None:
+        try:
+            jsonl_last_size = (
+                jsonl_path.stat().st_size if jsonl_path.exists() else 0
+            )
+        except OSError:
+            jsonl_last_size = None
+    jsonl_saw_growth = False
+    jsonl_last_change_time: float | None = None
 
     while loop.time() < completion_deadline:
         payload = await session_show(session_info.agent_deck_session_id)
         status = str(payload.get("status") or "").strip().lower()
 
+        if jsonl_path is not None and jsonl_last_size is not None:
+            try:
+                current_jsonl_size = (
+                    jsonl_path.stat().st_size if jsonl_path.exists() else 0
+                )
+            except OSError:
+                current_jsonl_size = None
+            if (
+                current_jsonl_size is not None
+                and current_jsonl_size > jsonl_last_size
+            ):
+                jsonl_saw_growth = True
+                jsonl_last_change_time = loop.time()
+                jsonl_last_size = current_jsonl_size
+
         if status in {"running", "busy", "active", "connected"}:
-            saw_running = True
+            status_saw_running = True
             settled_polls = 0
         elif status in {"waiting", "idle", ""}:
-            if saw_running:
+            if status_saw_running:
                 settled_polls += 1
                 if settled_polls >= 2:
                     return
-            elif loop.time() >= startup_deadline:
+            elif not jsonl_saw_growth and loop.time() >= startup_deadline:
                 raise AgentDeckBridgeError(
                     f"Agent Deck session `{session_info.agent_deck_session_title}` never started processing the live-edit request."
                 )
         else:
             settled_polls = 0
-            if not saw_running and loop.time() >= startup_deadline:
+            if (
+                not status_saw_running
+                and not jsonl_saw_growth
+                and loop.time() >= startup_deadline
+            ):
                 raise AgentDeckBridgeError(
                     f"Agent Deck session `{session_info.agent_deck_session_title}` did not enter a running state (status: {status or 'unknown'})."
                 )
+
+        if (
+            jsonl_saw_growth
+            and not status_saw_running
+            and jsonl_last_change_time is not None
+            and (loop.time() - jsonl_last_change_time) >= JSONL_IDLE_COMPLETION_SECONDS
+        ):
+            return
 
         await asyncio.sleep(poll_interval_seconds)
 

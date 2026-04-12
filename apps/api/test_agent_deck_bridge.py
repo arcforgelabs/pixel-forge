@@ -655,5 +655,103 @@ class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.last_output, "")
 
 
+class AgentDeckBridgeTurnCompletionTest(unittest.IsolatedAsyncioTestCase):
+    def _session_info_with_jsonl(
+        self, jsonl_path: Path
+    ) -> agent_deck_bridge.AgentDeckSessionInfo:
+        return agent_deck_bridge.AgentDeckSessionInfo(
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="pixel-forge-project-thread-a",
+            workspace_path="/tmp/project/.agents/thread-a",
+            tmux_session="tmux-a",
+            tool="claude",
+            status="waiting",
+            acpx_agent=None,
+            acpx_session_name=None,
+            acpx_record_id=None,
+            acp_session_id=None,
+            claude_session_id=None,
+            codex_session_id=None,
+            jsonl_path=jsonl_path,
+        )
+
+    async def test_turn_completion_detects_jsonl_growth_when_status_stays_waiting(
+        self,
+    ) -> None:
+        with tempfile.NamedTemporaryFile(
+            "w", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write("")
+            jsonl_path = Path(handle.name)
+        self.addCleanup(lambda: jsonl_path.unlink(missing_ok=True))
+
+        session_info = self._session_info_with_jsonl(jsonl_path)
+
+        call_count = {"n": 0}
+
+        async def fake_session_show(_session_id: str) -> dict:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                with jsonl_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}\n'
+                    )
+            return {"id": "deck-a", "status": "waiting"}
+
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "session_show",
+                side_effect=fake_session_show,
+            ),
+            patch.object(
+                agent_deck_bridge,
+                "JSONL_IDLE_COMPLETION_SECONDS",
+                0.0,
+            ),
+        ):
+            await agent_deck_bridge.wait_for_agent_deck_turn_completion(
+                session_info,
+                startup_timeout_seconds=5.0,
+                completion_timeout_seconds=5.0,
+                poll_interval_seconds=0.01,
+            )
+
+        self.assertGreaterEqual(call_count["n"], 2)
+
+    async def test_turn_completion_raises_without_jsonl_growth_or_status_transition(
+        self,
+    ) -> None:
+        with tempfile.NamedTemporaryFile(
+            "w", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write("")
+            jsonl_path = Path(handle.name)
+        self.addCleanup(lambda: jsonl_path.unlink(missing_ok=True))
+
+        session_info = self._session_info_with_jsonl(jsonl_path)
+
+        async def fake_session_show(_session_id: str) -> dict:
+            return {"id": "deck-a", "status": "waiting"}
+
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "session_show",
+                side_effect=fake_session_show,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                agent_deck_bridge.AgentDeckBridgeError,
+                "never started processing",
+            ):
+                await agent_deck_bridge.wait_for_agent_deck_turn_completion(
+                    session_info,
+                    startup_timeout_seconds=0.05,
+                    completion_timeout_seconds=1.0,
+                    poll_interval_seconds=0.01,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

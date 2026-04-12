@@ -274,6 +274,7 @@ export interface ThreadChatState {
   activePreviewTabId: string | null
   urlHistory: string[]
   urlHistoryCursor: number
+  lastReplayDraft: ReplayDraftSnapshot | null
 }
 
 interface ActiveThreadViewState {
@@ -306,6 +307,7 @@ interface ActiveThreadViewState {
   activePreviewTabId: string | null
   urlHistory: string[]
   urlHistoryCursor: number
+  lastReplayDraft: ReplayDraftSnapshot | null
 }
 
 interface SelectionPayload {
@@ -525,6 +527,7 @@ function createEmptyThreadState(projectPath: string | null = getCurrentProjectPa
     selectedElements: [],
     selectionUndoStack: [],
     selectionRedoStack: [],
+    lastReplayDraft: null,
     ...createEmptyThreadEditorState(),
   }
 }
@@ -811,6 +814,7 @@ function buildActiveThreadViewState(
     activePreviewTabId: threadState.activePreviewTabId,
     urlHistory: threadState.urlHistory,
     urlHistoryCursor: threadState.urlHistoryCursor,
+    lastReplayDraft: threadState.lastReplayDraft,
   }
 }
 
@@ -1782,7 +1786,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const appendSystemError = (threadKey: string, message: string) => {
     updateThreadState(threadKey, (threadState) => {
-      const replayDraft = cloneReplayDraftSnapshot(findLastUserReplayDraft(threadState.messages))
+      const replayDraft = cloneReplayDraftSnapshot(
+        findLastUserReplayDraft(threadState.messages)
+          ?? threadState.lastReplayDraft
+          ?? undefined
+      )
       return {
         ...threadState,
         messages: [
@@ -2467,6 +2475,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return
       }
 
+      const freshReplayDraft = buildReplayDraftSnapshot(
+        activeThreadState,
+        trimmedContent,
+        attachments
+      )
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         messages: [
@@ -2477,11 +2490,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             content: userVisibleContent,
             attachments: hasAttachments ? attachments : undefined,
             timestamp: new Date(),
-            replayDraft: buildReplayDraftSnapshot(
-              activeThreadState,
-              trimmedContent,
-              attachments
-            ),
+            replayDraft: cloneReplayDraftSnapshot(freshReplayDraft),
           },
         ],
         isStreaming: true,
@@ -2493,6 +2502,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             : 'Preparing live edit request...',
         currentSelectionCount: selectionTunnel.selections.length,
         currentRequestId: null,
+        lastReplayDraft: cloneReplayDraftSnapshot(freshReplayDraft) ?? null,
       }))
       stopObservedThreadStreaming()
 
