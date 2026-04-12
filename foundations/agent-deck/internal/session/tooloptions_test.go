@@ -393,7 +393,7 @@ func TestCodexOptions_ToArgs(t *testing.T) {
 		{
 			name:     "model only",
 			opts:     CodexOptions{Model: "gpt-5.4"},
-			expected: []string{"--model", "gpt-5.4"},
+			expected: []string{"--model", "gpt-5.4", "-c", "notice.model_migrations={}"},
 		},
 		{
 			name:     "yolo true",
@@ -403,7 +403,7 @@ func TestCodexOptions_ToArgs(t *testing.T) {
 		{
 			name:     "model and yolo",
 			opts:     CodexOptions{Model: "gpt-5.4", YoloMode: boolPtr(true)},
-			expected: []string{"--model", "gpt-5.4", "--dangerously-bypass-approvals-and-sandbox"},
+			expected: []string{"--model", "gpt-5.4", "-c", "notice.model_migrations={}", "--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
 			name:     "yolo false",

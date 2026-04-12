@@ -147,6 +147,12 @@ func (o *CodexOptions) ToArgs() []string {
 	var args []string
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
+		// Codex's TUI silently rewrites --model via the
+		// `[notice.model_migrations]` table in ~/.codex/config.toml
+		// (e.g. "gpt-5.2" -> "gpt-5.4"). When the caller explicitly
+		// asked for a model, honor it: blank the migration table for
+		// this launch only so the model flag sticks.
+		args = append(args, "-c", "notice.model_migrations={}")
 	}
 	if o.ReasoningEffort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+o.ReasoningEffort)
