@@ -226,6 +226,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     sessionId,
     defaultAgentType,
     setDefaultAgentType,
+    defaultWorkspaceMode,
+    setDefaultWorkspaceMode,
     previewUrl,
     controllerVersion,
     controllerRuntimeRoot,
@@ -2132,6 +2134,27 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                             <SelectContent>
                               <SelectItem value="claude">Claude Code</SelectItem>
                               <SelectItem value="codex">Codex</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                          <div>
+                            <Label className="text-sm font-medium">Default Chat Mode</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              New chats default to this workspace mode.
+                            </p>
+                          </div>
+                          <Select
+                            value={defaultWorkspaceMode}
+                            onValueChange={(value) => setDefaultWorkspaceMode(value as "root" | "clone")}
+                          >
+                            <SelectTrigger className="h-9 w-[160px] text-xs">
+                              {defaultWorkspaceMode === "root" ? "Root" : "Clone"}
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="root">Root</SelectItem>
+                              <SelectItem value="clone">Clone</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

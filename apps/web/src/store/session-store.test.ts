@@ -682,7 +682,7 @@ describe("session-store chat creation", () => {
     expect(state.defaultAgentType).toBe("claude");
     expect(createChatBody).toMatchObject({
       agent_type: "codex",
-      workspace_mode: "clone",
+      workspace_mode: "root",
     });
   });
 

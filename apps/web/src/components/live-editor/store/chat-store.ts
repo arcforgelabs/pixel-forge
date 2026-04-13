@@ -407,6 +407,10 @@ function getDefaultDraftAgentType(): string {
   return normalizeDraftAgentType(useSessionStore.getState().defaultAgentType)
 }
 
+function getDefaultDraftWorkspaceMode(): DraftWorkspaceMode {
+  return normalizeDraftWorkspaceMode(useSessionStore.getState().defaultWorkspaceMode)
+}
+
 function getCurrentProjectPathSnapshot(): string | null {
   return useSessionStore.getState().projectPath?.trim() || null
 }
@@ -472,7 +476,7 @@ function restoreWorkspacePreviewMeta(
 
 function createEmptyThreadEditorState(
   draftAgentType: string = getDefaultDraftAgentType(),
-  draftWorkspaceMode: DraftWorkspaceMode = 'clone',
+  draftWorkspaceMode: DraftWorkspaceMode = getDefaultDraftWorkspaceMode(),
 ): ThreadEditorState {
   const initialPreviewTab = createEmptyPreviewTab()
   return {

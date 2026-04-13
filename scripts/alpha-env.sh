@@ -13,7 +13,7 @@ fi
 : "${PIXEL_FORGE_SHELL_NAME:=pixel-forge-alpha-shell}"
 : "${PIXEL_FORGE_SERVICE_NAME:=pixel-forge-alpha}"
 : "${PIXEL_FORGE_PORT:=7201}"
-: "${PIXEL_FORGE_API_PORT:=7201}"
+: "${PIXEL_FORGE_API_PORT:=$PIXEL_FORGE_PORT}"
 : "${PIXEL_FORGE_WEB_PORT:=5273}"
 : "${PIXEL_FORGE_URL_HOST:=pixel-forge-alpha.localhost}"
 : "${PIXEL_FORGE_WEB_HOST:=pixel-forge-alpha.localhost}"

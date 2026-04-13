@@ -250,6 +250,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(initial.active_project_path)
         self.assertIsNone(initial.active_live_editor_thread_id)
         self.assertEqual(initial.default_agent_type, "claude")
+        self.assertEqual(initial.default_workspace_mode, "root")
 
         project_path = Path(self.tempdir.name) / "project"
         project_store.upsert_project(str(project_path))
@@ -258,12 +259,14 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             active_mode="live-editor",
             active_live_editor_thread_id="thread-a",
             default_agent_type="codex",
+            default_workspace_mode="clone",
         )
 
         self.assertEqual(saved.active_project_path, str(project_path))
         self.assertEqual(saved.active_mode, "live-editor")
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")
+        self.assertEqual(saved.default_workspace_mode, "clone")
 
     def test_create_adopted_project_session_persists_a_first_class_chat_lane(self) -> None:
         project_path = Path(self.tempdir.name) / "project"

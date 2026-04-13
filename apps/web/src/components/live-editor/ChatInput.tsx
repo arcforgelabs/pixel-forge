@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Bot, Brain, ChevronUp, Cpu, FileText, Paperclip, Send, X } from 'lucide-react'
+import { Bot, Brain, Cpu, FileText, FolderTree, GitBranch, Paperclip, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
@@ -230,7 +230,11 @@ export function ChatInput() {
     shouldRenderSkillAutocomplete && (skillsLoading || skillSuggestions.length > 0)
   )
 
-  function focusTextareaAt(caret: number) {
+  const syncShellFocus = useCallback(() => {
+    void desktopAppRef.current?.focusShell?.()
+  }, [])
+
+  const focusTextareaAt = useCallback((caret: number) => {
     window.requestAnimationFrame(() => {
       syncShellFocus()
       if (!textareaRef.current) {
@@ -239,7 +243,7 @@ export function ChatInput() {
       textareaRef.current.focus()
       textareaRef.current.setSelectionRange(caret, caret)
     })
-  }
+  }, [syncShellFocus])
 
   function commitSkillSuggestion(skillName: string) {
     if (!activeSkillMatch) {
@@ -267,12 +271,12 @@ export function ChatInput() {
     }
   }
 
-  function syncAttachmentOrdinalsFromAttachments(nextAttachments: ChatAttachment[]) {
+  const syncAttachmentOrdinalsFromAttachments = useCallback((nextAttachments: ChatAttachment[]) => {
     resetAttachmentOrdinals()
     for (const attachment of nextAttachments) {
       attachmentOrdinalRef.current[attachment.kind] += 1
     }
-  }
+  }, [])
 
   function getInsertionRange(): { start: number; end: number } {
     const textarea = textareaRef.current
@@ -415,7 +419,13 @@ export function ChatInput() {
     syncAttachmentOrdinalsFromAttachments(seed.attachments)
     setCaretIndex(seed.content.length)
     focusTextareaAt(seed.content.length)
-  }, [activeThreadKey, consumePendingComposerSeed, pendingComposerSeed])
+  }, [
+    activeThreadKey,
+    consumePendingComposerSeed,
+    focusTextareaAt,
+    pendingComposerSeed,
+    syncAttachmentOrdinalsFromAttachments,
+  ])
 
   // Close agent picker on outside click
   useEffect(() => {
@@ -497,10 +507,6 @@ export function ChatInput() {
       textareaRef.current?.focus()
     }, 100)
     return () => clearTimeout(timer)
-  }, [])
-
-  const syncShellFocus = useCallback(() => {
-    void desktopAppRef.current?.focusShell?.()
   }, [])
 
   // Handle click on container to ensure focus reaches textarea
@@ -889,16 +895,23 @@ export function ChatInput() {
                 onClick={() => {
                   setDraftWorkspaceMode(draftWorkspaceMode === 'root' ? 'clone' : 'root')
                 }}
-                className="h-7 px-2 rounded-none border-l border-border/20"
+                className={`h-7 w-7 rounded-none border-l border-border/20 p-0 transition-colors ${
+                  draftWorkspaceMode === 'clone'
+                    ? 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 title={
                   draftWorkspaceMode === 'root'
                     ? 'First send will bind this chat in the canonical workspace root'
                     : 'First send will create and bind an isolated clone workspace'
                 }
+                aria-label={`Workspace mode: ${formatWorkspaceModeLabel(draftWorkspaceMode)}`}
               >
-                <span className="px-1 text-[11px] font-medium">
-                  {formatWorkspaceModeLabel(draftWorkspaceMode)}
-                </span>
+                {draftWorkspaceMode === 'root' ? (
+                  <FolderTree className="h-3.5 w-3.5" />
+                ) : (
+                  <GitBranch className="h-3.5 w-3.5" />
+                )}
               </Button>
             )}
             {/* Agent selector */}
@@ -913,7 +926,11 @@ export function ChatInput() {
                   }
                   setShowAgentPicker((v) => !v)
                 }}
-                className="h-7 px-1.5 rounded-none border-l border-border/20"
+                className={`h-7 w-7 rounded-none border-l border-border/20 p-0 transition-colors ${
+                  showAgentPicker
+                    ? 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 disabled={agentSelectionLocked}
                 title={
                   agentSelectionLocked
@@ -921,9 +938,9 @@ export function ChatInput() {
                     : `Agent: ${formatAgentLabel(effectiveAgentType)}`
                 }
                 aria-label={`Agent: ${formatAgentLabel(effectiveAgentType)}`}
-                >
+                aria-expanded={showAgentPicker}
+              >
                 <Bot className="h-3.5 w-3.5" />
-                <ChevronUp className={`ml-0.5 h-3 w-3 transition-transform ${showAgentPicker ? 'rotate-180' : ''}`} />
               </Button>
               {showAgentPicker && (
                 <div className="absolute bottom-full right-0 mb-1 w-40 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
@@ -963,7 +980,11 @@ export function ChatInput() {
                   }
                   setShowModelPicker((v) => !v)
                 }}
-                className="h-7 px-1.5 rounded-none border-l border-border/20"
+                className={`h-7 w-7 rounded-none border-l border-border/20 p-0 transition-colors ${
+                  showModelPicker
+                    ? 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 disabled={modelSelectionDisabled}
                 title={
                   agentSelectionLocked
@@ -973,11 +994,9 @@ export function ChatInput() {
                       : `No models configured for ${formatAgentLabel(effectiveAgentType)}`
                 }
                 aria-label={`Model: ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)}`}
+                aria-expanded={showModelPicker}
               >
                 <Cpu className="h-3.5 w-3.5" />
-                <ChevronUp
-                  className={`ml-0.5 h-3 w-3 transition-transform ${showModelPicker ? 'rotate-180' : ''}`}
-                />
               </Button>
               {showModelPicker && hasAgentModelOptions && (
                 <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
@@ -1041,7 +1060,11 @@ export function ChatInput() {
                   }
                   setShowThinkingPicker((v) => !v)
                 }}
-                className="h-7 px-1.5 rounded-lg rounded-l-none border-l border-border/20"
+                className={`h-7 w-7 rounded-lg rounded-l-none border-l border-border/20 p-0 transition-colors ${
+                  showThinkingPicker
+                    ? 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 disabled={thinkingSelectionDisabled}
                 title={
                   agentSelectionLocked
@@ -1051,11 +1074,9 @@ export function ChatInput() {
                       : `No thinking levels configured for ${formatAgentLabel(effectiveAgentType)}`
                 }
                 aria-label={`Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`}
+                aria-expanded={showThinkingPicker}
               >
                 <Brain className="h-3.5 w-3.5" />
-                <ChevronUp
-                  className={`ml-0.5 h-3 w-3 transition-transform ${showThinkingPicker ? 'rotate-180' : ''}`}
-                />
               </Button>
               {showThinkingPicker && hasAgentThinkingOptions && (
                 <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">

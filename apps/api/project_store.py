@@ -169,6 +169,7 @@ class ProfileStateRecord:
     active_mode: str
     active_live_editor_thread_id: str | None
     default_agent_type: str
+    default_workspace_mode: str
     updated_at: str
 
 
@@ -738,6 +739,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
                 default_agent_type TEXT NOT NULL DEFAULT 'claude',
+                default_workspace_mode TEXT NOT NULL DEFAULT 'root',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -791,6 +793,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             if "default_agent_type" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN default_agent_type TEXT NOT NULL DEFAULT 'claude'"
+                )
+            if "default_workspace_mode" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN default_workspace_mode TEXT NOT NULL DEFAULT 'root'"
                 )
             if "updated_at" not in existing_profile_columns:
                 conn.execute(
@@ -1191,6 +1197,7 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
             else None
         ),
         default_agent_type=_normalize_agent_type(row["default_agent_type"]),
+        default_workspace_mode=_normalize_workspace_mode(row["default_workspace_mode"]),
         updated_at=row["updated_at"],
     )
 
@@ -1675,8 +1682,9 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
             INSERT OR IGNORE INTO profile_state (
                 profile_id,
                 active_mode,
-                default_agent_type
-            ) VALUES (?, 'screenshot', 'claude')
+                default_agent_type,
+                default_workspace_mode
+            ) VALUES (?, 'screenshot', 'claude', 'root')
             """,
             (normalized_profile_id,),
         )
@@ -1684,7 +1692,7 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, updated_at
+                   default_agent_type, default_workspace_mode, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,
@@ -1704,6 +1712,7 @@ def upsert_profile_state(
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
     default_agent_type: str = "claude",
+    default_workspace_mode: str = "root",
 ) -> ProfileStateRecord:
     normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_project_path = (
@@ -1717,6 +1726,7 @@ def upsert_profile_state(
         else None
     )
     normalized_default_agent_type = _normalize_agent_type(default_agent_type)
+    normalized_default_workspace_mode = _normalize_workspace_mode(default_workspace_mode)
 
     with _connect() as conn:
         conn.execute(
@@ -1726,8 +1736,9 @@ def upsert_profile_state(
                 active_project_path,
                 active_mode,
                 active_live_editor_thread_id,
-                default_agent_type
-            ) VALUES (?, ?, ?, ?, ?)
+                default_agent_type,
+                default_workspace_mode
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 active_mode = excluded.active_mode,
@@ -1736,6 +1747,7 @@ def upsert_profile_state(
                     ELSE excluded.active_live_editor_thread_id
                 END,
                 default_agent_type = excluded.default_agent_type,
+                default_workspace_mode = excluded.default_workspace_mode,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -1744,13 +1756,14 @@ def upsert_profile_state(
                 _normalize_active_mode(active_mode),
                 normalized_thread_id,
                 normalized_default_agent_type,
+                normalized_default_workspace_mode,
             ),
         )
         conn.commit()
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, updated_at
+                   default_agent_type, default_workspace_mode, updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,

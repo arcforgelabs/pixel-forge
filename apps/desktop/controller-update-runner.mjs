@@ -39,6 +39,7 @@ const shellUrl =
   || normalizeText(process.env.PIXEL_FORGE_SHELL_URL)
   || `http://${shellHost}:${shellPort}`
 const pixelForgeBinDir = normalizeText(process.env.PIXEL_FORGE_BIN_DIR)
+const pixelForgeCliName = normalizeText(process.env.PIXEL_FORGE_CLI_NAME) || 'pixel-forge'
 const pixelForgeShellName = normalizeText(process.env.PIXEL_FORGE_SHELL_NAME) || 'pixel-forge-shell'
 
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
@@ -484,8 +485,8 @@ async function main() {
     message: 'Restarting Pixel Forge service…',
     error: null,
   })
-  await runShellCommand(`${JSON.stringify(pixelForgeCommand('pixel-forge'))} restart`, resolvedInstallRoot)
-  await logInfo('Finished pixel-forge restart')
+  await runShellCommand(`${JSON.stringify(pixelForgeCommand(pixelForgeCliName))} restart`, resolvedInstallRoot)
+  await logInfo(`Finished ${pixelForgeCliName} restart`)
 
   await setState({
     phase: 'waiting',

@@ -1472,7 +1472,6 @@ describe('live editor selection history', () => {
     expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
       message: 'Use the draft agent',
       agent_type: 'codex',
-      workspace_mode: 'clone',
     })
     expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty(
       'target_agent_deck_session_id'

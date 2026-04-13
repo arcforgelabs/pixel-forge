@@ -464,6 +464,7 @@ class ProfileStateRequest(BaseModel):
     active_mode: Literal["screenshot", "live-editor"] = "screenshot"
     active_live_editor_thread_id: str | None = None
     default_agent_type: Literal["claude", "codex"] = "claude"
+    default_workspace_mode: Literal["clone", "root"] = "root"
 
 
 class AgentDeckSessionRequest(BaseModel):
@@ -724,6 +725,7 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "active_mode": profile_state.active_mode,
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
         "default_agent_type": profile_state.default_agent_type,
+        "default_workspace_mode": profile_state.default_workspace_mode,
         "updated_at": profile_state.updated_at,
     }
 
@@ -910,6 +912,7 @@ async def save_default_profile_state(request: ProfileStateRequest):
             active_mode=request.active_mode,
             active_live_editor_thread_id=request.active_live_editor_thread_id,
             default_agent_type=request.default_agent_type,
+            default_workspace_mode=request.default_workspace_mode,
         )
     )
 

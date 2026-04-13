@@ -145,6 +145,7 @@ export interface ProfileStateRecord {
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  defaultWorkspaceMode: DraftWorkspaceMode;
   updatedAt: string;
 }
 
@@ -213,6 +214,7 @@ interface SessionStore {
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
+      | "defaultWorkspaceMode"
     >>
   ) => Promise<ProfileStateRecord | null>;
   setProject: (options: {
@@ -264,6 +266,10 @@ interface SessionStore {
   // Agent selection
   defaultAgentType: string;
   setDefaultAgentType: (agentType: string) => void;
+
+  // Workspace mode selection
+  defaultWorkspaceMode: DraftWorkspaceMode;
+  setDefaultWorkspaceMode: (mode: DraftWorkspaceMode) => void;
 
   // Settings sidebar
   settingsSidebarOpen: boolean;
@@ -328,6 +334,7 @@ interface ApiProfileState {
   active_mode: ActiveMode;
   active_live_editor_thread_id: string | null;
   default_agent_type: string;
+  default_workspace_mode: string;
   updated_at: string;
 }
 
@@ -420,6 +427,7 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
       profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
     defaultAgentType: normalizeAgentType(profileState.default_agent_type),
+    defaultWorkspaceMode: normalizeWorkspaceMode(profileState.default_workspace_mode),
     updatedAt: profileState.updated_at,
   };
 }
@@ -855,6 +863,10 @@ function normalizeAgentType(agentType: string | null | undefined): string {
   return agentType === "codex" ? "codex" : "claude";
 }
 
+function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspaceMode {
+  return mode === "clone" ? "clone" : "root";
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
     credentials: "include",
@@ -964,6 +976,7 @@ async function upsertProfileStateToApi(options: {
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  defaultWorkspaceMode: DraftWorkspaceMode;
 }): Promise<ProfileStateRecord> {
   const payload = await requestJson<ApiProfileState>("/api/profile-state", {
     method: "POST",
@@ -973,6 +986,7 @@ async function upsertProfileStateToApi(options: {
       active_mode: options.activeMode,
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
       default_agent_type: normalizeAgentType(options.defaultAgentType),
+      default_workspace_mode: normalizeWorkspaceMode(options.defaultWorkspaceMode),
     }),
   });
   return normalizeProfileState(payload);
@@ -1057,6 +1071,7 @@ function buildNextProfileState(
     | "activeMode"
     | "liveEditorSession"
     | "defaultAgentType"
+    | "defaultWorkspaceMode"
   >,
   overrides?: Partial<
     Pick<
@@ -1065,6 +1080,7 @@ function buildNextProfileState(
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
+      | "defaultWorkspaceMode"
     >
   >
 ): {
@@ -1073,6 +1089,7 @@ function buildNextProfileState(
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
+  defaultWorkspaceMode: DraftWorkspaceMode;
 } {
   return {
     profileId: currentState.profileState?.profileId ?? "default",
@@ -1093,6 +1110,12 @@ function buildNextProfileState(
         ? normalizeAgentType(overrides.defaultAgentType)
         : normalizeAgentType(
             currentState.profileState?.defaultAgentType ?? currentState.defaultAgentType
+          ),
+    defaultWorkspaceMode:
+      overrides?.defaultWorkspaceMode !== undefined
+        ? normalizeWorkspaceMode(overrides.defaultWorkspaceMode)
+        : normalizeWorkspaceMode(
+            currentState.profileState?.defaultWorkspaceMode ?? currentState.defaultWorkspaceMode
           ),
   };
 }
@@ -1157,6 +1180,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       });
   },
 
+  // Workspace mode selection
+  defaultWorkspaceMode: "root",
+  setDefaultWorkspaceMode: (mode: DraftWorkspaceMode) => {
+    const normalizedMode = normalizeWorkspaceMode(mode);
+    set({ defaultWorkspaceMode: normalizedMode });
+    void get()
+      .persistProfileState({ defaultWorkspaceMode: normalizedMode })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist default workspace mode:", error);
+      });
+  },
+
   // Settings sidebar
   settingsSidebarOpen: false,
   toggleSettingsSidebar: () => {
@@ -1198,6 +1233,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           profileLoaded: true,
           defaultAgentType: normalizeAgentType(
             profileState?.defaultAgentType ?? state.defaultAgentType
+          ),
+          defaultWorkspaceMode: normalizeWorkspaceMode(
+            profileState?.defaultWorkspaceMode ?? state.defaultWorkspaceMode
           ),
           projectName: currentProject?.name ?? state.projectName,
           outputMode: currentProject?.outputMode ?? state.outputMode,
@@ -1713,7 +1751,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createProjectChatSession: async (options) => {
-    const { projectPath, defaultAgentType, liveEditorSession } = get();
+    const { projectPath, defaultAgentType, defaultWorkspaceMode, liveEditorSession } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
@@ -1723,7 +1761,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       const created = await createProjectChat(projectPath, {
         agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
-        workspaceMode: options?.workspaceMode ?? "clone",
+        workspaceMode: options?.workspaceMode ?? defaultWorkspaceMode,
       });
       const createdTarget = agentDeckTargetFromProjectChat(created);
       const createdSession = projectSessionFromProjectChat(created);
