@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Bot, Brain, Cpu, FileText, FolderTree, GitBranch, Paperclip, Send, X } from 'lucide-react'
+import { Bot, Brain, Cpu, FileText, GitBranch, GitCommitVertical, Paperclip, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
@@ -908,7 +908,7 @@ export function ChatInput() {
                 aria-label={`Workspace mode: ${formatWorkspaceModeLabel(draftWorkspaceMode)}`}
               >
                 {draftWorkspaceMode === 'root' ? (
-                  <FolderTree className="h-3.5 w-3.5" />
+                  <GitCommitVertical className="h-3.5 w-3.5" />
                 ) : (
                   <GitBranch className="h-3.5 w-3.5" />
                 )}
