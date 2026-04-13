@@ -13,14 +13,28 @@ from typing import Any
 from uuid import uuid4
 
 from state_db import connect as connect_state_db
+from state_db import ensure_migration_markers_table
+from state_db import has_migration_marker
 from state_db import legacy_instance_db_paths
 from state_db import legacy_live_editor_db_path
+from state_db import set_migration_marker
 
 
 _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
 DEFAULT_PROFILE_ID = "default"
 SAFE_THREAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+CLAUDE_MODEL_ALLOWLIST = frozenset({
+    "opus",
+    "sonnet",
+    "haiku",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+})
+CLAUDE_THINKING_ALLOWLIST = frozenset({"low", "medium", "high", "max"})
+CODEX_MODEL_ALLOWLIST = frozenset({"gpt-5.4", "gpt-5.3", "gpt-5.2"})
+CODEX_THINKING_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
 
 
 @dataclass(slots=True)
@@ -44,6 +58,7 @@ class ProjectRecord:
 @dataclass(slots=True)
 class SessionRecord:
     id: int
+    profile_id: str
     project_path: str
     workspace_path: str
     thread_id: str
@@ -170,6 +185,10 @@ class ProfileStateRecord:
     active_live_editor_thread_id: str | None
     default_agent_type: str
     default_workspace_mode: str
+    claude_default_model: str | None
+    claude_default_thinking: str | None
+    codex_default_model: str | None
+    codex_default_thinking: str | None
     updated_at: str
 
 
@@ -480,6 +499,9 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
     legacy_path = legacy_live_editor_db_path()
     if not legacy_path.is_file():
         return
+    marker_key = f"project-store:legacy-live-editor:{legacy_path.resolve()}"
+    if has_migration_marker(conn, marker_key):
+        return
 
     with sqlite3.connect(legacy_path) as legacy_conn:
         legacy_conn.row_factory = sqlite3.Row
@@ -527,6 +549,7 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT OR IGNORE INTO sessions (
+                profile_id,
                 project_path,
                 workspace_path,
                 thread_id,
@@ -536,9 +559,10 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
                 agent_deck_tool,
                 created_at,
                 last_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                DEFAULT_PROFILE_ID,
                 normalized_path,
                 normalized_path,
                 row["thread_id"],
@@ -550,10 +574,14 @@ def _migrate_legacy_live_editor_state(conn: sqlite3.Connection) -> None:
                 row["updated_at"],
             ),
         )
+    set_migration_marker(conn, marker_key)
 
 
 def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
     for legacy_path in legacy_instance_db_paths():
+        marker_key = f"project-store:legacy-instance:{legacy_path.resolve()}"
+        if has_migration_marker(conn, marker_key):
+            continue
         with sqlite3.connect(legacy_path) as legacy_conn:
             legacy_conn.row_factory = sqlite3.Row
 
@@ -650,6 +678,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO sessions (
+                            profile_id,
                             project_path,
                             workspace_path,
                             thread_id,
@@ -659,9 +688,10 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                             agent_deck_tool,
                             created_at,
                             last_active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
+                            DEFAULT_PROFILE_ID,
                             normalized_path,
                             normalize_project_path(row["workspace_path"]),
                             row["thread_id"],
@@ -673,6 +703,7 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
                             row["last_active"],
                         ),
                     )
+        set_migration_marker(conn, marker_key)
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -706,6 +737,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
             CREATE TABLE IF NOT EXISTS sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL DEFAULT 'default',
                 project_path TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
                 thread_id TEXT NOT NULL UNIQUE,
@@ -715,6 +747,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
                 editor_state_json TEXT,
+                hidden_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
@@ -722,11 +755,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
             CREATE TABLE IF NOT EXISTS chat_session_bindings (
                 chat_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL DEFAULT 'default',
                 project_path TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
                 agent_deck_session_id TEXT NOT NULL UNIQUE,
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
+                hidden_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE,
@@ -740,6 +775,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 active_live_editor_thread_id TEXT,
                 default_agent_type TEXT NOT NULL DEFAULT 'claude',
                 default_workspace_mode TEXT NOT NULL DEFAULT 'root',
+                claude_default_model TEXT,
+                claude_default_thinking TEXT,
+                codex_default_model TEXT,
+                codex_default_thinking TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -753,6 +792,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON chat_session_bindings (project_path, updated_at DESC);
             """
         )
+        ensure_migration_markers_table(conn)
         existing_session_columns = {
             str(row[1])
             for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
@@ -772,6 +812,26 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         if "editor_state_json" not in existing_session_columns:
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN editor_state_json TEXT"
+            )
+        if "profile_id" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default'"
+            )
+        if "hidden_at" not in existing_session_columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN hidden_at TEXT"
+            )
+        existing_binding_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(chat_session_bindings)").fetchall()
+        }
+        if "profile_id" not in existing_binding_columns:
+            conn.execute(
+                "ALTER TABLE chat_session_bindings ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default'"
+            )
+        if "hidden_at" not in existing_binding_columns:
+            conn.execute(
+                "ALTER TABLE chat_session_bindings ADD COLUMN hidden_at TEXT"
             )
         existing_profile_columns = {
             str(row[1])
@@ -802,6 +862,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
                 )
+            if "claude_default_model" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN claude_default_model TEXT"
+                )
+            if "claude_default_thinking" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN claude_default_thinking TEXT"
+                )
+            if "codex_default_model" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN codex_default_model TEXT"
+                )
+            if "codex_default_thinking" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN codex_default_thinking TEXT"
+                )
         conn.execute(
             """
             UPDATE sessions
@@ -816,6 +892,22 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             WHERE origin_kind IS NULL OR TRIM(origin_kind) = ''
             """
         )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET profile_id = ?
+            WHERE profile_id IS NULL OR TRIM(profile_id) = ''
+            """,
+            (DEFAULT_PROFILE_ID,),
+        )
+        conn.execute(
+            """
+            UPDATE chat_session_bindings
+            SET profile_id = ?
+            WHERE profile_id IS NULL OR TRIM(profile_id) = ''
+            """,
+            (DEFAULT_PROFILE_ID,),
+        )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
         conn.commit()
@@ -828,6 +920,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """
             INSERT INTO chat_session_bindings (
                 chat_id,
+                profile_id,
                 project_path,
                 workspace_path,
                 agent_deck_session_id,
@@ -838,6 +931,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             )
             SELECT
                 thread_id,
+                profile_id,
                 project_path,
                 workspace_path,
                 agent_deck_session_id,
@@ -857,11 +951,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                   LIMIT 1
               )
             ON CONFLICT(chat_id) DO UPDATE SET
+                profile_id = excluded.profile_id,
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
+                hidden_at = NULL,
                 updated_at = excluded.updated_at
             ON CONFLICT(agent_deck_session_id) DO NOTHING
             """
@@ -906,6 +1002,26 @@ def _normalize_workspace_mode(value: object | None) -> str:
 
 def _normalize_origin_kind(value: object | None) -> str:
     return "adopted" if value == "adopted" else "managed"
+
+
+def _normalize_claude_model(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in CLAUDE_MODEL_ALLOWLIST else None
+
+
+def _normalize_claude_thinking(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in CLAUDE_THINKING_ALLOWLIST else None
+
+
+def _normalize_codex_model(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in CODEX_MODEL_ALLOWLIST else None
+
+
+def _normalize_codex_thinking(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in CODEX_THINKING_ALLOWLIST else None
 
 
 def _normalize_profile_id(profile_id: str | None = None) -> str:
@@ -1065,6 +1181,7 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
 
     return SessionRecord(
         id=row["id"],
+        profile_id=_normalize_profile_id(row["profile_id"]),
         project_path=row["project_path"],
         workspace_path=row["workspace_path"] or row["project_path"],
         thread_id=row["thread_id"],
@@ -1082,6 +1199,7 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
 _SESSION_SELECT_SQL = """
     SELECT
         sessions.id,
+        sessions.profile_id,
         sessions.project_path,
         COALESCE(chat_session_bindings.workspace_path, sessions.workspace_path) AS workspace_path,
         sessions.thread_id,
@@ -1110,6 +1228,7 @@ _SESSION_SELECT_SQL = """
     FROM sessions
     LEFT JOIN chat_session_bindings
         ON chat_session_bindings.chat_id = sessions.thread_id
+       AND chat_session_bindings.hidden_at IS NULL
 """
 
 
@@ -1140,9 +1259,29 @@ def _delete_chat_binding(conn: sqlite3.Connection, chat_id: str) -> None:
     )
 
 
+def _hide_chat_binding(
+    conn: sqlite3.Connection,
+    *,
+    profile_id: str,
+    chat_id: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE chat_session_bindings
+        SET hidden_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE profile_id = ?
+          AND chat_id = ?
+          AND hidden_at IS NULL
+        """,
+        (profile_id, chat_id),
+    )
+
+
 def _upsert_chat_binding(
     conn: sqlite3.Connection,
     *,
+    profile_id: str,
     project_path: str,
     chat_id: str,
     workspace_path: str,
@@ -1154,22 +1293,26 @@ def _upsert_chat_binding(
         """
         INSERT INTO chat_session_bindings (
             chat_id,
+            profile_id,
             project_path,
             workspace_path,
             agent_deck_session_id,
             agent_deck_session_title,
             agent_deck_tool
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id) DO UPDATE SET
+            profile_id = excluded.profile_id,
             project_path = excluded.project_path,
             workspace_path = excluded.workspace_path,
             agent_deck_session_id = excluded.agent_deck_session_id,
             agent_deck_session_title = excluded.agent_deck_session_title,
             agent_deck_tool = excluded.agent_deck_tool,
+            hidden_at = NULL,
             updated_at = CURRENT_TIMESTAMP
         """,
         (
             chat_id,
+            profile_id,
             project_path,
             workspace_path,
             agent_deck_session_id,
@@ -1198,6 +1341,10 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
         ),
         default_agent_type=_normalize_agent_type(row["default_agent_type"]),
         default_workspace_mode=_normalize_workspace_mode(row["default_workspace_mode"]),
+        claude_default_model=_normalize_claude_model(row["claude_default_model"]),
+        claude_default_thinking=_normalize_claude_thinking(row["claude_default_thinking"]),
+        codex_default_model=_normalize_codex_model(row["codex_default_model"]),
+        codex_default_thinking=_normalize_codex_thinking(row["codex_default_thinking"]),
         updated_at=row["updated_at"],
     )
 
@@ -1378,8 +1525,11 @@ def _should_prune_detached_adopted_root_session(
 def detach_missing_agent_deck_session_bindings(
     project_path: str,
     available_session_ids: set[str] | list[str] | tuple[str, ...],
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> list[SessionRecord]:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     available_ids = {
         session_id.strip()
         for session_id in available_session_ids
@@ -1389,8 +1539,8 @@ def detach_missing_agent_deck_session_bindings(
     with _connect() as conn:
         records = _fetch_session_records(
             conn,
-            where_sql="sessions.project_path = ?",
-            params=(normalized_path,),
+            where_sql="sessions.project_path = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL",
+            params=(normalized_path, normalized_profile_id),
         )
         stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
         detached_thread_ids = [
@@ -1412,9 +1562,10 @@ def detach_missing_agent_deck_session_bindings(
                 f"""
                 DELETE FROM chat_session_bindings
                 WHERE project_path = ?
+                  AND profile_id = ?
                   AND chat_id IN ({placeholders})
                 """,
-                (normalized_path, *detached_thread_ids),
+                (normalized_path, normalized_profile_id, *detached_thread_ids),
             )
             conn.execute(
                 f"""
@@ -1423,14 +1574,15 @@ def detach_missing_agent_deck_session_bindings(
                     agent_deck_session_title = NULL,
                     agent_deck_tool = NULL
                 WHERE project_path = ?
+                  AND profile_id = ?
                   AND thread_id IN ({placeholders})
                 """,
-                (normalized_path, *detached_thread_ids),
+                (normalized_path, normalized_profile_id, *detached_thread_ids),
             )
         records = _fetch_session_records(
             conn,
-            where_sql="sessions.project_path = ?",
-            params=(normalized_path,),
+            where_sql="sessions.project_path = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL",
+            params=(normalized_path, normalized_profile_id),
         )
         pruned_thread_ids = [
             record.thread_id
@@ -1445,8 +1597,8 @@ def detach_missing_agent_deck_session_bindings(
 
         return _fetch_session_records(
             conn,
-            where_sql="sessions.project_path = ?",
-            params=(normalized_path,),
+            where_sql="sessions.project_path = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL",
+            params=(normalized_path, normalized_profile_id),
         )
 
 
@@ -1467,14 +1619,19 @@ def list_project_urls(project_path: str) -> list[ProjectUrlRecord]:
     return [_row_to_url_record(row) for row in rows]
 
 
-def list_project_sessions(project_path: str) -> list[SessionRecord]:
+def list_project_sessions(
+    project_path: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> list[SessionRecord]:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
 
     with _connect() as conn:
         records = _fetch_session_records(
             conn,
-            where_sql="sessions.project_path = ?",
-            params=(normalized_path,),
+            where_sql="sessions.project_path = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL",
+            params=(normalized_path, normalized_profile_id),
         )
         stale_ids = [record.id for record in records if _is_stale_clone_session(record)]
         pruned_thread_ids = [
@@ -1505,8 +1662,11 @@ def list_project_sessions(project_path: str) -> list[SessionRecord]:
 def get_project_session(
     project_path: str,
     thread_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> SessionRecord | None:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return None
@@ -1514,8 +1674,8 @@ def get_project_session(
     with _connect() as conn:
         records = _fetch_session_records(
             conn,
-            where_sql="sessions.project_path = ? AND sessions.thread_id = ?",
-            params=(normalized_path, normalized_thread_id),
+            where_sql="sessions.project_path = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL AND sessions.thread_id = ?",
+            params=(normalized_path, normalized_profile_id, normalized_thread_id),
         )
 
     if not records:
@@ -1526,8 +1686,11 @@ def get_project_session(
 def get_project_session_by_agent_deck_session_id(
     project_path: str,
     agent_deck_session_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> SessionRecord | None:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_session_id = agent_deck_session_id.strip()
     if not normalized_session_id:
         return None
@@ -1538,9 +1701,9 @@ def get_project_session_by_agent_deck_session_id(
             where_sql=(
                 "sessions.project_path = ? AND COALESCE("
                 "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
-                ") = ?"
+                ") = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
             ),
-            params=(normalized_path, normalized_session_id),
+            params=(normalized_path, normalized_session_id, normalized_profile_id),
         )
 
     if not records:
@@ -1550,8 +1713,11 @@ def get_project_session_by_agent_deck_session_id(
 
 def list_sessions_by_agent_deck_session_id(
     agent_deck_session_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> list[SessionRecord]:
     normalized_session_id = agent_deck_session_id.strip()
+    normalized_profile_id = _normalize_profile_id(profile_id)
     if not normalized_session_id:
         return []
 
@@ -1561,17 +1727,20 @@ def list_sessions_by_agent_deck_session_id(
             where_sql=(
                 "COALESCE("
                 "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
-                ") = ?"
+                ") = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
             ),
-            params=(normalized_session_id,),
+            params=(normalized_session_id, normalized_profile_id),
         )
 
 
 def detach_project_session_binding(
     project_path: str,
     thread_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> SessionRecord | None:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return None
@@ -1586,13 +1755,14 @@ def detach_project_session_binding(
                 agent_deck_tool = NULL,
                 last_active = CURRENT_TIMESTAMP
             WHERE project_path = ?
+              AND profile_id = ?
               AND thread_id = ?
             """,
-            (normalized_path, normalized_thread_id),
+            (normalized_path, normalized_profile_id, normalized_thread_id),
         )
         conn.commit()
 
-    return get_project_session(normalized_path, normalized_thread_id)
+    return get_project_session(normalized_path, normalized_thread_id, profile_id=normalized_profile_id)
 
 
 def get_project(project_path: str) -> ProjectRecord | None:
@@ -1692,7 +1862,10 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, default_workspace_mode, updated_at
+                   default_agent_type, default_workspace_mode,
+                   claude_default_model, claude_default_thinking,
+                   codex_default_model, codex_default_thinking,
+                   updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,
@@ -1713,6 +1886,10 @@ def upsert_profile_state(
     active_live_editor_thread_id: str | None = None,
     default_agent_type: str = "claude",
     default_workspace_mode: str = "root",
+    claude_default_model: str | None = None,
+    claude_default_thinking: str | None = None,
+    codex_default_model: str | None = None,
+    codex_default_thinking: str | None = None,
 ) -> ProfileStateRecord:
     normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_project_path = (
@@ -1727,6 +1904,10 @@ def upsert_profile_state(
     )
     normalized_default_agent_type = _normalize_agent_type(default_agent_type)
     normalized_default_workspace_mode = _normalize_workspace_mode(default_workspace_mode)
+    normalized_claude_default_model = _normalize_claude_model(claude_default_model)
+    normalized_claude_default_thinking = _normalize_claude_thinking(claude_default_thinking)
+    normalized_codex_default_model = _normalize_codex_model(codex_default_model)
+    normalized_codex_default_thinking = _normalize_codex_thinking(codex_default_thinking)
 
     with _connect() as conn:
         conn.execute(
@@ -1737,8 +1918,12 @@ def upsert_profile_state(
                 active_mode,
                 active_live_editor_thread_id,
                 default_agent_type,
-                default_workspace_mode
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                default_workspace_mode,
+                claude_default_model,
+                claude_default_thinking,
+                codex_default_model,
+                codex_default_thinking
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 active_mode = excluded.active_mode,
@@ -1748,6 +1933,10 @@ def upsert_profile_state(
                 END,
                 default_agent_type = excluded.default_agent_type,
                 default_workspace_mode = excluded.default_workspace_mode,
+                claude_default_model = excluded.claude_default_model,
+                claude_default_thinking = excluded.claude_default_thinking,
+                codex_default_model = excluded.codex_default_model,
+                codex_default_thinking = excluded.codex_default_thinking,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -1757,13 +1946,20 @@ def upsert_profile_state(
                 normalized_thread_id,
                 normalized_default_agent_type,
                 normalized_default_workspace_mode,
+                normalized_claude_default_model,
+                normalized_claude_default_thinking,
+                normalized_codex_default_model,
+                normalized_codex_default_thinking,
             ),
         )
         conn.commit()
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
-                   default_agent_type, default_workspace_mode, updated_at
+                   default_agent_type, default_workspace_mode,
+                   claude_default_model, claude_default_thinking,
+                   codex_default_model, codex_default_thinking,
+                   updated_at
             FROM profile_state
             WHERE profile_id = ?
             """,
@@ -1894,6 +2090,7 @@ def upsert_session(
     *,
     thread_id: str,
     backend: str,
+    profile_id: str = DEFAULT_PROFILE_ID,
     origin_kind: str = "managed",
     workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
@@ -1902,6 +2099,7 @@ def upsert_session(
     editor_state: dict[str, Any] | None = None,
 ) -> SessionRecord:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         raise ValueError("thread_id is required")
@@ -1956,12 +2154,13 @@ def upsert_session(
                 where_sql=(
                     "sessions.project_path = ? AND COALESCE("
                     "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
-                    ") = ? AND sessions.thread_id <> ?"
+                    ") = ? AND sessions.thread_id <> ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
                 ),
                 params=(
                     normalized_path,
                     normalized_agent_deck_session_id,
                     effective_thread_id,
+                    normalized_profile_id,
                 ),
             )
             for record in rows:
@@ -1986,6 +2185,7 @@ def upsert_session(
         conn.execute(
             """
             INSERT INTO sessions (
+                profile_id,
                 project_path,
                 workspace_path,
                 thread_id,
@@ -1995,8 +2195,9 @@ def upsert_session(
                 agent_deck_session_title,
                 agent_deck_tool,
                 editor_state_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
+                profile_id = excluded.profile_id,
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
@@ -2005,9 +2206,11 @@ def upsert_session(
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
                 editor_state_json = COALESCE(excluded.editor_state_json, sessions.editor_state_json),
+                hidden_at = NULL,
                 last_active = CURRENT_TIMESTAMP
             """,
             (
+                normalized_profile_id,
                 normalized_path,
                 normalized_workspace_path,
                 effective_thread_id,
@@ -2022,6 +2225,7 @@ def upsert_session(
         if normalized_agent_deck_session_id:
             _upsert_chat_binding(
                 conn,
+                profile_id=normalized_profile_id,
                 project_path=normalized_path,
                 chat_id=effective_thread_id,
                 workspace_path=normalized_workspace_path,
@@ -2041,7 +2245,7 @@ def upsert_session(
         )
         conn.commit()
 
-    saved = get_project_session(normalized_path, effective_thread_id)
+    saved = get_project_session(normalized_path, effective_thread_id, profile_id=normalized_profile_id)
     if saved is None:
         raise RuntimeError("Session record disappeared during upsert")
     return saved
@@ -2050,6 +2254,7 @@ def upsert_session(
 def create_adopted_project_session(
     project_path: str,
     *,
+    profile_id: str = DEFAULT_PROFILE_ID,
     workspace_path: str,
     agent_deck_session_id: str,
     agent_deck_session_title: str | None,
@@ -2058,12 +2263,14 @@ def create_adopted_project_session(
     existing = get_project_session_by_agent_deck_session_id(
         project_path,
         agent_deck_session_id,
+        profile_id=profile_id,
     )
     if existing is not None:
         return upsert_session(
             project_path,
             thread_id=existing.thread_id,
             backend=existing.backend,
+            profile_id=profile_id,
             origin_kind="adopted",
             workspace_path=workspace_path,
             agent_deck_session_id=agent_deck_session_id,
@@ -2076,6 +2283,7 @@ def create_adopted_project_session(
         project_path,
         thread_id=_next_chat_id(),
         backend="agent-deck",
+        profile_id=profile_id,
         origin_kind="adopted",
         workspace_path=workspace_path,
         agent_deck_session_id=agent_deck_session_id,
@@ -2089,8 +2297,11 @@ def update_session_title(
     project_path: str,
     thread_id: str,
     title: str | None,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
 ) -> SessionRecord | None:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return None
@@ -2104,9 +2315,10 @@ def update_session_title(
             SET agent_deck_session_title = ?,
                 last_active = CURRENT_TIMESTAMP
             WHERE project_path = ?
+              AND profile_id = ?
               AND thread_id = ?
             """,
-            (normalized_title, normalized_path, normalized_thread_id),
+            (normalized_title, normalized_path, normalized_profile_id, normalized_thread_id),
         )
         conn.execute(
             """
@@ -2114,34 +2326,135 @@ def update_session_title(
             SET agent_deck_session_title = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE project_path = ?
+              AND profile_id = ?
               AND chat_id = ?
             """,
-            (normalized_title, normalized_path, normalized_thread_id),
+            (normalized_title, normalized_path, normalized_profile_id, normalized_thread_id),
         )
         conn.commit()
 
-    return get_project_session(normalized_path, normalized_thread_id)
+    return get_project_session(normalized_path, normalized_thread_id, profile_id=normalized_profile_id)
 
 
 def delete_session(
     project_path: str,
     thread_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+    purge: bool = False,
 ) -> bool:
     normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return False
 
     with _connect() as conn:
-        _delete_chat_binding(conn, normalized_thread_id)
-        result = conn.execute(
+        if purge:
+            _delete_chat_binding(conn, normalized_thread_id)
+            result = conn.execute(
+                """
+                DELETE FROM sessions
+                WHERE project_path = ?
+                  AND profile_id = ?
+                  AND thread_id = ?
+                """,
+                (normalized_path, normalized_profile_id, normalized_thread_id),
+            )
+        else:
+            _hide_chat_binding(
+                conn,
+                profile_id=normalized_profile_id,
+                chat_id=normalized_thread_id,
+            )
+            conn.execute(
+                """
+                UPDATE profile_state
+                SET active_live_editor_thread_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE profile_id = ?
+                  AND active_live_editor_thread_id = ?
+                """,
+                (normalized_profile_id, normalized_thread_id),
+            )
+            result = conn.execute(
+                """
+                UPDATE sessions
+                SET hidden_at = CURRENT_TIMESTAMP,
+                    last_active = CURRENT_TIMESTAMP
+                WHERE project_path = ?
+                  AND profile_id = ?
+                  AND thread_id = ?
+                  AND hidden_at IS NULL
+                """,
+                (normalized_path, normalized_profile_id, normalized_thread_id),
+            )
+        conn.commit()
+
+    return bool(result.rowcount)
+
+
+def purge_hidden_profile_history(
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> dict[str, int]:
+    normalized_profile_id = _normalize_profile_id(profile_id)
+
+    with _connect() as conn:
+        hidden_rows = conn.execute(
             """
-            DELETE FROM sessions
-            WHERE project_path = ?
-              AND thread_id = ?
+            SELECT project_path, thread_id
+            FROM sessions
+            WHERE profile_id = ?
+              AND hidden_at IS NOT NULL
             """,
-            (normalized_path, normalized_thread_id),
+            (normalized_profile_id,),
+        ).fetchall()
+        hidden_thread_ids = [str(row["thread_id"]) for row in hidden_rows]
+
+        workstation_events_deleted = 0
+        if hidden_thread_ids and _table_exists(conn, "workstation_events"):
+            placeholders = ",".join("?" for _ in hidden_thread_ids)
+            result = conn.execute(
+                f"""
+                DELETE FROM workstation_events
+                WHERE chat_id IN ({placeholders})
+                """,
+                tuple(hidden_thread_ids),
+            )
+            workstation_events_deleted = int(result.rowcount or 0)
+
+        bindings_deleted = int(
+            conn.execute(
+                """
+                DELETE FROM chat_session_bindings
+                WHERE profile_id = ?
+                  AND hidden_at IS NOT NULL
+                """,
+                (normalized_profile_id,),
+            ).rowcount
+            or 0
+        )
+        sessions_deleted = int(
+            conn.execute(
+                """
+                DELETE FROM sessions
+                WHERE profile_id = ?
+                  AND hidden_at IS NOT NULL
+                """,
+                (normalized_profile_id,),
+            ).rowcount
+            or 0
         )
         conn.commit()
 
-    return result.rowcount > 0
+    for row in hidden_rows:
+        artifact_root = _thread_artifact_root(row["project_path"], row["thread_id"])
+        if artifact_root.exists():
+            shutil.rmtree(artifact_root, ignore_errors=True)
+
+    return {
+        "sessions_deleted": sessions_deleted,
+        "bindings_deleted": bindings_deleted,
+        "workstation_events_deleted": workstation_events_deleted,
+    }

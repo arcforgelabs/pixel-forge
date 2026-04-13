@@ -50,6 +50,11 @@ describe("session-store thread switching", () => {
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
               default_agent_type: body.default_agent_type ?? "claude",
+              default_workspace_mode: body.default_workspace_mode ?? "root",
+              claude_default_model: body.claude_default_model ?? null,
+              claude_default_thinking: body.claude_default_thinking ?? null,
+              codex_default_model: body.codex_default_model ?? null,
+              codex_default_thinking: body.codex_default_thinking ?? null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -170,6 +175,11 @@ describe("session-store thread switching", () => {
               active_mode: "live-editor",
               active_live_editor_thread_id: "thread-a",
               default_agent_type: "claude",
+              default_workspace_mode: "root",
+              claude_default_model: null,
+              claude_default_thinking: null,
+              codex_default_model: null,
+              codex_default_thinking: null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -558,6 +568,11 @@ describe("session-store thread switching", () => {
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
               default_agent_type: body.default_agent_type ?? "claude",
+              default_workspace_mode: body.default_workspace_mode ?? "root",
+              claude_default_model: body.claude_default_model ?? null,
+              claude_default_thinking: body.claude_default_thinking ?? null,
+              codex_default_model: body.codex_default_model ?? null,
+              codex_default_thinking: body.codex_default_thinking ?? null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }

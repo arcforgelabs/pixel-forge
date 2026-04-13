@@ -62,6 +62,7 @@ from live_editor_threads import (
     delete_live_editor_thread,
     get_live_editor_thread,
     get_or_create_live_editor_thread,
+    purge_hidden_live_editor_threads,
     update_live_editor_thread,
 )
 from project_store import (
@@ -81,6 +82,7 @@ from project_store import (
     update_session_title,
     upsert_project,
     upsert_profile_state,
+    purge_hidden_profile_history,
     upsert_session,
 )
 from project_chats import (
@@ -145,6 +147,7 @@ from session_manager import (
 TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
 GRID_COLS = 4  # 4 columns in the frame grid
 FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
+LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS = 8.0
 LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS = 60 * 60
 LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS = 20.0
 AGENT_DECK_NATIVE_EVENT_INGESTOR = AgentDeckNativeEventIngestor()
@@ -465,12 +468,18 @@ class ProfileStateRequest(BaseModel):
     active_live_editor_thread_id: str | None = None
     default_agent_type: Literal["claude", "codex"] = "claude"
     default_workspace_mode: Literal["clone", "root"] = "root"
+    claude_default_model: str | None = None
+    claude_default_thinking: str | None = None
+    codex_default_model: str | None = None
+    codex_default_thinking: str | None = None
 
 
 class AgentDeckSessionRequest(BaseModel):
     agent_type: str = "claude"
     title: str | None = None
     workspace_mode: Literal["clone", "root"] = "clone"
+    agent_model: str | None = None
+    agent_thinking: str | None = None
 
 
 class ChatItemRenameRequest(BaseModel):
@@ -726,6 +735,10 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
         "default_agent_type": profile_state.default_agent_type,
         "default_workspace_mode": profile_state.default_workspace_mode,
+        "claude_default_model": profile_state.claude_default_model,
+        "claude_default_thinking": profile_state.claude_default_thinking,
+        "codex_default_model": profile_state.codex_default_model,
+        "codex_default_thinking": profile_state.codex_default_thinking,
         "updated_at": profile_state.updated_at,
     }
 
@@ -913,8 +926,24 @@ async def save_default_profile_state(request: ProfileStateRequest):
             active_live_editor_thread_id=request.active_live_editor_thread_id,
             default_agent_type=request.default_agent_type,
             default_workspace_mode=request.default_workspace_mode,
+            claude_default_model=request.claude_default_model,
+            claude_default_thinking=request.claude_default_thinking,
+            codex_default_model=request.codex_default_model,
+            codex_default_thinking=request.codex_default_thinking,
         )
     )
+
+
+@app.post("/api/profile-state/purge-hidden-history")
+async def purge_default_profile_hidden_history():
+    profile_id = get_profile_state().profile_id
+    project_result = purge_hidden_profile_history(profile_id=profile_id)
+    live_editor_threads_deleted = purge_hidden_live_editor_threads(profile_id=profile_id)
+    return {
+        "profile_id": profile_id,
+        **project_result,
+        "live_editor_threads_deleted": live_editor_threads_deleted,
+    }
 
 
 @app.post("/api/projects")
@@ -1068,6 +1097,8 @@ async def create_project_agent_deck_session(
             agent_type=request.agent_type,
             title=request.title,
             workspace_mode=request.workspace_mode,
+            agent_model=request.agent_model,
+            agent_thinking=request.agent_thinking,
         )
     except AgentDeckBridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2810,6 +2841,7 @@ async def _deliver_live_editor_prompt_to_agent_deck_session(
         turn_wait_task = asyncio.create_task(
             wait_for_agent_deck_turn_completion(
                 session_info,
+                startup_timeout_seconds=LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
                 completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
             )
         )

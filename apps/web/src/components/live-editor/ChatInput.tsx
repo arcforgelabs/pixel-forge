@@ -178,6 +178,8 @@ export function ChatInput() {
   } = useLiveEditorStore()
   const {
     defaultAgentType,
+    defaultAgentModels,
+    defaultAgentThinking,
     liveEditorSession,
     agentDeckTargets,
     installedSkills,
@@ -202,13 +204,13 @@ export function ChatInput() {
   const showDraftWorkspaceModeControl = !agentSelectionLocked
   const agentModelOptions = getAgentModelOptions(effectiveAgentType)
   const activeAgentModel = effectiveAgentType
-    ? draftAgentModels[effectiveAgentType] ?? null
+    ? draftAgentModels[effectiveAgentType] ?? defaultAgentModels[effectiveAgentType] ?? null
     : null
   const hasAgentModelOptions = agentModelOptions.length > 0
   const modelSelectionDisabled = agentSelectionLocked || !hasAgentModelOptions
   const agentThinkingOptions = getAgentThinkingOptions(effectiveAgentType)
   const activeAgentThinking = effectiveAgentType
-    ? draftAgentThinking[effectiveAgentType] ?? null
+    ? draftAgentThinking[effectiveAgentType] ?? defaultAgentThinking[effectiveAgentType] ?? null
     : null
   const hasAgentThinkingOptions = agentThinkingOptions.length > 0
   const thinkingSelectionDisabled = agentSelectionLocked || !hasAgentThinkingOptions

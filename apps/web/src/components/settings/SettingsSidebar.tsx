@@ -109,6 +109,35 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
       : capitalize(tool);
 }
 
+const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: "opus", label: "Opus (latest)" },
+    { value: "sonnet", label: "Sonnet (latest)" },
+    { value: "haiku", label: "Haiku (latest)" },
+  ],
+  codex: [
+    { value: "gpt-5.4", label: "GPT 5.4" },
+    { value: "gpt-5.3", label: "GPT 5.3" },
+    { value: "gpt-5.2", label: "GPT 5.2" },
+  ],
+};
+
+const AGENT_THINKING_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "max", label: "Max" },
+  ],
+  codex: [
+    { value: "minimal", label: "Minimal" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High" },
+  ],
+};
+
 function formatRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -206,6 +235,7 @@ interface Props {
 }
 
 export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, isOpeningWorkspace }: Props) {
+  const [purgingHiddenHistory, setPurgingHiddenHistory] = useState(false);
   const {
     settingsSidebarOpen,
     toggleSettingsSidebar,
@@ -225,7 +255,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     lastSavedFile,
     sessionId,
     defaultAgentType,
+    defaultAgentModels,
+    defaultAgentThinking,
     setDefaultAgentType,
+    setDefaultAgentModel,
+    setDefaultAgentThinking,
     defaultWorkspaceMode,
     setDefaultWorkspaceMode,
     previewUrl,
@@ -253,6 +287,34 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     projectSettingsPath,
     setProjectSettingsPath,
   } = useSessionStore();
+
+  async function handlePurgeHiddenHistory() {
+    if (purgingHiddenHistory) {
+      return;
+    }
+    setPurgingHiddenHistory(true);
+    try {
+      const response = await fetch(`${HTTP_BACKEND_URL}/api/profile-state/purge-hidden-history`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const payload = await readResponsePayload(response);
+      if (!response.ok) {
+        throw new Error(getResponseErrorMessage(response, payload));
+      }
+      const sessionCount = Number((payload as Record<string, unknown>).sessions_deleted ?? 0);
+      const threadCount = Number((payload as Record<string, unknown>).live_editor_threads_deleted ?? 0);
+      toast.success(`Purged ${sessionCount} hidden chats and ${threadCount} hidden lane records.`);
+      await Promise.all([
+        refreshProjectSessions(projectPath),
+        refreshProjectChats(projectPath),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to purge hidden history");
+    } finally {
+      setPurgingHiddenHistory(false);
+    }
+  }
   const projectSessions = useSessionStore(selectActiveProjectSessions);
   const projectChats = useSessionStore(selectActiveProjectChats);
 
@@ -2159,6 +2221,108 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           </Select>
                         </div>
 
+                        <div className="space-y-4 border-t border-border/40 pt-4">
+                          <div>
+                            <Label className="text-sm font-medium">Claude Defaults</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Profile-wide model and thinking defaults for new Claude chats and launches.
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Model</Label>
+                            <Select
+                              value={defaultAgentModels.claude ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentModel("claude", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_MODEL_OPTIONS.claude.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Thinking</Label>
+                            <Select
+                              value={defaultAgentThinking.claude ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentThinking("claude", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_THINKING_OPTIONS.claude.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 border-t border-border/40 pt-4">
+                          <div>
+                            <Label className="text-sm font-medium">Codex Defaults</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Profile-wide model and reasoning defaults for new Codex chats and launches.
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Model</Label>
+                            <Select
+                              value={defaultAgentModels.codex ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentModel("codex", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_MODEL_OPTIONS.codex.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Thinking</Label>
+                            <Select
+                              value={defaultAgentThinking.codex ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentThinking("codex", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_THINKING_OPTIONS.codex.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
                         <div className="flex items-center justify-between border-t border-border/40 pt-4">
                           <Label htmlFor="settings-page-image-gen" className="text-sm font-medium">
                             DALL-E Image Generation
@@ -2173,6 +2337,24 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }))
                             }
                           />
+                        </div>
+
+                        <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                          <div>
+                            <Label className="text-sm font-medium">Purge Hidden History</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Permanently remove chats and live-editor lane records that were previously deleted from this profile.
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handlePurgeHiddenHistory()}
+                            disabled={purgingHiddenHistory}
+                          >
+                            {purgingHiddenHistory ? "Purging..." : "Purge"}
+                          </Button>
                         </div>
                       </div>
                     </TabsContent>

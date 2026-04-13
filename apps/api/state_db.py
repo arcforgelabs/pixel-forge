@@ -26,6 +26,44 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def ensure_migration_markers_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS migration_markers (
+            key TEXT PRIMARY KEY,
+            completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def has_migration_marker(conn: sqlite3.Connection, key: str) -> bool:
+    ensure_migration_markers_table(conn)
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM migration_markers
+        WHERE key = ?
+        LIMIT 1
+        """,
+        (key,),
+    ).fetchone()
+    return row is not None
+
+
+def set_migration_marker(conn: sqlite3.Connection, key: str) -> None:
+    ensure_migration_markers_table(conn)
+    conn.execute(
+        """
+        INSERT INTO migration_markers (key)
+        VALUES (?)
+        ON CONFLICT(key) DO UPDATE SET
+            completed_at = CURRENT_TIMESTAMP
+        """,
+        (key,),
+    )
+
+
 def legacy_live_editor_db_path() -> Path:
     xdg_state_home = os.environ.get("XDG_STATE_HOME")
     base_dir = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"

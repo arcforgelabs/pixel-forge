@@ -154,6 +154,11 @@ describe('live editor selection history', () => {
             active_mode: 'live-editor',
             active_live_editor_thread_id: 'thread-a',
             default_agent_type: 'claude',
+            default_workspace_mode: 'root',
+            claude_default_model: null,
+            claude_default_thinking: null,
+            codex_default_model: null,
+            codex_default_thinking: null,
             updated_at: '2026-03-20T00:00:00Z',
           })
         }
@@ -1685,6 +1690,12 @@ describe('live editor selection history', () => {
         active_project_path: '/tmp/example-project',
         active_mode: 'live-editor',
         active_live_editor_thread_id: 'thread-1',
+        default_agent_type: 'claude',
+        default_workspace_mode: 'root',
+        claude_default_model: null,
+        claude_default_thinking: null,
+        codex_default_model: null,
+        codex_default_thinking: null,
         updated_at: '2026-03-20T00:00:00Z',
       })
     })
@@ -1769,6 +1780,12 @@ describe('live editor selection history', () => {
         active_project_path: '/tmp/example-project',
         active_mode: 'live-editor',
         active_live_editor_thread_id: 'thread-1',
+        default_agent_type: 'claude',
+        default_workspace_mode: 'root',
+        claude_default_model: null,
+        claude_default_thinking: null,
+        codex_default_model: null,
+        codex_default_thinking: null,
         updated_at: '2026-03-20T00:00:00Z',
       })
     })

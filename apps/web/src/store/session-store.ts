@@ -146,6 +146,8 @@ export interface ProfileStateRecord {
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
+  defaultAgentModels: Record<string, string | null>;
+  defaultAgentThinking: Record<string, string | null>;
   updatedAt: string;
 }
 
@@ -215,6 +217,8 @@ interface SessionStore {
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
       | "defaultWorkspaceMode"
+      | "defaultAgentModels"
+      | "defaultAgentThinking"
     >>
   ) => Promise<ProfileStateRecord | null>;
   setProject: (options: {
@@ -265,7 +269,11 @@ interface SessionStore {
 
   // Agent selection
   defaultAgentType: string;
+  defaultAgentModels: Record<string, string | null>;
+  defaultAgentThinking: Record<string, string | null>;
   setDefaultAgentType: (agentType: string) => void;
+  setDefaultAgentModel: (agentType: string, model: string | null) => void;
+  setDefaultAgentThinking: (agentType: string, thinking: string | null) => void;
 
   // Workspace mode selection
   defaultWorkspaceMode: DraftWorkspaceMode;
@@ -335,6 +343,10 @@ interface ApiProfileState {
   active_live_editor_thread_id: string | null;
   default_agent_type: string;
   default_workspace_mode: string;
+  claude_default_model: string | null;
+  claude_default_thinking: string | null;
+  codex_default_model: string | null;
+  codex_default_thinking: string | null;
   updated_at: string;
 }
 
@@ -428,6 +440,14 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
     defaultAgentType: normalizeAgentType(profileState.default_agent_type),
     defaultWorkspaceMode: normalizeWorkspaceMode(profileState.default_workspace_mode),
+    defaultAgentModels: {
+      claude: profileState.claude_default_model ?? null,
+      codex: profileState.codex_default_model ?? null,
+    },
+    defaultAgentThinking: {
+      claude: profileState.claude_default_thinking ?? null,
+      codex: profileState.codex_default_thinking ?? null,
+    },
     updatedAt: profileState.updated_at,
   };
 }
@@ -867,6 +887,15 @@ function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspace
   return mode === "clone" ? "clone" : "root";
 }
 
+function normalizeAgentProfileDefaults(
+  value: Record<string, string | null> | null | undefined
+): Record<string, string | null> {
+  return {
+    claude: value?.claude?.trim() || null,
+    codex: value?.codex?.trim() || null,
+  };
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${HTTP_BACKEND_URL}${path}`, {
     credentials: "include",
@@ -977,6 +1006,8 @@ async function upsertProfileStateToApi(options: {
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
+  defaultAgentModels: Record<string, string | null>;
+  defaultAgentThinking: Record<string, string | null>;
 }): Promise<ProfileStateRecord> {
   const payload = await requestJson<ApiProfileState>("/api/profile-state", {
     method: "POST",
@@ -987,6 +1018,10 @@ async function upsertProfileStateToApi(options: {
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
       default_agent_type: normalizeAgentType(options.defaultAgentType),
       default_workspace_mode: normalizeWorkspaceMode(options.defaultWorkspaceMode),
+      claude_default_model: options.defaultAgentModels.claude,
+      claude_default_thinking: options.defaultAgentThinking.claude,
+      codex_default_model: options.defaultAgentModels.codex,
+      codex_default_thinking: options.defaultAgentThinking.codex,
     }),
   });
   return normalizeProfileState(payload);
@@ -1028,6 +1063,8 @@ async function createAgentDeckTarget(
   options: {
     agentType: string;
     title?: string | null;
+    agentModel?: string | null;
+    agentThinking?: string | null;
   }
 ): Promise<AgentDeckSessionTarget> {
   const payload = await requestJson<ApiAgentDeckSessionTarget>(
@@ -1037,6 +1074,8 @@ async function createAgentDeckTarget(
       body: JSON.stringify({
         agent_type: options.agentType,
         title: options.title ?? null,
+        agent_model: options.agentModel ?? null,
+        agent_thinking: options.agentThinking ?? null,
       }),
     }
   );
@@ -1072,6 +1111,8 @@ function buildNextProfileState(
     | "liveEditorSession"
     | "defaultAgentType"
     | "defaultWorkspaceMode"
+    | "defaultAgentModels"
+    | "defaultAgentThinking"
   >,
   overrides?: Partial<
     Pick<
@@ -1081,6 +1122,8 @@ function buildNextProfileState(
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
       | "defaultWorkspaceMode"
+      | "defaultAgentModels"
+      | "defaultAgentThinking"
     >
   >
 ): {
@@ -1090,6 +1133,8 @@ function buildNextProfileState(
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
+  defaultAgentModels: Record<string, string | null>;
+  defaultAgentThinking: Record<string, string | null>;
 } {
   return {
     profileId: currentState.profileState?.profileId ?? "default",
@@ -1116,6 +1161,18 @@ function buildNextProfileState(
         ? normalizeWorkspaceMode(overrides.defaultWorkspaceMode)
         : normalizeWorkspaceMode(
             currentState.profileState?.defaultWorkspaceMode ?? currentState.defaultWorkspaceMode
+          ),
+    defaultAgentModels:
+      overrides?.defaultAgentModels !== undefined
+        ? normalizeAgentProfileDefaults(overrides.defaultAgentModels)
+        : normalizeAgentProfileDefaults(
+            currentState.profileState?.defaultAgentModels ?? currentState.defaultAgentModels
+          ),
+    defaultAgentThinking:
+      overrides?.defaultAgentThinking !== undefined
+        ? normalizeAgentProfileDefaults(overrides.defaultAgentThinking)
+        : normalizeAgentProfileDefaults(
+            currentState.profileState?.defaultAgentThinking ?? currentState.defaultAgentThinking
           ),
   };
 }
@@ -1170,6 +1227,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Agent selection
   defaultAgentType: "claude",
+  defaultAgentModels: { claude: null, codex: null },
+  defaultAgentThinking: { claude: null, codex: null },
   setDefaultAgentType: (agentType: string) => {
     const normalizedAgentType = normalizeAgentType(agentType);
     set({ defaultAgentType: normalizedAgentType });
@@ -1177,6 +1236,46 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       .persistProfileState({ defaultAgentType: normalizedAgentType })
       .catch((error) => {
         console.error("[session-store] Failed to persist default agent type:", error);
+      });
+  },
+  setDefaultAgentModel: (agentType: string, model: string | null) => {
+    const normalizedAgentType = normalizeAgentType(agentType);
+    const normalizedModel = model?.trim() || null;
+    set((state) => ({
+      defaultAgentModels: {
+        ...state.defaultAgentModels,
+        [normalizedAgentType]: normalizedModel,
+      },
+    }));
+    void get()
+      .persistProfileState({
+        defaultAgentModels: {
+          ...get().defaultAgentModels,
+          [normalizedAgentType]: normalizedModel,
+        },
+      })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist default agent model:", error);
+      });
+  },
+  setDefaultAgentThinking: (agentType: string, thinking: string | null) => {
+    const normalizedAgentType = normalizeAgentType(agentType);
+    const normalizedThinking = thinking?.trim() || null;
+    set((state) => ({
+      defaultAgentThinking: {
+        ...state.defaultAgentThinking,
+        [normalizedAgentType]: normalizedThinking,
+      },
+    }));
+    void get()
+      .persistProfileState({
+        defaultAgentThinking: {
+          ...get().defaultAgentThinking,
+          [normalizedAgentType]: normalizedThinking,
+        },
+      })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist default agent thinking:", error);
       });
   },
 
@@ -1236,6 +1335,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           ),
           defaultWorkspaceMode: normalizeWorkspaceMode(
             profileState?.defaultWorkspaceMode ?? state.defaultWorkspaceMode
+          ),
+          defaultAgentModels: normalizeAgentProfileDefaults(
+            profileState?.defaultAgentModels ?? state.defaultAgentModels
+          ),
+          defaultAgentThinking: normalizeAgentProfileDefaults(
+            profileState?.defaultAgentThinking ?? state.defaultAgentThinking
           ),
           projectName: currentProject?.name ?? state.projectName,
           outputMode: currentProject?.outputMode ?? state.outputMode,
@@ -1807,16 +1912,19 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createAgentDeckTargetSession: async (options) => {
-    const { projectPath, defaultAgentType, liveEditorSession } = get();
+    const { projectPath, defaultAgentType, defaultAgentModels, defaultAgentThinking, liveEditorSession } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
 
     set({ agentDeckTargetsLoading: true });
     try {
+      const effectiveAgentType = normalizeAgentType(options?.agentType ?? defaultAgentType);
       const created = await createAgentDeckTarget(projectPath, {
-        agentType: options?.agentType ?? defaultAgentType,
+        agentType: effectiveAgentType,
         title: options?.title ?? null,
+        agentModel: defaultAgentModels[effectiveAgentType] ?? null,
+        agentThinking: defaultAgentThinking[effectiveAgentType] ?? null,
       });
       const shouldRefreshProjectChats = options?.refreshProjectChats !== false;
       const nextProjectChats = shouldRefreshProjectChats

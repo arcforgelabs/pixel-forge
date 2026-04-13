@@ -8,8 +8,11 @@ from pathlib import Path
 
 from state_db import connect as connect_state_db
 from state_db import db_path as state_db_path
+from state_db import ensure_migration_markers_table
+from state_db import has_migration_marker
 from state_db import legacy_instance_db_paths
 from state_db import legacy_live_editor_db_path
+from state_db import set_migration_marker
 
 
 _DB_LOCK = threading.Lock()
@@ -19,6 +22,7 @@ _DB_INITIALIZED = False
 @dataclass(slots=True)
 class LiveEditorThreadRecord:
     thread_id: str
+    profile_id: str
     project_path: str
     workspace_path: str
     backend: str
@@ -47,6 +51,9 @@ def _connect() -> sqlite3.Connection:
 def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
     legacy_path = legacy_live_editor_db_path()
     if legacy_path == _db_path() or not legacy_path.is_file():
+        return
+    marker_key = f"live-editor-threads:legacy-live-editor:{legacy_path.resolve()}"
+    if has_migration_marker(conn, marker_key):
         return
 
     with sqlite3.connect(legacy_path) as legacy_conn:
@@ -77,6 +84,7 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
             """
             INSERT OR IGNORE INTO live_editor_threads (
                 thread_id,
+                profile_id,
                 project_path,
                 workspace_path,
                 backend,
@@ -90,10 +98,11 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
                 last_request_id,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["thread_id"],
+                "default",
                 str(Path(row["project_path"]).resolve()),
                 str(Path(row["workspace_path"]).resolve()),
                 row["backend"],
@@ -109,11 +118,15 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
                 row["updated_at"],
             ),
         )
+    set_migration_marker(conn, marker_key)
 
 
 def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
     for legacy_path in legacy_instance_db_paths():
         if legacy_path == _db_path() or not legacy_path.is_file():
+            continue
+        marker_key = f"live-editor-threads:legacy-instance:{legacy_path.resolve()}"
+        if has_migration_marker(conn, marker_key):
             continue
 
         with sqlite3.connect(legacy_path) as legacy_conn:
@@ -144,6 +157,7 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                 """
                 INSERT OR IGNORE INTO live_editor_threads (
                     thread_id,
+                    profile_id,
                     project_path,
                     workspace_path,
                     backend,
@@ -157,10 +171,11 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                     last_request_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["thread_id"],
+                    "default",
                     str(Path(row["project_path"]).resolve()),
                     str(Path(row["workspace_path"]).resolve()),
                     row["backend"],
@@ -176,6 +191,7 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                     row["updated_at"],
                 ),
             )
+        set_migration_marker(conn, marker_key)
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -191,6 +207,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """
             CREATE TABLE IF NOT EXISTS live_editor_threads (
                 thread_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL DEFAULT 'default',
                 project_path TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
                 backend TEXT NOT NULL,
@@ -202,32 +219,48 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 acp_session_id TEXT,
                 claude_session_id TEXT,
                 last_request_id TEXT,
+                hidden_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        ensure_migration_markers_table(conn)
         existing_columns = {
             str(row[1])
             for row in conn.execute("PRAGMA table_info(live_editor_threads)").fetchall()
         }
         for column_name in (
+            "profile_id",
             "workspace_path",
             "acpx_agent",
             "acpx_session_name",
             "acpx_record_id",
             "acp_session_id",
+            "hidden_at",
         ):
             if column_name in existing_columns:
                 continue
-            conn.execute(
-                f"ALTER TABLE live_editor_threads ADD COLUMN {column_name} TEXT"
-            )
+            if column_name == "profile_id":
+                conn.execute(
+                    "ALTER TABLE live_editor_threads ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default'"
+                )
+            else:
+                conn.execute(
+                    f"ALTER TABLE live_editor_threads ADD COLUMN {column_name} TEXT"
+                )
         conn.execute(
             """
             UPDATE live_editor_threads
             SET workspace_path = project_path
             WHERE workspace_path IS NULL OR TRIM(workspace_path) = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET profile_id = 'default'
+            WHERE profile_id IS NULL OR TRIM(profile_id) = ''
             """
         )
         _migrate_legacy_rows(conn)
@@ -239,6 +272,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
     return LiveEditorThreadRecord(
         thread_id=row["thread_id"],
+        profile_id=str(row["profile_id"] or "default").strip() or "default",
         project_path=row["project_path"],
         workspace_path=row["workspace_path"] or row["project_path"],
         backend=row["backend"],
@@ -255,18 +289,24 @@ def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
     )
 
 
-def get_live_editor_thread(thread_id: str) -> LiveEditorThreadRecord | None:
+def get_live_editor_thread(
+    thread_id: str,
+    *,
+    profile_id: str = "default",
+) -> LiveEditorThreadRecord | None:
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE thread_id = ?
+              AND profile_id = ?
+              AND hidden_at IS NULL
             """,
-            (thread_id,),
+            (thread_id, profile_id),
         ).fetchone()
 
     if row is None:
@@ -277,11 +317,14 @@ def get_live_editor_thread(thread_id: str) -> LiveEditorThreadRecord | None:
 def get_or_create_live_editor_thread(
     project_path: str,
     thread_id: str | None = None,
+    *,
+    profile_id: str = "default",
 ) -> LiveEditorThreadRecord:
     normalized_project_path = str(Path(project_path).resolve())
+    normalized_profile_id = str(profile_id or "default").strip() or "default"
 
     if thread_id:
-        existing = get_live_editor_thread(thread_id)
+        existing = get_live_editor_thread(thread_id, profile_id=normalized_profile_id)
         if existing:
             if existing.project_path != normalized_project_path:
                 raise ValueError(
@@ -296,16 +339,30 @@ def get_or_create_live_editor_thread(
             """
             INSERT INTO live_editor_threads (
                 thread_id,
+                profile_id,
                 project_path,
                 workspace_path,
                 backend
-            ) VALUES (?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                profile_id = excluded.profile_id,
+                project_path = excluded.project_path,
+                workspace_path = excluded.workspace_path,
+                backend = excluded.backend,
+                hidden_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
             """,
-            (record_id, normalized_project_path, normalized_project_path, "agent-deck"),
+            (
+                record_id,
+                normalized_profile_id,
+                normalized_project_path,
+                normalized_project_path,
+                "agent-deck",
+            ),
         )
         conn.commit()
 
-    created = get_live_editor_thread(record_id)
+    created = get_live_editor_thread(record_id, profile_id=normalized_profile_id)
     if created is None:
         raise RuntimeError("Failed to create live editor thread record")
     return created
@@ -314,6 +371,7 @@ def get_or_create_live_editor_thread(
 def update_live_editor_thread(
     thread_id: str,
     *,
+    profile_id: str = "default",
     workspace_path: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
@@ -356,6 +414,7 @@ def update_live_editor_thread(
         values.append(last_request_id)
 
     values.append(thread_id)
+    values.append(profile_id)
 
     with _connect() as conn:
         conn.execute(
@@ -363,12 +422,13 @@ def update_live_editor_thread(
             UPDATE live_editor_threads
             SET {", ".join(assignments)}
             WHERE thread_id = ?
+              AND profile_id = ?
             """,
             values,
         )
         conn.commit()
 
-    updated = get_live_editor_thread(thread_id)
+    updated = get_live_editor_thread(thread_id, profile_id=profile_id)
     if updated is None:
         raise RuntimeError("Live Editor thread record disappeared during update")
     return updated
@@ -377,8 +437,11 @@ def update_live_editor_thread(
 def detach_missing_agent_deck_thread_bindings(
     project_path: str,
     available_session_ids: set[str] | list[str] | tuple[str, ...],
+    *,
+    profile_id: str = "default",
 ) -> list[LiveEditorThreadRecord]:
     normalized_project_path = str(Path(project_path).resolve())
+    normalized_profile_id = str(profile_id or "default").strip() or "default"
     available_ids = {
         session_id.strip()
         for session_id in available_session_ids
@@ -388,15 +451,17 @@ def detach_missing_agent_deck_thread_bindings(
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE project_path = ?
+              AND profile_id = ?
+              AND hidden_at IS NULL
             ORDER BY updated_at DESC, created_at DESC
             """,
-            (normalized_project_path,),
+            (normalized_project_path, normalized_profile_id),
         ).fetchall()
         detached_thread_ids = [
             str(row["thread_id"])
@@ -420,41 +485,79 @@ def detach_missing_agent_deck_thread_bindings(
                     last_request_id = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE project_path = ?
+                  AND profile_id = ?
                   AND thread_id IN ({placeholders})
                 """,
-                (normalized_project_path, *detached_thread_ids),
+                (normalized_project_path, normalized_profile_id, *detached_thread_ids),
             )
             conn.commit()
 
         refreshed_rows = conn.execute(
             """
-            SELECT thread_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE project_path = ?
+              AND profile_id = ?
+              AND hidden_at IS NULL
             ORDER BY updated_at DESC, created_at DESC
             """,
-            (normalized_project_path,),
+            (normalized_project_path, normalized_profile_id),
         ).fetchall()
 
     return [_row_to_record(row) for row in refreshed_rows]
 
 
-def delete_live_editor_thread(thread_id: str) -> bool:
+def delete_live_editor_thread(
+    thread_id: str,
+    *,
+    profile_id: str = "default",
+    purge: bool = False,
+) -> bool:
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         return False
+    normalized_profile_id = str(profile_id or "default").strip() or "default"
 
+    with _connect() as conn:
+        if purge:
+            result = conn.execute(
+                """
+                DELETE FROM live_editor_threads
+                WHERE thread_id = ?
+                  AND profile_id = ?
+                """,
+                (normalized_thread_id, normalized_profile_id),
+            )
+        else:
+            result = conn.execute(
+                """
+                UPDATE live_editor_threads
+                SET hidden_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE thread_id = ?
+                  AND profile_id = ?
+                  AND hidden_at IS NULL
+                """,
+                (normalized_thread_id, normalized_profile_id),
+            )
+        conn.commit()
+
+    return result.rowcount > 0
+
+
+def purge_hidden_live_editor_threads(*, profile_id: str = "default") -> int:
+    normalized_profile_id = str(profile_id or "default").strip() or "default"
     with _connect() as conn:
         result = conn.execute(
             """
             DELETE FROM live_editor_threads
-            WHERE thread_id = ?
+            WHERE profile_id = ?
+              AND hidden_at IS NOT NULL
             """,
-            (normalized_thread_id,),
+            (normalized_profile_id,),
         )
         conn.commit()
-
-    return result.rowcount > 0
+    return int(result.rowcount or 0)

@@ -726,6 +726,8 @@ async def create_agent_deck_session_target(
     agent_type: str = "claude",
     title: str | None = None,
     workspace_mode: str = "clone",
+    agent_model: str | None = None,
+    agent_thinking: str | None = None,
 ) -> AgentDeckSessionTarget:
     session_title = title.strip() if isinstance(title, str) and title.strip() else _session_title_for_target(project_path)
     payload = await _launch_new_session(
@@ -733,6 +735,8 @@ async def create_agent_deck_session_target(
         session_title=session_title,
         agent_type=agent_type.strip() or "claude",
         workspace_mode=workspace_mode.strip().lower() if isinstance(workspace_mode, str) else "clone",
+        agent_model=agent_model,
+        agent_thinking=agent_thinking,
     )
     return _payload_to_session_target(payload)
 

@@ -251,6 +251,10 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(initial.active_live_editor_thread_id)
         self.assertEqual(initial.default_agent_type, "claude")
         self.assertEqual(initial.default_workspace_mode, "root")
+        self.assertIsNone(initial.claude_default_model)
+        self.assertIsNone(initial.claude_default_thinking)
+        self.assertIsNone(initial.codex_default_model)
+        self.assertIsNone(initial.codex_default_thinking)
 
         project_path = Path(self.tempdir.name) / "project"
         project_store.upsert_project(str(project_path))
@@ -260,6 +264,10 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             active_live_editor_thread_id="thread-a",
             default_agent_type="codex",
             default_workspace_mode="clone",
+            claude_default_model="sonnet",
+            claude_default_thinking="high",
+            codex_default_model="gpt-5.4",
+            codex_default_thinking="xhigh",
         )
 
         self.assertEqual(saved.active_project_path, str(project_path))
@@ -267,6 +275,124 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")
         self.assertEqual(saved.default_workspace_mode, "clone")
+        self.assertEqual(saved.claude_default_model, "sonnet")
+        self.assertEqual(saved.claude_default_thinking, "high")
+        self.assertEqual(saved.codex_default_model, "gpt-5.4")
+        self.assertEqual(saved.codex_default_thinking, "xhigh")
+
+    def test_legacy_instance_session_rows_import_once_and_do_not_resurrect_after_delete(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        legacy_dir = Path(self.tempdir.name) / "instances" / "legacy-a"
+        legacy_dir.mkdir(parents=True)
+        legacy_db_path = legacy_dir / "pixel-forge.db"
+
+        with sqlite3.connect(legacy_db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE projects (
+                    path TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    output_mode TEXT NOT NULL,
+                    custom_output_path TEXT,
+                    created_at TEXT NOT NULL,
+                    last_opened TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE sessions (
+                    project_path TEXT NOT NULL,
+                    thread_id TEXT NOT NULL UNIQUE,
+                    backend TEXT NOT NULL,
+                    agent_deck_session_id TEXT,
+                    agent_deck_session_title TEXT,
+                    created_at TEXT NOT NULL,
+                    last_active TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    path, name, output_mode, custom_output_path, created_at, last_opened
+                ) VALUES (?, ?, 'scratch', NULL, '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z')
+                """,
+                (str(project_path), "project"),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    project_path, thread_id, backend, agent_deck_session_id,
+                    agent_deck_session_title, created_at, last_active
+                ) VALUES (?, ?, 'agent-deck', ?, ?, '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z')
+                """,
+                (str(project_path), "chat-legacy0001", "deck-legacy", "Legacy Chat"),
+            )
+            conn.commit()
+
+        first_sessions = project_store.list_project_sessions(str(project_path))
+        self.assertEqual([session.thread_id for session in first_sessions], ["chat-legacy0001"])
+
+        deleted = project_store.delete_session(str(project_path), "chat-legacy0001")
+        self.assertTrue(deleted)
+
+        project_store._DB_INITIALIZED = False
+        second_sessions = project_store.list_project_sessions(str(project_path))
+        self.assertEqual(second_sessions, [])
+
+    def test_legacy_instance_live_editor_rows_import_once_and_do_not_resurrect_after_delete(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        legacy_dir = Path(self.tempdir.name) / "instances" / "legacy-b"
+        legacy_dir.mkdir(parents=True)
+        legacy_db_path = legacy_dir / "pixel-forge.db"
+
+        with sqlite3.connect(legacy_db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE live_editor_threads (
+                    thread_id TEXT PRIMARY KEY,
+                    project_path TEXT NOT NULL,
+                    backend TEXT NOT NULL,
+                    agent_deck_session_id TEXT,
+                    agent_deck_session_title TEXT,
+                    claude_session_id TEXT,
+                    last_request_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO live_editor_threads (
+                    thread_id, project_path, backend, agent_deck_session_id,
+                    agent_deck_session_title, claude_session_id, last_request_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, 'agent-deck', ?, ?, ?, ?, '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z')
+                """,
+                (
+                    "chat-legacy-thread",
+                    str(project_path),
+                    "deck-legacy-thread",
+                    "Legacy Thread",
+                    "claude-legacy-thread",
+                    "request-legacy-thread",
+                ),
+            )
+            conn.commit()
+
+        first_thread = live_editor_threads.get_live_editor_thread("chat-legacy-thread")
+        self.assertIsNotNone(first_thread)
+
+        deleted = live_editor_threads.delete_live_editor_thread("chat-legacy-thread")
+        self.assertTrue(deleted)
+
+        live_editor_threads._DB_INITIALIZED = False
+        second_thread = live_editor_threads.get_live_editor_thread("chat-legacy-thread")
+        self.assertIsNone(second_thread)
 
     def test_create_adopted_project_session_persists_a_first_class_chat_lane(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
