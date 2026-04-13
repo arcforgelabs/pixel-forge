@@ -476,6 +476,12 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIsNone(status_heartbeat_task)
         self.assertEqual(len(create_task_calls), 1)
+        wait_for_completion = main.wait_for_agent_deck_turn_completion
+        wait_for_completion.assert_awaited_once_with(
+            session_info,
+            startup_timeout_seconds=main.LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
+            completion_timeout_seconds=main.LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+        )
 
     async def test_deliver_live_editor_prompt_falls_back_to_agent_deck_send_for_busy_codex(self) -> None:
         session_info = AgentDeckSessionInfo(
@@ -548,6 +554,12 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             project_path="/tmp/project/.agents/thread-a",
             prompt="Review the request",
             no_wait=True,
+        )
+        wait_for_completion = main.wait_for_agent_deck_turn_completion
+        wait_for_completion.assert_awaited_once_with(
+            session_info,
+            startup_timeout_seconds=main.LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
+            completion_timeout_seconds=main.LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
         )
         self.assertEqual(baseline_output, "")
         self.assertIs(turn_wait_task, fake_wait_task)
