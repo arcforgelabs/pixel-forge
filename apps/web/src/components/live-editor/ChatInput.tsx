@@ -97,10 +97,11 @@ function formatAgentModelLabel(
   agentType: string | null | undefined,
   model: string | null,
 ): string {
+  const options = getAgentModelOptions(agentType)
   if (!model) {
-    return 'Default model'
+    return options[0]?.label ?? 'Default model'
   }
-  const match = getAgentModelOptions(agentType).find((option) => option.value === model)
+  const match = options.find((option) => option.value === model)
   return match?.label ?? model
 }
 
@@ -108,10 +109,11 @@ function formatAgentThinkingLabel(
   agentType: string | null | undefined,
   thinking: string | null,
 ): string {
+  const options = getAgentThinkingOptions(agentType)
   if (!thinking) {
-    return 'Default thinking'
+    return options[0]?.label ?? 'Default thinking'
   }
-  const match = getAgentThinkingOptions(agentType).find((option) => option.value === thinking)
+  const match = options.find((option) => option.value === thinking)
   return match?.label ?? thinking
 }
 
@@ -1000,51 +1002,40 @@ export function ChatInput() {
               </Button>
               {showModelPicker && hasAgentModelOptions && (
                 <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!effectiveAgentType) return
-                      setDraftAgentModels((prev) => {
-                        if (!(effectiveAgentType in prev)) return prev
-                        const next = { ...prev }
-                        delete next[effectiveAgentType]
-                        return next
-                      })
-                      setShowModelPicker(false)
-                    }}
-                    className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                      activeAgentModel === null ? 'text-primary font-medium' : 'text-foreground'
-                    }`}
-                  >
-                    Default model
-                    {activeAgentModel === null && (
-                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                    )}
-                  </button>
-                  {agentModelOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        if (!effectiveAgentType) return
-                        setDraftAgentModels((prev) => ({
-                          ...prev,
-                          [effectiveAgentType]: option.value,
-                        }))
-                        setShowModelPicker(false)
-                      }}
-                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                        activeAgentModel === option.value
-                          ? 'text-primary font-medium'
-                          : 'text-foreground'
-                      }`}
-                    >
-                      {option.label}
-                      {activeAgentModel === option.value && (
-                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                      )}
-                    </button>
-                  ))}
+                  {agentModelOptions.map((option, index) => {
+                    const isSelected = activeAgentModel === option.value || (activeAgentModel === null && index === 0)
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          if (!effectiveAgentType) return
+                          if (index === 0) {
+                            setDraftAgentModels((prev) => {
+                              if (!(effectiveAgentType in prev)) return prev
+                              const next = { ...prev }
+                              delete next[effectiveAgentType]
+                              return next
+                            })
+                          } else {
+                            setDraftAgentModels((prev) => ({
+                              ...prev,
+                              [effectiveAgentType]: option.value,
+                            }))
+                          }
+                          setShowModelPicker(false)
+                        }}
+                        className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                          isSelected ? 'text-primary font-medium' : 'text-foreground'
+                        }`}
+                      >
+                        {option.label}
+                        {isSelected && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1080,51 +1071,40 @@ export function ChatInput() {
               </Button>
               {showThinkingPicker && hasAgentThinkingOptions && (
                 <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!effectiveAgentType) return
-                      setDraftAgentThinking((prev) => {
-                        if (!(effectiveAgentType in prev)) return prev
-                        const next = { ...prev }
-                        delete next[effectiveAgentType]
-                        return next
-                      })
-                      setShowThinkingPicker(false)
-                    }}
-                    className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                      activeAgentThinking === null ? 'text-primary font-medium' : 'text-foreground'
-                    }`}
-                  >
-                    Default thinking
-                    {activeAgentThinking === null && (
-                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                    )}
-                  </button>
-                  {agentThinkingOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        if (!effectiveAgentType) return
-                        setDraftAgentThinking((prev) => ({
-                          ...prev,
-                          [effectiveAgentType]: option.value,
-                        }))
-                        setShowThinkingPicker(false)
-                      }}
-                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                        activeAgentThinking === option.value
-                          ? 'text-primary font-medium'
-                          : 'text-foreground'
-                      }`}
-                    >
-                      {option.label}
-                      {activeAgentThinking === option.value && (
-                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                      )}
-                    </button>
-                  ))}
+                  {agentThinkingOptions.map((option, index) => {
+                    const isSelected = activeAgentThinking === option.value || (activeAgentThinking === null && index === 0)
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          if (!effectiveAgentType) return
+                          if (index === 0) {
+                            setDraftAgentThinking((prev) => {
+                              if (!(effectiveAgentType in prev)) return prev
+                              const next = { ...prev }
+                              delete next[effectiveAgentType]
+                              return next
+                            })
+                          } else {
+                            setDraftAgentThinking((prev) => ({
+                              ...prev,
+                              [effectiveAgentType]: option.value,
+                            }))
+                          }
+                          setShowThinkingPicker(false)
+                        }}
+                        className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                          isSelected ? 'text-primary font-medium' : 'text-foreground'
+                        }`}
+                      >
+                        {option.label}
+                        {isSelected && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
