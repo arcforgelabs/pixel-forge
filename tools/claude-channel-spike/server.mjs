@@ -5,19 +5,61 @@ import { writeFileSync } from 'node:fs'
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import {
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 
-const host = process.env.PIXEL_FORGE_CLAUDE_CHANNEL_HOST || '127.0.0.1'
-const port = Number(process.env.PIXEL_FORGE_CLAUDE_CHANNEL_PORT || '8788')
-const readyFile = process.env.PIXEL_FORGE_CLAUDE_CHANNEL_READY_FILE || '/tmp/pixel-forge-claude-channel-ready.json'
+const readEnv = (...names) => {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value && value.trim()) {
+      return value.trim()
+    }
+  }
+  return undefined
+}
+
+const host =
+  readEnv(
+    'PIXEL_FORGE_CHANNEL_HOST',
+    'PIXEL_FORGE_CODEX_CHANNEL_HOST',
+    'PIXEL_FORGE_CLAUDE_CHANNEL_HOST',
+  ) || '127.0.0.1'
+const port = Number(
+  readEnv(
+    'PIXEL_FORGE_CHANNEL_PORT',
+    'PIXEL_FORGE_CODEX_CHANNEL_PORT',
+    'PIXEL_FORGE_CLAUDE_CHANNEL_PORT',
+  ) || '8788',
+)
+const readyFile =
+  readEnv(
+    'PIXEL_FORGE_CHANNEL_READY_FILE',
+    'PIXEL_FORGE_CODEX_CHANNEL_READY_FILE',
+    'PIXEL_FORGE_CLAUDE_CHANNEL_READY_FILE',
+  ) || '/tmp/pixel-forge-channel-ready.json'
 
 const mcp = new Server(
   { name: 'pixel-forge-channel', version: '0.0.1' },
   {
-    capabilities: { experimental: { 'claude/channel': {} } },
+    capabilities: {
+      experimental: { 'claude/channel': {} },
+      prompts: { listChanged: false },
+      resources: { listChanged: false, subscribe: false },
+      tools: { listChanged: false },
+    },
     instructions:
       'Messages from the Pixel Forge channel arrive as <channel source="pixel-forge-channel" ...>. Treat them as external operator context arriving while the terminal session is already open. This is a one-way channel spike: respond in-session normally and do not attempt to reply through the channel.',
   },
 )
+
+mcp.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }))
+mcp.setRequestHandler(ListPromptsRequestSchema, () => ({ prompts: [] }))
+mcp.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: [] }))
+mcp.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({ resourceTemplates: [] }))
 
 await mcp.connect(new StdioServerTransport())
 

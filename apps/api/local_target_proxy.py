@@ -10,7 +10,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 import websockets
 
-from local_targets import LocalTargetRecord, get_pixel_forge_target_by_host
+from local_targets import (
+    LocalTargetRecord,
+    get_pixel_forge_target_by_host,
+    start_pixel_forge_target,
+)
 from runtime_config import url_host as runtime_url_host
 from runtime_config import web_host as runtime_web_host
 from workspace_previews import WorkspacePreviewRecord, get_workspace_preview_by_host
@@ -140,9 +144,24 @@ def _response_headers(
     return headers
 
 
+async def _restart_pixel_forge_target(
+    target_record: LocalTargetRecord,
+) -> LocalTargetRecord:
+    return await asyncio.to_thread(
+        start_pixel_forge_target,
+        target_record.project_path,
+        runtime_kind=target_record.runtime_kind,
+        source_root=target_record.source_root,
+    )
+
+
 async def proxy_local_target_http(request: Request, target_record: AliasTargetRecord) -> Response:
+    live_target_record = target_record
+    if isinstance(target_record, LocalTargetRecord) and not target_record.already_running:
+        live_target_record = await _restart_pixel_forge_target(target_record)
+
     target_url = _build_upstream_url(
-        target_record.web_url,
+        live_target_record.web_url,
         request.url.path,
         request.scope.get("query_string", b""),
     )
@@ -162,11 +181,31 @@ async def proxy_local_target_http(request: Request, target_record: AliasTargetRe
                 content=request_body,
             )
         except httpx.ConnectError:
-            return Response(
-                content=f"Cannot connect to local target {target_record.instance_slug}",
-                status_code=502,
-                media_type="text/plain",
-            )
+            if isinstance(live_target_record, LocalTargetRecord):
+                live_target_record = await _restart_pixel_forge_target(live_target_record)
+                try:
+                    upstream_response = await client.request(
+                        method=request.method,
+                        url=_build_upstream_url(
+                            live_target_record.web_url,
+                            request.url.path,
+                            request.scope.get("query_string", b""),
+                        ),
+                        headers=_build_forward_headers(request),
+                        content=request_body,
+                    )
+                except httpx.ConnectError:
+                    return Response(
+                        content=f"Cannot connect to local target {live_target_record.instance_slug}",
+                        status_code=502,
+                        media_type="text/plain",
+                    )
+            else:
+                return Response(
+                    content=f"Cannot connect to local target {live_target_record.instance_slug}",
+                    status_code=502,
+                    media_type="text/plain",
+                )
 
     response = Response(
         content=upstream_response.content,
@@ -176,7 +215,7 @@ async def proxy_local_target_http(request: Request, target_record: AliasTargetRe
         _response_headers(
             upstream_response,
             request=request,
-            target_record=target_record,
+            target_record=live_target_record,
         )
     )
     return response
@@ -198,20 +237,17 @@ def _requested_subprotocols(websocket: WebSocket) -> list[str]:
     return [value.strip() for value in raw.split(",") if value.strip()]
 
 
-async def proxy_local_target_websocket(
-    scope: Scope,
-    receive: Receive,
-    send: Send,
+def _build_target_websocket_url(
     target_record: AliasTargetRecord,
-) -> None:
-    websocket = WebSocket(scope, receive=receive, send=send)
+    scope: Scope,
+) -> str:
     target_url = _build_upstream_url(
         target_record.web_url,
         scope.get("path", "/"),
         scope.get("query_string", b""),
     )
     parsed_target = urlparse(target_url)
-    target_ws_url = urlunparse(
+    return urlunparse(
         ParseResult(
             scheme="wss" if parsed_target.scheme == "https" else "ws",
             netloc=parsed_target.netloc,
@@ -222,46 +258,76 @@ async def proxy_local_target_websocket(
         )
     )
 
+
+async def proxy_local_target_websocket(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    target_record: AliasTargetRecord,
+) -> None:
+    live_target_record = target_record
+    if isinstance(target_record, LocalTargetRecord) and not target_record.already_running:
+        live_target_record = await _restart_pixel_forge_target(target_record)
+
+    websocket = WebSocket(scope, receive=receive, send=send)
     target_ws = None
     try:
         target_ws = await websockets.connect(
-            target_ws_url,
+            _build_target_websocket_url(live_target_record, scope),
             additional_headers=_websocket_headers(websocket),
             subprotocols=_requested_subprotocols(websocket) or None,
             ping_interval=None,
         )
-        await websocket.accept(subprotocol=target_ws.subprotocol)
-
-        async def forward_to_target() -> None:
+    except Exception:
+        if isinstance(live_target_record, LocalTargetRecord):
             try:
-                while True:
-                    data = await websocket.receive()
-                    if "text" in data:
-                        await target_ws.send(data["text"])
-                    elif "bytes" in data:
-                        await target_ws.send(data["bytes"])
-                    elif data.get("type") == "websocket.disconnect":
-                        break
-            except WebSocketDisconnect:
-                return
+                live_target_record = await _restart_pixel_forge_target(live_target_record)
+                target_ws = await websockets.connect(
+                    _build_target_websocket_url(live_target_record, scope),
+                    additional_headers=_websocket_headers(websocket),
+                    subprotocols=_requested_subprotocols(websocket) or None,
+                    ping_interval=None,
+                )
+            except Exception:
+                try:
+                    await websocket.close(code=1011, reason="Local target websocket proxy failed")
+                except Exception:
+                    pass
+        else:
+            try:
+                await websocket.close(code=1011, reason="Local target websocket proxy failed")
+            except Exception:
+                pass
+        return
 
-        async def forward_to_client() -> None:
-            async for message in target_ws:
-                if isinstance(message, str):
-                    await websocket.send_text(message)
-                else:
-                    await websocket.send_bytes(message)
+    await websocket.accept(subprotocol=target_ws.subprotocol)
 
+    async def forward_to_target() -> None:
+        try:
+            while True:
+                data = await websocket.receive()
+                if "text" in data:
+                    await target_ws.send(data["text"])
+                elif "bytes" in data:
+                    await target_ws.send(data["bytes"])
+                elif data.get("type") == "websocket.disconnect":
+                    break
+        except WebSocketDisconnect:
+            return
+
+    async def forward_to_client() -> None:
+        async for message in target_ws:
+            if isinstance(message, str):
+                await websocket.send_text(message)
+            else:
+                await websocket.send_bytes(message)
+
+    try:
         await asyncio.gather(
             forward_to_target(),
             forward_to_client(),
             return_exceptions=True,
         )
-    except Exception:
-        try:
-            await websocket.close(code=1011, reason="Local target websocket proxy failed")
-        except Exception:
-            pass
     finally:
         if target_ws is not None:
             await target_ws.close()
@@ -307,4 +373,3 @@ class LocalTargetAliasMiddleware:
 class AliasTargetRecord(Protocol):
     instance_slug: str
     web_url: str
-

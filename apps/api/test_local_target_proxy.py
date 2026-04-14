@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,8 +100,11 @@ class LocalTargetsStableUrlTest(unittest.TestCase):
 
 
 class _FakeAsyncClient:
-    def __init__(self, response: httpx.Response) -> None:
-        self.response = response
+    def __init__(self, responses: httpx.Response | Exception | list[httpx.Response | Exception]) -> None:
+        if isinstance(responses, list):
+            self.responses = responses
+        else:
+            self.responses = [responses]
         self.requests: list[dict[str, object]] = []
 
     async def __aenter__(self) -> "_FakeAsyncClient":
@@ -111,7 +115,10 @@ class _FakeAsyncClient:
 
     async def request(self, **kwargs):  # type: ignore[no-untyped-def]
         self.requests.append(kwargs)
-        return self.response
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class LocalTargetAliasProxyTest(unittest.IsolatedAsyncioTestCase):
@@ -177,6 +184,137 @@ class LocalTargetAliasProxyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             fake_client.requests[0]["headers"]["host"],
             "project-mirror-target-1234abcd.localhost:7201",
+        )
+
+    async def test_http_proxy_restarts_stale_pixel_forge_target_before_proxying(self) -> None:
+        stale_record = local_targets.LocalTargetRecord(
+            kind="pixel-forge",
+            runtime_kind="mirror",
+            project_path="/tmp/project",
+            source_root="/tmp/project",
+            build_label="Live Runtime",
+            instance_slug="project-mirror-target-1234abcd",
+            api_port=7101,
+            web_port=7101,
+            web_host="project-mirror-target-1234abcd.localhost",
+            api_url="http://127.0.0.1:7101",
+            web_url="http://project-mirror-target-1234abcd.localhost:7101",
+            stable_url="http://project-mirror-target-1234abcd.localhost:7201",
+            state_dir="/tmp/state",
+            log_file="/tmp/state/logs/mirror.log",
+            pid=None,
+            target_mode=False,
+            already_running=False,
+            created_at="2026-03-23T00:00:00+0000",
+        )
+        restarted_record = replace(
+            stale_record,
+            pid=456,
+            already_running=True,
+        )
+        fake_client = _FakeAsyncClient(httpx.Response(200, text="ok"))
+
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/",
+                "query_string": b"",
+                "headers": [(b"host", b"project-mirror-target-1234abcd.localhost:7201")],
+                "client": ("127.0.0.1", 12345),
+                "server": ("project-mirror-target-1234abcd.localhost", 7201),
+            }
+        )
+
+        with (
+            patch.object(local_target_proxy, "start_pixel_forge_target", return_value=restarted_record) as restart_mock,
+            patch.object(local_target_proxy.httpx, "AsyncClient", return_value=fake_client),
+        ):
+            response = await local_target_proxy.proxy_local_target_http(request, stale_record)
+
+        self.assertEqual(response.status_code, 200)
+        restart_mock.assert_called_once_with(
+            "/tmp/project",
+            runtime_kind="mirror",
+            source_root="/tmp/project",
+        )
+        self.assertEqual(
+            fake_client.requests[0]["url"],
+            "http://project-mirror-target-1234abcd.localhost:7101/",
+        )
+
+    async def test_http_proxy_retries_connect_error_after_restarting_pixel_forge_target(self) -> None:
+        target_record = local_targets.LocalTargetRecord(
+            kind="pixel-forge",
+            runtime_kind="mirror",
+            project_path="/tmp/project",
+            source_root="/tmp/project",
+            build_label="Live Runtime",
+            instance_slug="project-mirror-target-1234abcd",
+            api_port=7101,
+            web_port=7101,
+            web_host="project-mirror-target-1234abcd.localhost",
+            api_url="http://127.0.0.1:7101",
+            web_url="http://project-mirror-target-1234abcd.localhost:7101",
+            stable_url="http://project-mirror-target-1234abcd.localhost:7201",
+            state_dir="/tmp/state",
+            log_file="/tmp/state/logs/mirror.log",
+            pid=123,
+            target_mode=False,
+            already_running=True,
+            created_at="2026-03-23T00:00:00+0000",
+        )
+        restarted_record = replace(
+            target_record,
+            api_port=7102,
+            web_port=7102,
+            api_url="http://127.0.0.1:7102",
+            web_url="http://project-mirror-target-1234abcd.localhost:7102",
+            pid=456,
+        )
+        fake_client = _FakeAsyncClient(
+            [
+                httpx.ConnectError("boom"),
+                httpx.Response(200, text="ok"),
+            ]
+        )
+
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/",
+                "query_string": b"",
+                "headers": [(b"host", b"project-mirror-target-1234abcd.localhost:7201")],
+                "client": ("127.0.0.1", 12345),
+                "server": ("project-mirror-target-1234abcd.localhost", 7201),
+            }
+        )
+
+        with (
+            patch.object(local_target_proxy, "start_pixel_forge_target", return_value=restarted_record) as restart_mock,
+            patch.object(local_target_proxy.httpx, "AsyncClient", return_value=fake_client),
+        ):
+            response = await local_target_proxy.proxy_local_target_http(request, target_record)
+
+        self.assertEqual(response.status_code, 200)
+        restart_mock.assert_called_once_with(
+            "/tmp/project",
+            runtime_kind="mirror",
+            source_root="/tmp/project",
+        )
+        self.assertEqual(
+            [request["url"] for request in fake_client.requests],
+            [
+                "http://project-mirror-target-1234abcd.localhost:7101/",
+                "http://project-mirror-target-1234abcd.localhost:7102/",
+            ],
         )
 
 
