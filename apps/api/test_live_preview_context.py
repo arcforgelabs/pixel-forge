@@ -190,6 +190,7 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["live_attach_mode"], "controller-browserview")
         self.assertEqual(payload["attach_hints"]["browser_url"], "http://127.0.0.1:7301")
         self.assertEqual(payload["attach_hints"]["target_id"], "controller-target-1")
+        self.assertNotIn("inspection", payload)
 
     async def test_refresh_live_preview_context_reuses_stored_selection_hints(self) -> None:
         preview_manager = Mock()

@@ -403,6 +403,104 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_build_dispatch_prompt_omits_session_brief_on_delta_turn(self) -> None:
+        artifacts = {
+            "session_brief_file": ".pixel-forge/threads/thread-a/session-brief.md",
+            "selection_tunnel_file": ".pixel-forge/requests/abcd/selection-tunnel.json",
+            "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
+        }
+        payload = {
+            "prompt_text": "Keep going",
+            "artifacts": artifacts,
+        }
+
+        claude_prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload=payload,
+            continuation_mode="delta",
+        )
+        self.assertNotIn("session-brief.md", claude_prompt)
+        self.assertIn("@.pixel-forge/requests/abcd/selection-tunnel.json", claude_prompt)
+
+        codex_prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload=payload,
+            continuation_mode="delta",
+            tool="codex",
+        )
+        self.assertNotIn("session-brief.md", codex_prompt)
+        self.assertIn(".pixel-forge/requests/abcd/selection-tunnel.json", codex_prompt)
+
+    def test_build_dispatch_prompt_omits_session_brief_on_attached_session(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Resume",
+                "artifacts": {
+                    "session_brief_file": ".pixel-forge/threads/thread-a/session-brief.md",
+                },
+            },
+            continuation_mode="attached-session",
+        )
+        self.assertNotIn("session-brief.md", prompt)
+
+    def test_build_dispatch_prompt_keeps_session_brief_on_bootstrap(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Kick off",
+                "artifacts": {
+                    "session_brief_file": ".pixel-forge/threads/thread-a/session-brief.md",
+                },
+            },
+            continuation_mode="bootstrap",
+        )
+        self.assertIn("@.pixel-forge/threads/thread-a/session-brief.md", prompt)
+
+    def test_build_dispatch_prompt_skips_live_preview_when_unchanged(self) -> None:
+        payload = {
+            "prompt_text": "Same preview",
+            "artifacts": {
+                "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
+            },
+        }
+        claude_prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload=payload,
+            continuation_mode="delta",
+            include_live_preview_context=False,
+        )
+        self.assertNotIn("live-preview-context.json", claude_prompt)
+
+        codex_prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload=payload,
+            continuation_mode="delta",
+            include_live_preview_context=False,
+            tool="codex",
+        )
+        self.assertNotIn("live-preview-context.json", codex_prompt)
+
+    def test_hash_live_preview_context_stable_across_timestamps(self) -> None:
+        payload_a = {"current_url": "http://a", "captured_at": 100, "refreshed_at": 200}
+        payload_b = {"current_url": "http://a", "captured_at": 999, "refreshed_at": 9999}
+        self.assertEqual(
+            main._hash_live_preview_context(payload_a),
+            main._hash_live_preview_context(payload_b),
+        )
+        payload_c = {"current_url": "http://b", "captured_at": 100}
+        self.assertNotEqual(
+            main._hash_live_preview_context(payload_a),
+            main._hash_live_preview_context(payload_c),
+        )
+        self.assertIsNone(main._hash_live_preview_context(None))
+
     def test_build_dispatch_prompt_falls_back_to_request_mirror_when_turn_bundle_is_missing(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",

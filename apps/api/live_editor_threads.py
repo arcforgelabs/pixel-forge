@@ -34,6 +34,7 @@ class LiveEditorThreadRecord:
     acp_session_id: str | None
     claude_session_id: str | None
     last_request_id: str | None
+    last_live_preview_hash: str | None
     created_at: str
     updated_at: str
 
@@ -219,6 +220,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 acp_session_id TEXT,
                 claude_session_id TEXT,
                 last_request_id TEXT,
+                last_live_preview_hash TEXT,
                 hidden_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -238,6 +240,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             "acpx_record_id",
             "acp_session_id",
             "hidden_at",
+            "last_live_preview_hash",
         ):
             if column_name in existing_columns:
                 continue
@@ -269,6 +272,17 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         _DB_INITIALIZED = True
 
 
+def _column_or_none(row: sqlite3.Row, column: str) -> str | None:
+    try:
+        value = row[column]
+    except (IndexError, KeyError):
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
     return LiveEditorThreadRecord(
         thread_id=row["thread_id"],
@@ -284,6 +298,7 @@ def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
         acp_session_id=row["acp_session_id"],
         claude_session_id=row["claude_session_id"],
         last_request_id=row["last_request_id"],
+        last_live_preview_hash=_column_or_none(row, "last_live_preview_hash"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -299,7 +314,7 @@ def get_live_editor_thread(
             """
             SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
-                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE thread_id = ?
@@ -381,6 +396,7 @@ def update_live_editor_thread(
     acp_session_id: str | None = None,
     claude_session_id: str | None = None,
     last_request_id: str | None = None,
+    last_live_preview_hash: str | None = None,
 ) -> LiveEditorThreadRecord:
     assignments: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
     values: list[str] = []
@@ -412,6 +428,9 @@ def update_live_editor_thread(
     if last_request_id is not None:
         assignments.append("last_request_id = ?")
         values.append(last_request_id)
+    if last_live_preview_hash is not None:
+        assignments.append("last_live_preview_hash = ?")
+        values.append(last_live_preview_hash)
 
     values.append(thread_id)
     values.append(profile_id)
@@ -453,7 +472,7 @@ def detach_missing_agent_deck_thread_bindings(
             """
             SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
-                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE project_path = ?
@@ -496,7 +515,7 @@ def detach_missing_agent_deck_thread_bindings(
             """
             SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
-                   acpx_record_id, acp_session_id, claude_session_id, last_request_id,
+                   acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
             FROM live_editor_threads
             WHERE project_path = ?

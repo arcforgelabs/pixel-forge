@@ -7,6 +7,7 @@ to use subscription billing instead of raw API credits.
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import math
@@ -2537,6 +2538,37 @@ def _assert_agent_deck_lane_available(
         )
 
 
+_LIVE_PREVIEW_HASH_VOLATILE_KEYS = frozenset(
+    {
+        "captured_at",
+        "refreshed_at",
+        "live_context_fresh",
+    }
+)
+
+
+def _hash_live_preview_context(
+    live_preview_context: dict[str, object] | None,
+) -> str | None:
+    """Stable content hash for a live-preview-context payload.
+
+    Excludes volatile wall-clock fields so turns with identical substance do
+    not churn the hash and re-trigger re-attachment of the preview artifact.
+    """
+    if not isinstance(live_preview_context, dict):
+        return None
+    filtered = {
+        key: value
+        for key, value in live_preview_context.items()
+        if key not in _LIVE_PREVIEW_HASH_VOLATILE_KEYS
+    }
+    try:
+        encoded = json.dumps(filtered, sort_keys=True, default=str).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _summarize_live_preview_context(
     live_preview_context: dict[str, object] | None,
 ) -> dict[str, object] | None:
@@ -2654,6 +2686,7 @@ def build_live_editor_dispatch_prompt(
     explicit_live_attach_required: bool = False,
     tool: str = "claude",
     exclude_attachment_paths: set[str] | list[str] | tuple[str, ...] | None = None,
+    include_live_preview_context: bool = True,
 ) -> str:
     del request_id
     del preview_url
@@ -2664,9 +2697,14 @@ def build_live_editor_dispatch_prompt(
     del requested_skills
     del self_edit_safe_mode
     del self_edit_scope
-    del continuation_mode
     del informational_only
     del explicit_live_attach_required
+
+    normalized_continuation_mode = (
+        continuation_mode if continuation_mode in {"bootstrap", "attached-session", "delta"}
+        else "bootstrap"
+    )
+    is_bootstrap_turn = normalized_continuation_mode == "bootstrap"
 
     prompt_text = ""
     if isinstance(turn_input_payload, dict):
@@ -2702,13 +2740,19 @@ def build_live_editor_dispatch_prompt(
     if isinstance(turn_input_payload, dict):
         raw_artifacts = turn_input_payload.get("artifacts")
         if isinstance(raw_artifacts, dict):
-            for key in (
-                "session_brief_file",
-                "context_patch_file",
-                "selected_elements_file",
-                "selection_tunnel_file",
-                "live_preview_context_file",
-            ):
+            artifact_keys: list[str] = []
+            if is_bootstrap_turn:
+                artifact_keys.append("session_brief_file")
+            artifact_keys.extend(
+                [
+                    "context_patch_file",
+                    "selected_elements_file",
+                    "selection_tunnel_file",
+                ]
+            )
+            if include_live_preview_context:
+                artifact_keys.append("live_preview_context_file")
+            for key in artifact_keys:
                 append_reference(raw_artifacts.get(key))
 
         raw_attachments = turn_input_payload.get("attachments")
@@ -3591,6 +3635,7 @@ async def live_editor_chat(websocket: WebSocket):
                 )
                 previous_request_id = thread.last_request_id
                 previous_agent_deck_session_id = thread.agent_deck_session_id
+                previous_live_preview_hash = thread.last_live_preview_hash
 
                 await websocket.send_json(
                     {
@@ -3658,6 +3703,7 @@ async def live_editor_chat(websocket: WebSocket):
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
                     preview_manager=MANAGED_BROWSER_PREVIEW,
                 )
+                current_live_preview_hash = _hash_live_preview_context(live_preview_context)
                 if previous_request_id:
                     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "delta"
                 elif (
@@ -3720,6 +3766,11 @@ async def live_editor_chat(websocket: WebSocket):
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     last_request_id=request_pack.request_id,
+                    last_live_preview_hash=(
+                        current_live_preview_hash
+                        if current_live_preview_hash is not None
+                        else None
+                    ),
                 )
                 turn_event_base = {
                     "request_id": request_pack.request_id,
@@ -3860,6 +3911,11 @@ async def live_editor_chat(websocket: WebSocket):
                     requested_skills=requested_skills,
                     tool=session_info.tool,
                     exclude_attachment_paths=native_image_paths,
+                    include_live_preview_context=(
+                        continuation_mode == "bootstrap"
+                        or current_live_preview_hash is None
+                        or current_live_preview_hash != previous_live_preview_hash
+                    ),
                 )
                 assistant_output = ""
                 if session_info.acpx_agent and session_info.acpx_session_name:

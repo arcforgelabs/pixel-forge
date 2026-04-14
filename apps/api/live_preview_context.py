@@ -174,13 +174,13 @@ async def capture_live_preview_context(
         preview_url=reference.get("preview_url"),
     )
 
+    captured_inspection = reference.get("inspection")
     payload: dict[str, Any] = {
-        **reference,
+        **{key: value for key, value in reference.items() if key != "inspection"},
         "captured_at": int(time.time()),
         "selection_hints": selection_hints,
     }
 
-    captured_inspection = reference.get("inspection")
     if isinstance(captured_inspection, dict):
         payload.update(captured_inspection)
         payload["live_inspection_available"] = bool(
