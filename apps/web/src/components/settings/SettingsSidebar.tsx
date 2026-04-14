@@ -1107,12 +1107,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           <div className="flex items-center justify-between border-b border-border/40 px-3 py-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold tracking-tight">Pixel Forge</span>
-              <Badge
-                variant="outline"
-                className="border-orange-400/40 bg-orange-500/10 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-[0.28em] text-orange-200"
-              >
-                Alpha
-              </Badge>
             </div>
             <button
               onClick={toggleSettingsSidebar}
@@ -1735,7 +1729,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-foreground">
-                    Launch the integrated Agent Deck shell against this same alpha control plane and profile.
+                    Launch the integrated Agent Deck shell against this same control plane and profile.
                   </p>
                   {agentDeckSurface?.url && (
                     <p className="mt-2 break-all font-mono text-xs text-muted-foreground">

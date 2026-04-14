@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Pixel Forge
 Comment=Visual app editor — screenshot bootstrap and live editing
-Exec=bash -c 'export PIXEL_FORGE_USE_DESKTOP_SHELL=1; exec "$HOME/repos/3-resources/pixel-forge/start-dev.sh"'
+Exec=bash -lc 'exec pixel-forge-shell'
 Icon=pixel-forge
 Terminal=false
 Type=Application

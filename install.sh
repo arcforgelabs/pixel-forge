@@ -7,10 +7,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/scripts/alpha-env.sh" ]; then
-    # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/scripts/alpha-env.sh"
-fi
 
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
 INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-$INSTALL_NAME}"
@@ -22,19 +18,19 @@ BIN_DIR="${PIXEL_FORGE_BIN_DIR:-$HOME/.local/bin}"
 WEB_DIR="$SCRIPT_DIR/apps/web"
 DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
 AGENT_DECK_FOUNDATION_SOURCE_DIR="$SCRIPT_DIR/foundations/agent-deck"
-AGENT_DECK_RUNNER_SOURCE="$SCRIPT_DIR/scripts/agent-deck-alpha.sh"
+AGENT_DECK_RUNNER_SOURCE="$SCRIPT_DIR/scripts/agent-deck.sh"
 CLAUDE_CHANNEL_BOOTSTRAP_SOURCE="$SCRIPT_DIR/scripts/bootstrap-claude-channel-spike.sh"
-PORT="${PIXEL_FORGE_PORT:-7001}"
+PORT="${PIXEL_FORGE_PORT:-7201}"
 API_PORT="${PIXEL_FORGE_API_PORT:-$PORT}"
 WEB_HOST="${PIXEL_FORGE_WEB_HOST:-${PIXEL_FORGE_URL_HOST:-${INSTANCE_SLUG}.localhost}}"
 URL_HOST="${PIXEL_FORGE_URL_HOST:-$WEB_HOST}"
 SERVICE_NAME="${PIXEL_FORGE_SERVICE_NAME:-${INSTALL_NAME}}"
 SYSTEMD_DIR="${PIXEL_FORGE_SYSTEMD_DIR:-$HOME/.config/systemd/user}"
 SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.${INSTANCE_SLUG}}"
-LEGACY_SHARED_STATE_DIR="${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$HOME/.pixel-forge/workstation-v2}"
+LEGACY_SHARED_STATE_DIR="${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$HOME/.pixel-forge-alpha}"
 SKILLS_INSTALL_DIR="${PIXEL_FORGE_SKILLS_INSTALL_DIR:-${SHARED_STATE_DIR}/skills}"
 DB_PATH="${PIXEL_FORGE_DB_PATH:-${SHARED_STATE_DIR}/pixel-forge.db}"
-AGENT_DECK_PROFILE="${PIXEL_FORGE_AGENT_DECK_PROFILE:-alpha}"
+AGENT_DECK_PROFILE="${PIXEL_FORGE_AGENT_DECK_PROFILE:-pixel-forge}"
 AGENT_DECK_HOME="${PIXEL_FORGE_AGENT_DECK_HOME:-${SHARED_STATE_DIR}/agent-deck}"
 CLAUDE_CHANNEL_ENV_FILE="${PIXEL_FORGE_CLAUDE_CHANNEL_ENV_FILE:-${SHARED_STATE_DIR}/claude-channel-spike.env}"
 AGENT_DECK_SURFACE_HOST="${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-127.0.0.1}"
@@ -44,33 +40,48 @@ AGENT_DECK_FOUNDATION_INSTALL_DIR="$INSTALL_DIR/foundations/agent-deck"
 AGENT_DECK_FOUNDATION_BUILD_DIR="$AGENT_DECK_FOUNDATION_INSTALL_DIR/build"
 AGENT_DECK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_BUILD_DIR/agent-deck"
 AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck"
-AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck-alpha.sh"
+AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck.sh"
 AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
-STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_alpha_state_root.py"
+STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_state_root.py"
 SHELL_URL="${PIXEL_FORGE_SHELL_URL:-http://${URL_HOST}:${API_PORT}}"
 PREVIEW_PARTITION="${PIXEL_FORGE_PREVIEW_PARTITION:-persist:${INSTANCE_SLUG}-preview}"
-AGENT_DECK_TUI_LAUNCHER_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME:-pixel-forge-agent-deck-alpha}"
-AGENT_DECK_TUI_TITLE="${PIXEL_FORGE_AGENT_DECK_TUI_TITLE:-Agent Deck (alpha)}"
-AGENT_DECK_TUI_WM_CLASS="${PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS:-pixel-forge-agent-deck-alpha}"
-AGENT_DECK_TUI_DESKTOP_ENTRY_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME:-Agent Deck (alpha)}"
-AGENT_DECK_TUI_DESKTOP_FILE_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME:-pixel-forge-agent-deck-alpha.desktop}"
-AGENT_DECK_TUI_ICON_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:-pixel-forge-agent-deck-alpha}"
-AGENT_DECK_TUI_ICON_SOURCE="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/agent-deck-alpha.png}"
+AGENT_DECK_TUI_LAUNCHER_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_LAUNCHER_NAME:-pixel-forge-agent-deck}"
+AGENT_DECK_TUI_TITLE="${PIXEL_FORGE_AGENT_DECK_TUI_TITLE:-Agent Deck}"
+AGENT_DECK_TUI_WM_CLASS="${PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS:-pixel-forge-agent-deck}"
+AGENT_DECK_TUI_DESKTOP_ENTRY_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_ENTRY_NAME:-Agent Deck}"
+AGENT_DECK_TUI_DESKTOP_FILE_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_DESKTOP_FILE_NAME:-pixel-forge-agent-deck.desktop}"
+AGENT_DECK_TUI_ICON_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:-pixel-forge-agent-deck}"
+AGENT_DECK_TUI_ICON_SOURCE="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/agent-deck.png}"
 SKIP_SYSTEMD="${PIXEL_FORGE_INSTALL_SKIP_SYSTEMD:-0}"
 SKIP_DESKTOP_INTEGRATION="${PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION:-0}"
 INSTALL_CLAUDE_CHANNEL_SPIKE="${PIXEL_FORGE_INSTALL_CLAUDE_CHANNEL_SPIKE:-0}"
 DESKTOP_ENTRY_NAME="${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-Pixel Forge}"
 DESKTOP_FILE_NAME="${PIXEL_FORGE_DESKTOP_FILE_NAME:-${INSTALL_NAME}.desktop}"
 DESKTOP_ICON_NAME="${PIXEL_FORGE_DESKTOP_ICON_NAME:-${INSTALL_NAME}}"
-DESKTOP_ICON_SOURCE="${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/alpha.png}"
-LEGACY_ALPHA_INSTALL_NAME="pixel-forge-workstation-v2"
-LEGACY_ALPHA_CLI_NAME="pixel-forge-workstation-v2"
-LEGACY_ALPHA_SHELL_NAME="pixel-forge-workstation-v2-shell"
-LEGACY_ALPHA_SERVICE_NAME="pixel-forge-workstation-v2"
-LEGACY_ALPHA_INSTALL_DIR="$HOME/.local/lib/pixel-forge-workstation-v2"
-LEGACY_ALPHA_BACKUP_DIR="$HOME/.local/lib/pixel-forge-workstation-v2.rollback"
-LEGACY_ALPHA_DESKTOP_FILE_NAME="pixel-forge-workstation-v2.desktop"
-LEGACY_ALPHA_DESKTOP_ICON_NAME="pixel-forge-workstation-v2"
+DESKTOP_ICON_SOURCE="${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/app.png}"
+
+# Legacy cleanup: pixel-forge-alpha (the alpha lane that preceded this unified install).
+LEGACY_ALPHA_INSTALL_NAME="pixel-forge-alpha"
+LEGACY_ALPHA_CLI_NAME="pixel-forge-alpha"
+LEGACY_ALPHA_SHELL_NAME="pixel-forge-alpha-shell"
+LEGACY_ALPHA_SERVICE_NAME="pixel-forge-alpha"
+LEGACY_ALPHA_TUI_NAME="pixel-forge-agent-deck-alpha"
+LEGACY_ALPHA_INSTALL_DIR="$HOME/.local/lib/pixel-forge-alpha"
+LEGACY_ALPHA_BACKUP_DIR="$HOME/.local/lib/pixel-forge-alpha.rollback"
+LEGACY_ALPHA_DESKTOP_FILE_NAME="pixel-forge-alpha.desktop"
+LEGACY_ALPHA_TUI_DESKTOP_FILE_NAME="pixel-forge-agent-deck-alpha.desktop"
+LEGACY_ALPHA_DESKTOP_ICON_NAME="pixel-forge-alpha"
+LEGACY_ALPHA_TUI_ICON_NAME="pixel-forge-agent-deck-alpha"
+
+# Legacy cleanup: pre-alpha workstation-v2 prototype (older than -alpha).
+LEGACY_WS_V2_INSTALL_NAME="pixel-forge-workstation-v2"
+LEGACY_WS_V2_CLI_NAME="pixel-forge-workstation-v2"
+LEGACY_WS_V2_SHELL_NAME="pixel-forge-workstation-v2-shell"
+LEGACY_WS_V2_SERVICE_NAME="pixel-forge-workstation-v2"
+LEGACY_WS_V2_INSTALL_DIR="$HOME/.local/lib/pixel-forge-workstation-v2"
+LEGACY_WS_V2_BACKUP_DIR="$HOME/.local/lib/pixel-forge-workstation-v2.rollback"
+LEGACY_WS_V2_DESKTOP_FILE_NAME="pixel-forge-workstation-v2.desktop"
+LEGACY_WS_V2_DESKTOP_ICON_NAME="pixel-forge-workstation-v2"
 
 # Ensure pnpm/node are in PATH.
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
@@ -105,7 +116,7 @@ install_agent_deck_foundation_binary() {
     local fallback_bundled_binary="$AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH"
 
     if command -v go >/dev/null 2>&1; then
-        echo "Building bundled alpha Agent Deck binary..."
+        echo "Building bundled Agent Deck binary..."
         rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
         mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
         (
@@ -118,7 +129,7 @@ install_agent_deck_foundation_binary() {
     fi
 
     if [ -x "$prebuilt_build_binary" ]; then
-        echo "Using prebuilt alpha Agent Deck binary from foundation build output..."
+        echo "Using prebuilt Agent Deck binary from foundation build output..."
         chmod +x "$prebuilt_build_binary"
         cp "$prebuilt_build_binary" "$fallback_bundled_binary"
         chmod +x "$fallback_bundled_binary"
@@ -129,37 +140,38 @@ install_agent_deck_foundation_binary() {
     mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
 
     if [ -x "$fallback_bundled_binary" ]; then
-        echo "Using prebuilt alpha Agent Deck binary from the foundation bundle..."
+        echo "Using prebuilt Agent Deck binary from the foundation bundle..."
         cp "$fallback_bundled_binary" "$AGENT_DECK_BUNDLED_BINARY_PATH"
         chmod +x "$AGENT_DECK_BUNDLED_BINARY_PATH"
         return
     fi
 
-    echo "Error: unable to provision the bundled alpha Agent Deck binary. Install Go or provide foundations/agent-deck/agent-deck before running install.sh." >&2
+    echo "Error: unable to provision the bundled Agent Deck binary. Install Go or provide foundations/agent-deck/agent-deck before running install.sh." >&2
     exit 1
 }
 
-terminate_legacy_alpha_processes() {
+terminate_processes_matching() {
+    local pattern="$1"
     if ! command -v pgrep >/dev/null 2>&1; then
         return
     fi
 
-    local -a legacy_pids=()
-    mapfile -t legacy_pids < <(pgrep -f "$LEGACY_ALPHA_INSTALL_NAME" 2>/dev/null || true)
-    if [ "${#legacy_pids[@]}" -eq 0 ]; then
+    local -a pids=()
+    mapfile -t pids < <(pgrep -f "$pattern" 2>/dev/null || true)
+    if [ "${#pids[@]}" -eq 0 ]; then
         return
     fi
 
-    kill "${legacy_pids[@]}" 2>/dev/null || true
+    kill "${pids[@]}" 2>/dev/null || true
     for _ in $(seq 1 5); do
         sleep 1
-        mapfile -t legacy_pids < <(pgrep -f "$LEGACY_ALPHA_INSTALL_NAME" 2>/dev/null || true)
-        if [ "${#legacy_pids[@]}" -eq 0 ]; then
+        mapfile -t pids < <(pgrep -f "$pattern" 2>/dev/null || true)
+        if [ "${#pids[@]}" -eq 0 ]; then
             return
         fi
     done
 
-    kill -9 "${legacy_pids[@]}" 2>/dev/null || true
+    kill -9 "${pids[@]}" 2>/dev/null || true
 }
 
 cleanup_legacy_alpha_install() {
@@ -174,13 +186,47 @@ cleanup_legacy_alpha_install() {
         systemctl --user daemon-reload 2>/dev/null || true
     fi
 
-    terminate_legacy_alpha_processes
+    terminate_processes_matching "$LEGACY_ALPHA_INSTALL_DIR"
     rm -f "$BIN_DIR/${LEGACY_ALPHA_CLI_NAME}"
     rm -f "$BIN_DIR/${LEGACY_ALPHA_SHELL_NAME}"
+    rm -f "$BIN_DIR/${LEGACY_ALPHA_TUI_NAME}"
     rm -f "$HOME/.local/share/applications/${LEGACY_ALPHA_DESKTOP_FILE_NAME}"
+    rm -f "$HOME/.local/share/applications/${LEGACY_ALPHA_TUI_DESKTOP_FILE_NAME}"
     rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/${LEGACY_ALPHA_DESKTOP_ICON_NAME}.png"
+    rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/${LEGACY_ALPHA_TUI_ICON_NAME}.png"
     rm -rf "$LEGACY_ALPHA_INSTALL_DIR"
     rm -rf "$LEGACY_ALPHA_BACKUP_DIR"
+}
+
+cleanup_legacy_workstation_v2_install() {
+    if [ "$INSTALL_NAME" = "$LEGACY_WS_V2_INSTALL_NAME" ]; then
+        return
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user stop "${LEGACY_WS_V2_SERVICE_NAME}.service" 2>/dev/null || true
+        systemctl --user disable "${LEGACY_WS_V2_SERVICE_NAME}.service" 2>/dev/null || true
+        rm -f "$SYSTEMD_DIR/${LEGACY_WS_V2_SERVICE_NAME}.service"
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
+
+    terminate_processes_matching "$LEGACY_WS_V2_INSTALL_NAME"
+    rm -f "$BIN_DIR/${LEGACY_WS_V2_CLI_NAME}"
+    rm -f "$BIN_DIR/${LEGACY_WS_V2_SHELL_NAME}"
+    rm -f "$HOME/.local/share/applications/${LEGACY_WS_V2_DESKTOP_FILE_NAME}"
+    rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/${LEGACY_WS_V2_DESKTOP_ICON_NAME}.png"
+    rm -rf "$LEGACY_WS_V2_INSTALL_DIR"
+    rm -rf "$LEGACY_WS_V2_BACKUP_DIR"
+}
+
+clear_stale_controller_updates() {
+    # Per CLAUDE.md: if the install/update lane changes, clear and restage old pending
+    # controller updates instead of applying stale snapshots. Controller-update state
+    # is always rewritten by later runs, so it is safe to remove on every install.
+    rm -rf "$SHARED_STATE_DIR/controller-updates"
+    rm -f "$SHARED_STATE_DIR/pending-preview-updates.json"
+    rm -f "$SHARED_STATE_DIR/controller-update-apply-state.json"
+    rm -f "$SHARED_STATE_DIR/dismissed-controller-update-id.txt"
 }
 
 echo "Installing Pixel Forge..."
@@ -190,6 +236,12 @@ require_command "pnpm" "Install pnpm and re-run ./install.sh."
 require_command "node" "Install Node.js and re-run ./install.sh."
 require_command "npm" "Install Node.js/npm and re-run ./install.sh."
 require_command "curl" "Install curl and re-run ./install.sh."
+
+# --- Migrate alpha state dir to pixel-forge state dir if needed ---
+if [ ! -d "$SHARED_STATE_DIR" ] && [ -d "$LEGACY_SHARED_STATE_DIR" ]; then
+    echo "Migrating state from $LEGACY_SHARED_STATE_DIR to $SHARED_STATE_DIR..."
+    mv "$LEGACY_SHARED_STATE_DIR" "$SHARED_STATE_DIR"
+fi
 
 # --- Build frontend ---
 echo "Building frontend..."
@@ -215,7 +267,7 @@ if [ -f "$SCRIPT_DIR/VERSION" ]; then
     cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/VERSION"
 fi
 if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
-    echo "Bundling alpha Agent Deck foundation..."
+    echo "Bundling Agent Deck foundation..."
     mkdir -p "$INSTALL_DIR/foundations"
     cp -r "$AGENT_DECK_FOUNDATION_SOURCE_DIR" "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
     install_agent_deck_foundation_binary
@@ -563,7 +615,7 @@ else
     fi
     cp "$DESKTOP_ICON_SOURCE" "$ICON_DIR/${DESKTOP_ICON_NAME}.png"
     if [ ! -f "$AGENT_DECK_TUI_ICON_SOURCE" ]; then
-        echo "Error: Agent Deck alpha icon source missing at $AGENT_DECK_TUI_ICON_SOURCE" >&2
+        echo "Error: Agent Deck icon source missing at $AGENT_DECK_TUI_ICON_SOURCE" >&2
         exit 1
     fi
     cp "$AGENT_DECK_TUI_ICON_SOURCE" "$ICON_DIR/${AGENT_DECK_TUI_ICON_NAME}.png"
@@ -587,13 +639,13 @@ DESKTOP
     cat > "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}" << DESKTOP
 [Desktop Entry]
 Name=${AGENT_DECK_TUI_DESKTOP_ENTRY_NAME}
-Comment=Alpha-owned Agent Deck terminal app for Pixel Forge integration
+Comment=Agent Deck terminal app bundled with Pixel Forge
 Exec=bash -lc 'exec ${AGENT_DECK_TUI_LAUNCHER_NAME}'
 Icon=${AGENT_DECK_TUI_ICON_NAME}
 Terminal=false
 Type=Application
 Categories=Development;
-Keywords=agent;deck;alpha;pixel-forge;terminal;
+Keywords=agent;deck;pixel-forge;terminal;
 StartupNotify=true
 StartupWMClass=${AGENT_DECK_TUI_WM_CLASS}
 DESKTOP
@@ -603,6 +655,8 @@ DESKTOP
 fi
 
 cleanup_legacy_alpha_install
+cleanup_legacy_workstation_v2_install
+clear_stale_controller_updates
 
 INSTALL_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$INSTALL_DIR/runtime-install-metadata.json" <<METADATA
@@ -626,10 +680,10 @@ echo "  ${CLI_NAME} tunnel --project <path> --request <id>"
 echo "  ${CLI_NAME} controller-update stage --project \$PWD --git-ref HEAD --summary 'Update ready to load'"
 echo "  ${CLI_NAME} controller-update apply"
 echo "  ${CLI_NAME} clone promote <session> --into master --commit --push --stage"
-echo "  ${CLI_NAME} agent-deck-tui open   # Open Agent Deck (alpha) in a terminal window"
-echo "  ${CLI_NAME} agent-deck-tui run    # Run Agent Deck (alpha) in the current terminal"
+echo "  ${CLI_NAME} agent-deck-tui open   # Open Agent Deck in a terminal window"
+echo "  ${CLI_NAME} agent-deck-tui run    # Run Agent Deck in the current terminal"
 echo "  ${SHELL_NAME}    # Open the desktop shell"
-echo "  ${AGENT_DECK_TUI_LAUNCHER_NAME}   # Open Agent Deck (alpha)"
+echo "  ${AGENT_DECK_TUI_LAUNCHER_NAME}   # Open Agent Deck"
 echo "  ${CLI_NAME} logs     # Tail logs"
 echo "  ${CLI_NAME} status   # Check status"
 echo ""

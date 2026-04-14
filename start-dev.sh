@@ -6,12 +6,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/scripts/alpha-env.sh" ]; then
-    # This clone is the dedicated alpha lane. Apply isolated defaults
-    # unless the operator explicitly overrides them in the environment.
-    # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/scripts/alpha-env.sh"
-fi
 
 # Ensure common tool paths are available (desktop launchers may not source profile)
 for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
@@ -21,10 +15,11 @@ done
 API_DIR="$SCRIPT_DIR/apps/api"
 WEB_DIR="$SCRIPT_DIR/apps/web"
 INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-pixel-forge}"
-API_PORT="${PIXEL_FORGE_API_PORT:-7001}"
-WEB_PORT="${PIXEL_FORGE_WEB_PORT:-5173}"
+API_PORT="${PIXEL_FORGE_API_PORT:-7201}"
+WEB_PORT="${PIXEL_FORGE_WEB_PORT:-5273}"
 WEB_HOST="${PIXEL_FORGE_WEB_HOST:-${INSTANCE_SLUG}.localhost}"
-LOG_DIR="${PIXEL_FORGE_LOG_DIR:-$SCRIPT_DIR/.pixel-forge/logs}"
+SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}"
+LOG_DIR="${PIXEL_FORGE_LOG_DIR:-$SHARED_STATE_DIR/runtime/logs}"
 API_URL="http://127.0.0.1:${API_PORT}"
 WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 WEB_HEALTH_URL="http://127.0.0.1:${WEB_PORT}"
@@ -34,7 +29,7 @@ KILL_STALE="${PIXEL_FORGE_KILL_STALE:-0}"
 USE_DESKTOP_SHELL="${PIXEL_FORGE_USE_DESKTOP_SHELL:-1}"
 REQUIREMENTS_HASH_FILE="${PIXEL_FORGE_REQUIREMENTS_HASH_FILE:-$SCRIPT_DIR/.pixel-forge/api-requirements.sha256}"
 
-python3 "$API_DIR/ensure_alpha_state_root.py" >/dev/null
+python3 "$API_DIR/ensure_state_root.py" >/dev/null
 
 mkdir -p "$LOG_DIR"
 
@@ -42,6 +37,7 @@ export PIXEL_FORGE_INSTANCE_SLUG="$INSTANCE_SLUG"
 export PIXEL_FORGE_API_PORT="$API_PORT"
 export PIXEL_FORGE_WEB_PORT="$WEB_PORT"
 export PIXEL_FORGE_WEB_HOST="$WEB_HOST"
+export PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR"
 export VITE_PIXEL_FORGE_TARGET_MODE="${VITE_PIXEL_FORGE_TARGET_MODE:-${PIXEL_FORGE_TARGET_MODE:-0}}"
 export VITE_PIXEL_FORGE_TARGET_PROJECT_PATH="${VITE_PIXEL_FORGE_TARGET_PROJECT_PATH:-${PIXEL_FORGE_TARGET_PROJECT_PATH:-}}"
 
