@@ -37,6 +37,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
 
             thread = LiveEditorThreadRecord(
                 thread_id="thread-a",
+                profile_id="default",
                 project_path=str(project_path.resolve()),
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
@@ -48,6 +49,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 acp_session_id=None,
                 claude_session_id=None,
                 last_request_id=None,
+                last_live_preview_hash=None,
                 created_at="2026-03-20T00:00:00Z",
                 updated_at="2026-03-20T00:00:00Z",
             )
@@ -78,6 +80,8 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 agent_type="claude",
                 workspace_mode="clone",
                 workspace_path=None,
+                agent_model=None,
+                agent_thinking=None,
             )
 
     async def test_detached_clone_lane_reuses_existing_workspace(self) -> None:
@@ -88,6 +92,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
 
             thread = LiveEditorThreadRecord(
                 thread_id="thread-a",
+                profile_id="default",
                 project_path=str(project_path.resolve()),
                 workspace_path=str(workspace_path.resolve()),
                 backend="agent-deck",
@@ -99,6 +104,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 acp_session_id=None,
                 claude_session_id=None,
                 last_request_id="request-a",
+                last_live_preview_hash=None,
                 created_at="2026-03-20T00:00:00Z",
                 updated_at="2026-03-20T00:00:00Z",
             )
@@ -148,6 +154,8 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 agent_type="claude",
                 workspace_mode="existing",
                 workspace_path=str(workspace_path.resolve()),
+                agent_model=None,
+                agent_thinking=None,
             )
 
     async def test_fresh_lane_still_creates_clone_workspace(self) -> None:
@@ -157,6 +165,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
 
             thread = LiveEditorThreadRecord(
                 thread_id="thread-a",
+                profile_id="default",
                 project_path=str(project_path.resolve()),
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
@@ -168,6 +177,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 acp_session_id=None,
                 claude_session_id=None,
                 last_request_id=None,
+                last_live_preview_hash=None,
                 created_at="2026-03-20T00:00:00Z",
                 updated_at="2026-03-20T00:00:00Z",
             )
@@ -217,6 +227,8 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 agent_type="claude",
                 workspace_mode="clone",
                 workspace_path=None,
+                agent_model=None,
+                agent_thinking=None,
             )
 
     async def test_bound_lane_reconciles_existing_agent_deck_title_to_pixel_forge_title(self) -> None:
@@ -226,6 +238,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
 
             thread = LiveEditorThreadRecord(
                 thread_id="thread-a",
+                profile_id="default",
                 project_path=str(project_path.resolve()),
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
@@ -237,6 +250,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 acp_session_id=None,
                 claude_session_id=None,
                 last_request_id="request-a",
+                last_live_preview_hash=None,
                 created_at="2026-03-20T00:00:00Z",
                 updated_at="2026-03-20T00:00:00Z",
             )
@@ -551,6 +565,319 @@ class AgentDeckBridgeCloseoutPromptTest(unittest.TestCase):
 
 
 class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
+    def test_codex_jsonl_payloads_cover_tool_cards_and_text_blocks(self) -> None:
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": "tool-1",
+                        "name": "open_file",
+                        "arguments": {"path": "a.txt"},
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_use",
+                    "tool_call_id": "tool-1",
+                    "tool": "open_file",
+                    "input": {"path": "a.txt"},
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": "tool-2",
+                        "name": "search",
+                        "arguments": '{"q":"needle"}',
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_use",
+                    "tool_call_id": "tool-2",
+                    "tool": "search",
+                    "input": {"q": "needle"},
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "tool-3",
+                        "output": {"content": "done", "success": True},
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "tool-3",
+                    "content": "done",
+                    "is_error": False,
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "tool-4",
+                        "output": {"content": "failed", "success": False},
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "tool-4",
+                    "content": "failed",
+                    "is_error": True,
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "tool-5",
+                        "output": "plain output",
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "tool-5",
+                    "content": "plain output",
+                    "is_error": False,
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "exec_command_begin",
+                        "call_id": "bash-1",
+                        "command": ["git", "status"],
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_use",
+                    "tool_call_id": "bash-1",
+                    "tool": "Bash",
+                    "input": {"command": "git status"},
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "exec_command_end",
+                        "call_id": "bash-2",
+                        "stdout": "ok",
+                        "stderr": "",
+                        "exit_code": 0,
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "bash-2",
+                    "content": "ok",
+                    "is_error": False,
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "exec_command_end",
+                        "call_id": "bash-3",
+                        "stdout": "",
+                        "stderr": "bad",
+                        "exit_code": 2,
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "bash-3",
+                    "content": "bad",
+                    "is_error": True,
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Thinking",
+                    },
+                }
+            ),
+            [{"type": "chunk", "content": "Thinking\n\n"}],
+        )
+        self.assertEqual(
+            agent_deck_bridge.codex_jsonl_payloads_for_record(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "Line one"},
+                            {"type": "output_text", "text": "Line two"},
+                        ],
+                    },
+                }
+            ),
+            [
+                {"type": "chunk", "content": "Line one"},
+                {"type": "chunk", "content": "Line two"},
+            ],
+        )
+
+    def test_read_codex_jsonl_payloads_rewinds_when_file_shrinks(self) -> None:
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "first payload is deliberately longer than the replacement",
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            handle.write("\n")
+            jsonl_path = Path(handle.name)
+
+        self.addCleanup(lambda: jsonl_path.unlink(missing_ok=True))
+
+        first_offset, first_payloads = agent_deck_bridge.read_codex_jsonl_payloads(
+            jsonl_path,
+            0,
+        )
+        self.assertGreater(first_offset, 0)
+        self.assertEqual(
+            first_payloads,
+            [
+                {
+                    "type": "chunk",
+                    "content": "first payload is deliberately longer than the replacement",
+                }
+            ],
+        )
+
+        jsonl_path.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "rewound"}],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        second_offset, second_payloads = agent_deck_bridge.read_codex_jsonl_payloads(
+            jsonl_path,
+            first_offset,
+        )
+        self.assertGreater(second_offset, 0)
+        self.assertEqual(second_payloads, [{"type": "chunk", "content": "rewound"}])
+
+    def test_claude_jsonl_payloads_preserve_tool_call_ids(self) -> None:
+        self.assertEqual(
+            agent_deck_bridge.claude_jsonl_payloads_for_record(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool-claude-1",
+                                "name": "Read",
+                                "input": {"file": "a.txt"},
+                            }
+                        ],
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_use",
+                    "tool_call_id": "tool-claude-1",
+                    "tool": "Read",
+                    "input": {"file": "a.txt"},
+                }
+            ],
+        )
+        self.assertEqual(
+            agent_deck_bridge.claude_jsonl_payloads_for_record(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool-claude-1",
+                                "content": [{"type": "text", "text": "ok"}],
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            ),
+            [
+                {
+                    "type": "tool_result",
+                    "tool_call_id": "tool-claude-1",
+                    "content": "ok",
+                    "is_error": False,
+                }
+            ],
+        )
+
     async def test_stream_claude_jsonl_mirrors_chunk_payloads_to_callback(self) -> None:
         websocket = AsyncMock()
         on_emit = AsyncMock()

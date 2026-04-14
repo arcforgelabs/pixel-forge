@@ -165,7 +165,11 @@ class BackfillChatHistoryTest(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.original_shared_state_dir = main.os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        self.original_xdg_state_home = main.os.environ.get("XDG_STATE_HOME")
+        self.original_db_path = main.os.environ.get("PIXEL_FORGE_DB_PATH")
         main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        main.os.environ["XDG_STATE_HOME"] = self.tempdir.name
+        main.os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
         project_store._DB_INITIALIZED = False
         workstation_events._DB_INITIALIZED = False
         live_editor_threads._DB_INITIALIZED = False
@@ -201,6 +205,14 @@ class BackfillChatHistoryTest(unittest.TestCase):
             main.os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
         else:
             main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        if self.original_xdg_state_home is None:
+            main.os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            main.os.environ["XDG_STATE_HOME"] = self.original_xdg_state_home
+        if self.original_db_path is None:
+            main.os.environ.pop("PIXEL_FORGE_DB_PATH", None)
+        else:
+            main.os.environ["PIXEL_FORGE_DB_PATH"] = self.original_db_path
 
     def test_backfill_skips_when_primary_typed_turn_history_already_exists(self) -> None:
         workstation_events.append_workstation_event(
@@ -517,7 +529,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             agent_deck_session_id="deck-a",
             agent_deck_session_title="Chat thread-a",
             workspace_path="/tmp/project/.agents/thread-a",
-            tmux_session="tmux-a",
+            tmux_session=None,
             tool="claude",
             status="waiting",
             acpx_agent=None,
@@ -551,7 +563,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
                 main,
                 "wait_for_agent_deck_turn_completion",
                 AsyncMock(return_value=None),
-            ),
+            ) as wait_for_completion,
             patch.object(main.asyncio, "create_task", side_effect=fake_create_task),
         ):
             baseline_output, turn_wait_task, status_heartbeat_task = (
@@ -574,19 +586,14 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIsNone(status_heartbeat_task)
         self.assertEqual(len(create_task_calls), 1)
-        wait_for_completion = main.wait_for_agent_deck_turn_completion
-        wait_for_completion.assert_awaited_once_with(
-            session_info,
-            startup_timeout_seconds=main.LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
-            completion_timeout_seconds=main.LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-        )
+        wait_for_completion.assert_not_awaited()
 
     async def test_deliver_live_editor_prompt_falls_back_to_agent_deck_send_for_busy_codex(self) -> None:
         session_info = AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",
             agent_deck_session_title="Chat thread-a",
             workspace_path="/tmp/project/.agents/thread-a",
-            tmux_session="tmux-a",
+            tmux_session=None,
             tool="codex",
             status="running",
             acpx_agent=None,
@@ -628,7 +635,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
                 main,
                 "wait_for_agent_deck_turn_completion",
                 AsyncMock(return_value=None),
-            ),
+            ) as wait_for_completion,
             patch.object(
                 main,
                 "_emit_live_editor_wait_heartbeat",
@@ -653,15 +660,11 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             prompt="Review the request",
             no_wait=True,
         )
-        wait_for_completion = main.wait_for_agent_deck_turn_completion
-        wait_for_completion.assert_awaited_once_with(
-            session_info,
-            startup_timeout_seconds=main.LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
-            completion_timeout_seconds=main.LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-        )
+        wait_for_completion.assert_not_awaited()
         self.assertEqual(baseline_output, "")
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIs(status_heartbeat_task, fake_heartbeat_task)
+        self.assertEqual(len(create_task_calls), 2)
 
 
 if __name__ == "__main__":
