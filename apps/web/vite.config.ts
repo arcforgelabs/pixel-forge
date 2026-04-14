@@ -57,7 +57,7 @@ export default defineConfig(({ mode }) => {
     (env.PIXEL_FORGE_FORCE_POLLING || process.env.PIXEL_FORGE_FORCE_POLLING || "0") === "1";
 
   return {
-    base: "",
+    base: "/",
     plugins: [react(), checker({ typescript: true })],
     resolve: {
       alias: {

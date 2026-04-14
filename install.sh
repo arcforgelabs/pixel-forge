@@ -549,7 +549,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$BIN_DIR/$CLI_NAME run
+ExecStart=$INSTALL_DIR/.venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT
 Restart=on-failure
 RestartSec=3
 KillMode=mixed

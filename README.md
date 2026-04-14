@@ -8,7 +8,7 @@ Visual app editor with screenshot bootstrap and live editing, backed by an integ
 curl -fsSL https://raw.githubusercontent.com/IAMSamuelRodda/pixel-forge/master/scripts/quick-install.sh | bash
 ```
 
-The installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.22); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts.
+The installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.24); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts.
 
 After install:
 

@@ -20,10 +20,10 @@ Preferred path:
 
 That starts the dev-lane API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone uses isolated defaults so the default dev lane is the `2026.4.14` runtime on `pixel-forge.localhost` with shared state under `~/.pixel-forge`.
 
-Source branch of record for continuing this lane from a normal repo checkout or worktree:
+Canonical branch for continuing this lane from a normal repo checkout or worktree:
 
 ```bash
-git switch dev/pixel-forge-alpha
+git switch master
 ```
 
 Manual fallback:
@@ -49,13 +49,13 @@ pixel-forge agent-deck-surface open
 pixel-forge-agent-deck
 ```
 
-This install lane is side-by-side. It should not replace the stable installed `pixel-forge` controller or the stable standalone `agent-deck` install.
+This install lane is the canonical installed `pixel-forge` controller. It owns the integrated Pixel Forge runtime while still leaving any separately installed standalone `agent-deck` alone.
 
 ### Branch Truth
 
-- `dev/pixel-forge-alpha` is the source branch of record for the dev lane.
-- The earlier bootstrap clone/branch was an R&D bring-up path, not the long-term branch identity.
-- Future Pixel Forge dev work should continue from a normal repo checkout or dedicated worktree on `dev/pixel-forge-alpha` until that branch is renamed.
+- `master` is the source branch of record for the canonical Pixel Forge lane.
+- `legacy-v1` preserves the pre-cutover line that used to live on `master`.
+- `dev/pixel-forge-alpha` is retired history, not an active operating lane.
 
 ### Versioning
 
