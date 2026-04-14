@@ -20,9 +20,10 @@
     "check:web": "pnpm --dir apps/web build",
     "lint:web": "pnpm --dir apps/web lint",
     "test:web": "pnpm --dir apps/web test",
+    "test:retired-lane-env": "bash scripts/test-retired-lane-env.sh",
     "smoke:install": "node scripts/smoke-install.mjs",
     "smoke:update": "node scripts/smoke-controller-update.mjs",
-    "verify": "pnpm check:version && pnpm check:shell && pnpm check:api && pnpm check:desktop && pnpm lint:web && pnpm test:web && pnpm check:web && pnpm smoke:install && pnpm smoke:update"
+    "verify": "pnpm check:version && pnpm check:shell && pnpm check:api && pnpm check:desktop && pnpm lint:web && pnpm test:web && pnpm check:web && pnpm test:retired-lane-env && pnpm smoke:install && pnpm smoke:update"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

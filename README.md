@@ -10,7 +10,7 @@ curl -fsSL https://raw.githubusercontent.com/IAMSamuelRodda/pixel-forge/master/s
 
 The installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.24); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts.
 
-Retired `pixel-forge-alpha` / `pixel-forge-workstation-v2` install env overrides are ignored by default so a stale shell session cannot accidentally reinstall the old lane. Set `PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1` only if you are intentionally reproducing a legacy install for investigation.
+Retired `pixel-forge-alpha` / `pixel-forge-workstation-v2` install env overrides are ignored by default by both `install.sh` and the installed `pixel-forge`, `pixel-forge-shell`, and `pixel-forge-agent-deck` launchers, so a stale shell session cannot accidentally reinstall or misroute runtime into the old lane. Set `PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1` only if you are intentionally reproducing a legacy install for investigation.
 
 After install:
 

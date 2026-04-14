@@ -8,46 +8,54 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-ALLOW_RETIRED_LANE_ENV="${PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV:-0}"
-retired_lane_env_detected=0
-if [ "$ALLOW_RETIRED_LANE_ENV" != "1" ]; then
+# Reused by the installer and by every generated launcher below so a stale shell
+# with retired-lane env overrides (e.g. pixel-forge-alpha, pixel-forge-workstation-v2)
+# cannot misroute install or runtime. Override with PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1
+# only when intentionally reproducing a legacy install for investigation.
+RETIRED_LANE_ENV_STRIP_SNIPPET=$(cat <<'RETIRED_LANE_STRIP'
+_pf_allow_retired_lane_env="${PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV:-0}"
+if [ "$_pf_allow_retired_lane_env" != "1" ]; then
     case "${PIXEL_FORGE_INSTALL_NAME:-}" in
         pixel-forge-alpha|pixel-forge-workstation-v2)
-            retired_lane_env_detected=1
+            echo "Ignoring retired Pixel Forge lane env overrides from the current shell." >&2
+            for _pf_retired_var in \
+                PIXEL_FORGE_INSTALL_NAME \
+                PIXEL_FORGE_INSTANCE_SLUG \
+                PIXEL_FORGE_CLI_NAME \
+                PIXEL_FORGE_SHELL_NAME \
+                PIXEL_FORGE_INSTALL_DIR \
+                PIXEL_FORGE_BACKUP_DIR \
+                PIXEL_FORGE_SERVICE_NAME \
+                PIXEL_FORGE_SHARED_STATE_DIR \
+                PIXEL_FORGE_LEGACY_SHARED_STATE_DIR \
+                PIXEL_FORGE_SKILLS_INSTALL_DIR \
+                PIXEL_FORGE_DB_PATH \
+                PIXEL_FORGE_AGENT_DECK_PROFILE \
+                PIXEL_FORGE_AGENT_DECK_HOME \
+                PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT \
+                PIXEL_FORGE_AGENT_DECK_CMD \
+                PIXEL_FORGE_AGENT_DECK_TUI_TITLE \
+                PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS \
+                PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER \
+                PIXEL_FORGE_URL_HOST \
+                PIXEL_FORGE_WEB_HOST \
+                PIXEL_FORGE_SHELL_URL \
+                PIXEL_FORGE_PREVIEW_PARTITION \
+                PIXEL_FORGE_RUNTIME_DIR \
+                AGENTDECK_PROFILE \
+                AGENTDECK_DIR \
+                AGENT_DECK_DIR
+            do
+                unset "$_pf_retired_var"
+            done
             ;;
     esac
-
-    if [ "$retired_lane_env_detected" = "1" ]; then
-        echo "Ignoring retired Pixel Forge lane env overrides from the current shell."
-        for retired_var in \
-            PIXEL_FORGE_INSTALL_NAME \
-            PIXEL_FORGE_INSTANCE_SLUG \
-            PIXEL_FORGE_CLI_NAME \
-            PIXEL_FORGE_SHELL_NAME \
-            PIXEL_FORGE_INSTALL_DIR \
-            PIXEL_FORGE_BACKUP_DIR \
-            PIXEL_FORGE_SERVICE_NAME \
-            PIXEL_FORGE_SHARED_STATE_DIR \
-            PIXEL_FORGE_LEGACY_SHARED_STATE_DIR \
-            PIXEL_FORGE_SKILLS_INSTALL_DIR \
-            PIXEL_FORGE_DB_PATH \
-            PIXEL_FORGE_AGENT_DECK_PROFILE \
-            PIXEL_FORGE_AGENT_DECK_HOME \
-            PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT \
-            PIXEL_FORGE_AGENT_DECK_CMD \
-            PIXEL_FORGE_AGENT_DECK_TUI_TITLE \
-            PIXEL_FORGE_AGENT_DECK_TUI_WM_CLASS \
-            PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER \
-            PIXEL_FORGE_URL_HOST \
-            PIXEL_FORGE_WEB_HOST \
-            PIXEL_FORGE_SHELL_URL \
-            PIXEL_FORGE_PREVIEW_PARTITION \
-            PIXEL_FORGE_RUNTIME_DIR
-        do
-            unset "$retired_var"
-        done
-    fi
 fi
+unset _pf_allow_retired_lane_env _pf_retired_var
+RETIRED_LANE_STRIP
+)
+
+eval "$RETIRED_LANE_ENV_STRIP_SNIPPET"
 
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
 INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-$INSTALL_NAME}"
@@ -366,6 +374,8 @@ cat > "$BIN_DIR/${CLI_NAME}" <<LAUNCHER
 
 set -euo pipefail
 
+$RETIRED_LANE_ENV_STRIP_SNIPPET
+
 LAUNCHER_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_NAME="\${PIXEL_FORGE_INSTALL_NAME:-$INSTALL_NAME}"
 INSTANCE_SLUG="\${PIXEL_FORGE_INSTANCE_SLUG:-$INSTANCE_SLUG}"
@@ -444,6 +454,8 @@ cat > "$BIN_DIR/${AGENT_DECK_TUI_LAUNCHER_NAME}" <<TUI
 
 set -euo pipefail
 
+$RETIRED_LANE_ENV_STRIP_SNIPPET
+
 LAUNCHER_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 CLI_NAME="\${PIXEL_FORGE_CLI_NAME:-$CLI_NAME}"
 INSTALL_DIR="\${PIXEL_FORGE_INSTALL_DIR:-$INSTALL_DIR}"
@@ -486,6 +498,8 @@ cat > "$BIN_DIR/${SHELL_NAME}" <<SHELL
 #!/bin/bash
 
 set -euo pipefail
+
+$RETIRED_LANE_ENV_STRIP_SNIPPET
 
 LAUNCHER_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_NAME="\${PIXEL_FORGE_INSTALL_NAME:-$INSTALL_NAME}"
