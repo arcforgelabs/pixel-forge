@@ -1,12 +1,34 @@
 # Pixel Forge
 
-Active docs:
+Visual app editor with screenshot bootstrap and live editing, backed by an integrated Agent Deck runtime.
 
-- `SPECS.md`
-- `ARCHITECTURE.md`
-- `AGENTS.md`
-- `CLAUDE.md`
+## Install (Ubuntu, one command)
 
-Historical and displaced root docs:
+```bash
+curl -fsSL https://raw.githubusercontent.com/IAMSamuelRodda/pixel-forge/master/scripts/quick-install.sh | bash
+```
 
-- `docs/archives/root-docs/`
+The installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.22); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts.
+
+After install:
+
+```bash
+pixel-forge            # control the service (start/stop/open/status/logs)
+pixel-forge-shell      # open the desktop shell
+pixel-forge-agent-deck # open the Agent Deck terminal
+```
+
+To uninstall: run `./uninstall.sh` from the repo checkout (pass `--remove-state` to also wipe `~/.pixel-forge`).
+
+## Active docs
+
+- `SPECS.md` — intent, goals, requirements, proof status
+- `ARCHITECTURE.md` — current system shape, operating lanes, next target release
+- `AGENTS.md` — agent guardrails for working in this repo
+- `CLAUDE.md` — Claude Code specific guardrails
+
+Historical and displaced root docs live under `docs/archives/root-docs/`.
+
+## Versioning
+
+CalVer `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction), `YYYY.M.D-beta.N` (prerelease). See `SPECS.md` REQ-S-014 / REQ-S-015.
