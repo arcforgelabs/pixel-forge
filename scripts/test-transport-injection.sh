@@ -35,7 +35,7 @@ else
         -json \
         -no-wait \
         -t="transport-injection-test" \
-        -g="pixel-forge-alpha/tests" \
+        -g="pixel-forge/tests" \
         -c=claude \
         "$PROJECT_DIR")
 

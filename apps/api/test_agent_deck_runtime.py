@@ -34,12 +34,12 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
             else:
                 os.environ[key] = value
 
-    def test_agent_deck_env_defaults_to_shared_alpha_home(self) -> None:
+    def test_agent_deck_env_defaults_to_shared_pixel_forge_home(self) -> None:
         env = agent_deck_runtime.agent_deck_env()
         expected = str(Path(self.tempdir.name) / "agent-deck")
 
         self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], expected)
         self.assertEqual(env["AGENTDECK_DIR"], expected)
         self.assertEqual(env["AGENT_DECK_DIR"], expected)
-        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "alpha")
-        self.assertEqual(env["AGENTDECK_PROFILE"], "alpha")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["AGENTDECK_PROFILE"], "pixel-forge")

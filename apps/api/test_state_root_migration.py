@@ -13,13 +13,13 @@ from state_root_migration import (
 
 
 class StateRootMigrationTest(unittest.TestCase):
-    def test_copies_legacy_alpha_state_into_new_root_without_runtime_noise(self) -> None:
+    def test_copies_legacy_state_into_new_root_without_runtime_noise(self) -> None:
         with tempfile.TemporaryDirectory() as temp_root:
             base = Path(temp_root)
             legacy = base / "legacy"
-            target = base / "alpha"
-            (legacy / "agent-deck" / "profiles" / "workstation-v2").mkdir(parents=True)
-            (legacy / "agent-deck" / "profiles" / "workstation-v2" / "state.db").write_text(
+            target = base / "pixel-forge"
+            (legacy / "agent-deck" / "profiles" / "alpha").mkdir(parents=True)
+            (legacy / "agent-deck" / "profiles" / "alpha" / "state.db").write_text(
                 "deck-state",
                 encoding="utf-8",
             )
@@ -36,8 +36,8 @@ class StateRootMigrationTest(unittest.TestCase):
 
             self.assertTrue(result.migrated)
             self.assertEqual((target / "pixel-forge.db").read_text(encoding="utf-8"), "db")
-            self.assertTrue((target / "agent-deck" / "profiles" / "alpha" / "state.db").is_file())
-            self.assertFalse((target / "agent-deck" / "profiles" / "workstation-v2").exists())
+            self.assertTrue((target / "agent-deck" / "profiles" / "pixel-forge" / "state.db").is_file())
+            self.assertFalse((target / "agent-deck" / "profiles" / "alpha").exists())
             self.assertTrue((target / "workspaces" / "chat-1" / "README.txt").is_file())
             self.assertFalse((target / "runtime").exists())
 
@@ -50,7 +50,7 @@ class StateRootMigrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_root:
             base = Path(temp_root)
             legacy = base / "legacy"
-            target = base / "alpha"
+            target = base / "pixel-forge"
             legacy.mkdir(parents=True)
             (legacy / "pixel-forge.db").write_text("legacy", encoding="utf-8")
             target.mkdir(parents=True)
@@ -62,18 +62,18 @@ class StateRootMigrationTest(unittest.TestCase):
             self.assertEqual((target / "pixel-forge.db").read_text(encoding="utf-8"), "current")
             self.assertFalse((target / MIGRATION_MARKER_NAME).exists())
 
-    def test_existing_alpha_root_promotes_legacy_profile_slug_in_place(self) -> None:
+    def test_existing_state_root_promotes_legacy_profile_slug_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as temp_root:
             base = Path(temp_root)
-            target = base / "alpha"
-            legacy_profile = target / "agent-deck" / "profiles" / "workstation-v2"
+            target = base / "pixel-forge"
+            legacy_profile = target / "agent-deck" / "profiles" / "alpha"
             legacy_profile.mkdir(parents=True)
             (legacy_profile / "state.db").write_text("profile", encoding="utf-8")
 
             migrated = ensure_agent_deck_profile_slug(target)
 
             self.assertTrue(migrated)
-            self.assertTrue((target / "agent-deck" / "profiles" / "alpha" / "state.db").is_file())
+            self.assertTrue((target / "agent-deck" / "profiles" / "pixel-forge" / "state.db").is_file())
             self.assertFalse(legacy_profile.exists())
 
 

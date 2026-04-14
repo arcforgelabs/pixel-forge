@@ -41,7 +41,7 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
         self.assertEqual(command[-2], "web-standalone")
         self.assertEqual(command[-1], "-listen=127.0.0.1:8842")
 
-    def test_read_agent_deck_surface_status_reports_alpha_owned_paths(self) -> None:
+    def test_read_agent_deck_surface_status_reports_pixel_forge_paths(self) -> None:
         with patch.object(agent_deck_surface, "_is_surface_ready", return_value=False):
             status = agent_deck_surface.read_agent_deck_surface_status()
 

@@ -46,9 +46,9 @@ from selection_tunnel_cli import selection_tunnel_path
 APPLY_STATE_FILE = "controller-update-apply-state.json"
 BOOTSTRAP_STATE_FILE = "controller-bootstrap-state.json"
 DEFAULT_INSTALL_NAME = "pixel-forge"
-DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME = "pixel-forge-agent-deck-alpha"
-DEFAULT_AGENT_DECK_TUI_TITLE = "Agent Deck (alpha)"
-DEFAULT_AGENT_DECK_TUI_WM_CLASS = "pixel-forge-agent-deck-alpha"
+DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME = "pixel-forge-agent-deck"
+DEFAULT_AGENT_DECK_TUI_TITLE = "Agent Deck"
+DEFAULT_AGENT_DECK_TUI_WM_CLASS = "pixel-forge-agent-deck"
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -579,7 +579,7 @@ def _command_agent_deck_tui_open(_args: argparse.Namespace) -> int:
     )
     if command is None:
         raise SystemExit(
-            "No supported terminal emulator found for Agent Deck (alpha). "
+            "No supported terminal emulator found for Agent Deck. "
             f"Run `{agent_deck_tui_launcher_name()} run` in a terminal instead."
         )
 
@@ -1030,22 +1030,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_deck_tui = subparsers.add_parser(
         "agent-deck-tui",
-        help="Open or run the alpha-owned Agent Deck terminal app",
+        help="Open or run the Pixel Forge Agent Deck terminal app",
     )
     agent_deck_tui_subparsers = agent_deck_tui.add_subparsers(
         dest="agent_deck_tui_command",
         required=True,
     )
     for command_name, help_text, handler in (
-        ("open", "Open the Agent Deck alpha TUI in a separate terminal window", _command_agent_deck_tui_open),
-        ("run", "Run the Agent Deck alpha TUI in the current terminal", _command_agent_deck_tui_run),
+        ("open", "Open the Agent Deck TUI in a separate terminal window", _command_agent_deck_tui_open),
+        ("run", "Run the Agent Deck TUI in the current terminal", _command_agent_deck_tui_run),
     ):
         command = agent_deck_tui_subparsers.add_parser(command_name, help=help_text)
         command.set_defaults(handler=handler)
 
     agent_deck_surface = subparsers.add_parser(
         "agent-deck-surface",
-        help="Manage the alpha-owned Agent Deck visual surface",
+        help="Manage the Pixel Forge Agent Deck visual surface",
     )
     agent_deck_surface_subparsers = agent_deck_surface.add_subparsers(
         dest="agent_deck_surface_command",

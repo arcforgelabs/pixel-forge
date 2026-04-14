@@ -7,7 +7,7 @@ import {
 } from './preview-url'
 
 describe('preview-url helpers', () => {
-  const helperUrl = 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-123&source=file%3A%2F%2F%2Ftmp%2Fquote.pdf&title=quote.pdf'
+  const helperUrl = 'http://pixel-forge.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-123&source=file%3A%2F%2F%2Ftmp%2Fquote.pdf&title=quote.pdf'
   const failingUrl = 'chrome-error://chromewebdata/'
 
   it('recognizes internal pdf viewer urls', () => {

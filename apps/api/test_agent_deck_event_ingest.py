@@ -466,8 +466,8 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         jsonl_path.write_text(
             "\n".join(
                 [
-                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"<channel source=\\"plugin:pixel-forge-channel:pixel-forge-channel\\" request_id=\\"req-1\\">\\nPixel Forge live smoke probe from installed alpha lane\\n</channel>"}]}}',
-                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Pixel Forge channel probe received — installed alpha lane is live and connected."}]}}',
+                    '{"type":"user","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"<channel source=\\"plugin:pixel-forge-channel:pixel-forge-channel\\" request_id=\\"req-1\\">\\nPixel Forge live smoke probe from installed lane\\n</channel>"}]}}',
+                    '{"type":"assistant","entrypoint":"cli","message":{"role":"assistant","content":[{"type":"text","text":"Pixel Forge channel probe received — installed lane is live and connected."}]}}',
                     '{"type":"system","entrypoint":"cli","subtype":"stop_hook_summary"}',
                 ]
             )
@@ -486,15 +486,15 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             events[0].payload["turn_input"]["prompt_text"],
-            "Pixel Forge live smoke probe from installed alpha lane",
+            "Pixel Forge live smoke probe from installed lane",
         )
         self.assertEqual(
             events[2].payload["content"],
-            "Pixel Forge channel probe received — installed alpha lane is live and connected.",
+            "Pixel Forge channel probe received — installed lane is live and connected.",
         )
         self.assertEqual(
             events[3].payload["assistant_output"],
-            "Pixel Forge channel probe received — installed alpha lane is live and connected.",
+            "Pixel Forge channel probe received — installed lane is live and connected.",
         )
 
     async def test_poll_once_normalizes_command_wrapped_cli_user_prompt(self) -> None:

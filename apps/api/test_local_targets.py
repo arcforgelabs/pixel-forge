@@ -50,8 +50,8 @@ class MirrorRuntimeIsolationTest(unittest.TestCase):
                         "PIXEL_FORGE_SHARED_STATE_DIR": "/tmp/controller-shared",
                         "PIXEL_FORGE_DB_PATH": "/tmp/controller.db",
                         "PIXEL_FORGE_AGENT_DECK_HOME": "/tmp/controller-agent-deck",
-                        "PIXEL_FORGE_URL_HOST": "pixel-forge-alpha.localhost",
-                        "PIXEL_FORGE_SHELL_URL": "http://pixel-forge-alpha.localhost:7201",
+                        "PIXEL_FORGE_URL_HOST": "pixel-forge.localhost",
+                        "PIXEL_FORGE_SHELL_URL": "http://pixel-forge.localhost:7201",
                     },
                 ),
             ):
@@ -59,9 +59,9 @@ class MirrorRuntimeIsolationTest(unittest.TestCase):
                     project_path="/tmp/project",
                     source_root=str(root),
                     state_dir=state_dir,
-                    instance_slug="pixel-forge-alpha-mirror-target-test",
+                    instance_slug="pixel-forge-mirror-target-test",
                     api_port=7102,
-                    web_host="pixel-forge-alpha-mirror-target-test.localhost",
+                    web_host="pixel-forge-mirror-target-test.localhost",
                     log_file=log_file,
                 )
 
@@ -69,7 +69,7 @@ class MirrorRuntimeIsolationTest(unittest.TestCase):
         self.assertEqual(env["PIXEL_FORGE_RUNTIME_DIR"], str(state_dir / "runtime"))
         self.assertEqual(env["PIXEL_FORGE_DB_PATH"], str(state_dir / "pixel-forge.db"))
         self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], str(state_dir / "agent-deck"))
-        self.assertEqual(env["PIXEL_FORGE_URL_HOST"], "pixel-forge-alpha-mirror-target-test.localhost")
+        self.assertEqual(env["PIXEL_FORGE_URL_HOST"], "pixel-forge-mirror-target-test.localhost")
         self.assertEqual(env["PIXEL_FORGE_SHELL_URL"], web_url)
 
 

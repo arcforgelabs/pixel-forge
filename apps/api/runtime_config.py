@@ -5,8 +5,8 @@ import re
 from pathlib import Path
 
 from state_root_migration import (
-    default_alpha_shared_state_dir,
-    default_legacy_alpha_shared_state_dir,
+    default_legacy_shared_state_dir,
+    default_shared_state_dir,
     ensure_state_root_ready,
 )
 
@@ -85,11 +85,11 @@ def agent_deck_surface_url() -> str:
 def shared_state_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
     legacy_override = os.environ.get("PIXEL_FORGE_LEGACY_SHARED_STATE_DIR")
-    base_dir = Path(override).expanduser() if override else default_alpha_shared_state_dir()
+    base_dir = Path(override).expanduser() if override else default_shared_state_dir()
     legacy_dir = (
         Path(legacy_override).expanduser()
         if legacy_override
-        else (default_legacy_alpha_shared_state_dir() if not override else None)
+        else (default_legacy_shared_state_dir() if not override else None)
     )
     ensure_state_root_ready(target_dir=base_dir, legacy_dir=legacy_dir)
     base_dir.mkdir(parents=True, exist_ok=True)

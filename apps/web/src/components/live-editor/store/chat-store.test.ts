@@ -561,15 +561,15 @@ describe('live editor selection history', () => {
             agentDeckTool: 'codex',
             editorState: {
               activePreviewTool: null,
-              targetUrl: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+              targetUrl: 'http://pixel-forge.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
               activeTab: 'elements',
               viewportMode: 'desktop',
               showUrlHistory: false,
               previewTabs: [
                 {
                   id: 'tab-a',
-                  url: 'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
-                  title: 'Pixel Forge (alpha)',
+                  url: 'http://pixel-forge.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+                  title: 'Pixel Forge',
                   mode: 'browser',
                   localTarget: null,
                   workspacePreview: null,
@@ -578,7 +578,7 @@ describe('live editor selection history', () => {
               activePreviewTabId: 'tab-a',
               urlHistory: [
                 'file:///tmp/quote.pdf',
-                'http://pixel-forge-alpha.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
+                'http://pixel-forge.localhost:7201/internal/pdf-viewer?embedded=1&tabId=preview-a',
               ],
               urlHistoryCursor: 1,
             },

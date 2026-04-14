@@ -220,8 +220,8 @@ do not treat /tmp/workspace as a skill.
             with patch.dict(
                 "os.environ",
                 {
-                    "PIXEL_FORGE_CLI_NAME": "pixel-forge-alpha",
-                    "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+                    "PIXEL_FORGE_CLI_NAME": "pixel-forge",
+                    "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge",
                 },
                 clear=False,
             ):
@@ -249,7 +249,7 @@ do not treat /tmp/workspace as a skill.
 
             request_body = request_pack.request_file.read_text(encoding="utf-8")
 
-            self.assertIn("pixel-forge-alpha attach-proof --project . --request", request_body)
+            self.assertIn("pixel-forge attach-proof --project . --request", request_body)
             self.assertIn("--via chrome-devtools-mcp", request_body)
 
     def test_request_pack_requires_real_attach_for_explicit_attach_proof_requests(self) -> None:

@@ -402,7 +402,7 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             agent_deck_bridge,
             "_run_agent_deck_command",
-            AsyncMock(return_value=(0, "No sessions found in profile 'alpha'.\n", "")),
+            AsyncMock(return_value=(0, "No sessions found in profile 'pixel-forge'.\n", "")),
         ):
             sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
 

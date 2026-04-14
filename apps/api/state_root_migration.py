@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_ALPHA_SHARED_STATE_DIR = Path.home() / ".pixel-forge-alpha"
-DEFAULT_LEGACY_ALPHA_SHARED_STATE_DIR = Path.home() / ".pixel-forge" / "workstation-v2"
-DEFAULT_ALPHA_AGENT_DECK_PROFILE = "alpha"
-LEGACY_ALPHA_AGENT_DECK_PROFILES = ("workstation-v2",)
+DEFAULT_SHARED_STATE_DIR = Path.home() / ".pixel-forge"
+DEFAULT_LEGACY_SHARED_STATE_DIR = Path.home() / ".pixel-forge-alpha"
+DEFAULT_AGENT_DECK_PROFILE = "pixel-forge"
+LEGACY_AGENT_DECK_PROFILES = ("alpha", "workstation-v2")
 MIGRATION_MARKER_NAME = ".state-root-migration.json"
 SKIPPED_ENTRIES = frozenset({"runtime"})
 
@@ -23,20 +23,20 @@ class StateRootMigrationResult:
     migrated: bool
 
 
-def default_alpha_shared_state_dir() -> Path:
-    return DEFAULT_ALPHA_SHARED_STATE_DIR
+def default_shared_state_dir() -> Path:
+    return DEFAULT_SHARED_STATE_DIR
 
 
-def default_legacy_alpha_shared_state_dir() -> Path:
-    return DEFAULT_LEGACY_ALPHA_SHARED_STATE_DIR
+def default_legacy_shared_state_dir() -> Path:
+    return DEFAULT_LEGACY_SHARED_STATE_DIR
 
 
 def migration_marker_path(target_dir: Path) -> Path:
     return target_dir / MIGRATION_MARKER_NAME
 
 
-def default_alpha_agent_deck_profile() -> str:
-    return DEFAULT_ALPHA_AGENT_DECK_PROFILE
+def default_agent_deck_profile() -> str:
+    return DEFAULT_AGENT_DECK_PROFILE
 
 
 def _directory_has_entries(path: Path) -> bool:
@@ -59,7 +59,7 @@ def _copy_path(source: Path, destination: Path) -> None:
 
 def ensure_agent_deck_profile_slug(
     state_root: Path,
-    target_profile: str = DEFAULT_ALPHA_AGENT_DECK_PROFILE,
+    target_profile: str = DEFAULT_AGENT_DECK_PROFILE,
 ) -> bool:
     profiles_root = state_root.expanduser() / "agent-deck" / "profiles"
     if not profiles_root.is_dir():
@@ -68,7 +68,7 @@ def ensure_agent_deck_profile_slug(
     target_dir = profiles_root / target_profile
     migrated = False
 
-    for legacy_profile in LEGACY_ALPHA_AGENT_DECK_PROFILES:
+    for legacy_profile in LEGACY_AGENT_DECK_PROFILES:
         legacy_dir = profiles_root / legacy_profile
         if legacy_profile == target_profile or not legacy_dir.exists():
             continue

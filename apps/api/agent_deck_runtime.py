@@ -4,10 +4,10 @@ import os
 import shlex
 
 from runtime_config import agent_deck_home_dir, shared_db_path, source_root
-from state_root_migration import default_alpha_agent_deck_profile
+from state_root_migration import default_agent_deck_profile
 
 
-DEFAULT_AGENT_DECK_PROFILE = default_alpha_agent_deck_profile()
+DEFAULT_AGENT_DECK_PROFILE = default_agent_deck_profile()
 
 
 def agent_deck_profile() -> str:
@@ -24,7 +24,7 @@ def agent_deck_command() -> list[str]:
     if explicit:
         return shlex.split(explicit)
 
-    runner = source_root() / "scripts" / "agent-deck-alpha.sh"
+    runner = source_root() / "scripts" / "agent-deck.sh"
     if runner.is_file():
         return [str(runner)]
 

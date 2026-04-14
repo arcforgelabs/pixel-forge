@@ -18,43 +18,43 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         with patch.dict(
             "os.environ",
             {
-                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge",
             },
             clear=True,
         ):
-            self.assertEqual(pixel_forge_cli.url_host(), "pixel-forge-alpha.localhost")
-            self.assertEqual(pixel_forge_cli.shell_url(), "http://pixel-forge-alpha.localhost:7001")
+            self.assertEqual(pixel_forge_cli.url_host(), "pixel-forge.localhost")
+            self.assertEqual(pixel_forge_cli.shell_url(), "http://pixel-forge.localhost:7001")
 
     def test_build_parser_uses_runtime_cli_name(self) -> None:
         with patch.dict(
             "os.environ",
             {
-                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge-alpha",
+                "PIXEL_FORGE_INSTANCE_SLUG": "pixel-forge",
             },
             clear=True,
         ):
             parser = pixel_forge_cli.build_parser()
 
-        self.assertEqual(parser.prog, "pixel-forge-alpha")
+        self.assertEqual(parser.prog, "pixel-forge")
 
     def test_prefers_ghostty_when_available(self) -> None:
         with patch("pixel_forge_cli.shutil.which") as mock_which:
             mock_which.side_effect = lambda binary: "/usr/bin/ghostty" if binary == "ghostty" else None
 
             command = pixel_forge_cli._agent_deck_tui_terminal_command(
-                ["/tmp/agent-deck-alpha"],
-                "Agent Deck (alpha)",
-                "pixel-forge-agent-deck-alpha",
+                ["/tmp/agent-deck"],
+                "Agent Deck",
+                "pixel-forge-agent-deck",
             )
 
         self.assertEqual(
             command,
             [
                 "/usr/bin/ghostty",
-                "--class=pixel-forge-agent-deck-alpha",
-                "--title=Agent Deck (alpha)",
+                "--class=pixel-forge-agent-deck",
+                "--title=Agent Deck",
                 "-e",
-                "/tmp/agent-deck-alpha",
+                "/tmp/agent-deck",
             ],
         )
 
@@ -65,19 +65,19 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
             )
 
             command = pixel_forge_cli._agent_deck_tui_terminal_command(
-                ["/tmp/agent-deck-alpha"],
-                "Agent Deck (alpha)",
-                "pixel-forge-agent-deck-alpha",
+                ["/tmp/agent-deck"],
+                "Agent Deck",
+                "pixel-forge-agent-deck",
             )
 
         self.assertEqual(
             command,
             [
                 "/usr/bin/gnome-terminal",
-                "--class=pixel-forge-agent-deck-alpha",
-                "--title=Agent Deck (alpha)",
+                "--class=pixel-forge-agent-deck",
+                "--title=Agent Deck",
                 "--",
-                "/tmp/agent-deck-alpha",
+                "/tmp/agent-deck",
             ],
         )
 
@@ -88,11 +88,11 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
                 "TMUX": "/tmp/tmux-1000/default,123,0",
                 "TMUX_PANE": "%7",
                 "AGENTDECK_INSTANCE_ID": "inst-123",
-                "AGENTDECK_TITLE": "alpha-task",
+                "AGENTDECK_TITLE": "deck-task",
                 "AGENTDECK_TOOL": "codex",
                 "CODEX_SESSION_ID": "codex-123",
-                "PIXEL_FORGE_AGENT_DECK_HOME": "/tmp/alpha-home",
-                "PIXEL_FORGE_DB_PATH": "/tmp/alpha.db",
+                "PIXEL_FORGE_AGENT_DECK_HOME": "/tmp/deck-home",
+                "PIXEL_FORGE_DB_PATH": "/tmp/pixel-forge.db",
             },
             clear=False,
         ):
@@ -104,9 +104,9 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertNotIn("AGENTDECK_TITLE", env)
         self.assertNotIn("AGENTDECK_TOOL", env)
         self.assertNotIn("CODEX_SESSION_ID", env)
-        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], "/tmp/alpha-home")
-        self.assertEqual(env["AGENTDECK_DIR"], "/tmp/alpha-home")
-        self.assertEqual(env["AGENT_DECK_DIR"], "/tmp/alpha-home")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], "/tmp/deck-home")
+        self.assertEqual(env["AGENTDECK_DIR"], "/tmp/deck-home")
+        self.assertEqual(env["AGENT_DECK_DIR"], "/tmp/deck-home")
 
     def test_preview_context_command_reads_stored_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

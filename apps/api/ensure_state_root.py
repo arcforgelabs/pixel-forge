@@ -5,20 +5,20 @@ import os
 from pathlib import Path
 
 from state_root_migration import (
-    default_alpha_shared_state_dir,
-    default_legacy_alpha_shared_state_dir,
+    default_legacy_shared_state_dir,
+    default_shared_state_dir,
     ensure_state_root_ready,
 )
 
 
 def main() -> int:
     shared_state_override = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
-    target_dir = Path(shared_state_override or default_alpha_shared_state_dir()).expanduser()
+    target_dir = Path(shared_state_override or default_shared_state_dir()).expanduser()
     legacy_raw = os.environ.get("PIXEL_FORGE_LEGACY_SHARED_STATE_DIR")
     legacy_dir = (
         Path(legacy_raw).expanduser()
         if legacy_raw
-        else (default_legacy_alpha_shared_state_dir() if not shared_state_override else None)
+        else (default_legacy_shared_state_dir() if not shared_state_override else None)
     )
     result = ensure_state_root_ready(target_dir=target_dir, legacy_dir=legacy_dir)
 
