@@ -38,6 +38,10 @@ def agent_deck_env() -> dict[str, str]:
     env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
     home_dir = str(agent_deck_home_dir())
     env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", home_dir)
-    env.setdefault("AGENTDECK_DIR", home_dir)
-    env.setdefault("AGENT_DECK_DIR", home_dir)
+    if (os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME") or "").strip():
+        env["AGENTDECK_DIR"] = home_dir
+        env["AGENT_DECK_DIR"] = home_dir
+    else:
+        env.setdefault("AGENTDECK_DIR", home_dir)
+        env.setdefault("AGENT_DECK_DIR", home_dir)
     return env

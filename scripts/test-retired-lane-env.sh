@@ -110,4 +110,40 @@ assert_var "launcher.INSTALL_NAME" pixel-forge "$l_install"
 assert_var "launcher.CLI_NAME"     pixel-forge "$l_cli"
 assert_var "launcher.SERVICE_NAME" pixel-forge "$l_service"
 
+echo "case 6: controller-update runner ignores retired cli/shell env"
+RUNNER_OUT="$(env -i PATH="$PATH" HOME="$HOME" \
+    PIXEL_FORGE_CLI_NAME=pixel-forge-alpha \
+    PIXEL_FORGE_SHELL_NAME=pixel-forge-alpha-shell \
+    node - <<'NODE'
+function normalizeText(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const trimmed = value.trim()
+  return trimmed || null
+}
+const retiredInstallNames = new Set(['pixel-forge-alpha', 'pixel-forge-workstation-v2'])
+function normalizeLaneName(value) {
+  const normalized = normalizeText(value)
+  if (!normalized || retiredInstallNames.has(normalized)) {
+    return null
+  }
+  return normalized
+}
+function normalizeShellLauncherName(value) {
+  const normalized = normalizeText(value)
+  if (!normalized || retiredInstallNames.has(normalized.replace(/-shell$/, ''))) {
+    return null
+  }
+  return normalized
+}
+const cli = normalizeLaneName(process.env.PIXEL_FORGE_CLI_NAME) || 'pixel-forge'
+const shell = normalizeShellLauncherName(process.env.PIXEL_FORGE_SHELL_NAME) || 'pixel-forge-shell'
+console.log(`${cli}|${shell}`)
+NODE
+)"
+IFS='|' read -r runner_cli runner_shell <<<"$RUNNER_OUT"
+assert_var "runner.CLI_NAME" pixel-forge "$runner_cli"
+assert_var "runner.SHELL_NAME" pixel-forge-shell "$runner_shell"
+
 echo "PASS: retired-lane env strip covers install.sh header and generated launcher."

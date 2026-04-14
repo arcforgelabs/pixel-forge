@@ -18,6 +18,24 @@ function normalizeText(value) {
   return trimmed || null
 }
 
+const retiredInstallNames = new Set(['pixel-forge-alpha', 'pixel-forge-workstation-v2'])
+
+function normalizeLaneName(value) {
+  const normalized = normalizeText(value)
+  if (!normalized || retiredInstallNames.has(normalized)) {
+    return null
+  }
+  return normalized
+}
+
+function normalizeShellLauncherName(value) {
+  const normalized = normalizeText(value)
+  if (!normalized || retiredInstallNames.has(normalized.replace(/-shell$/, ''))) {
+    return null
+  }
+  return normalized
+}
+
 function isTruthy(value) {
   return typeof value === 'string'
     && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
@@ -39,8 +57,9 @@ const shellUrl =
   || normalizeText(process.env.PIXEL_FORGE_SHELL_URL)
   || `http://${shellHost}:${shellPort}`
 const pixelForgeBinDir = normalizeText(process.env.PIXEL_FORGE_BIN_DIR)
-const pixelForgeCliName = normalizeText(process.env.PIXEL_FORGE_CLI_NAME) || 'pixel-forge'
-const pixelForgeShellName = normalizeText(process.env.PIXEL_FORGE_SHELL_NAME) || 'pixel-forge-shell'
+const pixelForgeCliName = normalizeLaneName(process.env.PIXEL_FORGE_CLI_NAME) || 'pixel-forge'
+const pixelForgeShellName =
+  normalizeShellLauncherName(process.env.PIXEL_FORGE_SHELL_NAME) || 'pixel-forge-shell'
 
 const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')

@@ -49,6 +49,7 @@ DEFAULT_INSTALL_NAME = "pixel-forge"
 DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME = "pixel-forge-agent-deck"
 DEFAULT_AGENT_DECK_TUI_TITLE = "Agent Deck"
 DEFAULT_AGENT_DECK_TUI_WM_CLASS = "pixel-forge-agent-deck"
+RETIRED_INSTALL_NAMES = frozenset({"pixel-forge-alpha", "pixel-forge-workstation-v2"})
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -58,14 +59,21 @@ def _normalize_text(value: Any) -> str | None:
     return trimmed or None
 
 
+def _normalize_lane_name(value: Any) -> str | None:
+    normalized = _normalize_text(value)
+    if normalized in RETIRED_INSTALL_NAMES:
+        return None
+    return normalized
+
+
 def install_name() -> str:
-    return os.environ.get("PIXEL_FORGE_INSTALL_NAME", DEFAULT_INSTALL_NAME)
+    return _normalize_lane_name(os.environ.get("PIXEL_FORGE_INSTALL_NAME")) or DEFAULT_INSTALL_NAME
 
 
 def cli_name() -> str:
     return (
-        _normalize_text(os.environ.get("PIXEL_FORGE_CLI_NAME"))
-        or _normalize_text(os.environ.get("PIXEL_FORGE_INSTALL_NAME"))
+        _normalize_lane_name(os.environ.get("PIXEL_FORGE_CLI_NAME"))
+        or _normalize_lane_name(os.environ.get("PIXEL_FORGE_INSTALL_NAME"))
         or runtime_cli_name()
     )
 
@@ -92,11 +100,14 @@ def bin_dir() -> Path:
 
 
 def service_name() -> str:
-    return os.environ.get("PIXEL_FORGE_SERVICE_NAME", install_name())
+    return _normalize_lane_name(os.environ.get("PIXEL_FORGE_SERVICE_NAME")) or install_name()
 
 
 def shell_name() -> str:
-    return os.environ.get("PIXEL_FORGE_SHELL_NAME", f"{install_name()}-shell")
+    raw_shell_name = _normalize_text(os.environ.get("PIXEL_FORGE_SHELL_NAME"))
+    if raw_shell_name in {f"{name}-shell" for name in RETIRED_INSTALL_NAMES}:
+        raw_shell_name = None
+    return raw_shell_name or f"{install_name()}-shell"
 
 
 def agent_deck_tui_launcher_name() -> str:
@@ -273,18 +284,24 @@ def _resolve_node_executable() -> str:
 
 def _base_env() -> dict[str, str]:
     env = dict(os.environ)
-    env.setdefault("PIXEL_FORGE_INSTALL_NAME", install_name())
+    env["PIXEL_FORGE_INSTALL_NAME"] = install_name()
+    env["PIXEL_FORGE_CLI_NAME"] = cli_name()
+    env["PIXEL_FORGE_SHELL_NAME"] = shell_name()
+    env["PIXEL_FORGE_SERVICE_NAME"] = service_name()
     env.setdefault("PIXEL_FORGE_INSTALL_DIR", str(install_dir()))
     env.setdefault("PIXEL_FORGE_BACKUP_DIR", str(backup_dir()))
-    env.setdefault("PIXEL_FORGE_SERVICE_NAME", service_name())
     env.setdefault("PIXEL_FORGE_PORT", port())
     env.setdefault("PIXEL_FORGE_URL_HOST", url_host())
     env.setdefault("PIXEL_FORGE_SHARED_STATE_DIR", str(shared_state_dir()))
     env.setdefault("PIXEL_FORGE_RUNTIME_DIR", str(runtime_dir()))
     env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
     env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", str(agent_deck_home_dir()))
-    env.setdefault("AGENTDECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
-    env.setdefault("AGENT_DECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
+    if _normalize_text(os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME")):
+        env["AGENTDECK_DIR"] = env["PIXEL_FORGE_AGENT_DECK_HOME"]
+        env["AGENT_DECK_DIR"] = env["PIXEL_FORGE_AGENT_DECK_HOME"]
+    else:
+        env.setdefault("AGENTDECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
+        env.setdefault("AGENT_DECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
     return env
 
 

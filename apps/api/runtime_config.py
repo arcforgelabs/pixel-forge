@@ -17,6 +17,7 @@ DEFAULT_WEB_PORT = 5173
 DEFAULT_AGENT_DECK_SURFACE_HOST = "127.0.0.1"
 DEFAULT_AGENT_DECK_SURFACE_PORT = 8422
 DEFAULT_RUNTIME_KIND = "controller"
+RETIRED_CLI_NAMES = frozenset({"pixel-forge-alpha", "pixel-forge-workstation-v2"})
 
 
 def _sanitize_slug(raw_value: str) -> str:
@@ -60,7 +61,7 @@ def shell_url() -> str:
 
 def cli_name() -> str:
     explicit = (os.environ.get("PIXEL_FORGE_CLI_NAME") or "").strip()
-    if explicit:
+    if explicit and explicit not in RETIRED_CLI_NAMES:
         return explicit
     return instance_slug()
 

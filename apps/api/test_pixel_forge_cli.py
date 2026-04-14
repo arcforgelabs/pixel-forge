@@ -14,6 +14,42 @@ import pixel_forge_cli
 
 
 class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
+    def test_retired_lane_env_names_fall_back_to_canonical_names(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "PIXEL_FORGE_INSTALL_NAME": "pixel-forge-alpha",
+                "PIXEL_FORGE_CLI_NAME": "pixel-forge-alpha",
+                "PIXEL_FORGE_SHELL_NAME": "pixel-forge-alpha-shell",
+                "PIXEL_FORGE_SERVICE_NAME": "pixel-forge-alpha",
+            },
+            clear=True,
+        ):
+            self.assertEqual(pixel_forge_cli.install_name(), "pixel-forge")
+            self.assertEqual(pixel_forge_cli.cli_name(), "pixel-forge")
+            self.assertEqual(pixel_forge_cli.shell_name(), "pixel-forge-shell")
+            self.assertEqual(pixel_forge_cli.service_name(), "pixel-forge")
+
+    def test_base_env_overwrites_retired_lane_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(
+                "os.environ",
+                {
+                    "PIXEL_FORGE_INSTALL_NAME": "pixel-forge-alpha",
+                    "PIXEL_FORGE_CLI_NAME": "pixel-forge-alpha",
+                    "PIXEL_FORGE_SHELL_NAME": "pixel-forge-alpha-shell",
+                    "PIXEL_FORGE_SERVICE_NAME": "pixel-forge-alpha",
+                    "PIXEL_FORGE_SHARED_STATE_DIR": tmpdir,
+                },
+                clear=True,
+            ):
+                env = pixel_forge_cli._base_env()
+
+        self.assertEqual(env["PIXEL_FORGE_INSTALL_NAME"], "pixel-forge")
+        self.assertEqual(env["PIXEL_FORGE_CLI_NAME"], "pixel-forge")
+        self.assertEqual(env["PIXEL_FORGE_SHELL_NAME"], "pixel-forge-shell")
+        self.assertEqual(env["PIXEL_FORGE_SERVICE_NAME"], "pixel-forge")
+
     def test_url_host_falls_back_to_instance_slug_host(self) -> None:
         with patch.dict(
             "os.environ",
