@@ -15,8 +15,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RETIRED_LANE_ENV_STRIP_SNIPPET=$(cat <<'RETIRED_LANE_STRIP'
 _pf_allow_retired_lane_env="${PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV:-0}"
 if [ "$_pf_allow_retired_lane_env" != "1" ]; then
-    case "${PIXEL_FORGE_INSTALL_NAME:-}" in
-        pixel-forge-alpha|pixel-forge-workstation-v2)
+    _pf_lane_markers="${PIXEL_FORGE_INSTALL_NAME:-} ${PIXEL_FORGE_INSTANCE_SLUG:-} ${PIXEL_FORGE_CLI_NAME:-} ${PIXEL_FORGE_SHELL_NAME:-} ${PIXEL_FORGE_INSTALL_DIR:-} ${PIXEL_FORGE_BACKUP_DIR:-} ${PIXEL_FORGE_SERVICE_NAME:-} ${PIXEL_FORGE_SHARED_STATE_DIR:-} ${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-} ${PIXEL_FORGE_SKILLS_INSTALL_DIR:-} ${PIXEL_FORGE_DB_PATH:-} ${PIXEL_FORGE_AGENT_DECK_PROFILE:-} ${PIXEL_FORGE_AGENT_DECK_HOME:-} ${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-} ${PIXEL_FORGE_AGENT_DECK_CMD:-} ${PIXEL_FORGE_URL_HOST:-} ${PIXEL_FORGE_WEB_HOST:-} ${PIXEL_FORGE_SHELL_URL:-} ${PIXEL_FORGE_PREVIEW_PARTITION:-} ${PIXEL_FORGE_RUNTIME_DIR:-} ${AGENTDECK_PROFILE:-} ${AGENTDECK_DIR:-} ${AGENT_DECK_DIR:-}"
+    case "$_pf_lane_markers" in
+        *pixel-forge-alpha*|*pixel-forge-workstation-v2*)
             echo "Ignoring retired Pixel Forge lane env overrides from the current shell." >&2
             for _pf_retired_var in \
                 PIXEL_FORGE_INSTALL_NAME \
@@ -51,7 +52,7 @@ if [ "$_pf_allow_retired_lane_env" != "1" ]; then
             ;;
     esac
 fi
-unset _pf_allow_retired_lane_env _pf_retired_var
+unset _pf_allow_retired_lane_env _pf_retired_var _pf_lane_markers
 RETIRED_LANE_STRIP
 )
 

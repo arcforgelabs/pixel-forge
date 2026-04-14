@@ -69,18 +69,30 @@ line=$(source_head_and_echo '"$INSTALL_NAME"' \
     PIXEL_FORGE_INSTALL_NAME=pixel-forge-workstation-v2)
 assert_var "case2.INSTALL_NAME" pixel-forge "$line"
 
-echo "case 3: opt-out PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1 preserves alpha"
+echo "case 3: mixed retired markers without retired install name still reset to canonical"
+line=$(source_head_and_echo '"$INSTALL_NAME|$CLI_NAME|$INSTALL_DIR|$URL_HOST"' \
+    PIXEL_FORGE_INSTALL_NAME=pixel-forge \
+    PIXEL_FORGE_CLI_NAME=pixel-forge-alpha \
+    PIXEL_FORGE_INSTALL_DIR=/tmp/pixel-forge-alpha-nope \
+    PIXEL_FORGE_URL_HOST=pixel-forge-alpha.localhost)
+IFS='|' read -r c3_install c3_cli c3_dir c3_host <<<"$line"
+assert_var "case3.INSTALL_NAME" pixel-forge "$c3_install"
+assert_var "case3.CLI_NAME" pixel-forge "$c3_cli"
+assert_var "case3.INSTALL_DIR" "$HOME/.local/lib/pixel-forge" "$c3_dir"
+assert_var "case3.URL_HOST" pixel-forge.localhost "$c3_host"
+
+echo "case 4: opt-out PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1 preserves alpha"
 line=$(source_head_and_echo '"$INSTALL_NAME"' \
     PIXEL_FORGE_INSTALL_NAME=pixel-forge-alpha \
     PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1)
-assert_var "case3.INSTALL_NAME" pixel-forge-alpha "$line"
+assert_var "case4.INSTALL_NAME" pixel-forge-alpha "$line"
 
-echo "case 4: non-retired custom name passes through"
+echo "case 5: non-retired custom name passes through"
 line=$(source_head_and_echo '"$INSTALL_NAME"' \
     PIXEL_FORGE_INSTALL_NAME=pixel-forge-smoke-abc)
-assert_var "case4.INSTALL_NAME" pixel-forge-smoke-abc "$line"
+assert_var "case5.INSTALL_NAME" pixel-forge-smoke-abc "$line"
 
-echo "case 5: generated launcher also ignores retired env at runtime"
+echo "case 6: generated launcher also ignores retired env at runtime"
 LAUNCHER_OUT="$(mktemp)"
 # Build a miniature launcher using the same expansion pattern install.sh uses
 # for the real CLI/Shell/TUI launchers (unquoted heredoc so the snippet expands
@@ -106,11 +118,11 @@ line=$(env -i PATH="$PATH" HOME="$HOME" \
     AGENTDECK_PROFILE=workstation-v2 \
     bash "$LAUNCHER_OUT" 2>/dev/null | tail -n1)
 IFS='|' read -r l_install l_cli l_service <<<"$line"
-assert_var "launcher.INSTALL_NAME" pixel-forge "$l_install"
-assert_var "launcher.CLI_NAME"     pixel-forge "$l_cli"
-assert_var "launcher.SERVICE_NAME" pixel-forge "$l_service"
+assert_var "case6.launcher.INSTALL_NAME" pixel-forge "$l_install"
+assert_var "case6.launcher.CLI_NAME"     pixel-forge "$l_cli"
+assert_var "case6.launcher.SERVICE_NAME" pixel-forge "$l_service"
 
-echo "case 6: controller-update runner ignores retired cli/shell env"
+echo "case 7: controller-update runner ignores retired cli/shell env"
 RUNNER_OUT="$(env -i PATH="$PATH" HOME="$HOME" \
     PIXEL_FORGE_CLI_NAME=pixel-forge-alpha \
     PIXEL_FORGE_SHELL_NAME=pixel-forge-alpha-shell \
@@ -143,7 +155,7 @@ console.log(`${cli}|${shell}`)
 NODE
 )"
 IFS='|' read -r runner_cli runner_shell <<<"$RUNNER_OUT"
-assert_var "runner.CLI_NAME" pixel-forge "$runner_cli"
-assert_var "runner.SHELL_NAME" pixel-forge-shell "$runner_shell"
+assert_var "case7.runner.CLI_NAME" pixel-forge "$runner_cli"
+assert_var "case7.runner.SHELL_NAME" pixel-forge-shell "$runner_shell"
 
 echo "PASS: retired-lane env strip covers install.sh header and generated launcher."
