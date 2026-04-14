@@ -18,7 +18,7 @@ Preferred path:
 ./start-dev.sh
 ```
 
-That starts the alpha-lane API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/alpha-env.sh`, so the default dev lane is the isolated `2.0.0-alpha.1` runtime on `pixel-forge-alpha.localhost` with shared state under `~/.pixel-forge-alpha`.
+That starts the alpha-lane API, the Vite frontend, and auto-opens the desktop shell when a GUI display is available. This clone auto-sources `scripts/alpha-env.sh`, so the default dev lane is the isolated `2026.4.14` runtime on `pixel-forge-alpha.localhost` with shared state under `~/.pixel-forge-alpha`.
 
 Source branch of record for continuing this lane from a normal repo checkout or worktree:
 
@@ -57,6 +57,12 @@ This install lane is side-by-side. It should not replace the stable installed `p
 - The earlier bootstrap clone/branch was an R&D bring-up path, not the long-term branch identity.
 - Future alpha work should continue from a normal repo checkout or dedicated worktree on `dev/pixel-forge-alpha`.
 
+### Versioning
+
+Pixel Forge uses date-based CalVer per `SPECS.md` REQ-S-014 / REQ-S-015. Accepted tag shapes are `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction, `N >= 1`), and `YYYY.M.D-beta.N` (prerelease). Ordering: `YYYY.M.D-beta.N < YYYY.M.D < YYYY.M.D-1 < YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere.
+
+Version surfaces kept in lock-step: `VERSION`, root `package.json`, `apps/web/package.json`, `apps/desktop/package.json`, `packages/sdk-node/package.json`. `scripts/check-version-sync.mjs` (invoked by `pnpm check:version` and `pnpm verify`) enforces both drift and CalVer format; UI-side comparisons use `apps/web/src/lib/calver.ts`.
+
 ### Verification
 
 ```bash
@@ -81,7 +87,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 
 ## Current System Shape
 
-- This clone is the dedicated alpha R&D lane. The default runtime/install identity is `2.0.0-alpha.1`, `pixel-forge-alpha`, `pixel-forge-alpha-shell`, `pixel-forge-alpha.localhost`, and `~/.pixel-forge-alpha`.
+- This clone is the dedicated alpha R&D lane. The default runtime/install identity is `2026.4.14`, `pixel-forge-alpha`, `pixel-forge-alpha-shell`, `pixel-forge-alpha.localhost`, and `~/.pixel-forge-alpha`.
 - Hidden install/runtime metadata for that lane now needs to derive from the same lane identity root instead of per-surface hardcoding: service names, CLI names, URL hosts, state roots, preview partitions, and agent-facing request-pack commands should all flow from the active runtime identity config.
 - The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck-alpha.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=alpha` plus an isolated Agent Deck home at `~/.pixel-forge-alpha/agent-deck`.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.

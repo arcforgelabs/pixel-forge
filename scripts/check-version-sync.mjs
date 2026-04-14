@@ -10,7 +10,29 @@ const versionFiles = [
   ['package.json', path.join(repoRoot, 'package.json')],
   ['apps/web/package.json', path.join(repoRoot, 'apps', 'web', 'package.json')],
   ['apps/desktop/package.json', path.join(repoRoot, 'apps', 'desktop', 'package.json')],
+  ['packages/sdk-node/package.json', path.join(repoRoot, 'packages', 'sdk-node', 'package.json')],
 ]
+
+// CalVer per SPECS.md REQ-S-014:
+//   stable:     YYYY.M.D
+//   correction: YYYY.M.D-N       (same-day post-release, N >= 1)
+//   prerelease: YYYY.M.D-beta.N  (N >= 1)
+const STABLE_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)$/
+const CORRECTION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-([1-9]\d*)$/
+const BETA_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/
+
+function isValidCalver(value) {
+  if (typeof value !== 'string') return false
+  const v = value.trim()
+  if (!STABLE_REGEX.test(v) && !CORRECTION_REGEX.test(v) && !BETA_REGEX.test(v)) return false
+  const match = STABLE_REGEX.exec(v) ?? CORRECTION_REGEX.exec(v) ?? BETA_REGEX.exec(v)
+  const [, y, m, d] = match
+  const year = Number(y), month = Number(m), day = Number(d)
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false
+  // calendar-validate the date
+  const candidate = new Date(Date.UTC(year, month - 1, day))
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day
+}
 
 async function readVersion([label, filePath]) {
   if (label === 'VERSION') {
@@ -28,6 +50,15 @@ async function readVersion([label, filePath]) {
 const versions = await Promise.all(versionFiles.map(readVersion))
 const expected = versions[0]?.value
 const mismatches = versions.filter((entry) => entry.value !== expected)
+const formatErrors = versions.filter((entry) => !isValidCalver(entry.value))
+
+if (formatErrors.length > 0) {
+  console.error('[check:version] Version format error — expected YYYY.M.D, YYYY.M.D-N, or YYYY.M.D-beta.N:')
+  for (const entry of formatErrors) {
+    console.error(`- ${entry.label}: ${entry.value}`)
+  }
+  process.exit(1)
+}
 
 if (mismatches.length > 0) {
   console.error('[check:version] Version drift detected:')

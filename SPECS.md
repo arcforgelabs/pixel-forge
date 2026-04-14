@@ -42,7 +42,6 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 - `REQ-R-007A:` Clone-backed first bind remains the default for a fresh Live Editor chat, but the operator must be able to choose canonical-root first bind explicitly when they want to work directly in the workspace root. That choice must be available in the new-chat/create-bind flow without requiring hidden API knowledge, and Pixel Forge must keep the chosen workspace mode truthful in the saved chat/session metadata.
 - `REQ-R-008:` Agent Deck should remain the operator-facing session identity layer, and the default visible Agent Deck pane for a Live Editor target must stay the real endpoint agent session rather than a custom proxy shell that replaces native operator behavior.
 - `REQ-R-009:` Pixel Forge must provide a first-class clone-promotion command that merges isolated clone-backed session work back into the canonical root and can optionally commit, push, stage, apply, and clean up from that same operator flow.
-- `REQ-R-010:` The alpha lane must run as a side-by-side semantic-version/runtime/install lane that can be launched and installed without replacing the stable Pixel Forge runtime or the stable standalone Agent Deck runtime. Its live mutable state must live in its own top-level alpha-owned root instead of nesting under the stable Pixel Forge state root.
 
 ### Context Transport
 - `REQ-C-001:` Each Live Editor request must be written to a disk-backed request pack before it is sent to the agent runtime.
@@ -87,6 +86,10 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 - `REQ-S-011:` Anonymous detached root `draft-*` lanes and empty legacy root shell rows are implementation detail, not operator-visible chat rows. Pixel Forge must not surface or reopen those placeholders as first-class chats, and any `draft-*` lane that becomes truthfully bound to a real Agent Deck session must be promoted to explicit `chat-*` identity before it surfaces. Explicit chats and truthfully bound lanes are the visible unit.
 - `REQ-S-012:` If a project/chat binding error or stale lane makes a turn unrecoverable in place, the operator must be able to replay their own user prompt into a fresh chat without losing the work they already did. Replay must preserve exact prompt text/formatting, attached artifacts, selected elements, and the durable preview/editor state needed to continue, but it must not auto-submit the recovered prompt.
 - `REQ-S-013:` Frontend project/chat/session ownership must live in one project-scoped registry (`...ByProject` or a stricter successor). The active project view must be derived through selectors over that registry; mutable flat current-project chat/session collections must not exist as co-equal store state.
+
+### Versioning
+- `REQ-S-014:` Pixel Forge uses date-based CalVer with three accepted tag shapes and no other scheme. Stable release: `YYYY.M.D`. Same-day post-release correction: `YYYY.M.D-N` where `N >= 1`. Prerelease: `YYYY.M.D-beta.N` where `N >= 1`. Ordering: `YYYY.M.D-beta.N` < `YYYY.M.D` < `YYYY.M.D-1` < `YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere in this repo.
+- `REQ-S-015:` Every version surface must match exactly: `VERSION`, root `package.json`, `apps/web/package.json`, `apps/desktop/package.json`, `packages/sdk-node/package.json`. `pnpm check:version` (`scripts/check-version-sync.mjs`) enforces both drift and format. Drift or a non-CalVer format must fail the verify lane.
 
 ### Git Hygiene
 - `REQ-G-001:` Request packs created inside a target repo must not pollute the user’s normal git status.

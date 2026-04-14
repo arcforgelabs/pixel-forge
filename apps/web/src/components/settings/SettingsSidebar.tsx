@@ -31,7 +31,7 @@ import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
 import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { capitalize } from "@/lib/utils";
-import { compareSemver, formatVersionLabel } from "@/lib/semver";
+import { compareCalver, formatVersionLabel } from "@/lib/calver";
 import OutputSettingsSection from "./OutputSettingsSection";
 import ProjectSettingsPane from "./ProjectSettingsPane";
 import { Stack } from "@/lib/stacks";
@@ -394,7 +394,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     : null;
   const isUpdatingChatTargets = isRefreshingChatTargets || agentDeckTargetsLoading;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
-  const versionComparison = compareSemver(stagedVersion, controllerVersion);
+  const versionComparison = compareCalver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
