@@ -485,7 +485,9 @@ async function main() {
     message: 'Restarting Pixel Forge service…',
     error: null,
   })
-  await runShellCommand(`${JSON.stringify(pixelForgeCommand(pixelForgeCliName))} restart`, resolvedInstallRoot)
+  // Use stateDir as cwd — install.sh may have relocated resolvedInstallRoot
+  // and Node surfaces a missing cwd as a confusing "spawn bash ENOENT".
+  await runShellCommand(`${JSON.stringify(pixelForgeCommand(pixelForgeCliName))} restart`, stateDir)
   await logInfo(`Finished ${pixelForgeCliName} restart`)
 
   await setState({
