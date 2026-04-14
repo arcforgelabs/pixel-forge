@@ -11,7 +11,9 @@ settings_path="${HOME}/.claude/settings.json"
 installed_plugins_path="${HOME}/.claude/plugins/installed_plugins.json"
 known_marketplaces_path="${HOME}/.claude/plugins/known_marketplaces.json"
 
-git_sha="$(git -C "${repo_root}" rev-parse HEAD)"
+# Controller-update snapshots exclude .git, so fall back when git isn't usable.
+# Override with PIXEL_FORGE_INSTALL_GIT_SHA when the caller knows the real commit.
+git_sha="${PIXEL_FORGE_INSTALL_GIT_SHA:-$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || echo "unknown")}"
 installed_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
 
 mkdir -p "${HOME}/.claude/plugins"
