@@ -322,7 +322,11 @@ async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, st
         cwd=cwd,
     )
     stdout, stderr = await proc.communicate()
-    return proc.returncode, stdout.decode(), stderr.decode()
+    return (
+        proc.returncode,
+        stdout.decode("utf-8", errors="replace"),
+        stderr.decode("utf-8", errors="replace"),
+    )
 
 
 async def _run_command_with_env(
@@ -339,7 +343,11 @@ async def _run_command_with_env(
         env=env,
     )
     stdout, stderr = await proc.communicate()
-    return proc.returncode, stdout.decode(), stderr.decode()
+    return (
+        proc.returncode,
+        stdout.decode("utf-8", errors="replace"),
+        stderr.decode("utf-8", errors="replace"),
+    )
 
 
 def _agent_deck_args(*args: str) -> list[str]:
@@ -1524,6 +1532,7 @@ def claude_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str
                 payloads.append(
                     {
                         "type": "tool_use",
+                        "tool_call_id": block.get("id", ""),
                         "tool": block.get("name", ""),
                         "input": block.get("input", {}),
                     }
@@ -1562,6 +1571,7 @@ def claude_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str
         payloads.append(
             {
                 "type": "tool_result",
+                "tool_call_id": block.get("tool_use_id", ""),
                 "content": _flatten_tool_content(block.get("content")),
                 "is_error": bool(block.get("is_error")),
             }
@@ -1583,7 +1593,7 @@ def read_claude_jsonl_payloads(
     if not jsonl_path.exists():
         return offset, payloads
 
-    with jsonl_path.open("r", encoding="utf-8") as handle:
+    with jsonl_path.open("r", encoding="utf-8", errors="replace") as handle:
         handle.seek(offset)
         while True:
             line = handle.readline()
@@ -1680,6 +1690,166 @@ def codex_jsonl_text_chunks_for_record(record: dict[str, object]) -> list[str]:
     return chunks
 
 
+def codex_jsonl_payloads_for_record(record: dict[str, object]) -> list[dict[str, object]]:
+    record_type = record.get("type")
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return []
+
+    events: list[dict[str, object]] = []
+
+    if record_type == "event_msg":
+        event_type = payload.get("type")
+        if event_type == "agent_message":
+            message = payload.get("message")
+            if isinstance(message, str) and message:
+                events.append({"type": "chunk", "content": f"{message}\n\n"})
+        elif event_type == "exec_command_begin":
+            call_id = payload.get("call_id")
+            command = payload.get("command")
+            cmd_text = ""
+            if isinstance(command, list):
+                cmd_text = " ".join(part for part in command if isinstance(part, str))
+            elif isinstance(command, str):
+                cmd_text = command
+            events.append(
+                {
+                    "type": "tool_use",
+                    "tool_call_id": call_id if isinstance(call_id, str) else "",
+                    "tool": "Bash",
+                    "input": {"command": cmd_text} if cmd_text else {},
+                }
+            )
+        elif event_type == "exec_command_end":
+            call_id = payload.get("call_id")
+            stdout = payload.get("stdout")
+            stderr = payload.get("stderr")
+            exit_code = payload.get("exit_code")
+            parts: list[str] = []
+            if isinstance(stdout, str) and stdout:
+                parts.append(stdout)
+            if isinstance(stderr, str) and stderr:
+                parts.append(stderr)
+            events.append(
+                {
+                    "type": "tool_result",
+                    "tool_call_id": call_id if isinstance(call_id, str) else "",
+                    "content": "\n".join(parts),
+                    "is_error": isinstance(exit_code, int) and exit_code != 0,
+                }
+            )
+        return events
+
+    if record_type != "response_item":
+        return events
+
+    payload_type = payload.get("type")
+
+    if payload_type == "function_call":
+        name = payload.get("name")
+        if isinstance(name, str) and name:
+            call_id = payload.get("call_id")
+            raw_args = payload.get("arguments")
+            parsed_args: dict[str, object] = {}
+            if isinstance(raw_args, str):
+                try:
+                    decoded = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    decoded = None
+                if isinstance(decoded, dict):
+                    parsed_args = decoded
+            elif isinstance(raw_args, dict):
+                parsed_args = raw_args
+            events.append(
+                {
+                    "type": "tool_use",
+                    "tool_call_id": call_id if isinstance(call_id, str) else "",
+                    "tool": name,
+                    "input": parsed_args,
+                }
+            )
+        return events
+
+    if payload_type == "function_call_output":
+        call_id = payload.get("call_id")
+        output = payload.get("output")
+        output_text = ""
+        is_error = False
+        if isinstance(output, dict):
+            content_value = output.get("content")
+            if isinstance(content_value, str):
+                output_text = content_value
+            success = output.get("success")
+            if isinstance(success, bool):
+                is_error = not success
+        elif isinstance(output, str):
+            output_text = output
+        events.append(
+            {
+                "type": "tool_result",
+                "tool_call_id": call_id if isinstance(call_id, str) else "",
+                "content": output_text,
+                "is_error": is_error,
+            }
+        )
+        return events
+
+    if payload_type != "message" or payload.get("role") != "assistant":
+        return events
+
+    content_blocks = payload.get("content")
+    if not isinstance(content_blocks, list):
+        return events
+
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "output_text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            events.append({"type": "chunk", "content": text})
+    return events
+
+
+def read_codex_jsonl_payloads(
+    jsonl_path: Path,
+    start_offset: int,
+) -> tuple[int, list[dict[str, object]]]:
+    offset = start_offset
+    payloads: list[dict[str, object]] = []
+
+    if not jsonl_path.exists():
+        return offset, payloads
+
+    try:
+        file_size = jsonl_path.stat().st_size
+    except OSError:
+        return offset, payloads
+    if offset > file_size:
+        offset = 0
+
+    with jsonl_path.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(offset)
+        while True:
+            line = handle.readline()
+            if not line:
+                break
+            offset = handle.tell()
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(record, dict):
+                continue
+
+            payloads.extend(codex_jsonl_payloads_for_record(record))
+
+    return offset, payloads
+
+
 def read_codex_jsonl_text_chunks(
     jsonl_path: Path,
     start_offset: int,
@@ -1697,7 +1867,7 @@ def read_codex_jsonl_text_chunks(
     if offset > file_size:
         offset = 0
 
-    with jsonl_path.open("r", encoding="utf-8") as handle:
+    with jsonl_path.open("r", encoding="utf-8", errors="replace") as handle:
         handle.seek(offset)
         while True:
             line = handle.readline()
@@ -1764,7 +1934,7 @@ async def stream_claude_jsonl(
 
     while True:
         if jsonl_path.exists():
-            with jsonl_path.open("r", encoding="utf-8") as handle:
+            with jsonl_path.open("r", encoding="utf-8", errors="replace") as handle:
                 handle.seek(offset)
                 while True:
                     line = handle.readline()
@@ -1921,7 +2091,7 @@ async def send_native_claude_prompt_reliably(
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise AgentDeckBridgeError(
-            stderr.decode().strip()
+            stderr.decode("utf-8", errors="replace").strip()
             or "Claude native live-edit request failed"
         )
 
@@ -1964,7 +2134,7 @@ async def send_native_codex_prompt_reliably(
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise AgentDeckBridgeError(
-            stderr.decode().strip()
+            stderr.decode("utf-8", errors="replace").strip()
             or "Codex native live-edit request failed"
         )
 

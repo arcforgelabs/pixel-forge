@@ -1467,7 +1467,7 @@ def _backfill_chat_history_from_jsonl(
 
     records: list[dict] = []
     try:
-        with jsonl_path.open("r", encoding="utf-8") as fh:
+        with jsonl_path.open("r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     rec = json.loads(line)
@@ -2916,11 +2916,11 @@ async def generate_with_claude_cli(
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
-        error_msg = stderr.decode() if stderr else "Unknown error"
+        error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
         raise Exception(f"Claude CLI error: {error_msg}")
 
     # Parse JSON response
-    result = json.loads(stdout.decode())
+    result = json.loads(stdout.decode("utf-8", errors="replace"))
     return result.get("result", ""), session_id or ""
 
 
@@ -2976,11 +2976,11 @@ Update the code according to the user's request. Return ONLY the complete update
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
-        error_msg = stderr.decode() if stderr else "Unknown error"
+        error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
         raise Exception(f"Claude CLI error: {error_msg}")
 
     # Parse JSON response
-    result = json.loads(stdout.decode())
+    result = json.loads(stdout.decode("utf-8", errors="replace"))
     return result.get("result", ""), session_id or ""
 
 
@@ -3228,11 +3228,11 @@ Be precise and minimal - only change what's necessary."""
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
-        error_msg = stderr.decode() if stderr else "Unknown error"
+        error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
         raise Exception(f"Claude CLI error: {error_msg}")
 
     # Parse JSON response
-    result = json.loads(stdout.decode())
+    result = json.loads(stdout.decode("utf-8", errors="replace"))
     return result.get("result", ""), session_id or ""
 
 
@@ -3411,7 +3411,7 @@ async def unified_chat(websocket: WebSocket):
                     if not line:
                         break
 
-                    line_str = line.decode().strip()
+                    line_str = line.decode("utf-8", errors="replace").strip()
                     if not line_str:
                         continue
 
@@ -3464,7 +3464,7 @@ async def unified_chat(websocket: WebSocket):
 
                 if proc.returncode != 0:
                     stderr = await proc.stderr.read()
-                    error_msg = stderr.decode() if stderr else "Unknown error"
+                    error_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
                     await websocket.send_json({
                         "type": "error",
                         "message": error_msg,

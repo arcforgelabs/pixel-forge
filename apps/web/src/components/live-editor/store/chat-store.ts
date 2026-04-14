@@ -155,6 +155,8 @@ type ObservedAgentDeckTurnEventType =
   | 'turn_started'
   | 'turn_status'
   | 'turn_chunk'
+  | 'turn_tool_use'
+  | 'turn_tool_result'
   | 'turn_completed'
   | 'turn_failed'
 
@@ -175,6 +177,10 @@ interface ObservedAgentDeckTurnEvent {
     prompt_text?: string
     [key: string]: unknown
   }
+  tool_call_id?: string | null
+  tool?: string | null
+  input?: Record<string, unknown> | null
+  is_error?: boolean | null
 }
 
 export type LiveEditorPanelTab = 'chat' | 'elements'
@@ -1425,6 +1431,93 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           }
         }
 
+        case 'turn_tool_use': {
+          const toolName =
+            typeof event.tool === 'string' && event.tool
+              ? event.tool
+              : 'Tool'
+          const toolCallId =
+            typeof event.tool_call_id === 'string' && event.tool_call_id
+              ? event.tool_call_id
+              : null
+          const toolInput =
+            event.input && typeof event.input === 'object'
+              ? (event.input as Record<string, unknown>)
+              : {}
+          const toolMessageId = `observed:tool:${requestId}:${toolCallId ?? `idx-${event.id}`}`
+          const toolActivity: ToolActivity = {
+            id: toolMessageId,
+            toolCallId,
+            tool: toolName,
+            input: toolInput,
+            status: 'running',
+          }
+          return {
+            ...currentState,
+            messages: upsertObservedMessage(nextMessages, {
+              id: toolMessageId,
+              role: 'tool',
+              content: '',
+              timestamp: new Date(),
+              observedSessionId: agentDeckSessionId,
+              toolActivity,
+            }),
+          }
+        }
+
+        case 'turn_tool_result': {
+          const toolCallId =
+            typeof event.tool_call_id === 'string' && event.tool_call_id
+              ? event.tool_call_id
+              : null
+          const resultContent =
+            typeof event.content === 'string' ? event.content : ''
+          const isError = Boolean(event.is_error)
+          const matchingMessage = [...nextMessages].reverse().find((message) => {
+            if (message.role !== 'tool' || !message.toolActivity) return false
+            if (toolCallId) return message.toolActivity.toolCallId === toolCallId
+            return message.observedSessionId === agentDeckSessionId
+              && message.toolActivity.status === 'running'
+          })
+          if (!matchingMessage?.toolActivity) {
+            const fallbackId = `observed:tool:${requestId}:${toolCallId ?? `idx-${event.id}`}`
+            const fallbackActivity: ToolActivity = {
+              id: fallbackId,
+              toolCallId,
+              tool: 'Tool',
+              input: {},
+              status: 'complete',
+              result: resultContent,
+              isError,
+            }
+            return {
+              ...currentState,
+              messages: upsertObservedMessage(nextMessages, {
+                id: fallbackId,
+                role: 'tool',
+                content: '',
+                timestamp: new Date(),
+                observedSessionId: agentDeckSessionId,
+                toolActivity: fallbackActivity,
+              }),
+            }
+          }
+          const updatedTool: ToolActivity = {
+            ...matchingMessage.toolActivity,
+            result: resultContent,
+            isError,
+            status: 'complete',
+          }
+          return {
+            ...currentState,
+            messages: nextMessages.map((message) =>
+              message.id === matchingMessage.id
+                ? { ...message, toolActivity: updatedTool }
+                : message
+            ),
+          }
+        }
+
         case 'turn_completed': {
           nextMessages = removeObservedMessage(nextMessages, statusMessageId)
           nextMessages = removeObservedMessage(nextMessages, failureMessageId)
@@ -1581,6 +1674,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       'turn_started',
       'turn_status',
       'turn_chunk',
+      'turn_tool_use',
+      'turn_tool_result',
       'turn_completed',
       'turn_failed',
     ]) {

@@ -22,6 +22,8 @@ TURN_EVENT_TYPES = {
     "turn_started",
     "turn_status",
     "turn_chunk",
+    "turn_tool_use",
+    "turn_tool_result",
     "turn_completed",
     "turn_failed",
 }

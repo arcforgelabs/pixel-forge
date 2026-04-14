@@ -14,7 +14,7 @@ from agent_deck_bridge import (
     codex_jsonl_path,
     get_last_output,
     read_claude_jsonl_payloads,
-    read_codex_jsonl_text_chunks,
+    read_codex_jsonl_payloads,
 )
 from project_store import SessionRecord, list_sessions_by_agent_deck_session_id
 from runtime_config import agent_deck_home_dir
@@ -256,7 +256,7 @@ def _latest_claude_user_turn(
     offset = 0
 
     try:
-        with jsonl_path.open("r", encoding="utf-8") as handle:
+        with jsonl_path.open("r", encoding="utf-8", errors="replace") as handle:
             while True:
                 line = handle.readline()
                 if not line:
@@ -1034,6 +1034,63 @@ class AgentDeckNativeEventIngestor:
                     )
                 continue
 
+            if payload_type == "tool_use":
+                if turn_state is None:
+                    if not fallback_prompt:
+                        continue
+                    turn_state = self._ensure_active_claude_turn(
+                        agent_deck_session_id,
+                        sessions,
+                        claude_session_id,
+                        hook_event.timestamp if hook_event is not None else int(time.time()),
+                        prompt_text=fallback_prompt,
+                    )
+                tool_name = _normalized_text(payload.get("tool"))
+                tool_call_id = _normalized_text(payload.get("tool_call_id"))
+                tool_input = payload.get("input")
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_tool_use",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "tool_call_id": tool_call_id,
+                            "tool": tool_name,
+                            "input": tool_input if isinstance(tool_input, dict) else {},
+                        },
+                    )
+                continue
+
+            if payload_type == "tool_result":
+                if turn_state is None:
+                    continue
+                tool_call_id = _normalized_text(payload.get("tool_call_id"))
+                result_content = payload.get("content")
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_tool_result",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "tool_call_id": tool_call_id,
+                            "content": result_content if isinstance(result_content, str) else str(result_content or ""),
+                            "is_error": bool(payload.get("is_error")),
+                        },
+                    )
+                continue
+
             if payload_type == "turn_stop" and turn_state is not None:
                 self._complete_claude_turn(
                     agent_deck_session_id,
@@ -1128,12 +1185,12 @@ class AgentDeckNativeEventIngestor:
         if cursor.jsonl_path is None:
             return
 
-        next_offset, text_chunks = read_codex_jsonl_text_chunks(
+        next_offset, payloads = read_codex_jsonl_payloads(
             cursor.jsonl_path,
             cursor.offset,
         )
         cursor.offset = next_offset
-        if not text_chunks:
+        if not payloads:
             return
 
         if turn_state is None:
@@ -1144,25 +1201,74 @@ class AgentDeckNativeEventIngestor:
                 hook_event.timestamp if hook_event is not None else int(time.time()),
             )
 
-        for chunk in text_chunks:
-            if not chunk:
+        for payload in payloads:
+            payload_type = _normalized_text(payload.get("type"))
+            if payload_type == "chunk":
+                chunk = _normalized_text(payload.get("content"))
+                if not chunk:
+                    continue
+                turn_state.assistant_output += chunk
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_chunk",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "content": chunk,
+                        },
+                    )
                 continue
-            turn_state.assistant_output += chunk
-            for session in sessions:
-                append_workstation_event(
-                    session.project_path,
-                    session.thread_id,
-                    agent_deck_session_id=session.agent_deck_session_id,
-                    event_type="turn_chunk",
-                    payload={
-                        "request_id": turn_state.request_id,
-                        "agent_deck_session_id": session.agent_deck_session_id,
-                        "agent_deck_session_title": session.agent_deck_session_title,
-                        "agent_deck_tool": session.agent_deck_tool,
-                        "workspace_path": session.workspace_path,
-                        "content": chunk,
-                    },
-                )
+
+            if payload_type == "tool_use":
+                tool_name = _normalized_text(payload.get("tool"))
+                tool_call_id = _normalized_text(payload.get("tool_call_id"))
+                tool_input = payload.get("input")
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_tool_use",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "tool_call_id": tool_call_id,
+                            "tool": tool_name,
+                            "input": tool_input if isinstance(tool_input, dict) else {},
+                        },
+                    )
+                continue
+
+            if payload_type == "tool_result":
+                tool_call_id = _normalized_text(payload.get("tool_call_id"))
+                result_content = payload.get("content")
+                for session in sessions:
+                    append_workstation_event(
+                        session.project_path,
+                        session.thread_id,
+                        agent_deck_session_id=session.agent_deck_session_id,
+                        event_type="turn_tool_result",
+                        payload={
+                            "request_id": turn_state.request_id,
+                            "agent_deck_session_id": session.agent_deck_session_id,
+                            "agent_deck_session_title": session.agent_deck_session_title,
+                            "agent_deck_tool": session.agent_deck_tool,
+                            "workspace_path": session.workspace_path,
+                            "tool_call_id": tool_call_id,
+                            "content": result_content if isinstance(result_content, str) else str(result_content or ""),
+                            "is_error": bool(payload.get("is_error")),
+                        },
+                    )
+                continue
 
     def _append_turn_status_if_changed(
         self,
