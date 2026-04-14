@@ -782,6 +782,21 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS profile_projects (
+                profile_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_opened TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (profile_id, project_path),
+                FOREIGN KEY (project_path) REFERENCES projects(path) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_projects_last_opened
                 ON projects (last_opened DESC);
             CREATE INDEX IF NOT EXISTS idx_project_urls_last_used
@@ -790,6 +805,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON sessions (project_path, last_active DESC);
             CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_project
                 ON chat_session_bindings (project_path, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_profile_projects_last_opened
+                ON profile_projects (profile_id, last_opened DESC);
             """
         )
         ensure_migration_markers_table(conn)
@@ -908,6 +925,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """,
             (DEFAULT_PROFILE_ID,),
         )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO profile_projects (profile_id, project_path, created_at, last_opened)
+            SELECT ?, path, created_at, last_opened
+            FROM projects
+            """,
+            (DEFAULT_PROFILE_ID,),
+        )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
         conn.commit()
@@ -971,6 +996,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """,
             (DEFAULT_PROFILE_ID,),
         )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO app_state (key, value)
+            VALUES ('active_profile_id', ?)
+            """,
+            (DEFAULT_PROFILE_ID,),
+        )
         conn.commit()
         _DB_INITIALIZED = True
 
@@ -978,6 +1010,64 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def ensure_state_store_initialized() -> None:
     with _connect():
         return
+
+
+def list_profiles() -> list[ProfileStateRecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   default_agent_type, default_workspace_mode,
+                   claude_default_model, claude_default_thinking,
+                   codex_default_model, codex_default_thinking,
+                   updated_at
+            FROM profile_state
+            ORDER BY CASE WHEN profile_id = ? THEN 0 ELSE 1 END, updated_at DESC, profile_id ASC
+            """,
+            (DEFAULT_PROFILE_ID,),
+        ).fetchall()
+    return [_row_to_profile_state_record(row) for row in rows]
+
+
+def get_active_profile_id() -> str:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT value
+            FROM app_state
+            WHERE key = 'active_profile_id'
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO app_state (key, value)
+                VALUES ('active_profile_id', ?)
+                """,
+                (DEFAULT_PROFILE_ID,),
+            )
+            conn.commit()
+            return DEFAULT_PROFILE_ID
+    return _normalize_profile_id(row["value"])
+
+
+def set_active_profile_id(profile_id: str) -> str:
+    normalized_profile_id = _normalize_profile_id(profile_id)
+    upsert_profile_state(profile_id=normalized_profile_id)
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_state (key, value)
+            VALUES ('active_profile_id', ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (normalized_profile_id,),
+        )
+        conn.commit()
+    return normalized_profile_id
 
 
 def _row_to_url_record(row: sqlite3.Row) -> ProjectUrlRecord:
@@ -1876,6 +1966,34 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
         raise RuntimeError("Profile state record disappeared during fetch")
 
     return _row_to_profile_state_record(row)
+
+
+def create_profile(
+    profile_id: str,
+    *,
+    clone_from_profile_id: str | None = None,
+) -> ProfileStateRecord:
+    normalized_profile_id = _normalize_profile_id(profile_id)
+    if normalized_profile_id == DEFAULT_PROFILE_ID:
+        return get_profile_state(normalized_profile_id)
+
+    source_profile = (
+        get_profile_state(clone_from_profile_id)
+        if isinstance(clone_from_profile_id, str) and clone_from_profile_id.strip()
+        else get_profile_state(DEFAULT_PROFILE_ID)
+    )
+    return upsert_profile_state(
+        profile_id=normalized_profile_id,
+        active_project_path=None,
+        active_mode="screenshot",
+        active_live_editor_thread_id=None,
+        default_agent_type=source_profile.default_agent_type,
+        default_workspace_mode=source_profile.default_workspace_mode,
+        claude_default_model=source_profile.claude_default_model,
+        claude_default_thinking=source_profile.claude_default_thinking,
+        codex_default_model=source_profile.codex_default_model,
+        codex_default_thinking=source_profile.codex_default_thinking,
+    )
 
 
 def upsert_profile_state(
