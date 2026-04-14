@@ -1610,21 +1610,65 @@ def read_claude_jsonl_payloads(
     return offset, payloads
 
 
-def codex_jsonl_text_chunks_for_record(record: dict[str, object]) -> list[str]:
-    if record.get("type") != "response_item":
-        return []
+def _summarize_codex_function_call(name: str, arguments: object) -> str:
+    parsed: dict[str, object] = {}
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, dict):
+            parsed = decoded
+    elif isinstance(arguments, dict):
+        parsed = arguments
 
+    if name == "exec_command":
+        cmd = parsed.get("cmd")
+        if isinstance(cmd, str) and cmd:
+            compact = cmd if len(cmd) <= 200 else f"{cmd[:197]}..."
+            return f"\n\n```\n$ {compact}\n```\n"
+
+    summary_args = json.dumps(parsed, ensure_ascii=False) if parsed else ""
+    if len(summary_args) > 200:
+        summary_args = f"{summary_args[:197]}..."
+    return f"\n\n```\n{name}({summary_args})\n```\n"
+
+
+def codex_jsonl_text_chunks_for_record(record: dict[str, object]) -> list[str]:
+    record_type = record.get("type")
     payload = record.get("payload")
     if not isinstance(payload, dict):
         return []
-    if payload.get("type") != "message" or payload.get("role") != "assistant":
-        return []
+
+    chunks: list[str] = []
+
+    if record_type == "event_msg":
+        if payload.get("type") == "agent_message":
+            message = payload.get("message")
+            if isinstance(message, str) and message:
+                chunks.append(f"{message}\n\n")
+        return chunks
+
+    if record_type != "response_item":
+        return chunks
+
+    payload_type = payload.get("type")
+
+    if payload_type == "function_call":
+        name = payload.get("name")
+        if isinstance(name, str) and name:
+            summary = _summarize_codex_function_call(name, payload.get("arguments"))
+            if summary:
+                chunks.append(summary)
+        return chunks
+
+    if payload_type != "message" or payload.get("role") != "assistant":
+        return chunks
 
     content_blocks = payload.get("content")
     if not isinstance(content_blocks, list):
-        return []
+        return chunks
 
-    chunks: list[str] = []
     for block in content_blocks:
         if not isinstance(block, dict):
             continue

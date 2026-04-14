@@ -751,5 +751,80 @@ class AgentDeckNativeEventIngestorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[2].payload["assistant_output"], "Hello from Codex")
 
 
+    async def test_poll_once_streams_codex_agent_message_and_function_call(self) -> None:
+        codex_session_id = "22222222-2222-4222-8222-222222222222"
+        ingestor = agent_deck_event_ingest.AgentDeckNativeEventIngestor()
+        self._write_hook_event(
+            instance_id="deck-a",
+            session_id=codex_session_id,
+            status="running",
+            event="turn/started",
+        )
+        await ingestor.poll_once()
+
+        self._write_codex_session_file(
+            session_id=codex_session_id,
+            lines=[
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": codex_session_id,
+                            "cwd": str(self.workspace_path),
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "agent_message",
+                            "message": "Investigating the issue first.",
+                            "phase": "commentary",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "ls /tmp"}),
+                            "call_id": "call_1",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {"type": "output_text", "text": "Done."}
+                            ],
+                        },
+                    }
+                ),
+            ],
+        )
+
+        await ingestor.poll_once()
+        events = workstation_events.list_workstation_events(
+            str(self.project_path),
+            "thread-a",
+        )
+        chunk_contents = [
+            event.payload["content"]
+            for event in events
+            if event.event_type == "turn_chunk"
+        ]
+        self.assertEqual(len(chunk_contents), 3)
+        self.assertIn("Investigating the issue first.", chunk_contents[0])
+        self.assertIn("$ ls /tmp", chunk_contents[1])
+        self.assertEqual(chunk_contents[2], "Done.")
+
+
 if __name__ == "__main__":
     unittest.main()
