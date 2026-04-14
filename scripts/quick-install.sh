@@ -168,28 +168,55 @@ ensure_uv() {
     info "uv $(uv --version) installed"
 }
 
-# --- Prereq: Go >= 1.22 ---
+# --- Prereq: Go >= 1.24 (for bundled Agent Deck build) ---
+# apt often lags, so install from go.dev tarball to guarantee the version.
+GO_MIN_MAJOR=1
+GO_MIN_MINOR=24
+GO_TARBALL_VERSION="1.24.2"
+
 ensure_go() {
     if command -v go >/dev/null 2>&1; then
-        local ver
+        local ver major minor
         ver="$(go version | awk '{print $3}' | sed 's/^go//')"
-        local major="${ver%%.*}"
-        local minor="$(echo "$ver" | awk -F. '{print $2}')"
-        if [ "$major" -ge 1 ] 2>/dev/null && [ "$minor" -ge 22 ] 2>/dev/null; then
+        major="${ver%%.*}"
+        minor="$(echo "$ver" | awk -F. '{print $2}')"
+        if [ "$major" -ge "$GO_MIN_MAJOR" ] 2>/dev/null && [ "$minor" -ge "$GO_MIN_MINOR" ] 2>/dev/null; then
             info "go ${ver} OK"
             return 0
         fi
-        warn "go ${ver} is too old; need >= 1.22."
+        warn "go ${ver} is too old; need >= ${GO_MIN_MAJOR}.${GO_MIN_MINOR}."
     else
         warn "go not found (needed to build the bundled Agent Deck binary)."
     fi
 
-    if ! confirm "Install Go via apt (golang-go)?"; then
-        error "Aborting: Go is required to build the Agent Deck binary."
+    if ! confirm "Install Go ${GO_TARBALL_VERSION} from go.dev into ~/.local/go?"; then
+        error "Aborting: Go >= ${GO_MIN_MAJOR}.${GO_MIN_MINOR} is required to build the Agent Deck binary."
         exit 1
     fi
-    apt_install golang-go
-    info "go $(go version) installed"
+
+    local arch
+    case "$(uname -m)" in
+        x86_64)  arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        *) error "Unsupported architecture $(uname -m) for Go install."; exit 1 ;;
+    esac
+    local tarball="go${GO_TARBALL_VERSION}.linux-${arch}.tar.gz"
+    local url="https://go.dev/dl/${tarball}"
+    local tmp
+    tmp="$(mktemp -d)"
+    info "Downloading ${url}"
+    curl -fsSL -o "${tmp}/${tarball}" "$url"
+    rm -rf "$HOME/.local/go"
+    mkdir -p "$HOME/.local"
+    tar -C "$HOME/.local" -xzf "${tmp}/${tarball}"
+    rm -rf "$tmp"
+    export PATH="$HOME/.local/go/bin:$PATH"
+    if ! command -v go >/dev/null 2>&1; then
+        error "Go tarball extracted but 'go' is not on PATH. Check $HOME/.local/go/bin."
+        exit 1
+    fi
+    info "go $(go version | awk '{print $3}') installed to ~/.local/go"
+    warn "Add ~/.local/go/bin to your PATH in your shell rc to use 'go' in new shells."
 }
 
 # --- Prereq: git + curl + build tools ---
