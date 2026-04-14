@@ -435,6 +435,7 @@ function App() {
       editorTheme: EditorTheme.COBALT,
       generatedCodeConfig: Stack.HTML_TAILWIND,
       codeGenerationModel: CodeGenerationModel.CLAUDE_4_5_SONNET_2025_09_29,
+      advancedMode: false,
     },
     "setting"
   );
@@ -774,7 +775,7 @@ function App() {
             showMainContent && activeMode === "live-editor" ? "" : "hidden"
           }`}
         >
-          <LiveEditorPane />
+          <LiveEditorPane advancedMode={settings.advancedMode} />
         </div>
 
         {/* Settings page — full-width surface; SettingsSidebar portals its content here. */}

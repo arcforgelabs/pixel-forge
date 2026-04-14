@@ -492,7 +492,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return editable instanceof HTMLElement
 }
 
-export function LiveEditorPane() {
+interface LiveEditorPaneProps {
+  advancedMode?: boolean
+}
+
+export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const {
     projectPath,
     previewUrl,
@@ -2991,7 +2995,7 @@ export function LiveEditorPane() {
                 Preview
               </Button>
             )}
-            {projectPath && canLaunchSelfMirror && (
+            {projectPath && canLaunchSelfMirror && advancedMode && (
               <Button
                 variant="outline"
                 size="sm"

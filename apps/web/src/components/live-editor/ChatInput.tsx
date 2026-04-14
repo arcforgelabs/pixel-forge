@@ -50,9 +50,9 @@ interface AgentModelOption {
 // Codex uses `-m gpt-5.x`.
 const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
   claude: [
-    { value: 'opus', label: 'Opus (latest)' },
-    { value: 'sonnet', label: 'Sonnet (latest)' },
-    { value: 'haiku', label: 'Haiku (latest)' },
+    { value: 'opus', label: 'Opus' },
+    { value: 'sonnet', label: 'Sonnet' },
+    { value: 'haiku', label: 'Haiku' },
   ],
   codex: [
     { value: 'gpt-5.4', label: 'GPT 5.4' },
@@ -947,28 +947,32 @@ export function ChatInput() {
                 <Bot className="h-3.5 w-3.5" />
               </Button>
               {showAgentPicker && (
-                <div className="absolute bottom-full right-0 mb-1 w-40 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                <div className="absolute bottom-full right-0 mb-1 min-w-[8rem] w-max max-w-[16rem] rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
                   {[
                     { value: 'claude', label: 'Claude Code' },
                     { value: 'codex', label: 'Codex' },
-                  ].map((agent) => (
-                    <button
-                      key={agent.value}
-                      type="button"
-                      onClick={() => {
-                        setDraftAgentType(agent.value)
-                        setShowAgentPicker(false)
-                      }}
-                      className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
-                        effectiveAgentType === agent.value ? 'text-primary font-medium' : 'text-foreground'
-                      }`}
-                    >
-                      {agent.label}
-                      {effectiveAgentType === agent.value && (
-                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                      )}
-                    </button>
-                  ))}
+                  ].map((agent) => {
+                    const isSelected = effectiveAgentType === agent.value
+                    return (
+                      <button
+                        key={agent.value}
+                        type="button"
+                        onClick={() => {
+                          setDraftAgentType(agent.value)
+                          setShowAgentPicker(false)
+                        }}
+                        className={`flex w-full items-center justify-between gap-6 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                          isSelected ? 'text-primary font-medium' : 'text-foreground'
+                        }`}
+                      >
+                        <span>{agent.label}</span>
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSelected ? 'bg-primary' : 'bg-transparent'}`}
+                        />
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1003,7 +1007,7 @@ export function ChatInput() {
                 <Cpu className="h-3.5 w-3.5" />
               </Button>
               {showModelPicker && hasAgentModelOptions && (
-                <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                <div className="absolute bottom-full right-0 mb-1 min-w-[8rem] w-max max-w-[16rem] rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
                   {agentModelOptions.map((option, index) => {
                     const isSelected = activeAgentModel === option.value || (activeAgentModel === null && index === 0)
                     return (
@@ -1027,14 +1031,15 @@ export function ChatInput() {
                           }
                           setShowModelPicker(false)
                         }}
-                        className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        className={`flex w-full items-center justify-between gap-6 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
                           isSelected ? 'text-primary font-medium' : 'text-foreground'
                         }`}
                       >
-                        {option.label}
-                        {isSelected && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                        )}
+                        <span>{option.label}</span>
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSelected ? 'bg-primary' : 'bg-transparent'}`}
+                        />
                       </button>
                     )
                   })}
@@ -1072,7 +1077,7 @@ export function ChatInput() {
                 <Brain className="h-3.5 w-3.5" />
               </Button>
               {showThinkingPicker && hasAgentThinkingOptions && (
-                <div className="absolute bottom-full right-0 mb-1 w-44 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
+                <div className="absolute bottom-full right-0 mb-1 min-w-[8rem] w-max max-w-[16rem] rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
                   {agentThinkingOptions.map((option, index) => {
                     const isSelected = activeAgentThinking === option.value || (activeAgentThinking === null && index === 0)
                     return (
@@ -1096,14 +1101,15 @@ export function ChatInput() {
                           }
                           setShowThinkingPicker(false)
                         }}
-                        className={`flex w-full items-center px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
+                        className={`flex w-full items-center justify-between gap-6 px-3 py-1.5 text-xs transition-colors hover:bg-primary/10 ${
                           isSelected ? 'text-primary font-medium' : 'text-foreground'
                         }`}
                       >
-                        {option.label}
-                        {isSelected && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
-                        )}
+                        <span>{option.label}</span>
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${isSelected ? 'bg-primary' : 'bg-transparent'}`}
+                        />
                       </button>
                     )
                   })}

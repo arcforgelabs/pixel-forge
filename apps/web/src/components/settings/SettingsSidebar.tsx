@@ -111,9 +111,9 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
 
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   claude: [
-    { value: "opus", label: "Opus (latest)" },
-    { value: "sonnet", label: "Sonnet (latest)" },
-    { value: "haiku", label: "Haiku (latest)" },
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
   ],
   codex: [
     { value: "gpt-5.4", label: "GPT 5.4" },
@@ -1707,6 +1707,22 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                   </div>
                 )}
 
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Advanced Mode</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Enables developer features such as the Mirror preview launcher.
+                    </p>
+                  </div>
+                  <Switch
+                    id="advanced-mode-toggle"
+                    checked={settings.advancedMode}
+                    onCheckedChange={(checked) =>
+                      setSettings((prev) => ({ ...prev, advancedMode: checked }))
+                    }
+                  />
+                </div>
+
                 <div className="rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -2224,24 +2240,29 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
-                            <Select
-                              value={defaultAgentModels.claude ?? "__none__"}
-                              onValueChange={(value) =>
-                                setDefaultAgentModel("claude", value === "__none__" ? null : value)
-                              }
-                            >
-                              <SelectTrigger className="h-9 w-[200px] text-xs">
-                                <SelectValue placeholder="Tool default" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
-                                {AGENT_MODEL_OPTIONS.claude.map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/60">
+                                alias · latest
+                              </span>
+                              <Select
+                                value={defaultAgentModels.claude ?? "__none__"}
+                                onValueChange={(value) =>
+                                  setDefaultAgentModel("claude", value === "__none__" ? null : value)
+                                }
+                              >
+                                <SelectTrigger className="h-9 w-[200px] text-xs">
+                                  <SelectValue placeholder="Tool default" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">Tool default</SelectItem>
+                                  {AGENT_MODEL_OPTIONS.claude.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Thinking</Label>
