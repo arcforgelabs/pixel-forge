@@ -9,6 +9,11 @@ if [[ -f "$CHANNEL_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$CHANNEL_ENV_FILE"
 fi
+CODEX_CHANNEL_ENV_FILE="${PIXEL_FORGE_CODEX_CHANNEL_ENV_FILE:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}/codex-channel.env}"
+if [[ -f "$CODEX_CHANNEL_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CODEX_CHANNEL_ENV_FILE"
+fi
 FOUNDATION_ROOT="${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-$REPO_ROOT/foundations/agent-deck}"
 BUILD_DIR="$FOUNDATION_ROOT/build"
 DEFAULT_BUILD_BIN="$BUILD_DIR/agent-deck"

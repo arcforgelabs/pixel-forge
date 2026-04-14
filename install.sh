@@ -69,6 +69,7 @@ DESKTOP_SOURCE_DIR="$SCRIPT_DIR/apps/desktop"
 AGENT_DECK_FOUNDATION_SOURCE_DIR="$SCRIPT_DIR/foundations/agent-deck"
 AGENT_DECK_RUNNER_SOURCE="$SCRIPT_DIR/scripts/agent-deck.sh"
 CLAUDE_CHANNEL_BOOTSTRAP_SOURCE="$SCRIPT_DIR/scripts/bootstrap-claude-channel-spike.sh"
+CODEX_CHANNEL_BOOTSTRAP_SOURCE="$SCRIPT_DIR/scripts/bootstrap-codex-channel.sh"
 PORT="${PIXEL_FORGE_PORT:-7201}"
 API_PORT="${PIXEL_FORGE_API_PORT:-$PORT}"
 WEB_HOST="${PIXEL_FORGE_WEB_HOST:-${PIXEL_FORGE_URL_HOST:-${INSTANCE_SLUG}.localhost}}"
@@ -82,6 +83,7 @@ DB_PATH="${PIXEL_FORGE_DB_PATH:-${SHARED_STATE_DIR}/pixel-forge.db}"
 AGENT_DECK_PROFILE="${PIXEL_FORGE_AGENT_DECK_PROFILE:-pixel-forge}"
 AGENT_DECK_HOME="${PIXEL_FORGE_AGENT_DECK_HOME:-${SHARED_STATE_DIR}/agent-deck}"
 CLAUDE_CHANNEL_ENV_FILE="${PIXEL_FORGE_CLAUDE_CHANNEL_ENV_FILE:-${SHARED_STATE_DIR}/claude-channel-spike.env}"
+CODEX_CHANNEL_ENV_FILE="${PIXEL_FORGE_CODEX_CHANNEL_ENV_FILE:-${SHARED_STATE_DIR}/codex-channel.env}"
 AGENT_DECK_SURFACE_HOST="${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-127.0.0.1}"
 AGENT_DECK_SURFACE_PORT="${PIXEL_FORGE_AGENT_DECK_SURFACE_PORT:-8422}"
 AGENT_DECK_SURFACE_URL="${PIXEL_FORGE_AGENT_DECK_SURFACE_URL:-http://${AGENT_DECK_SURFACE_HOST}:${AGENT_DECK_SURFACE_PORT}}"
@@ -103,7 +105,8 @@ AGENT_DECK_TUI_ICON_NAME="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_NAME:-pixel-forge-ag
 AGENT_DECK_TUI_ICON_SOURCE="${PIXEL_FORGE_AGENT_DECK_TUI_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/agent-deck.png}"
 SKIP_SYSTEMD="${PIXEL_FORGE_INSTALL_SKIP_SYSTEMD:-0}"
 SKIP_DESKTOP_INTEGRATION="${PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION:-0}"
-INSTALL_CLAUDE_CHANNEL_SPIKE="${PIXEL_FORGE_INSTALL_CLAUDE_CHANNEL_SPIKE:-0}"
+INSTALL_CLAUDE_CHANNEL_SPIKE="${PIXEL_FORGE_INSTALL_CLAUDE_CHANNEL_SPIKE:-1}"
+INSTALL_CODEX_CHANNEL="${PIXEL_FORGE_INSTALL_CODEX_CHANNEL:-1}"
 DESKTOP_ENTRY_NAME="${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-Pixel Forge}"
 DESKTOP_FILE_NAME="${PIXEL_FORGE_DESKTOP_FILE_NAME:-${INSTALL_NAME}.desktop}"
 DESKTOP_ICON_NAME="${PIXEL_FORGE_DESKTOP_ICON_NAME:-${INSTALL_NAME}}"
@@ -272,6 +275,17 @@ clear_stale_controller_updates() {
     # Per CLAUDE.md: if the install/update lane changes, clear and restage old pending
     # controller updates instead of applying stale snapshots. Controller-update state
     # is always rewritten by later runs, so it is safe to remove on every install.
+    # Exception: when install.sh is invoked by the controller-update runner, SCRIPT_DIR
+    # is the snapshot currently being applied and is also the runner's cwd. Wiping it
+    # mid-flight yanks the cwd out from under the runner so the follow-up `pixel-forge
+    # restart` spawn fails with ENOENT. Skip the clear in that case — the runner owns
+    # snapshot lifecycle (clearPendingControllerUpdate + launchDetachedSnapshotCleanup).
+    case "$SCRIPT_DIR/" in
+        "$SHARED_STATE_DIR/controller-updates/"*)
+            echo "Skipping stale controller-update cleanup (install.sh launched from snapshot $SCRIPT_DIR)."
+            return
+            ;;
+    esac
     rm -rf "$SHARED_STATE_DIR/controller-updates"
     rm -f "$SHARED_STATE_DIR/pending-preview-updates.json"
     rm -f "$SHARED_STATE_DIR/controller-update-apply-state.json"
@@ -328,10 +342,27 @@ if [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
 fi
 
 if [ "$INSTALL_CLAUDE_CHANNEL_SPIKE" = "1" ] && [ -f "$CLAUDE_CHANNEL_BOOTSTRAP_SOURCE" ]; then
-    echo "Bootstrapping Claude channel spike..."
-    PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR" \
-    PIXEL_FORGE_CLAUDE_CHANNEL_ENV_FILE="$CLAUDE_CHANNEL_ENV_FILE" \
-    bash "$CLAUDE_CHANNEL_BOOTSTRAP_SOURCE"
+    if command -v claude >/dev/null 2>&1; then
+        echo "Bootstrapping Claude channel spike..."
+        PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR" \
+        PIXEL_FORGE_CLAUDE_CHANNEL_ENV_FILE="$CLAUDE_CHANNEL_ENV_FILE" \
+        bash "$CLAUDE_CHANNEL_BOOTSTRAP_SOURCE"
+    else
+        echo "Skipping Claude channel spike bootstrap: 'claude' CLI not on PATH."
+        echo "Install Claude Code (npm i -g @anthropic-ai/claude-code), then re-run this install script to wire up the pixel-forge-channel plugin."
+    fi
+fi
+
+if [ "$INSTALL_CODEX_CHANNEL" = "1" ] && [ -f "$CODEX_CHANNEL_BOOTSTRAP_SOURCE" ]; then
+    if command -v codex >/dev/null 2>&1; then
+        echo "Bootstrapping Codex MCP channel..."
+        PIXEL_FORGE_SHARED_STATE_DIR="$SHARED_STATE_DIR" \
+        PIXEL_FORGE_CODEX_CHANNEL_ENV_FILE="$CODEX_CHANNEL_ENV_FILE" \
+        bash "$CODEX_CHANNEL_BOOTSTRAP_SOURCE"
+    else
+        echo "Skipping Codex MCP channel bootstrap: 'codex' CLI not on PATH."
+        echo "Install Codex (npm i -g @openai/codex), then re-run this install script to wire up the pixel-forge-channel MCP server."
+    fi
 fi
 
 # --- Bundle built frontend ---

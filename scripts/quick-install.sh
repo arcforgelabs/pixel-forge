@@ -219,6 +219,47 @@ ensure_go() {
     warn "Add ~/.local/go/bin to your PATH in your shell rc to use 'go' in new shells."
 }
 
+# --- Prereq: Claude Code + Codex CLIs ---
+# Pixel Forge talks to Claude Code sessions via the pixel-forge-channel plugin,
+# which install.sh registers into ~/.claude. Codex loads the same MCP server
+# from ~/.codex/config.toml (mcp_servers). Both transports require their
+# respective CLI binaries on PATH, so we install them here when missing.
+ensure_claude_code() {
+    if command -v claude >/dev/null 2>&1; then
+        info "claude $(claude --version 2>/dev/null | head -n1) OK"
+        return 0
+    fi
+    warn "claude (Claude Code CLI) not found."
+    if ! confirm "Install Claude Code globally via npm (@anthropic-ai/claude-code)?"; then
+        warn "Skipping Claude Code install; the pixel-forge-channel plugin will be registered but inert until you install it yourself."
+        return 0
+    fi
+    sudo_cmd npm install -g @anthropic-ai/claude-code
+    if ! command -v claude >/dev/null 2>&1; then
+        error "npm install finished but 'claude' is not on PATH. Check your npm global prefix."
+        exit 1
+    fi
+    info "claude $(claude --version 2>/dev/null | head -n1) installed"
+}
+
+ensure_codex() {
+    if command -v codex >/dev/null 2>&1; then
+        info "codex $(codex --version 2>/dev/null | head -n1) OK"
+        return 0
+    fi
+    warn "codex (OpenAI Codex CLI) not found."
+    if ! confirm "Install Codex globally via npm (@openai/codex)?"; then
+        warn "Skipping Codex install; the pixel-forge-channel MCP entry will be registered but inert until you install it yourself."
+        return 0
+    fi
+    sudo_cmd npm install -g @openai/codex
+    if ! command -v codex >/dev/null 2>&1; then
+        error "npm install finished but 'codex' is not on PATH. Check your npm global prefix."
+        exit 1
+    fi
+    info "codex $(codex --version 2>/dev/null | head -n1) installed"
+}
+
 # --- Prereq: git + curl + build tools ---
 ensure_base_tools() {
     local missing=()
@@ -282,6 +323,8 @@ main() {
     ensure_pnpm
     ensure_uv
     ensure_go
+    ensure_claude_code
+    ensure_codex
     clone_repo
     run_install
     cat <<EOF
