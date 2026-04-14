@@ -181,17 +181,28 @@ def _project_slug(project_path: str) -> str:
 
 
 def _session_title(project_path: str, thread_id: str) -> str:
-    return f"pixel-forge-{_project_slug(project_path)}-{thread_id[:8]}"
+    normalized = thread_id.strip() if isinstance(thread_id, str) else ""
+    return normalized or "chat"
+
+
+def _is_legacy_pixel_forge_session_title(project_path: str, title: str | None) -> bool:
+    if not isinstance(title, str):
+        return False
+    stripped = title.strip()
+    if not stripped:
+        return False
+    legacy_prefix = f"pixel-forge-{_project_slug(project_path)}-"
+    return stripped.startswith(legacy_prefix)
 
 
 def _preferred_thread_session_title(
     project_path: str,
     thread: LiveEditorThreadRecord,
 ) -> str:
-    return _normalized_text(thread.agent_deck_session_title) or _session_title(
-        project_path,
-        thread.thread_id,
-    )
+    persisted = _normalized_text(thread.agent_deck_session_title)
+    if persisted and not _is_legacy_pixel_forge_session_title(project_path, persisted):
+        return persisted
+    return _session_title(project_path, thread.thread_id)
 
 
 def _group_path(project_path: str) -> str:
@@ -623,7 +634,7 @@ def _session_title_for_target(project_path: str, suffix: str | None = None) -> s
     normalized_suffix = re.sub(r"[^a-z0-9-]+", "-", raw_suffix.lower()).strip("-")
     if not normalized_suffix:
         normalized_suffix = uuid4().hex[:8]
-    return f"pixel-forge-{_project_slug(project_path)}-{normalized_suffix}"
+    return f"chat-{normalized_suffix}"
 
 
 def _payload_to_session_target(payload: dict[str, object]) -> AgentDeckSessionTarget:
@@ -1442,14 +1453,21 @@ async def ensure_agent_deck_session(
             agent_thinking=agent_thinking,
         )
 
+    rename_target: str | None = None
     if persisted_thread_title:
+        if _is_legacy_pixel_forge_session_title(project_path, persisted_thread_title):
+            rename_target = preferred_session_title
+        else:
+            rename_target = persisted_thread_title
+
+    if rename_target:
         current_title = _normalized_text(payload.get("title"))
         session_id = _normalized_text(payload.get("id"))
-        if session_id and current_title != persisted_thread_title:
-            await _rename_session(session_id, persisted_thread_title)
+        if session_id and current_title != rename_target:
+            await _rename_session(session_id, rename_target)
             payload = {
                 **payload,
-                "title": persisted_thread_title,
+                "title": rename_target,
             }
 
     return await _build_session_info(
