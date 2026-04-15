@@ -65,10 +65,10 @@ body {
 }
 
 .brand-context {
-  font-size: 0.72em;
+  font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+  font-size: 0.75em;
   font-weight: 400;
   color: var(--muted);
-  letter-spacing: 0.03em;
 }
 
 .menu-toggle {
