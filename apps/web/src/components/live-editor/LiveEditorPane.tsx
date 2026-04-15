@@ -156,6 +156,11 @@ interface WorkspacePreviewResponse {
   created_at: string | null
 }
 
+interface ProjectCapabilitiesResponse {
+  project_path: string
+  is_pixel_forge_workspace: boolean
+}
+
 interface BrowserPreviewEvent {
   type:
     | 'browser-location-changed'
@@ -533,6 +538,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const [workspacePreviewCandidates, setWorkspacePreviewCandidates] = useState<WorkspacePreviewCandidateResponse[]>([])
   const [workspacePreviewCandidatesLoading, setWorkspacePreviewCandidatesLoading] = useState(false)
   const [startingWorkspacePreviewCandidateId, setStartingWorkspacePreviewCandidateId] = useState<string | null>(null)
+  const [isPixelForgeWorkspace, setIsPixelForgeWorkspace] = useState(false)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
 
@@ -701,6 +707,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
   const canLaunchSelfMirror = RUNTIME_KIND === 'controller'
+  const canLaunchPixelForgeMirror = canLaunchSelfMirror && isPixelForgeWorkspace
   const isSelectionToolActive = activePreviewTool === 'select'
   const activePreviewTabForNav = previewTabs.find((tab) => tab.id === activePreviewTabId) ?? previewTabs[0] ?? null
   const canGoBack = activePreviewTabForNav?.mode === 'browser'
@@ -922,7 +929,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   }, [])
 
   const refreshMirrorBuilds = useCallback(async () => {
-    if (!canLaunchSelfMirror) {
+    if (!canLaunchPixelForgeMirror) {
       setMirrorBuilds([])
       return
     }
@@ -938,7 +945,34 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     } catch (error) {
       console.error('[live-editor] Failed to load Pixel Forge mirror builds:', error)
     }
-  }, [canLaunchSelfMirror, projectPath])
+  }, [canLaunchPixelForgeMirror, projectPath])
+
+  useEffect(() => {
+    if (!projectPath) {
+      setIsPixelForgeWorkspace(false)
+      return
+    }
+
+    let cancelled = false
+    void requestPreviewJson<ProjectCapabilitiesResponse>(
+      `/api/projects/capabilities?project_path=${encodeURIComponent(projectPath)}`
+    )
+      .then((payload) => {
+        if (!cancelled) {
+          setIsPixelForgeWorkspace(payload.is_pixel_forge_workspace)
+        }
+      })
+      .catch((error) => {
+        console.error('[live-editor] Failed to load project capabilities:', error)
+        if (!cancelled) {
+          setIsPixelForgeWorkspace(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [projectPath])
 
   useEffect(() => {
     void refreshMirrorBuilds()
@@ -3012,7 +3046,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 Preview
               </Button>
             )}
-            {projectPath && canLaunchSelfMirror && advancedMode && (
+            {projectPath && canLaunchPixelForgeMirror && advancedMode && (
               <Button
                 variant="outline"
                 size="sm"

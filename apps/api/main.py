@@ -1710,6 +1710,15 @@ async def list_workspace_preview_candidates(workspace_path: str):
     }
 
 
+@app.get("/api/projects/capabilities")
+async def get_project_capabilities(project_path: str):
+    normalized_project_path = str(Path(project_path).expanduser().resolve())
+    return {
+        "project_path": normalized_project_path,
+        "is_pixel_forge_workspace": _is_pixel_forge_workspace(normalized_project_path),
+    }
+
+
 @app.post("/api/workspace-previews/start")
 async def start_workspace_preview_route(payload: WorkspacePreviewStartRequest):
     try:
