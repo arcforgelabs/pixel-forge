@@ -207,7 +207,29 @@ func tmuxCommand(args ...string) *exec.Cmd {
 
 func tmuxAttachCommand(sessionName string) *exec.Cmd {
 	// Keep this web client from influencing other attached client sizes (for example, the local TUI).
-	return tmuxCommand("attach-session", "-f", "ignore-size", "-t", sessionName)
+	cmd := tmuxCommand("attach-session", "-f", "ignore-size", "-t", sessionName)
+	// Force a usable TERM in the PTY.  The web-server process typically runs
+	// under systemd with no TERM, which causes tmux to print "terminal does
+	// not support clear" and exit immediately.
+	cmd.Env = withForcedTerm(cmd.Env, "xterm-256color")
+	return cmd
+}
+
+// withForcedTerm returns env with TERM overridden to term.
+// If env is nil (inherit parent), it starts from os.Environ() so we can
+// inject the override without producing a stripped-down environment.
+func withForcedTerm(env []string, term string) []string {
+	base := env
+	if base == nil {
+		base = os.Environ()
+	}
+	result := make([]string, 0, len(base)+1)
+	for _, kv := range base {
+		if !strings.HasPrefix(kv, "TERM=") {
+			result = append(result, kv)
+		}
+	}
+	return append(result, "TERM="+term)
 }
 
 func tmuxSocketFromEnv() (string, bool) {
