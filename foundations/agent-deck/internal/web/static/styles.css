@@ -55,7 +55,20 @@ body {
 }
 
 .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.brand-name {
   font-weight: 700;
+}
+
+.brand-context {
+  font-size: 0.72em;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0.03em;
 }
 
 .menu-toggle {
