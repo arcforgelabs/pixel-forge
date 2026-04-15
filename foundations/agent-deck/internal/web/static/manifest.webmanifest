@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Pixel Forge (alpha) Agent Deck",
+  "name": "Pixel Forge Agent Deck",
   "short_name": "PF Agent Deck",
-  "description": "Integrated Agent Deck surface for the Pixel Forge alpha workstation lane.",
+  "description": "Integrated Agent Deck surface for the Pixel Forge workstation.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
