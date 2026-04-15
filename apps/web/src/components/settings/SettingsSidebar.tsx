@@ -178,6 +178,7 @@ interface ChatSidebarActionItem {
 interface ChatSidebarRow extends ChatSidebarActionItem {
   isActive: boolean;
   isStreaming: boolean;
+  hasError?: boolean;
   lastActiveLabel: string | null;
   onSelect: () => void;
 }
@@ -1014,15 +1015,35 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         >
           <MessageSquare className="h-3 w-3 flex-shrink-0" />
           <span className="truncate flex-1 text-left">{item.label}</span>
-          {item.isStreaming && (
-            <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-emerald-200">
-              Live
-            </span>
-          )}
-
-          {item.isActive && (
-            <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-          )}
+          {(() => {
+            const dotStatus: "thinking" | "error" | "ready" | null = item.isStreaming
+              ? "thinking"
+              : item.hasError
+                ? "error"
+                : item.isActive
+                  ? "ready"
+                  : null;
+            if (!dotStatus) return null;
+            const dotClass =
+              dotStatus === "thinking"
+                ? "bg-amber-400 animate-pulse"
+                : dotStatus === "error"
+                  ? "bg-red-500"
+                  : "bg-emerald-500";
+            const dotTitle =
+              dotStatus === "thinking"
+                ? "Thinking"
+                : dotStatus === "error"
+                  ? "Error"
+                  : "Ready";
+            return (
+              <span
+                className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${dotClass}`}
+                aria-label={dotTitle}
+                title={dotTitle}
+              />
+            );
+          })()}
         </button>
 
         <Popover
