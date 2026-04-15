@@ -218,7 +218,7 @@ SELECTION_SCRIPT_TEMPLATE = """
     }
 
     const style = window.getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {
+    if (style.display === 'none' || style.visibility === 'hidden') {
       return false;
     }
 
@@ -793,6 +793,40 @@ SELECTION_SCRIPT_TEMPLATE = """
     });
     return result;
   };
+
+  // Intercept new-tab navigations (window.open and target="_blank" links)
+  function shouldOpenInPreviewTab(target) {
+    const normalizedTarget = String(target || '').trim().toLowerCase();
+    return !normalizedTarget || normalizedTarget === '_blank' || normalizedTarget === 'new';
+  }
+
+  const _origOpen = window.open.bind(window);
+  window.open = function(url, target, features) {
+    if (url && shouldOpenInPreviewTab(target)) {
+      try {
+        const resolved = new URL(String(url), window.location.href).href;
+        window.parent.postMessage({ type: 'pixel-forge-new-tab-requested', data: { url: resolved } }, '*');
+      } catch(e) {}
+      return null;
+    }
+    return _origOpen(url, target, features);
+  };
+
+  document.addEventListener('click', function(event) {
+    if (selectMode) return;
+    const anchor = event.target instanceof Element
+      ? event.target.closest('a[target="_blank"], a[target="new"]')
+      : null;
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      const resolved = new URL(href, window.location.href).href;
+      window.parent.postMessage({ type: 'pixel-forge-new-tab-requested', data: { url: resolved } }, '*');
+    } catch(e) {}
+  }, true);
 
   // Add event listeners
   document.addEventListener('mousemove', handleMouseMove, true);

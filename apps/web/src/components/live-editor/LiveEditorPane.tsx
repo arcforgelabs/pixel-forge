@@ -167,6 +167,7 @@ interface BrowserPreviewEvent {
     | 'browser-select-cancelled'
     | 'browser-tab-closed'
     | 'browser-load-failed'
+    | 'browser-new-tab-requested'
   browser_tab_id: string
   url?: string
   title?: string
@@ -2478,6 +2479,11 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
           setTargetUrl(nextUrl)
           void syncStorePreviewUrl(nextUrl)
         }
+      } else if (event.data.type === 'pixel-forge-new-tab-requested') {
+        const url = typeof event.data.data?.url === 'string' ? event.data.data.url : ''
+        if (url) {
+          void openUrlInPreviewTab(url)
+        }
       }
     }
 
@@ -2487,6 +2493,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     addElement,
     getActivePreviewTab,
     getTabForMessageSource,
+    openUrlInPreviewTab,
     removeElement,
     replaceElement,
     setActivePreviewTool,
@@ -2640,12 +2647,22 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
           ? 'Embedded preview tab was closed. Reload the URL to reopen it.'
           : 'Managed browser tab was closed. Reload the URL to reopen it.'
       )
+      return
+    }
+
+    if (payload.type === 'browser-new-tab-requested') {
+      const url = typeof payload.url === 'string' ? payload.url : ''
+      if (url) {
+        void openUrlInPreviewTab(url)
+      }
+      return
     }
   }, [
     addElement,
     getActivePreviewTab,
     getPreviewTabByBrowserId,
     hasEmbeddedBrowserPreview,
+    openUrlInPreviewTab,
     pushUrlHistory,
     removeElement,
     removeElements,

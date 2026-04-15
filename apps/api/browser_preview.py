@@ -300,7 +300,7 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
     }}
 
     const style = window.getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {{
+    if (style.display === 'none' || style.visibility === 'hidden') {{
       return false;
     }}
 
@@ -699,6 +699,40 @@ REAL_BROWSER_SELECTION_SCRIPT = f"""
       }};
     }}
   }};
+
+  // Intercept new-tab navigations (window.open and target="_blank" links)
+  function shouldOpenInPreviewTab(target) {{
+    const normalizedTarget = String(target || '').trim().toLowerCase();
+    return !normalizedTarget || normalizedTarget === '_blank' || normalizedTarget === 'new';
+  }}
+
+  const _origOpen = window.open.bind(window);
+  window.open = function(url, target, features) {{
+    if (url && shouldOpenInPreviewTab(target)) {{
+      try {{
+        const resolved = new URL(String(url), window.location.href).href;
+        emit('browser-new-tab-requested', {{ url: resolved }});
+      }} catch(e) {{}}
+      return null;
+    }}
+    return _origOpen(url, target, features);
+  }};
+
+  document.addEventListener('click', function(event) {{
+    if (selectMode) return;
+    const anchor = event.target instanceof Element
+      ? event.target.closest('a[target="_blank"], a[target="new"]')
+      : null;
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {{
+      const resolved = new URL(href, window.location.href).href;
+      emit('browser-new-tab-requested', {{ url: resolved }});
+    }} catch(e) {{}}
+  }}, true);
 
   document.addEventListener('mousemove', handleMouseMove, true);
   document.addEventListener('click', handleClick, true);
@@ -1230,6 +1264,18 @@ class ManagedBrowserPreviewManager:
                     "data": event_data,
                 }
             )
+
+        if event_type == "browser-new-tab-requested":
+            new_url = event_data.get("url") or ""
+            if new_url:
+                await self.broadcast(
+                    {
+                        "type": "browser-new-tab-requested",
+                        "browser_tab_id": tab.id,
+                        "url": new_url,
+                    }
+                )
+            return
 
     def _devtools_browser_url(self) -> str | None:
         if self._cdp_port is None:
