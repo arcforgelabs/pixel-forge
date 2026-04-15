@@ -111,13 +111,9 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
 
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   claude: [
-    { value: "opus", label: "Opus (alias)" },
-    { value: "sonnet", label: "Sonnet (alias)" },
-    { value: "haiku", label: "Haiku (alias)" },
-    { value: "claude-opus-4-6[1m]", label: "Opus 4.6 · 1M" },
-    { value: "claude-opus-4-6", label: "Opus 4.6 · 200K" },
-    { value: "claude-sonnet-4-6[1m]", label: "Sonnet 4.6 · 1M" },
-    { value: "claude-sonnet-4-6", label: "Sonnet 4.6 · 200K" },
+    { value: "opus", label: "Opus" },
+    { value: "sonnet", label: "Sonnet" },
+    { value: "haiku", label: "Haiku" },
   ],
   codex: [
     { value: "gpt-5.4", label: "GPT 5.4" },
@@ -340,6 +336,49 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
   const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
   const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
+  const [claude1MOpus, setClaude1MOpus] = useState(true);
+  const [claude1MSonnet, setClaude1MSonnet] = useState(false);
+  const [claude1MLoaded, setClaude1MLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const payload = await requestSidebarJson<{
+          use_1m_context_opus: boolean;
+          use_1m_context_sonnet: boolean;
+        }>("/api/claude-global-settings");
+        if (cancelled) return;
+        setClaude1MOpus(payload.use_1m_context_opus);
+        setClaude1MSonnet(payload.use_1m_context_sonnet);
+        setClaude1MLoaded(true);
+      } catch {
+        if (!cancelled) setClaude1MLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateClaude1M = async (patch: {
+    use_1m_context_opus?: boolean;
+    use_1m_context_sonnet?: boolean;
+  }) => {
+    try {
+      const payload = await requestSidebarJson<{
+        use_1m_context_opus: boolean;
+        use_1m_context_sonnet: boolean;
+      }>("/api/claude-global-settings", {
+        method: "POST",
+        body: JSON.stringify(patch),
+      });
+      setClaude1MOpus(payload.use_1m_context_opus);
+      setClaude1MSonnet(payload.use_1m_context_sonnet);
+    } catch (error) {
+      console.error("Failed to update Claude 1M context setting", error);
+    }
+  };
   const visibleProjects = recentProjects.filter((project) => (
     !(
       RUNTIME_KIND !== "controller"
@@ -2288,6 +2327,44 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 ))}
                               </SelectContent>
                             </Select>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <Label htmlFor="settings-claude-1m-opus" className="text-xs text-muted-foreground">
+                                Opus 1M context
+                              </Label>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                                Pin Opus 4.6 to the 1M-token window. Included in Max/Team/Enterprise.
+                              </p>
+                            </div>
+                            <Switch
+                              id="settings-claude-1m-opus"
+                              checked={claude1MOpus}
+                              disabled={!claude1MLoaded}
+                              onCheckedChange={(next) => {
+                                setClaude1MOpus(next);
+                                void updateClaude1M({ use_1m_context_opus: next });
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <Label htmlFor="settings-claude-1m-sonnet" className="text-xs text-muted-foreground">
+                                Sonnet 1M context
+                              </Label>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                                Pin Sonnet 4.6 to the 1M-token window. Requires extra usage on Max plans.
+                              </p>
+                            </div>
+                            <Switch
+                              id="settings-claude-1m-sonnet"
+                              checked={claude1MSonnet}
+                              disabled={!claude1MLoaded}
+                              onCheckedChange={(next) => {
+                                setClaude1MSonnet(next);
+                                void updateClaude1M({ use_1m_context_sonnet: next });
+                              }}
+                            />
                           </div>
                         </div>
 

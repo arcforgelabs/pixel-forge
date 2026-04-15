@@ -52,6 +52,7 @@ from agent_deck_surface import (
     stop_agent_deck_surface,
 )
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
+from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -473,6 +474,11 @@ class ProfileStateRequest(BaseModel):
     claude_default_thinking: str | None = None
     codex_default_model: str | None = None
     codex_default_thinking: str | None = None
+
+
+class ClaudeGlobalSettingsRequest(BaseModel):
+    use_1m_context_opus: bool | None = None
+    use_1m_context_sonnet: bool | None = None
 
 
 class AgentDeckSessionRequest(BaseModel):
@@ -932,6 +938,21 @@ async def save_default_profile_state(request: ProfileStateRequest):
             codex_default_model=request.codex_default_model,
             codex_default_thinking=request.codex_default_thinking,
         )
+    )
+
+
+@app.get("/api/claude-global-settings")
+async def get_claude_global_settings():
+    """Return system-wide Claude 1M context toggles from agent-deck's config."""
+    return get_claude_1m_settings()
+
+
+@app.post("/api/claude-global-settings")
+async def save_claude_global_settings(request: ClaudeGlobalSettingsRequest):
+    """Persist Claude 1M toggles to ~/.agent-deck/config.toml. Unset fields are left alone."""
+    return set_claude_1m_settings(
+        use_1m_context_opus=request.use_1m_context_opus,
+        use_1m_context_sonnet=request.use_1m_context_sonnet,
     )
 
 
