@@ -47,12 +47,18 @@ interface AgentModelOption {
 }
 
 // Claude uses `--model opus|sonnet|haiku|...` (aliases resolve to latest).
+// Pinned 4.6 variants carry the [1m] suffix to explicitly request the 1M
+// context window; the bare IDs keep the 200K default.
 // Codex uses `-m gpt-5.x`.
 const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
   claude: [
-    { value: 'opus', label: 'Opus' },
-    { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' },
+    { value: 'opus', label: 'Opus (alias)' },
+    { value: 'sonnet', label: 'Sonnet (alias)' },
+    { value: 'haiku', label: 'Haiku (alias)' },
+    { value: 'claude-opus-4-6[1m]', label: 'Opus 4.6 · 1M' },
+    { value: 'claude-opus-4-6', label: 'Opus 4.6 · 200K' },
+    { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 · 1M' },
+    { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 · 200K' },
   ],
   codex: [
     { value: 'gpt-5.4', label: 'GPT 5.4' },

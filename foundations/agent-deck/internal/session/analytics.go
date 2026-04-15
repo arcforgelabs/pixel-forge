@@ -78,10 +78,9 @@ func (a *SessionAnalytics) ContextPercent(modelLimit int) float64 {
 
 // ResolveClaudeContextWindow returns the effective context window in tokens
 // for a Claude model string. Returns 1_000_000 when the model carries the
-// [1m] suffix (opus[1m], sonnet[1m], claude-opus-4-6[1m], …) OR when the
-// caller indicates the 1M toggle is on AND the model resolves to an Opus/
-// Sonnet 4.6 alias/ID. Falls back to 200_000.
-func ResolveClaudeContextWindow(model string, use1MEnabled bool) int {
+// [1m] suffix, or when the model resolves to an Opus/Sonnet 4.6 alias/ID and
+// the corresponding per-model 1M toggle is on. Falls back to 200_000.
+func ResolveClaudeContextWindow(model string, opus1M, sonnet1M bool) int {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if m == "" {
 		return 200000
@@ -89,23 +88,38 @@ func ResolveClaudeContextWindow(model string, use1MEnabled bool) int {
 	if strings.Contains(m, "[1m]") {
 		return 1_000_000
 	}
-	if use1MEnabled && isOpusOrSonnet46(m) {
-		return 1_000_000
+	switch classifyClaudeModel(m) {
+	case claudeFamilyOpus:
+		if opus1M {
+			return 1_000_000
+		}
+	case claudeFamilySonnet:
+		if sonnet1M {
+			return 1_000_000
+		}
 	}
 	return 200000
 }
 
-// isOpusOrSonnet46 matches the aliases and full model IDs that Claude Code
-// currently resolves to Opus 4.6 or Sonnet 4.6. The bare aliases "opus" and
-// "sonnet" always point to the latest version per Anthropic's docs, so they
-// count for 1M when the toggle is on.
-func isOpusOrSonnet46(m string) bool {
+type claudeFamily int
+
+const (
+	claudeFamilyOther claudeFamily = iota
+	claudeFamilyOpus
+	claudeFamilySonnet
+)
+
+// classifyClaudeModel maps an alias or model ID to a 4.6 family. Bare "opus"
+// and "sonnet" always point to the latest version per Anthropic's docs.
+// "opusplan" and "best" resolve to Opus + planning behavior.
+func classifyClaudeModel(m string) claudeFamily {
 	switch m {
-	case "opus", "sonnet", "best", "opusplan",
-		"claude-opus-4-6", "claude-sonnet-4-6":
-		return true
+	case "opus", "best", "opusplan", "claude-opus-4-6":
+		return claudeFamilyOpus
+	case "sonnet", "claude-sonnet-4-6":
+		return claudeFamilySonnet
 	}
-	return false
+	return claudeFamilyOther
 }
 
 // ModelPricing holds pricing per million tokens for a model

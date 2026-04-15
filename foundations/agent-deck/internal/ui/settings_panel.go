@@ -19,7 +19,8 @@ const (
 	SettingTheme SettingType = iota // Theme must be first (index 0)
 	SettingDefaultTool
 	SettingDangerousMode
-	SettingUse1MContext
+	SettingUse1MContextOpus
+	SettingUse1MContextSonnet
 	SettingClaudeConfigDir
 	SettingGeminiYoloMode
 	SettingCodexYoloMode
@@ -38,7 +39,7 @@ const (
 )
 
 // Total number of navigable settings.
-const settingsCount = 19
+const settingsCount = 20
 
 // SettingsPanel displays and edits user configuration
 type SettingsPanel struct {
@@ -57,7 +58,8 @@ type SettingsPanel struct {
 	selectedTheme       int // 0=dark, 1=light, 2=system
 	selectedTool        int // index into toolNames/toolValues
 	dangerousMode       bool
-	use1MContext        bool
+	use1MContextOpus    bool
+	use1MContextSonnet  bool
 	claudeConfigDir     string
 	claudeConfigIsScope bool // true = profile override, false = global [claude]
 	geminiYoloMode      bool
@@ -204,7 +206,8 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 
 	// Claude settings
 	s.dangerousMode = config.Claude.GetDangerousMode()
-	s.use1MContext = config.Claude.GetUse1MContext()
+	s.use1MContextOpus = config.Claude.GetUse1MContextOpus()
+	s.use1MContextSonnet = config.Claude.GetUse1MContextSonnet()
 	s.claudeConfigDir = config.Claude.ConfigDir
 	s.claudeConfigIsScope = false
 	if s.profile != "" && config.Profiles != nil {
@@ -311,8 +314,10 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	// Claude settings
 	dangerousModeVal := s.dangerousMode
 	config.Claude.DangerousMode = &dangerousModeVal
-	use1MVal := s.use1MContext
-	config.Claude.Use1MContext = &use1MVal
+	use1MOpusVal := s.use1MContextOpus
+	config.Claude.Use1MContextOpus = &use1MOpusVal
+	use1MSonnetVal := s.use1MContextSonnet
+	config.Claude.Use1MContextSonnet = &use1MSonnetVal
 	if !s.claudeConfigIsScope {
 		config.Claude.ConfigDir = s.claudeConfigDir
 	}
@@ -496,8 +501,12 @@ func (s *SettingsPanel) toggleValue() bool {
 		s.dangerousMode = !s.dangerousMode
 		return true
 
-	case SettingUse1MContext:
-		s.use1MContext = !s.use1MContext
+	case SettingUse1MContextOpus:
+		s.use1MContextOpus = !s.use1MContextOpus
+		return true
+
+	case SettingUse1MContextSonnet:
+		s.use1MContextSonnet = !s.use1MContextSonnet
 		return true
 
 	case SettingGeminiYoloMode:
@@ -671,9 +680,15 @@ func (s *SettingsPanel) View() string {
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
 
-	// 1M context checkbox (Opus 4.6 / Sonnet 4.6)
-	line = s.renderCheckbox("1M context", s.use1MContext) + " - Opus 4.6 / Sonnet 4.6 extended window"
-	if s.cursor == int(SettingUse1MContext) {
+	// 1M context checkboxes (per-model)
+	line = s.renderCheckbox("1M context (Opus 4.6)", s.use1MContextOpus) + " - Included in Max/Team/Enterprise"
+	if s.cursor == int(SettingUse1MContextOpus) {
+		line = highlightStyle.Render(line)
+	}
+	content.WriteString("  " + labelStyle.Render(line) + "\n")
+
+	line = s.renderCheckbox("1M context (Sonnet 4.6)", s.use1MContextSonnet) + " - Extra usage on Max"
+	if s.cursor == int(SettingUse1MContextSonnet) {
 		line = highlightStyle.Render(line)
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
@@ -860,22 +875,23 @@ func (s *SettingsPanel) View() string {
 			4,  // SettingTheme
 			7,  // SettingDefaultTool
 			11, // SettingDangerousMode
-			12, // SettingUse1MContext
-			13, // SettingClaudeConfigDir
-			16, // SettingGeminiYoloMode
-			19, // SettingCodexYoloMode
-			22, // SettingTmuxSetClipboard
-			25, // SettingCheckForUpdates
-			26, // SettingAutoUpdate
-			29, // SettingLogMaxSize
-			29, // SettingLogMaxLines (shares line with LogMaxSize)
-			30, // SettingRemoveOrphans
-			33, // SettingGlobalSearchEnabled
-			34, // SettingSearchTier
-			35, // SettingRecentDays
-			38, // SettingShowOutput
-			39, // SettingShowAnalytics
-			42, // SettingMaintenanceEnabled
+			12, // SettingUse1MContextOpus
+			13, // SettingUse1MContextSonnet
+			14, // SettingClaudeConfigDir
+			17, // SettingGeminiYoloMode
+			20, // SettingCodexYoloMode
+			23, // SettingTmuxSetClipboard
+			26, // SettingCheckForUpdates
+			27, // SettingAutoUpdate
+			30, // SettingLogMaxSize
+			30, // SettingLogMaxLines (shares line with LogMaxSize)
+			31, // SettingRemoveOrphans
+			34, // SettingGlobalSearchEnabled
+			35, // SettingSearchTier
+			36, // SettingRecentDays
+			39, // SettingShowOutput
+			40, // SettingShowAnalytics
+			43, // SettingMaintenanceEnabled
 		}
 		cursorLine := cursorToLine[s.cursor]
 

@@ -2244,7 +2244,7 @@ func (h *Home) getInstanceByID(id string) *session.Instance {
 
 // resolveClaudeContextWindowFor returns the effective context window in tokens
 // for a Claude instance, taking the active model from ClaudeOptions and the
-// global [claude].use_1m_context toggle into account. Falls back to 200K
+// per-model [claude].use_1m_context_* toggles into account. Falls back to 200K
 // when the instance is not a Claude session or config can't be loaded.
 func resolveClaudeContextWindowFor(inst *session.Instance) int {
 	if inst == nil || inst.Tool != "claude" {
@@ -2254,11 +2254,13 @@ func resolveClaudeContextWindowFor(inst *session.Instance) int {
 	if opts := inst.GetClaudeOptions(); opts != nil {
 		model = opts.Model
 	}
-	use1M := true
+	opus1M := true
+	sonnet1M := false
 	if cfg, _ := session.LoadUserConfig(); cfg != nil {
-		use1M = cfg.Claude.GetUse1MContext()
+		opus1M = cfg.Claude.GetUse1MContextOpus()
+		sonnet1M = cfg.Claude.GetUse1MContextSonnet()
 	}
-	return session.ResolveClaudeContextWindow(model, use1M)
+	return session.ResolveClaudeContextWindow(model, opus1M, sonnet1M)
 }
 
 // pushUndoStack adds a deleted session to the undo stack (LIFO, capped at 10)

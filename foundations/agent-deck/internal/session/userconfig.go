@@ -557,12 +557,17 @@ type ClaudeSettings struct {
 	// Default: true (nil = use default true, set false to disable)
 	HooksEnabled *bool `toml:"hooks_enabled"`
 
-	// Use1MContext enables the 1M-token context window on Opus 4.6 / Sonnet 4.6
-	// by injecting ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m] and
-	// ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6[1m] into the session env.
-	// When false, injects CLAUDE_CODE_DISABLE_1M_CONTEXT=1 so the /model picker
-	// hides 1M variants entirely. Default: true (nil = use default true).
-	Use1MContext *bool `toml:"use_1m_context"`
+	// Use1MContextOpus enables the 1M-token context window on Opus 4.6 by
+	// injecting ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m] into the
+	// session env. Opus 1M is included in Max/Team/Enterprise plans, so this
+	// defaults to true (nil = use default true).
+	Use1MContextOpus *bool `toml:"use_1m_context_opus"`
+
+	// Use1MContextSonnet enables the 1M-token context window on Sonnet 4.6 by
+	// injecting ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6[1m]. Sonnet
+	// 1M requires additional usage on Max plans, so this defaults to false
+	// (nil = use default false) to avoid surprise charges.
+	Use1MContextSonnet *bool `toml:"use_1m_context_sonnet"`
 }
 
 // GetProfileClaudeConfigDir returns the profile-specific Claude config directory, if configured.
@@ -594,13 +599,22 @@ func (c *ClaudeSettings) GetHooksEnabled() bool {
 	return *c.HooksEnabled
 }
 
-// GetUse1MContext returns whether the 1M context window is enabled for Opus/Sonnet 4.6.
-// Defaults to true so users on Max/Team/Enterprise plans get the extended window by default.
-func (c *ClaudeSettings) GetUse1MContext() bool {
-	if c.Use1MContext == nil {
+// GetUse1MContextOpus returns whether 1M context is enabled for Opus 4.6.
+// Defaults to true (included in Max/Team/Enterprise plans).
+func (c *ClaudeSettings) GetUse1MContextOpus() bool {
+	if c.Use1MContextOpus == nil {
 		return true
 	}
-	return *c.Use1MContext
+	return *c.Use1MContextOpus
+}
+
+// GetUse1MContextSonnet returns whether 1M context is enabled for Sonnet 4.6.
+// Defaults to false because Sonnet 1M requires extra usage on Max plans.
+func (c *ClaudeSettings) GetUse1MContextSonnet() bool {
+	if c.Use1MContextSonnet == nil {
+		return false
+	}
+	return *c.Use1MContextSonnet
 }
 
 // GeminiSettings defines Gemini CLI configuration

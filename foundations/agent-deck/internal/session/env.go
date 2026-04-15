@@ -228,27 +228,31 @@ func (i *Instance) getToolInlineEnv() string {
 }
 
 // buildClaudeDerivedEnv returns shell exports that implement Claude-specific
-// runtime toggles derived from user config. Currently this covers the 1M
-// context window switch for Opus 4.6 / Sonnet 4.6.
-//
-// When [claude].use_1m_context is true (the default) we pin the Opus and
-// Sonnet aliases to the 4.6 models with the [1m] suffix, which enables the
-// 1M-token context window for every model selection in Claude Code —
-// including /model switches mid-session and opusplan.
-//
-// When false we set CLAUDE_CODE_DISABLE_1M_CONTEXT=1 so the /model picker
-// hides the 1M variants and Claude Code falls back to the standard 200K
-// window. Returns empty string for non-claude tools.
+// runtime toggles derived from user config. Each 4.6 model has its own 1M
+// toggle: Opus defaults on (included in Max/Team/Enterprise), Sonnet defaults
+// off (extra usage on Max). When a toggle is on we pin that alias to the [1m]
+// variant so /model switches and opusplan inherit the expanded window. When
+// both are off we export CLAUDE_CODE_DISABLE_1M_CONTEXT=1 so the picker hides
+// 1M variants entirely. Returns empty string for non-claude tools.
 func (i *Instance) buildClaudeDerivedEnv(config *UserConfig) string {
 	if i.Tool != "claude" || config == nil {
 		return ""
 	}
 
-	if config.Claude.GetUse1MContext() {
-		return "export ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-6[1m]' && " +
-			"export ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet-4-6[1m]'"
+	opus1M := config.Claude.GetUse1MContextOpus()
+	sonnet1M := config.Claude.GetUse1MContextSonnet()
+
+	var exports []string
+	if opus1M {
+		exports = append(exports, "export ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-6[1m]'")
 	}
-	return "export CLAUDE_CODE_DISABLE_1M_CONTEXT=1"
+	if sonnet1M {
+		exports = append(exports, "export ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet-4-6[1m]'")
+	}
+	if !opus1M && !sonnet1M {
+		exports = append(exports, "export CLAUDE_CODE_DISABLE_1M_CONTEXT=1")
+	}
+	return strings.Join(exports, " && ")
 }
 
 // getToolEnvFile returns the env_file setting for the current tool.
