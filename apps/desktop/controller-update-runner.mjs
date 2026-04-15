@@ -102,6 +102,15 @@ function requireInstallLayout(candidatePath) {
   )
 }
 
+function requireInstalledRuntimeAssets(candidatePath) {
+  return (
+    path.isAbsolute(candidatePath)
+    && existsSync(path.join(candidatePath, 'frontend', 'index.html'))
+    && existsSync(path.join(candidatePath, 'desktop', 'package.json'))
+    && existsSync(path.join(candidatePath, 'pixel_forge_cli.py'))
+  )
+}
+
 async function writeJsonFile(filePath, payload) {
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
@@ -497,6 +506,16 @@ async function main() {
   })
   await runShellCommand('bash ./install.sh', resolvedInstallRoot)
   await logInfo('Finished install.sh')
+
+  const installedRoot = path.resolve(
+    normalizeText(process.env.PIXEL_FORGE_INSTALL_DIR) || resolvedInstallRoot,
+  )
+  if (!requireInstalledRuntimeAssets(installedRoot)) {
+    throw new Error(
+      `Installed Pixel Forge runtime is incomplete after install.sh: ${installedRoot}`,
+    )
+  }
+  await logInfo(`Verified installed runtime assets at ${installedRoot}`)
 
   await setState({
     phase: 'restarting',

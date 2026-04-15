@@ -105,6 +105,24 @@ try {
     typeof updatedRuntimeInfo.installedAt === 'string' && updatedRuntimeInfo.installedAt.trim(),
     `Expected updated runtime-info installedAt, got ${JSON.stringify(updatedRuntimeInfo)}`,
   )
+  assert(
+    await pathExists(path.join(context.paths.installDir, 'frontend', 'index.html')),
+    'Updated install is missing frontend/index.html.',
+  )
+  assert(
+    await pathExists(path.join(context.paths.installDir, 'desktop', 'package.json')),
+    'Updated install is missing desktop/package.json.',
+  )
+  const updatedRootHtml = await fetchJson(`${context.baseUrl}/`)
+    .then(() => null)
+    .catch(async () => {
+      const result = await runProcess('curl', ['-fsS', `${context.baseUrl}/`], { cwd: repoRoot })
+      return result.stdout
+    })
+  assert(
+    typeof updatedRootHtml === 'string' && updatedRootHtml.includes('<!doctype html'),
+    'Updated runtime root did not return HTML.',
+  )
 
   await waitForCondition(
     async () => !(await pathExists(context.paths.pendingUpdatePath)),
