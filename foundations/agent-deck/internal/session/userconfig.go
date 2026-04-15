@@ -556,6 +556,13 @@ type ClaudeSettings struct {
 	// for instant, deterministic status updates instead of polling tmux content.
 	// Default: true (nil = use default true, set false to disable)
 	HooksEnabled *bool `toml:"hooks_enabled"`
+
+	// Use1MContext enables the 1M-token context window on Opus 4.6 / Sonnet 4.6
+	// by injecting ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m] and
+	// ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6[1m] into the session env.
+	// When false, injects CLAUDE_CODE_DISABLE_1M_CONTEXT=1 so the /model picker
+	// hides 1M variants entirely. Default: true (nil = use default true).
+	Use1MContext *bool `toml:"use_1m_context"`
 }
 
 // GetProfileClaudeConfigDir returns the profile-specific Claude config directory, if configured.
@@ -585,6 +592,15 @@ func (c *ClaudeSettings) GetHooksEnabled() bool {
 		return true
 	}
 	return *c.HooksEnabled
+}
+
+// GetUse1MContext returns whether the 1M context window is enabled for Opus/Sonnet 4.6.
+// Defaults to true so users on Max/Team/Enterprise plans get the extended window by default.
+func (c *ClaudeSettings) GetUse1MContext() bool {
+	if c.Use1MContext == nil {
+		return true
+	}
+	return *c.Use1MContext
 }
 
 // GeminiSettings defines Gemini CLI configuration

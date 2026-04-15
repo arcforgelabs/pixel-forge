@@ -2242,6 +2242,25 @@ func (h *Home) getInstanceByID(id string) *session.Instance {
 	return h.instanceByID[id]
 }
 
+// resolveClaudeContextWindowFor returns the effective context window in tokens
+// for a Claude instance, taking the active model from ClaudeOptions and the
+// global [claude].use_1m_context toggle into account. Falls back to 200K
+// when the instance is not a Claude session or config can't be loaded.
+func resolveClaudeContextWindowFor(inst *session.Instance) int {
+	if inst == nil || inst.Tool != "claude" {
+		return 0
+	}
+	var model string
+	if opts := inst.GetClaudeOptions(); opts != nil {
+		model = opts.Model
+	}
+	use1M := true
+	if cfg, _ := session.LoadUserConfig(); cfg != nil {
+		use1M = cfg.Claude.GetUse1MContext()
+	}
+	return session.ResolveClaudeContextWindow(model, use1M)
+}
+
 // pushUndoStack adds a deleted session to the undo stack (LIFO, capped at 10)
 func (h *Home) pushUndoStack(inst *session.Instance) {
 	entry := deletedSessionEntry{
@@ -2442,7 +2461,7 @@ func (h *Home) backgroundStatusUpdate() {
 		if cached == nil {
 			continue
 		}
-		if cached.ContextPercent(0) >= clearOnCompactThreshold {
+		if cached.ContextPercent(resolveClaudeContextWindowFor(inst)) >= clearOnCompactThreshold {
 			if tmuxSess := inst.GetTmuxSession(); tmuxSess != nil {
 				h.clearOnCompactSent[inst.ID] = time.Now()
 				conductorName := strings.TrimPrefix(inst.Title, "conductor-")
@@ -3772,6 +3791,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							h.currentGeminiAnalytics = nil
 							h.analyticsSessionID = inst.ID
 							h.analyticsPanel.SetAnalytics(cached)
+							h.analyticsPanel.SetContextWindow(resolveClaudeContextWindowFor(inst))
 						}
 					} else {
 						// Cache miss or expired - fetch new analytics
@@ -3889,6 +3909,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h.analyticsSessionID = msg.sessionID
 				// Update analytics panel with new data
 				h.analyticsPanel.SetAnalytics(msg.analytics)
+				h.analyticsPanel.SetContextWindow(resolveClaudeContextWindowFor(h.getInstanceByID(msg.sessionID)))
 			} else if msg.geminiAnalytics != nil {
 				// Store Gemini analytics in TTL cache
 				h.geminiAnalyticsCache[msg.sessionID] = msg.geminiAnalytics

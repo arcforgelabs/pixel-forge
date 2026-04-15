@@ -65,6 +65,11 @@ func (i *Instance) buildEnvSourceCommand() string {
 		sources = append(sources, inlineEnv)
 	}
 
+	// 6. Claude-specific derived env (1M context toggle, etc.)
+	if claudeEnv := i.buildClaudeDerivedEnv(config); claudeEnv != "" {
+		sources = append(sources, claudeEnv)
+	}
+
 	if len(sources) == 0 {
 		return ""
 	}
@@ -220,6 +225,30 @@ func (i *Instance) getToolInlineEnv() string {
 	}
 
 	return strings.Join(exports, " && ")
+}
+
+// buildClaudeDerivedEnv returns shell exports that implement Claude-specific
+// runtime toggles derived from user config. Currently this covers the 1M
+// context window switch for Opus 4.6 / Sonnet 4.6.
+//
+// When [claude].use_1m_context is true (the default) we pin the Opus and
+// Sonnet aliases to the 4.6 models with the [1m] suffix, which enables the
+// 1M-token context window for every model selection in Claude Code —
+// including /model switches mid-session and opusplan.
+//
+// When false we set CLAUDE_CODE_DISABLE_1M_CONTEXT=1 so the /model picker
+// hides the 1M variants and Claude Code falls back to the standard 200K
+// window. Returns empty string for non-claude tools.
+func (i *Instance) buildClaudeDerivedEnv(config *UserConfig) string {
+	if i.Tool != "claude" || config == nil {
+		return ""
+	}
+
+	if config.Claude.GetUse1MContext() {
+		return "export ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-6[1m]' && " +
+			"export ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet-4-6[1m]'"
+	}
+	return "export CLAUDE_CODE_DISABLE_1M_CONTEXT=1"
 }
 
 // getToolEnvFile returns the env_file setting for the current tool.

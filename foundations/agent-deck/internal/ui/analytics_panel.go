@@ -17,6 +17,10 @@ type AnalyticsPanel struct {
 	width           int
 	height          int
 	displaySettings session.AnalyticsDisplaySettings
+	// contextWindow is the effective context window in tokens for the active
+	// session's model (resolved via session.ResolveClaudeContextWindow).
+	// Zero falls back to the Claude default (200_000) inside renderContextBar.
+	contextWindow int
 }
 
 // NewAnalyticsPanel creates a new analytics panel
@@ -39,6 +43,14 @@ func (p *AnalyticsPanel) SetAnalytics(a *session.SessionAnalytics) {
 func (p *AnalyticsPanel) SetGeminiAnalytics(a *session.GeminiSessionAnalytics) {
 	p.geminiAnalytics = a
 	p.analytics = nil // Clear Claude analytics when setting Gemini
+}
+
+// SetContextWindow sets the effective context window (in tokens) for the
+// active Claude session's model. Callers should pass the resolved window
+// from session.ResolveClaudeContextWindow(model, use1MEnabled). Zero
+// preserves the default 200K fallback used by renderContextBar.
+func (p *AnalyticsPanel) SetContextWindow(tokens int) {
+	p.contextWindow = tokens
 }
 
 // SetSize sets the panel dimensions
@@ -342,7 +354,7 @@ func (p *AnalyticsPanel) renderContextBar() string {
 	labelStyle := lipgloss.NewStyle().Foreground(ColorText).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
 
-	percent := p.analytics.ContextPercent(0) // Use default 200k limit
+	percent := p.analytics.ContextPercent(p.contextWindow) // 0 falls back to 200k inside ContextPercent
 	if percent > 100 {
 		percent = 100
 	}

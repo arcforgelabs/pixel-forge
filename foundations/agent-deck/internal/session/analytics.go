@@ -76,6 +76,38 @@ func (a *SessionAnalytics) ContextPercent(modelLimit int) float64 {
 	return float64(a.CurrentContextTokens) / float64(modelLimit) * 100
 }
 
+// ResolveClaudeContextWindow returns the effective context window in tokens
+// for a Claude model string. Returns 1_000_000 when the model carries the
+// [1m] suffix (opus[1m], sonnet[1m], claude-opus-4-6[1m], …) OR when the
+// caller indicates the 1M toggle is on AND the model resolves to an Opus/
+// Sonnet 4.6 alias/ID. Falls back to 200_000.
+func ResolveClaudeContextWindow(model string, use1MEnabled bool) int {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return 200000
+	}
+	if strings.Contains(m, "[1m]") {
+		return 1_000_000
+	}
+	if use1MEnabled && isOpusOrSonnet46(m) {
+		return 1_000_000
+	}
+	return 200000
+}
+
+// isOpusOrSonnet46 matches the aliases and full model IDs that Claude Code
+// currently resolves to Opus 4.6 or Sonnet 4.6. The bare aliases "opus" and
+// "sonnet" always point to the latest version per Anthropic's docs, so they
+// count for 1M when the toggle is on.
+func isOpusOrSonnet46(m string) bool {
+	switch m {
+	case "opus", "sonnet", "best", "opusplan",
+		"claude-opus-4-6", "claude-sonnet-4-6":
+		return true
+	}
+	return false
+}
+
 // ModelPricing holds pricing per million tokens for a model
 type ModelPricing struct {
 	Input      float64
@@ -84,8 +116,13 @@ type ModelPricing struct {
 	CacheWrite float64
 }
 
-// modelPricing contains pricing per million tokens for each model (as of Jan 2025)
+// modelPricing contains pricing per million tokens for each model.
+// Opus 4.6 / Sonnet 4.6 rates verified against Anthropic's GA announcement
+// (March 2026): 1M context is charged at the standard per-token rate with
+// no premium beyond 200K.
 var modelPricing = map[string]ModelPricing{
+	"claude-opus-4-6":          {Input: 5.0, Output: 25.0, CacheRead: 0.50, CacheWrite: 6.25},
+	"claude-sonnet-4-6":        {Input: 3.0, Output: 15.0, CacheRead: 0.30, CacheWrite: 3.75},
 	"claude-sonnet-4-20250514": {Input: 3.0, Output: 15.0, CacheRead: 0.30, CacheWrite: 3.75},
 	"claude-opus-4-20250514":   {Input: 15.0, Output: 75.0, CacheRead: 1.50, CacheWrite: 18.75},
 	"claude-3-5-sonnet":        {Input: 3.0, Output: 15.0, CacheRead: 0.30, CacheWrite: 3.75},

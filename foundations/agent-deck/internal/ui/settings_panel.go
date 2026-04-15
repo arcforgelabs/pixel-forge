@@ -19,6 +19,7 @@ const (
 	SettingTheme SettingType = iota // Theme must be first (index 0)
 	SettingDefaultTool
 	SettingDangerousMode
+	SettingUse1MContext
 	SettingClaudeConfigDir
 	SettingGeminiYoloMode
 	SettingCodexYoloMode
@@ -37,7 +38,7 @@ const (
 )
 
 // Total number of navigable settings.
-const settingsCount = 18
+const settingsCount = 19
 
 // SettingsPanel displays and edits user configuration
 type SettingsPanel struct {
@@ -56,6 +57,7 @@ type SettingsPanel struct {
 	selectedTheme       int // 0=dark, 1=light, 2=system
 	selectedTool        int // index into toolNames/toolValues
 	dangerousMode       bool
+	use1MContext        bool
 	claudeConfigDir     string
 	claudeConfigIsScope bool // true = profile override, false = global [claude]
 	geminiYoloMode      bool
@@ -202,6 +204,7 @@ func (s *SettingsPanel) LoadConfig(config *session.UserConfig) {
 
 	// Claude settings
 	s.dangerousMode = config.Claude.GetDangerousMode()
+	s.use1MContext = config.Claude.GetUse1MContext()
 	s.claudeConfigDir = config.Claude.ConfigDir
 	s.claudeConfigIsScope = false
 	if s.profile != "" && config.Profiles != nil {
@@ -308,6 +311,8 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	// Claude settings
 	dangerousModeVal := s.dangerousMode
 	config.Claude.DangerousMode = &dangerousModeVal
+	use1MVal := s.use1MContext
+	config.Claude.Use1MContext = &use1MVal
 	if !s.claudeConfigIsScope {
 		config.Claude.ConfigDir = s.claudeConfigDir
 	}
@@ -491,6 +496,10 @@ func (s *SettingsPanel) toggleValue() bool {
 		s.dangerousMode = !s.dangerousMode
 		return true
 
+	case SettingUse1MContext:
+		s.use1MContext = !s.use1MContext
+		return true
+
 	case SettingGeminiYoloMode:
 		s.geminiYoloMode = !s.geminiYoloMode
 		return true
@@ -658,6 +667,13 @@ func (s *SettingsPanel) View() string {
 	// Dangerous mode checkbox
 	line = s.renderCheckbox("Dangerous mode", s.dangerousMode) + " - Skip permission prompts"
 	if s.cursor == int(SettingDangerousMode) {
+		line = highlightStyle.Render(line)
+	}
+	content.WriteString("  " + labelStyle.Render(line) + "\n")
+
+	// 1M context checkbox (Opus 4.6 / Sonnet 4.6)
+	line = s.renderCheckbox("1M context", s.use1MContext) + " - Opus 4.6 / Sonnet 4.6 extended window"
+	if s.cursor == int(SettingUse1MContext) {
 		line = highlightStyle.Render(line)
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
@@ -844,21 +860,22 @@ func (s *SettingsPanel) View() string {
 			4,  // SettingTheme
 			7,  // SettingDefaultTool
 			11, // SettingDangerousMode
-			12, // SettingClaudeConfigDir
-			15, // SettingGeminiYoloMode
-			18, // SettingCodexYoloMode
-			21, // SettingTmuxSetClipboard
-			24, // SettingCheckForUpdates
-			25, // SettingAutoUpdate
-			28, // SettingLogMaxSize
-			28, // SettingLogMaxLines (shares line with LogMaxSize)
-			29, // SettingRemoveOrphans
-			32, // SettingGlobalSearchEnabled
-			33, // SettingSearchTier
-			34, // SettingRecentDays
-			37, // SettingShowOutput
-			38, // SettingShowAnalytics
-			41, // SettingMaintenanceEnabled
+			12, // SettingUse1MContext
+			13, // SettingClaudeConfigDir
+			16, // SettingGeminiYoloMode
+			19, // SettingCodexYoloMode
+			22, // SettingTmuxSetClipboard
+			25, // SettingCheckForUpdates
+			26, // SettingAutoUpdate
+			29, // SettingLogMaxSize
+			29, // SettingLogMaxLines (shares line with LogMaxSize)
+			30, // SettingRemoveOrphans
+			33, // SettingGlobalSearchEnabled
+			34, // SettingSearchTier
+			35, // SettingRecentDays
+			38, // SettingShowOutput
+			39, // SettingShowAnalytics
+			42, // SettingMaintenanceEnabled
 		}
 		cursorLine := cursorToLine[s.cursor]
 
