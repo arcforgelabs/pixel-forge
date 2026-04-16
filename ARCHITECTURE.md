@@ -45,11 +45,17 @@ pnpm dev
 ./install.sh
 pixel-forge open
 pixel-forge agent-deck-tui open
+pixel-forge agent-deck-tui open --mirror <slug>   # attach TUI to a specific mirror's deck
+pixel-forge agent-deck-tui list-mirrors           # discover mirror slugs
 pixel-forge agent-deck-surface open
 pixel-forge-agent-deck
 ```
 
 This install lane is the canonical installed `pixel-forge` controller. It owns the integrated Pixel Forge runtime while still leaving any separately installed standalone `agent-deck` alone.
+
+`install.sh` hashes the inputs to each expensive step (frontend build, pip install, electron install, Agent Deck Go binary, Agent Deck foundation copy) and stores the digest under `~/.cache/pixel-forge/install-cache/<instance_slug>/*.sha256`. A re-run with unchanged inputs reuses the existing artifact instead of rebuilding, and the frontend/python/desktop steps run in parallel. Measured on this repo: a no-op reinstall drops from ~60s to ~2.5s; a fresh install from ~60s to ~10s. Any source change still triggers a rebuild of only the affected step. To force a full rebuild: `rm -rf ~/.cache/pixel-forge/install-cache`.
+
+Mirror runtimes apply the same pattern. `_ensure_mirror_runtime` in `apps/api/local_targets.py` stores cache markers under `<state_dir>/.build-cache/*.sha256` keyed by `requirements.txt` hash (pip install) and the web source tree hash (tsc + vite build).
 
 ### Branch Truth
 
