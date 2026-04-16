@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
 import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
-import { AlertTriangle, CheckCircle2, Copy, Download, FileText, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, CheckCircle2, Copy, Download, FileText, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { splitTextWithInlineAttachments } from './composer-attachments'
 import toast from 'react-hot-toast'
 
@@ -77,10 +77,15 @@ export function ChatMessages({
     isStreaming,
     currentStreamContent,
     currentStatusMessage,
+    activeThreadKey,
+    chatScrollPositions,
+    saveChatScrollPosition,
   } = useLiveEditorStore()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const scrollSaveRafRef = useRef<number | null>(null)
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
   const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
 
@@ -154,13 +159,36 @@ export function ChatMessages({
     return () => window.removeEventListener('keydown', handler)
   }, [lightboxImage, closeLightbox])
 
-  // Track whether user is pinned to bottom (within 100px threshold)
+  // Restore scroll position instantly when switching to a different thread
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const saved = chatScrollPositions[activeThreadKey]
+    if (saved !== undefined) {
+      container.scrollTop = saved
+    } else {
+      // No saved position → jump to bottom
+      container.scrollTop = container.scrollHeight
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThreadKey])
+
+  // Track whether user is pinned to bottom and save scroll position
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return
-    isAtBottomRef.current =
+    const atBottom =
       container.scrollTop + container.clientHeight >= container.scrollHeight - 100
-  }, [])
+    isAtBottomRef.current = atBottom
+    setIsAtBottom(atBottom)
+    // Throttle saves to one per animation frame
+    if (scrollSaveRafRef.current !== null) return
+    scrollSaveRafRef.current = requestAnimationFrame(() => {
+      scrollSaveRafRef.current = null
+      const c = scrollContainerRef.current
+      if (c) saveChatScrollPosition(activeThreadKey, c.scrollTop)
+    })
+  }, [activeThreadKey, saveChatScrollPosition])
 
   // Auto-scroll to bottom only when already pinned to bottom.
   // Use instant behavior when the element is hidden (display:none) so the browser
@@ -313,6 +341,7 @@ export function ChatMessages({
   ), [expandedPasteIds, togglePasteExpanded])
 
   return (
+    <div className="relative h-full min-h-0 min-w-0">
     <div
       ref={scrollContainerRef}
       className="h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain"
@@ -599,6 +628,25 @@ export function ChatMessages({
             </div>
           )}
         </div>
+      )}
+    </div>
+
+      {/* Scroll-to-bottom button */}
+      {!isAtBottom && (
+        <button
+          type="button"
+          onClick={() => {
+            scrollContainerRef.current?.scrollTo({
+              top: scrollContainerRef.current.scrollHeight,
+              behavior: 'smooth',
+            })
+          }}
+          className="absolute bottom-10 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-background/90 shadow-md ring-1 ring-border/50 text-muted-foreground transition-colors hover:text-foreground hover:ring-border"
+          aria-label="Scroll to bottom"
+          title="Scroll to bottom"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
       )}
     </div>
   )

@@ -329,6 +329,8 @@ interface SelectionPayload {
 interface LiveEditorChatStore extends ActiveThreadViewState {
   activeThreadKey: string
   threadStates: Record<string, ThreadChatState>
+  chatScrollPositions: Record<string, number>
+  saveChatScrollPosition: (threadKey: string, scrollTop: number) => void
 
   // NOTE: projectPath and persisted bound session metadata live in session-store.
   activateThread: (threadKey: string | null) => void
@@ -3295,6 +3297,16 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           kind: attachment.kind,
         })),
       }
+    },
+
+    chatScrollPositions: {},
+    saveChatScrollPosition: (threadKey: string, scrollTop: number) => {
+      set((state) => ({
+        chatScrollPositions: {
+          ...state.chatScrollPositions,
+          [threadKey]: scrollTop,
+        },
+      }))
     },
   }
 })
