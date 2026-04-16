@@ -342,6 +342,8 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   connect: (endpoint?: string) => void
   disconnect: (threadKey?: string | null) => void
   disconnectAll: () => void
+  openStatusBus: () => void
+  closeStatusBus: () => void
   sendMessage: (
     content: string,
     attachments?: ChatAttachment[],
@@ -1056,6 +1058,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   let observedThreadFromNow = false
   let observedThreadEventSource: EventSource | null = null
   const observedThreadHasPrimaryEvents = new Set<string>()
+  let statusBusEventSource: EventSource | null = null
+  let statusBusReconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   const resolveThreadSession = (threadKey: string | null | undefined) => {
     if (!threadKey) {
@@ -1581,6 +1585,73 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       observedThreadEventSource.close()
       observedThreadEventSource = null
     }
+  }
+
+  const openStatusBus = () => {
+    if (statusBusReconnectTimer) {
+      clearTimeout(statusBusReconnectTimer)
+      statusBusReconnectTimer = null
+    }
+    if (statusBusEventSource) return
+    if (typeof EventSource === 'undefined') return
+
+    const url = new URL(`${HTTP_BACKEND_URL}/api/events/status-bus`)
+    url.searchParams.set('from_now', '1')
+
+    const es = new EventSource(url.toString(), { withCredentials: true })
+    statusBusEventSource = es
+
+    const handleStatusBusEvent = (event: Event) => {
+      try {
+        const messageEvent = event as MessageEvent<string>
+        if (typeof messageEvent.data !== 'string') return
+        const payload = JSON.parse(messageEvent.data) as {
+          chat_id?: string | null
+          thread_id?: string | null
+          event_type?: string
+        }
+        const chatId = (payload.chat_id || payload.thread_id || '').trim()
+        if (!chatId) return
+        const isObservedStreaming = event.type === 'turn_started'
+        set((state) => {
+          const threadState = state.threadStates[chatId]
+          if (!threadState) return state
+          if (threadState.isObservedStreaming === isObservedStreaming) return state
+          return {
+            threadStates: {
+              ...state.threadStates,
+              [chatId]: { ...threadState, isObservedStreaming },
+            },
+          }
+        })
+      } catch (error) {
+        console.error('[status-bus] Failed to parse event:', error)
+      }
+    }
+
+    for (const eventType of ['turn_started', 'turn_completed', 'turn_failed']) {
+      es.addEventListener(eventType, handleStatusBusEvent as EventListener)
+    }
+
+    es.onerror = () => {
+      if (statusBusEventSource !== es) return
+      statusBusEventSource = null
+      es.close()
+      statusBusReconnectTimer = setTimeout(() => {
+        statusBusReconnectTimer = null
+        openStatusBus()
+      }, 3_000)
+    }
+  }
+
+  const closeStatusBus = () => {
+    if (statusBusReconnectTimer) {
+      clearTimeout(statusBusReconnectTimer)
+      statusBusReconnectTimer = null
+    }
+    const es = statusBusEventSource
+    statusBusEventSource = null
+    es?.close()
   }
 
   const startObservedAgentDeckActivityStream = (
@@ -2485,7 +2556,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       )
     },
 
+    openStatusBus,
+    closeStatusBus,
+
     disconnectAll: () => {
+      closeStatusBus()
       stopObservedThreadStreaming()
       const currentThreadStates = get().threadStates
       for (const threadKey of Object.keys(currentThreadStates)) {

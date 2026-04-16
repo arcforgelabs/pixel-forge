@@ -591,6 +591,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const {
     connect,
     disconnectAll,
+    openStatusBus,
     activeThreadKey,
     activateThread,
     hydrateProjectThreads,
@@ -846,8 +847,9 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
 
   useEffect(() => {
     connect()
+    openStatusBus()
     return () => disconnectAll()
-  }, [connect, disconnectAll])
+  }, [connect, disconnectAll, openStatusBus])
 
   useEffect(() => {
     const flushActiveThreadState = () => {

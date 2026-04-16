@@ -173,6 +173,49 @@ def _latest_activity_payload(
     return payload if isinstance(payload, dict) else None
 
 
+STATUS_BUS_EVENT_TYPES = frozenset({"turn_started", "turn_completed", "turn_failed"})
+
+
+def list_status_bus_events(
+    *,
+    after_id: int = 0,
+    limit: int = 200,
+) -> list[WorkstationEventRecord]:
+    event_types = sorted(STATUS_BUS_EVENT_TYPES)
+    placeholders = ",".join("?" for _ in event_types)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, project_path, chat_id, agent_deck_session_id, event_type, payload_json, created_at
+            FROM workstation_events
+            WHERE id > ?
+              AND event_type IN ({placeholders})
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (max(after_id, 0), *event_types, max(limit, 1)),
+        ).fetchall()
+    return [_row_to_event_record(row) for row in rows]
+
+
+def latest_status_bus_event_id() -> int:
+    event_types = sorted(STATUS_BUS_EVENT_TYPES)
+    placeholders = ",".join("?" for _ in event_types)
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT COALESCE(MAX(id), 0) AS latest_id
+            FROM workstation_events
+            WHERE event_type IN ({placeholders})
+            """,
+            tuple(event_types),
+        ).fetchone()
+    if row is None:
+        return 0
+    value = row["latest_id"]
+    return int(value) if isinstance(value, int) else 0
+
+
 def list_workstation_events(
     project_path: str,
     chat_id: str,

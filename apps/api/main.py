@@ -121,8 +121,10 @@ from workstation_events import (
     chat_has_typed_turn_events,
     chat_has_primary_workstation_events,
     get_chat_activity_snapshot,
+    latest_status_bus_event_id,
     latest_workstation_event,
     latest_workstation_event_id,
+    list_status_bus_events,
     list_workstation_events,
     sync_chat_activity_event,
 )
@@ -1652,6 +1654,45 @@ async def stream_project_chat_events(
                 )
                 yield f"id: {event.id}\nevent: {event.event_type}\ndata: {payload}\n\n"
 
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/events/status-bus")
+async def stream_status_bus(
+    request: Request,
+    from_now: bool = False,
+):
+    async def event_stream():
+        last_event_id = latest_status_bus_event_id() if from_now else 0
+        while True:
+            if await request.is_disconnected():
+                break
+            events = list_status_bus_events(after_id=last_event_id)
+            if not events:
+                yield ": keepalive\n\n"
+                await asyncio.sleep(1.0)
+                continue
+            for event in events:
+                last_event_id = max(last_event_id, event.id)
+                payload = json.dumps(
+                    {
+                        "id": event.id,
+                        "event_type": event.event_type,
+                        "chat_id": event.chat_id,
+                        **event.payload,
+                    }
+                )
+                yield f"id: {event.id}\nevent: {event.event_type}\ndata: {payload}\n\n"
             await asyncio.sleep(0.25)
 
     return StreamingResponse(
