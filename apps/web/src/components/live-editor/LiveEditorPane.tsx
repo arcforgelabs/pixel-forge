@@ -2840,11 +2840,11 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
           className="flex h-full flex-col overflow-hidden"
         >
           <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
-            <TabsTrigger value="chat" className="gap-1.5 text-xs">
+            <TabsTrigger value="chat" className="gap-1.5 text-xs hover:bg-muted/40 hover:text-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
               <MessageSquare className="h-3.5 w-3.5" />
               Chat
             </TabsTrigger>
-            <TabsTrigger value="elements" className="gap-1.5 text-xs">
+            <TabsTrigger value="elements" className="gap-1.5 text-xs hover:bg-muted/40 hover:text-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
               <Layers className="h-3.5 w-3.5" />
               Elements
               {selectedElements.length > 0 && (
