@@ -30,7 +30,7 @@ export function ModeTabBar() {
     || null;
 
   return (
-    <div className="flex items-center border-b border-border/50 bg-card/40 backdrop-blur-sm px-2 py-3">
+    <div className="flex items-center border-b border-transparent bg-card/50 px-2 py-3">
       {/* Sidebar toggle — always in DOM to keep header height consistent */}
       <button
         onClick={toggleSettingsSidebar}

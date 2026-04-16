@@ -2796,7 +2796,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const viewportFrameClassName =
     viewportMode === 'phone'
       ? 'h-full overflow-hidden rounded-[28px] border border-border bg-white shadow-2xl'
-      : 'h-full overflow-hidden rounded-xl border border-border bg-white shadow-sm'
+      : 'h-full overflow-hidden rounded-xl border border-border bg-white shadow-xl'
 
   const viewportModes: {
     mode: ViewportMode
@@ -2835,13 +2835,13 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
 
   return (
     <div className="flex h-full overflow-hidden">
-      <div className="flex basis-1/3 min-w-[300px] flex-shrink-0 flex-col overflow-hidden border-r border-border bg-card/50">
+      <div className="flex basis-1/3 min-w-[300px] flex-shrink-0 flex-col overflow-hidden border-r border-transparent bg-card/50">
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value === 'elements' ? 'elements' : 'chat')}
           className="flex h-full flex-col overflow-hidden"
         >
-          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 flex-shrink-0 bg-background/50">
+          <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 gap-1 flex-shrink-0 bg-background/50">
             <TabsTrigger value="chat" className="gap-1.5 text-xs hover:bg-muted/40 hover:text-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
               <MessageSquare className="h-3.5 w-3.5" />
               Chat
@@ -2893,7 +2893,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="border-b border-border bg-card/60 backdrop-blur-sm">
+        <div className="border-b border-transparent bg-card/50">
           <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
             {previewTabs.map((tab, index) => (
               <div
@@ -2951,7 +2951,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
             </Button>
           </div>
 
-          <div className="flex flex-wrap items-start gap-1.5 border-t border-border/50 px-3 py-1.5">
+          <div className="flex flex-wrap items-start gap-1.5 border-t border-transparent px-3 py-1.5">
             {/* Back / Forward navigation */}
             <div className="flex gap-0.5">
               <Button

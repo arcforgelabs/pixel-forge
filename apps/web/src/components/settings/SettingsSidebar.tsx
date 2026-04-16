@@ -1189,7 +1189,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-border/40 px-3 py-3">
+          <div className="flex items-center justify-between border-b border-transparent px-3 py-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold tracking-tight">Pixel Forge</span>
             </div>
@@ -1451,13 +1451,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 });
                               })}
 
-                              {!isLoadingProjectChats
-                                && chats.length === 0
-                                && (
-                                <span className="px-2 py-1 text-[10px] text-muted-foreground">
-                                  No chats yet
-                                </span>
-                              )}
 
                               <button
                                 onClick={() => {
@@ -1514,7 +1507,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           <div className="flex-1" />
 
           {/* Settings button at bottom — opens full-page settings */}
-          <div className="border-t border-border/30 px-2 py-2">
+          <div className="border-t border-transparent px-2 py-2">
             <button
               onClick={() => setViewingSettings(!viewingSettings)}
               aria-pressed={viewingSettings}

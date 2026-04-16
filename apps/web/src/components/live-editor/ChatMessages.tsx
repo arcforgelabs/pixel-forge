@@ -80,6 +80,7 @@ export function ChatMessages({
   } = useLiveEditorStore()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const isAtBottomRef = useRef(true)
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
   const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
 
@@ -153,15 +154,26 @@ export function ChatMessages({
     return () => window.removeEventListener('keydown', handler)
   }, [lightboxImage, closeLightbox])
 
-  // Auto-scroll to bottom when messages change
+  // Track whether user is pinned to bottom (within 100px threshold)
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    isAtBottomRef.current =
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 100
+  }, [])
+
+  // Auto-scroll to bottom only when already pinned to bottom.
+  // Use instant behavior when the element is hidden (display:none) so the browser
+  // doesn't queue a smooth scroll that plays visually when the tab is reopened.
   useEffect(() => {
     const container = scrollContainerRef.current
-    if (!container) {
+    if (!container || !isAtBottomRef.current) {
       return
     }
+    const isVisible = container.offsetParent !== null
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: 'smooth',
+      behavior: isVisible ? 'smooth' : 'instant',
     })
   }, [messages, currentStreamContent])
 
@@ -304,6 +316,8 @@ export function ChatMessages({
     <div
       ref={scrollContainerRef}
       className="h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain"
+      style={{ maskImage: 'linear-gradient(transparent, black 36px, black calc(100% - 36px), transparent)' }}
+      onScroll={handleScroll}
       onWheelCapture={(event) => {
         event.stopPropagation()
       }}
