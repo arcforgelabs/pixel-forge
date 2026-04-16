@@ -1018,51 +1018,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     return (
       <div
         key={item.key}
-        className="group/chat-row flex items-center gap-1 rounded-md"
+        className={`
+          group/chat-row flex items-center gap-1 rounded-md transition-colors duration-100
+          ${item.isActive
+            ? "bg-primary/10 text-primary"
+            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          }
+        `}
       >
         <button
           onClick={item.onSelect}
-          className={`
-            flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs
-            transition-colors duration-100
-            ${item.isActive
-              ? "bg-primary/10 text-primary"
-              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-            }
-          `}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs"
           title={item.label}
         >
           <MessageSquare className="h-3 w-3 flex-shrink-0" />
           <span className="truncate flex-1 text-left">{item.label}</span>
-          {(() => {
-            const dotStatus: "thinking" | "error" | "ready" | null = item.isStreaming
-              ? "thinking"
-              : item.hasError
-                ? "error"
-                : item.isReady
-                  ? "ready"
-                  : null;
-            if (!dotStatus) return null;
-            const dotClass =
-              dotStatus === "thinking"
-                ? "bg-amber-400 animate-pulse"
-                : dotStatus === "error"
-                  ? "bg-red-500"
-                  : "bg-emerald-500";
-            const dotTitle =
-              dotStatus === "thinking"
-                ? "Thinking"
-                : dotStatus === "error"
-                  ? "Error"
-                  : "Ready";
-            return (
-              <span
-                className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${dotClass}`}
-                aria-label={dotTitle}
-                title={dotTitle}
-              />
-            );
-          })()}
         </button>
 
         <Popover
@@ -1122,6 +1092,38 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
             </button>
           </PopoverContent>
         </Popover>
+
+        {(() => {
+          const dotStatus: "thinking" | "error" | "ready" | null = item.isStreaming
+            ? "thinking"
+            : item.hasError
+              ? "error"
+              : item.isReady
+                ? "ready"
+                : null;
+          if (!dotStatus) return null;
+          const dotClass =
+            dotStatus === "thinking"
+              ? "bg-amber-400 animate-pulse"
+              : dotStatus === "error"
+                ? "bg-red-500"
+                : "bg-emerald-500";
+          const dotTitle =
+            dotStatus === "thinking"
+              ? "Thinking"
+              : dotStatus === "error"
+                ? "Error"
+                : "Ready";
+          return (
+            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${dotClass}`}
+                aria-label={dotTitle}
+                title={dotTitle}
+              />
+            </span>
+          );
+        })()}
       </div>
     );
   }
@@ -1270,7 +1272,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                       return (
                         <div key={project.path}>
-                          <div className="group/project-row flex items-center gap-1">
+                          <div
+                            className={`
+                              group/project-row flex items-center gap-1 rounded-md transition-colors duration-100
+                              ${isActive
+                                ? "bg-primary/10 text-primary"
+                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                              }
+                            `}
+                          >
                             <button
                               onClick={() => {
                                 if (isActive) {
@@ -1278,14 +1288,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 }
                                 void setProject({ path: project.path });
                               }}
-                              className={`
-                                flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium
-                                transition-colors duration-100
-                                ${isActive
-                                  ? "bg-primary/10 text-primary"
-                                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                                }
-                              `}
+                              className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium"
                               title={project.path}
                             >
                               <span className="truncate flex-1 text-left">{project.name}</span>
@@ -1405,7 +1408,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   ? getThreadStatus(claimedThread.threadId)
                                   : draftThreadKey
                                     ? getThreadStatus(draftThreadKey)
-                                    : { isStreaming: false, connected: false };
+                                    : { isStreaming: false, connected: false, isObservedStreaming: false };
                                 const isActiveChat = chat.threadId
                                   ? liveEditorSession?.threadId === chat.threadId
                                   : (
@@ -1420,8 +1423,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   threadId: chat.threadId,
                                   agentDeckSessionId: chat.agentDeckSessionId,
                                   isActive: isActiveChat,
-                                  isReady: Boolean(threadStatus?.connected) && !Boolean(threadStatus?.isStreaming),
-                                  isStreaming: Boolean(threadStatus?.isStreaming),
+                                  isReady: (claimedThread !== null || draftThreadKey !== null) && !Boolean(threadStatus?.isStreaming) && !Boolean(threadStatus?.isObservedStreaming),
+                                  isStreaming: Boolean(threadStatus?.isStreaming) || Boolean(threadStatus?.isObservedStreaming),
                                   lastActiveLabel: chat.lastActive
                                     ? formatRelativeTime(chat.lastActive)
                                     : null,
