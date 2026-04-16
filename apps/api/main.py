@@ -17,7 +17,7 @@ import re
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import uuid4
 
@@ -51,6 +51,7 @@ from agent_deck_surface import (
     read_agent_deck_surface_status,
     stop_agent_deck_surface,
 )
+import pixel_forge_cli as _pf_cli
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
@@ -1786,6 +1787,41 @@ async def start_agent_deck_surface():
 @app.delete("/api/agent-deck-surface")
 async def delete_agent_deck_surface():
     return {"surface": await asyncio.to_thread(stop_agent_deck_surface)}
+
+
+@app.post("/api/agent-deck-tui/open")
+async def open_agent_deck_tui():
+    def _spawn() -> dict[str, Any]:
+        env = _pf_cli._agent_deck_tui_exec_env(for_external_terminal=True)
+        command = _pf_cli._agent_deck_tui_terminal_command(
+            _pf_cli.agent_deck_command(),
+            env.get("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", _pf_cli.agent_deck_tui_title()),
+            _pf_cli.agent_deck_tui_wm_class(),
+        )
+        if command is None:
+            raise RuntimeError(
+                "No supported terminal emulator found for Agent Deck TUI. "
+                "Install ghostty, gnome-terminal, or x-terminal-emulator."
+            )
+        import subprocess as _subprocess
+        _subprocess.Popen(
+            command,
+            env=env,
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+            stdin=_subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {
+            "ok": True,
+            "home": env.get("PIXEL_FORGE_AGENT_DECK_HOME"),
+            "title": env.get("PIXEL_FORGE_AGENT_DECK_TUI_TITLE"),
+        }
+
+    try:
+        return await asyncio.to_thread(_spawn)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/controller-update")

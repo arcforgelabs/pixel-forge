@@ -336,6 +336,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
   const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
   const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
+  const [isOpeningAgentDeckTui, setIsOpeningAgentDeckTui] = useState(false);
   const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
   const [claude1MOpus, setClaude1MOpus] = useState(true);
   const [claude1MSonnet, setClaude1MSonnet] = useState(false);
@@ -594,6 +595,23 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       toast.error(message);
     } finally {
       setIsOpeningAgentDeckSurface(false);
+    }
+  }
+
+  async function handleOpenAgentDeckTui() {
+    try {
+      setIsOpeningAgentDeckTui(true);
+      await requestSidebarJson<{ ok: true }>(
+        "/api/agent-deck-tui/open",
+        { method: "POST" }
+      );
+      toast.success("Agent Deck TUI opening in a terminal window.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to open the Agent Deck TUI";
+      toast.error(message);
+    } finally {
+      setIsOpeningAgentDeckTui(false);
     }
   }
 
@@ -1844,6 +1862,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         Stop Surface
                       </Button>
                     )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleOpenAgentDeckTui()}
+                      disabled={isOpeningAgentDeckTui}
+                      className="gap-1.5"
+                      title="Open the terminal Agent Deck TUI for this runtime (mirror or installed)"
+                    >
+                      <Loader2 className={`h-3.5 w-3.5 ${isOpeningAgentDeckTui ? "animate-spin" : "hidden"}`} />
+                      Open Terminal TUI
+                    </Button>
                   </div>
                 </div>
 

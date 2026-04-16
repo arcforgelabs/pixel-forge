@@ -144,6 +144,48 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertEqual(env["AGENTDECK_DIR"], "/tmp/deck-home")
         self.assertEqual(env["AGENT_DECK_DIR"], "/tmp/deck-home")
 
+    def test_mirror_flag_points_agent_deck_env_at_instance_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            instance_slug = "pixel-forge-mirror-target-abc123"
+            instance_dir = Path(tmpdir) / "instances" / instance_slug
+            (instance_dir / "agent-deck").mkdir(parents=True, exist_ok=True)
+            (instance_dir / "runtime.json").write_text("{}", encoding="utf-8")
+
+            with patch.object(
+                pixel_forge_cli,
+                "default_shared_state_dir",
+                return_value=Path(tmpdir),
+            ), patch.dict("os.environ", {}, clear=True):
+                env = pixel_forge_cli._agent_deck_tui_exec_env(mirror_slug=instance_slug)
+
+        self.assertEqual(
+            env["PIXEL_FORGE_AGENT_DECK_HOME"], str(instance_dir / "agent-deck")
+        )
+        self.assertEqual(env["PIXEL_FORGE_DB_PATH"], str(instance_dir / "pixel-forge.db"))
+        self.assertEqual(env["PIXEL_FORGE_SHARED_STATE_DIR"], str(instance_dir))
+        self.assertIn("mirror abc123", env["PIXEL_FORGE_AGENT_DECK_TUI_TITLE"])
+
+    def test_mirror_flag_unknown_slug_errors_with_available_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            known_slug = "pixel-forge-mirror-target-known"
+            (Path(tmpdir) / "instances" / known_slug / "agent-deck").mkdir(
+                parents=True, exist_ok=True
+            )
+            (Path(tmpdir) / "instances" / known_slug / "runtime.json").write_text(
+                "{}", encoding="utf-8"
+            )
+
+            with patch.object(
+                pixel_forge_cli,
+                "default_shared_state_dir",
+                return_value=Path(tmpdir),
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    pixel_forge_cli._resolve_mirror_state_dir("does-not-exist")
+
+        self.assertIn("does-not-exist", str(ctx.exception))
+        self.assertIn(known_slug, str(ctx.exception))
+
     def test_preview_context_command_reads_stored_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             request_dir = Path(tmpdir) / ".pixel-forge" / "requests" / "request-1"

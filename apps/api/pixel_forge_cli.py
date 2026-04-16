@@ -35,6 +35,7 @@ from runtime_config import (
     url_host as runtime_url_host,
 )
 from runtime_version import read_runtime_info_for_root
+from state_root_migration import default_shared_state_dir
 from live_preview_context import read_live_preview_context_artifact
 from request_packs import (
     read_request_pack_manifest,
@@ -557,10 +558,52 @@ def _command_agent_deck_surface_open(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _agent_deck_tui_exec_env(*, for_external_terminal: bool = False) -> dict[str, str]:
+def _resolve_mirror_state_dir(slug: str) -> Path:
+    normalized = slug.strip()
+    if not normalized:
+        raise SystemExit("--mirror requires a non-empty instance slug")
+    candidate = default_shared_state_dir() / "instances" / normalized
+    if not candidate.is_dir():
+        available = _list_mirror_slugs()
+        hint = f" Available: {', '.join(available)}" if available else ""
+        raise SystemExit(f"Unknown Pixel Forge mirror slug: {normalized}.{hint}")
+    return candidate
+
+
+def _list_mirror_slugs() -> list[str]:
+    instances_root = default_shared_state_dir() / "instances"
+    if not instances_root.is_dir():
+        return []
+    return sorted(
+        child.name
+        for child in instances_root.iterdir()
+        if child.is_dir() and (child / "runtime.json").is_file()
+    )
+
+
+def _agent_deck_tui_exec_env(
+    *,
+    for_external_terminal: bool = False,
+    mirror_slug: str | None = None,
+) -> dict[str, str]:
+    mirror_state_dir: Path | None = None
+    if mirror_slug:
+        mirror_state_dir = _resolve_mirror_state_dir(mirror_slug)
+        os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = str(mirror_state_dir)
+        os.environ["PIXEL_FORGE_STATE_DIR"] = str(mirror_state_dir)
+        os.environ["PIXEL_FORGE_RUNTIME_DIR"] = str(mirror_state_dir / "runtime")
+        os.environ["PIXEL_FORGE_DB_PATH"] = str(mirror_state_dir / "pixel-forge.db")
+        os.environ["PIXEL_FORGE_AGENT_DECK_HOME"] = str(mirror_state_dir / "agent-deck")
+
     env = _base_env()
     env.update(agent_deck_env())
-    env.setdefault("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", agent_deck_tui_title())
+    if mirror_state_dir is not None:
+        short_slug = mirror_slug.split("-")[-1] if mirror_slug else ""
+        env["PIXEL_FORGE_AGENT_DECK_TUI_TITLE"] = (
+            f"{agent_deck_tui_title()} · mirror {short_slug}" if short_slug else agent_deck_tui_title()
+        )
+    else:
+        env.setdefault("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", agent_deck_tui_title())
     if for_external_terminal:
         env = _without_nested_agent_deck_session_env(env)
     return env
@@ -584,14 +627,40 @@ def _agent_deck_tui_terminal_command(
     return None
 
 
-def _command_agent_deck_tui_run(_args: argparse.Namespace) -> int:
-    _exec(agent_deck_command(), env=_agent_deck_tui_exec_env())
+def _command_agent_deck_tui_list_mirrors(_args: argparse.Namespace) -> int:
+    slugs = _list_mirror_slugs()
+    instances_root = default_shared_state_dir() / "instances"
+    payload: list[dict[str, Any]] = []
+    for slug in slugs:
+        metadata_path = instances_root / slug / "runtime.json"
+        entry: dict[str, Any] = {"slug": slug}
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            metadata = None
+        if isinstance(metadata, dict):
+            for key in ("project_path", "web_url", "runtime_kind", "api_port"):
+                if key in metadata:
+                    entry[key] = metadata[key]
+        payload.append(entry)
+    print(json.dumps({"mirrors": payload}, indent=2))
+    return 0
 
 
-def _command_agent_deck_tui_open(_args: argparse.Namespace) -> int:
+def _command_agent_deck_tui_run(args: argparse.Namespace) -> int:
+    mirror_slug = getattr(args, "mirror", None)
+    _exec(agent_deck_command(), env=_agent_deck_tui_exec_env(mirror_slug=mirror_slug))
+
+
+def _command_agent_deck_tui_open(args: argparse.Namespace) -> int:
+    mirror_slug = getattr(args, "mirror", None)
+    title = agent_deck_tui_title()
+    if mirror_slug:
+        short_slug = mirror_slug.split("-")[-1]
+        title = f"{title} · mirror {short_slug}" if short_slug else title
     command = _agent_deck_tui_terminal_command(
         agent_deck_command(),
-        agent_deck_tui_title(),
+        title,
         agent_deck_tui_wm_class(),
     )
     if command is None:
@@ -602,7 +671,7 @@ def _command_agent_deck_tui_open(_args: argparse.Namespace) -> int:
 
     subprocess.Popen(
         command,
-        env=_agent_deck_tui_exec_env(for_external_terminal=True),
+        env=_agent_deck_tui_exec_env(for_external_terminal=True, mirror_slug=mirror_slug),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
@@ -1058,7 +1127,19 @@ def build_parser() -> argparse.ArgumentParser:
         ("run", "Run the Agent Deck TUI in the current terminal", _command_agent_deck_tui_run),
     ):
         command = agent_deck_tui_subparsers.add_parser(command_name, help=help_text)
+        command.add_argument(
+            "--mirror",
+            default=None,
+            metavar="SLUG",
+            help="Attach to the Agent Deck backend of a specific mirror instance (e.g. pixel-forge-mirror-target-c4074c62)",
+        )
         command.set_defaults(handler=handler)
+
+    mirror_list = agent_deck_tui_subparsers.add_parser(
+        "list-mirrors",
+        help="List discoverable Pixel Forge mirror instance slugs",
+    )
+    mirror_list.set_defaults(handler=_command_agent_deck_tui_list_mirrors)
 
     agent_deck_surface = subparsers.add_parser(
         "agent-deck-surface",
