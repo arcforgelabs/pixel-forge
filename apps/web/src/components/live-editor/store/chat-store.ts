@@ -254,6 +254,7 @@ export interface ThreadChatState {
   projectPath: string | null
   messages: ChatMessage[]
   isStreaming: boolean
+  isObservedStreaming: boolean
   currentStreamContent: string
   pendingAssistantAttachments: ChatAttachment[]
   currentTool: ToolActivity | null
@@ -287,6 +288,7 @@ interface ActiveThreadViewState {
   projectPath: string | null
   messages: ChatMessage[]
   isStreaming: boolean
+  isObservedStreaming: boolean
   currentStreamContent: string
   pendingAssistantAttachments: ChatAttachment[]
   currentTool: ToolActivity | null
@@ -384,7 +386,7 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   getThreadState: (threadKey: string | null | undefined) => ThreadChatState
   getThreadStatus: (
     threadKey: string | null | undefined
-  ) => Pick<ThreadChatState, 'connected' | 'currentStatusMessage' | 'isStreaming'>
+  ) => Pick<ThreadChatState, 'connected' | 'currentStatusMessage' | 'isStreaming' | 'isObservedStreaming'>
   getSessionId: () => string | null
   getProjectPath: () => string | null
 }
@@ -523,6 +525,7 @@ function createEmptyThreadState(projectPath: string | null = getCurrentProjectPa
     projectPath,
     messages: [],
     isStreaming: false,
+    isObservedStreaming: false,
     currentStreamContent: '',
     pendingAssistantAttachments: [],
     currentTool: null,
@@ -798,6 +801,7 @@ function buildActiveThreadViewState(
     projectPath: threadState.projectPath,
     messages: threadState.messages,
     isStreaming: threadState.isStreaming,
+    isObservedStreaming: threadState.isObservedStreaming,
     currentStreamContent: threadState.currentStreamContent,
     pendingAssistantAttachments: threadState.pendingAssistantAttachments,
     currentTool: threadState.currentTool,
@@ -929,6 +933,7 @@ function resetThreadRuntimeState(
   return {
     ...threadState,
     isStreaming: false,
+    isObservedStreaming: false,
     currentStreamContent: '',
     pendingAssistantAttachments: [],
     currentTool: null,
@@ -1383,6 +1388,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           nextMessages = removeObservedMessage(nextMessages, failureMessageId)
           return {
             ...currentState,
+            isObservedStreaming: true,
             messages: upsertObservedMessage(nextMessages, {
               id: statusMessageId,
               role: 'system',
@@ -1536,6 +1542,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           }
           return {
             ...currentState,
+            isObservedStreaming: false,
             messages: nextMessages,
           }
         }
@@ -1546,6 +1553,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           const replayDraft = cloneReplayDraftSnapshot(findLastUserReplayDraft(nextMessages))
           return {
             ...currentState,
+            isObservedStreaming: false,
             messages: upsertObservedMessage(nextMessages, {
               id: failureMessageId,
               role: 'system',
@@ -2358,6 +2366,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         connected: threadState.connected,
         currentStatusMessage: threadState.currentStatusMessage,
         isStreaming: threadState.isStreaming,
+        isObservedStreaming: threadState.isObservedStreaming,
       }
     },
     getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
