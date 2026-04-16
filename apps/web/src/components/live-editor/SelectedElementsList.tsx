@@ -193,7 +193,7 @@ export function SelectedElementsList({
       </div>
 
       {selectedElements.length === 0 ? (
-        <div className="p-3">
+        <div className="flex flex-col items-center p-3 text-center">
           <Crosshair className="w-8 h-8 text-muted-foreground/50 mb-2" />
           <p className="text-sm text-muted-foreground">No elements selected</p>
           <p className="text-xs text-muted-foreground/60 mt-1">
