@@ -402,6 +402,55 @@ def _run_logged_shell(
         )
 
 
+_BUILD_CACHE_EXCLUDED_PARTS = frozenset(
+    {"node_modules", ".venv", "dist", "__pycache__", ".git", "frontend-dist"}
+)
+
+
+def _hash_paths(*paths: Path) -> str:
+    digest = hashlib.sha256()
+    collected: list[Path] = []
+    for root in paths:
+        if not root.exists():
+            continue
+        if root.is_file():
+            collected.append(root)
+            continue
+        for candidate in sorted(root.rglob("*")):
+            if not candidate.is_file():
+                continue
+            if any(part in _BUILD_CACHE_EXCLUDED_PARTS for part in candidate.parts):
+                continue
+            collected.append(candidate)
+    for file_path in sorted(collected):
+        digest.update(str(file_path).encode("utf-8", "replace"))
+        digest.update(b"\0")
+        try:
+            digest.update(file_path.read_bytes())
+        except OSError:
+            pass
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _cache_hit(cache_dir: Path, key: str, current: str) -> bool:
+    marker = cache_dir / f"{key}.sha256"
+    if not marker.is_file():
+        return False
+    try:
+        return marker.read_text(encoding="utf-8").strip() == current
+    except OSError:
+        return False
+
+
+def _cache_write(cache_dir: Path, key: str, value: str) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (cache_dir / f"{key}.sha256").write_text(value + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _ensure_mirror_runtime(
     *,
     project_path: str,
@@ -440,6 +489,7 @@ def _ensure_mirror_runtime(
         venv_python = venv_dir / "bin" / "python"
         frontend_dist = state_dir / "frontend-dist"
         frontend_dist.mkdir(parents=True, exist_ok=True)
+        build_cache_dir = state_dir / ".build-cache"
 
         build_env = _build_base_env()
         build_env.update(
@@ -461,18 +511,21 @@ def _ensure_mirror_runtime(
                 log_file=log_file,
             )
 
-        _run_logged_shell(
-            f"{shlex.quote(str(venv_python))} -m pip install -q --upgrade pip",
-            cwd=str(launch_source.root),
-            env=build_env,
-            log_file=log_file,
-        )
-        _run_logged_shell(
-            f"{shlex.quote(str(venv_python))} -m pip install -q -r {shlex.quote(str(launch_source.requirements_path))}",
-            cwd=str(launch_source.root),
-            env=build_env,
-            log_file=log_file,
-        )
+        python_hash = _hash_paths(launch_source.requirements_path)
+        if not _cache_hit(build_cache_dir, "python_deps", python_hash):
+            _run_logged_shell(
+                f"{shlex.quote(str(venv_python))} -m pip install -q --upgrade pip",
+                cwd=str(launch_source.root),
+                env=build_env,
+                log_file=log_file,
+            )
+            _run_logged_shell(
+                f"{shlex.quote(str(venv_python))} -m pip install -q -r {shlex.quote(str(launch_source.requirements_path))}",
+                cwd=str(launch_source.root),
+                env=build_env,
+                log_file=log_file,
+            )
+            _cache_write(build_cache_dir, "python_deps", python_hash)
 
         web_dir = launch_source.web_dir
         if not web_dir:
@@ -488,18 +541,32 @@ def _ensure_mirror_runtime(
                 log_file=log_file,
             )
 
-        _run_logged_shell(
-            "pnpm exec tsc --pretty false",
-            cwd=str(web_dir),
-            env=build_env,
-            log_file=log_file,
+        frontend_hash = _hash_paths(
+            web_dir / "src",
+            web_dir / "public",
+            web_dir / "package.json",
+            launch_source.root / "pnpm-lock.yaml",
+            web_dir / "tsconfig.json",
+            web_dir / "vite.config.ts",
+            web_dir / "index.html",
         )
-        _run_logged_shell(
-            f"pnpm exec vite build --emptyOutDir --outDir {shlex.quote(str(frontend_dist))}",
-            cwd=str(web_dir),
-            env=build_env,
-            log_file=log_file,
-        )
+        if (
+            not _cache_hit(build_cache_dir, "frontend", frontend_hash)
+            or not (frontend_dist / "index.html").is_file()
+        ):
+            _run_logged_shell(
+                "pnpm exec tsc --pretty false",
+                cwd=str(web_dir),
+                env=build_env,
+                log_file=log_file,
+            )
+            _run_logged_shell(
+                f"pnpm exec vite build --emptyOutDir --outDir {shlex.quote(str(frontend_dist))}",
+                cwd=str(web_dir),
+                env=build_env,
+                log_file=log_file,
+            )
+            _cache_write(build_cache_dir, "frontend", frontend_hash)
 
     api_env = _build_base_env()
     api_env.update(

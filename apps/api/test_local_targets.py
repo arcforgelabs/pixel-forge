@@ -11,6 +11,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import local_targets
 
 
+class BuildCacheHelperTest(unittest.TestCase):
+    def test_hash_paths_is_deterministic_and_detects_content_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "src").mkdir()
+            file_a = root / "src" / "a.txt"
+            file_a.write_text("alpha", encoding="utf-8")
+            file_b = root / "src" / "b.txt"
+            file_b.write_text("beta", encoding="utf-8")
+
+            h1 = local_targets._hash_paths(root / "src")
+            h2 = local_targets._hash_paths(root / "src")
+            self.assertEqual(h1, h2)
+
+            file_a.write_text("alpha-modified", encoding="utf-8")
+            h3 = local_targets._hash_paths(root / "src")
+            self.assertNotEqual(h1, h3)
+
+    def test_hash_paths_ignores_node_modules_and_dist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "src").mkdir()
+            (root / "src" / "a.txt").write_text("alpha", encoding="utf-8")
+
+            base = local_targets._hash_paths(root / "src")
+
+            (root / "src" / "node_modules").mkdir()
+            (root / "src" / "node_modules" / "huge.bin").write_text(
+                "ignored", encoding="utf-8"
+            )
+            (root / "src" / "dist").mkdir()
+            (root / "src" / "dist" / "out.js").write_text("ignored", encoding="utf-8")
+
+            self.assertEqual(local_targets._hash_paths(root / "src"), base)
+
+    def test_hash_paths_tolerates_missing_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            missing = root / "does-not-exist"
+            present = root / "present.txt"
+            present.write_text("hello", encoding="utf-8")
+
+            h = local_targets._hash_paths(missing, present)
+            self.assertIsInstance(h, str)
+            self.assertEqual(len(h), 64)
+
+    def test_cache_hit_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            self.assertFalse(local_targets._cache_hit(cache_dir, "frontend", "abc"))
+            local_targets._cache_write(cache_dir, "frontend", "abc")
+            self.assertTrue(local_targets._cache_hit(cache_dir, "frontend", "abc"))
+            self.assertFalse(local_targets._cache_hit(cache_dir, "frontend", "xyz"))
+
+
 class MirrorRuntimeIsolationTest(unittest.TestCase):
     def test_ensure_mirror_runtime_overrides_controller_state_and_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
