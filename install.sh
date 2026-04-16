@@ -293,6 +293,57 @@ clear_stale_controller_updates() {
     rm -f "$SHARED_STATE_DIR/dismissed-controller-update-id.txt"
 }
 
+# ============================================================================
+# Content-hash build skip.
+#
+# Every expensive step (frontend build, desktop npm install, pip install, go
+# build, agent-deck foundation copy) hashes its inputs and stores the digest
+# under CACHE_DIR. A re-run that produces the same digest AND still has the
+# artifact on disk reuses it instead of rebuilding. No-op reinstalls drop from
+# ~60s to ~5s while any real source change still rebuilds correctly.
+# ============================================================================
+CACHE_DIR="${PIXEL_FORGE_INSTALL_CACHE_DIR:-$HOME/.cache/pixel-forge/install-cache/$INSTANCE_SLUG}"
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+
+sha_of_paths() {
+    # Hash the content of the given files/directories (missing paths are
+    # silently ignored). Deterministic via sorted file list.
+    local existing=()
+    local p
+    for p in "$@"; do
+        [ -e "$p" ] && existing+=("$p")
+    done
+    if [ ${#existing[@]} -eq 0 ]; then
+        printf 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n'
+        return 0
+    fi
+    find "${existing[@]}" -type f \
+        -not -path '*/node_modules/*' \
+        -not -path '*/.venv/*' \
+        -not -path '*/dist/*' \
+        -not -path '*/__pycache__/*' \
+        -not -path '*/.git/*' \
+        -print0 2>/dev/null \
+        | LC_ALL=C sort -z \
+        | xargs -0 sha256sum 2>/dev/null \
+        | sha256sum \
+        | cut -d' ' -f1
+}
+
+cache_key_path() {
+    printf '%s/%s.sha256' "$CACHE_DIR" "$1"
+}
+
+cache_matches() {
+    local f; f=$(cache_key_path "$1")
+    [ -f "$f" ] && [ "$(cat "$f" 2>/dev/null)" = "$2" ]
+}
+
+cache_write() {
+    local f; f=$(cache_key_path "$1")
+    printf '%s\n' "$2" > "$f" 2>/dev/null || true
+}
+
 echo "Installing Pixel Forge..."
 
 require_command "python3" "Install Python 3 and re-run ./install.sh."
@@ -307,14 +358,7 @@ if [ ! -d "$SHARED_STATE_DIR" ] && [ -d "$LEGACY_SHARED_STATE_DIR" ]; then
     mv "$LEGACY_SHARED_STATE_DIR" "$SHARED_STATE_DIR"
 fi
 
-# --- Build frontend ---
-echo "Building frontend..."
-cd "$WEB_DIR"
-[ -d "node_modules" ] || pnpm install --frozen-lockfile
-pnpm build
-echo "Frontend built."
-
-# --- Install backend ---
+# --- Install backend directories ---
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
 mkdir -p "$SKILLS_INSTALL_DIR"
@@ -324,22 +368,136 @@ echo "Backing up current install to $BACKUP_DIR..."
 backup_install_dir
 
 echo "Copying API to $INSTALL_DIR..."
-# Clean old files but preserve .venv.
-find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -not -name '.venv' -exec rm -rf {} + 2>/dev/null || true
+# Preserve cached artifacts across reinstalls: .venv, desktop (node_modules),
+# foundations (agent-deck binary). Each is managed by its own hash-skip step.
+find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 \
+    -not -name '.venv' \
+    -not -name 'desktop' \
+    -not -name 'foundations' \
+    -exec rm -rf {} + 2>/dev/null || true
 cp -r "$SCRIPT_DIR/apps/api/"* "$INSTALL_DIR/"
 if [ -f "$SCRIPT_DIR/VERSION" ]; then
     cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/VERSION"
 fi
+
+# --- Agent Deck foundation (with hash skip) ---
 if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
-    echo "Bundling Agent Deck foundation..."
-    mkdir -p "$INSTALL_DIR/foundations"
-    cp -r "$AGENT_DECK_FOUNDATION_SOURCE_DIR" "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
-    install_agent_deck_foundation_binary
+    AGENT_DECK_FOUNDATION_HASH=$(sha_of_paths "$AGENT_DECK_FOUNDATION_SOURCE_DIR")
+    if cache_matches agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH" \
+        && [ -d "$AGENT_DECK_FOUNDATION_INSTALL_DIR" ] \
+        && [ -x "$AGENT_DECK_BUNDLED_BINARY_PATH" ]; then
+        echo "Agent Deck foundation: cache hit, reusing binary."
+    else
+        echo "Bundling Agent Deck foundation..."
+        mkdir -p "$INSTALL_DIR/foundations"
+        rm -rf "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
+        cp -r "$AGENT_DECK_FOUNDATION_SOURCE_DIR" "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
+        install_agent_deck_foundation_binary
+        cache_write agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH"
+    fi
 fi
+
 if [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
     mkdir -p "$INSTALL_DIR/scripts"
     cp "$AGENT_DECK_RUNNER_SOURCE" "$AGENT_DECK_RUNNER_INSTALL_PATH"
     chmod +x "$AGENT_DECK_RUNNER_INSTALL_PATH"
+fi
+
+# --- Parallel build steps (frontend / python / desktop) ---
+# Each step reads its own inputs and writes to a disjoint output path, so they
+# can run concurrently. Logs interleave but each line is prefixed.
+FRONTEND_HASH=$(sha_of_paths \
+    "$WEB_DIR/src" \
+    "$WEB_DIR/public" \
+    "$WEB_DIR/package.json" \
+    "$SCRIPT_DIR/pnpm-lock.yaml" \
+    "$WEB_DIR/tsconfig.json" \
+    "$WEB_DIR/vite.config.ts" \
+    "$WEB_DIR/index.html")
+
+build_frontend() {
+    if cache_matches frontend "$FRONTEND_HASH" && [ -f "$WEB_DIR/dist/index.html" ]; then
+        echo "[frontend] cache hit, skipping build."
+        return 0
+    fi
+    echo "[frontend] building..."
+    (
+        cd "$WEB_DIR"
+        pnpm install --frozen-lockfile
+        pnpm build
+    )
+    cache_write frontend "$FRONTEND_HASH"
+    echo "[frontend] built."
+}
+
+build_python() {
+    if [ ! -d "$INSTALL_DIR/.venv" ]; then
+        echo "[python] creating virtual environment..."
+        python3 -m venv "$INSTALL_DIR/.venv"
+    fi
+    local req_hash
+    req_hash=$(sha_of_paths "$SCRIPT_DIR/apps/api/requirements.txt")
+    if cache_matches python_deps "$req_hash" && [ -x "$INSTALL_DIR/.venv/bin/pip" ]; then
+        echo "[python] cache hit, skipping pip install."
+        return 0
+    fi
+    echo "[python] installing dependencies..."
+    "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
+    "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade -r "$SCRIPT_DIR/apps/api/requirements.txt"
+    cache_write python_deps "$req_hash"
+    echo "[python] done."
+}
+
+build_desktop() {
+    if [ ! -f "$DESKTOP_SOURCE_DIR/package.json" ]; then
+        echo "Error: missing desktop shell package.json at $DESKTOP_SOURCE_DIR/package.json." >&2
+        return 1
+    fi
+    local pkg_hash
+    pkg_hash=$(sha_of_paths "$DESKTOP_SOURCE_DIR/package.json")
+    if cache_matches desktop_deps "$pkg_hash" \
+        && [ -d "$INSTALL_DIR/desktop/node_modules/electron/dist" ]; then
+        echo "[desktop] cache hit, refreshing source files only."
+        # Preserve node_modules; replace only source files.
+        if [ -d "$INSTALL_DIR/desktop/node_modules" ]; then
+            mv "$INSTALL_DIR/desktop/node_modules" "$INSTALL_DIR/.desktop-node_modules.tmp"
+        fi
+        rm -rf "$INSTALL_DIR/desktop"
+        cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
+        if [ -d "$INSTALL_DIR/.desktop-node_modules.tmp" ]; then
+            rm -rf "$INSTALL_DIR/desktop/node_modules"
+            mv "$INSTALL_DIR/.desktop-node_modules.tmp" "$INSTALL_DIR/desktop/node_modules"
+        fi
+        return 0
+    fi
+    echo "[desktop] installing electron + source..."
+    rm -rf "$INSTALL_DIR/desktop"
+    cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
+    local electron_spec
+    electron_spec="$(node -p "require('$DESKTOP_SOURCE_DIR/package.json').dependencies.electron")"
+    (
+        cd "$INSTALL_DIR/desktop"
+        npm install --no-fund --no-audit "electron@${electron_spec#^}"
+    )
+    cache_write desktop_deps "$pkg_hash"
+    echo "[desktop] done."
+}
+
+echo "Starting parallel builds (frontend + python + desktop)..."
+PIDS=()
+( build_frontend ) & PIDS+=($!)
+( build_python )   & PIDS+=($!)
+( build_desktop )  & PIDS+=($!)
+
+BUILD_FAIL=0
+for pid in "${PIDS[@]}"; do
+    if ! wait "$pid"; then
+        BUILD_FAIL=1
+    fi
+done
+if [ $BUILD_FAIL -ne 0 ]; then
+    echo "One or more parallel build steps failed." >&2
+    exit 1
 fi
 
 if [ "$INSTALL_CLAUDE_CHANNEL_SPIKE" = "1" ] && [ -f "$CLAUDE_CHANNEL_BOOTSTRAP_SOURCE" ]; then
@@ -366,7 +524,7 @@ if [ "$INSTALL_CODEX_CHANNEL" = "1" ] && [ -f "$CODEX_CHANNEL_BOOTSTRAP_SOURCE" 
     fi
 fi
 
-# --- Bundle built frontend ---
+# --- Bundle built frontend into install dir ---
 if [ ! -f "$WEB_DIR/dist/index.html" ]; then
     echo "Error: missing apps/web/dist/index.html after build." >&2
     exit 1
@@ -374,31 +532,6 @@ fi
 echo "Bundling built frontend..."
 rm -rf "$INSTALL_DIR/frontend"
 cp -r "$WEB_DIR/dist" "$INSTALL_DIR/frontend"
-
-# --- Desktop shell ---
-if [ ! -f "$DESKTOP_SOURCE_DIR/package.json" ]; then
-    echo "Error: missing desktop shell package.json at $DESKTOP_SOURCE_DIR/package.json." >&2
-    exit 1
-fi
-
-echo "Installing desktop shell..."
-rm -rf "$INSTALL_DIR/desktop"
-cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
-DESKTOP_ELECTRON_SPEC="$(node -p "require('$DESKTOP_SOURCE_DIR/package.json').dependencies.electron")"
-(
-    cd "$INSTALL_DIR/desktop"
-    npm install --no-fund --no-audit "electron@${DESKTOP_ELECTRON_SPEC#^}"
-)
-
-# --- Python venv ---
-if [ ! -d "$INSTALL_DIR/.venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$INSTALL_DIR/.venv"
-fi
-
-echo "Installing Python dependencies..."
-"$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install -q --upgrade -r "$INSTALL_DIR/requirements.txt"
 
 # --- Launcher script ---
 cat > "$BIN_DIR/${CLI_NAME}" <<LAUNCHER

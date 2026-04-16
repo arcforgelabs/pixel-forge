@@ -177,6 +177,7 @@ interface ChatSidebarActionItem {
 
 interface ChatSidebarRow extends ChatSidebarActionItem {
   isActive: boolean;
+  isReady: boolean;
   isStreaming: boolean;
   hasError?: boolean;
   lastActiveLabel: string | null;
@@ -1025,7 +1026,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
             flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs
             transition-colors duration-100
             ${item.isActive
-              ? "text-primary"
+              ? "bg-primary/10 text-primary"
               : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
             }
           `}
@@ -1038,7 +1039,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
               ? "thinking"
               : item.hasError
                 ? "error"
-                : item.isActive
+                : item.isReady
                   ? "ready"
                   : null;
             if (!dotStatus) return null;
@@ -1404,7 +1405,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   ? getThreadStatus(claimedThread.threadId)
                                   : draftThreadKey
                                     ? getThreadStatus(draftThreadKey)
-                                    : { isStreaming: false };
+                                    : { isStreaming: false, connected: false };
                                 const isActiveChat = chat.threadId
                                   ? liveEditorSession?.threadId === chat.threadId
                                   : (
@@ -1419,6 +1420,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   threadId: chat.threadId,
                                   agentDeckSessionId: chat.agentDeckSessionId,
                                   isActive: isActiveChat,
+                                  isReady: Boolean(threadStatus?.connected) && !Boolean(threadStatus?.isStreaming),
                                   isStreaming: Boolean(threadStatus?.isStreaming),
                                   lastActiveLabel: chat.lastActive
                                     ? formatRelativeTime(chat.lastActive)
