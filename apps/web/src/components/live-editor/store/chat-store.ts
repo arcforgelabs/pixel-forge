@@ -2418,21 +2418,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     },
 
     hydrateProjectThreads: ({ projectSessions, activeThreadKey, previewUrl }) => {
-      for (const timer of threadPersistenceTimers.values()) {
-        clearTimeout(timer)
-      }
-      threadPersistenceTimers.clear()
-      stopObservedThreadStreaming()
-
       const currentThreadStates = get().threadStates
-      for (const threadKey of Object.keys(currentThreadStates)) {
-        closeThreadSocket(threadKey, true)
-      }
-
-      const nextThreadStates: Record<string, ThreadChatState> = {}
+      const nextThreadStates: Record<string, ThreadChatState> = { ...currentThreadStates }
       const preferredThreadKey = activeThreadKey?.trim() || projectSessions[0]?.threadId || null
 
       for (const session of projectSessions) {
+        if (nextThreadStates[session.threadId]) {
+          continue
+        }
         nextThreadStates[session.threadId] = createThreadStateFromSession(
           session,
           preferredThreadKey === session.threadId ? previewUrl : null
@@ -2451,6 +2444,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         (preferredThreadKey && nextThreadStates[preferredThreadKey] && preferredThreadKey)
         || Object.keys(nextThreadStates)[0]
         || createDraftThreadKey()
+
+      if (get().activeThreadKey !== nextActiveThreadKey && observedThreadKey && observedThreadKey !== nextActiveThreadKey) {
+        stopObservedThreadStreaming()
+      }
 
       set(createStoreState(nextActiveThreadKey, nextThreadStates))
       syncActiveThreadTargetSelection(nextActiveThreadKey)
