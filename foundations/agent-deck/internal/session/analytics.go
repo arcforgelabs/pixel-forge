@@ -109,12 +109,12 @@ const (
 	claudeFamilySonnet
 )
 
-// classifyClaudeModel maps an alias or model ID to a 4.6 family. Bare "opus"
-// and "sonnet" always point to the latest version per Anthropic's docs.
+// classifyClaudeModel maps an alias or model ID to a Claude family. Bare
+// "opus" and "sonnet" always point to the latest version per Anthropic's docs.
 // "opusplan" and "best" resolve to Opus + planning behavior.
 func classifyClaudeModel(m string) claudeFamily {
 	switch m {
-	case "opus", "best", "opusplan", "claude-opus-4-6":
+	case "opus", "best", "opusplan", "claude-opus-4-7", "claude-opus-4-6":
 		return claudeFamilyOpus
 	case "sonnet", "claude-sonnet-4-6":
 		return claudeFamilySonnet
@@ -131,10 +131,11 @@ type ModelPricing struct {
 }
 
 // modelPricing contains pricing per million tokens for each model.
-// Opus 4.6 / Sonnet 4.6 rates verified against Anthropic's GA announcement
-// (March 2026): 1M context is charged at the standard per-token rate with
-// no premium beyond 200K.
+// Opus 4.7 pricing is unchanged from Opus 4.6 per Anthropic's Apr 16, 2026
+// launch post. The 4.6 1M window remains charged at the standard per-token
+// rate with no premium beyond 200K.
 var modelPricing = map[string]ModelPricing{
+	"claude-opus-4-7":          {Input: 5.0, Output: 25.0, CacheRead: 0.50, CacheWrite: 6.25},
 	"claude-opus-4-6":          {Input: 5.0, Output: 25.0, CacheRead: 0.50, CacheWrite: 6.25},
 	"claude-sonnet-4-6":        {Input: 3.0, Output: 15.0, CacheRead: 0.30, CacheWrite: 3.75},
 	"claude-sonnet-4-20250514": {Input: 3.0, Output: 15.0, CacheRead: 0.30, CacheWrite: 3.75},

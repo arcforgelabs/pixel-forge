@@ -681,13 +681,13 @@ func (s *SettingsPanel) View() string {
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
 
 	// 1M context checkboxes (per-model)
-	line = s.renderCheckbox("1M context (Opus 4.6)", s.use1MContextOpus) + " - Included in Max/Team/Enterprise"
+	line = s.renderCheckbox("1M context (Opus 4.6 legacy)", s.use1MContextOpus) + " - Opus 4.7 is the default model"
 	if s.cursor == int(SettingUse1MContextOpus) {
 		line = highlightStyle.Render(line)
 	}
 	content.WriteString("  " + labelStyle.Render(line) + "\n")
 
-	line = s.renderCheckbox("1M context (Sonnet 4.6)", s.use1MContextSonnet) + " - Extra usage on Max"
+	line = s.renderCheckbox("1M context (Sonnet 4.6 legacy)", s.use1MContextSonnet) + " - Extra usage on Max"
 	if s.cursor == int(SettingUse1MContextSonnet) {
 		line = highlightStyle.Render(line)
 	}

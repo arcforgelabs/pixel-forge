@@ -23,6 +23,12 @@ CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
+CLAUDE_MODEL_ALIASES = {
+    "opus": DEFAULT_CLAUDE_MODEL,
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
 
 # Allowlists for agent model + thinking-effort overrides plumbed from the
 # Pixel Forge chat composer through to agent-deck launch. These values end
@@ -32,16 +38,29 @@ StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 # (treated as "use tool defaults") rather than forwarded to the tool and
 # causing a surprising failure.
 CLAUDE_MODEL_ALLOWLIST = frozenset({
-    "opus",
-    "sonnet",
-    "haiku",
+    DEFAULT_CLAUDE_MODEL,
     "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
     "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
 })
-CLAUDE_EFFORT_ALLOWLIST = frozenset({"low", "medium", "high", "max"})
+CLAUDE_EFFORT_ALLOWLIST = frozenset({"low", "medium", "high", "xhigh", "max"})
 CODEX_MODEL_ALLOWLIST = frozenset({"gpt-5.4", "gpt-5.3", "gpt-5.2"})
 CODEX_EFFORT_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+
+
+def _normalize_claude_model(model: str | None) -> str:
+    normalized = (model or "").strip()
+    normalized = CLAUDE_MODEL_ALIASES.get(normalized, normalized)
+    return normalized
+
+
+def _claude_effort_allowlist_for_model(model: str | None) -> frozenset[str]:
+    if _normalize_claude_model(model) == DEFAULT_CLAUDE_MODEL:
+        return frozenset({"low", "medium", "high", "xhigh", "max"})
+    return frozenset({"low", "medium", "high", "max"})
 
 
 def _resolve_agent_model_effort_args(
@@ -66,7 +85,8 @@ def _resolve_agent_model_effort_args(
 
     if tool == "claude":
         model_allowed = CLAUDE_MODEL_ALLOWLIST
-        effort_allowed = CLAUDE_EFFORT_ALLOWLIST
+        model = _normalize_claude_model(model)
+        effort_allowed = _claude_effort_allowlist_for_model(model)
     elif tool == "codex":
         model_allowed = CODEX_MODEL_ALLOWLIST
         effort_allowed = CODEX_EFFORT_ALLOWLIST

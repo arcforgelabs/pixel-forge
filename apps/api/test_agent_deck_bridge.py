@@ -29,6 +29,29 @@ def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionI
     )
 
 
+class AgentDeckBridgeModelEffortArgsTest(unittest.TestCase):
+    def test_claude_alias_normalizes_to_explicit_opus_47_and_keeps_xhigh(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "claude",
+            "opus",
+            "xhigh",
+        )
+
+        self.assertEqual(
+            args,
+            ["--model", "claude-opus-4-7", "--effort", "xhigh"],
+        )
+
+    def test_claude_xhigh_is_dropped_for_non_opus_47_models(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "claude",
+            "claude-opus-4-6",
+            "xhigh",
+        )
+
+        self.assertEqual(args, ["--model", "claude-opus-4-6"])
+
+
 class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
     async def test_detached_lane_launches_with_persisted_pixel_forge_title(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

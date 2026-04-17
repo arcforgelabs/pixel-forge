@@ -24,15 +24,23 @@ _DB_LOCK = threading.Lock()
 _DB_INITIALIZED = False
 DEFAULT_PROFILE_ID = "default"
 SAFE_THREAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
+DEFAULT_CLAUDE_THINKING = "xhigh"
+CLAUDE_MODEL_ALIASES = {
+    "opus": DEFAULT_CLAUDE_MODEL,
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
 CLAUDE_MODEL_ALLOWLIST = frozenset({
-    "opus",
-    "sonnet",
-    "haiku",
+    DEFAULT_CLAUDE_MODEL,
     "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
     "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
 })
-CLAUDE_THINKING_ALLOWLIST = frozenset({"low", "medium", "high", "max"})
+CLAUDE_THINKING_ALLOWLIST = frozenset({"low", "medium", "high", "xhigh", "max"})
 CODEX_MODEL_ALLOWLIST = frozenset({"gpt-5.4", "gpt-5.3", "gpt-5.2"})
 CODEX_THINKING_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
 
@@ -706,6 +714,25 @@ def _migrate_legacy_instance_state(conn: sqlite3.Connection) -> None:
         set_migration_marker(conn, marker_key)
 
 
+def _backfill_claude_opus_47_defaults(conn: sqlite3.Connection) -> None:
+    marker_key = "project-store:claude-opus-4-7-defaults-2026-04-17"
+    if has_migration_marker(conn, marker_key):
+        return
+
+    conn.execute(
+        """
+        UPDATE profile_state
+        SET claude_default_model = ?,
+            claude_default_thinking = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE COALESCE(TRIM(claude_default_model), '') = ''
+           OR COALESCE(TRIM(claude_default_thinking), '') = ''
+        """,
+        (DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
+    )
+    set_migration_marker(conn, marker_key)
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     global _DB_INITIALIZED
     if _DB_INITIALIZED:
@@ -935,6 +962,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        _backfill_claude_opus_47_defaults(conn)
         conn.commit()
         _promote_legacy_attached_draft_sessions(conn)
         # Migrate session bindings — use a subquery to pick only the most
@@ -991,10 +1019,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             """
             INSERT OR IGNORE INTO profile_state (
                 profile_id,
-                active_mode
-            ) VALUES (?, 'screenshot')
+                active_mode,
+                default_agent_type,
+                default_workspace_mode,
+                claude_default_model,
+                claude_default_thinking
+            ) VALUES (?, 'screenshot', 'claude', 'root', ?, ?)
             """,
-            (DEFAULT_PROFILE_ID,),
+            (DEFAULT_PROFILE_ID, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
         )
         conn.execute(
             """
@@ -1096,12 +1128,24 @@ def _normalize_origin_kind(value: object | None) -> str:
 
 def _normalize_claude_model(value: object | None) -> str | None:
     normalized = str(value or "").strip()
+    normalized = CLAUDE_MODEL_ALIASES.get(normalized, normalized)
     return normalized if normalized in CLAUDE_MODEL_ALLOWLIST else None
 
 
-def _normalize_claude_thinking(value: object | None) -> str | None:
+def _claude_thinking_allowlist_for_model(model: object | None) -> frozenset[str]:
+    normalized_model = _normalize_claude_model(model)
+    if normalized_model == DEFAULT_CLAUDE_MODEL:
+        return frozenset({"low", "medium", "high", "xhigh", "max"})
+    return frozenset({"low", "medium", "high", "max"})
+
+
+def _normalize_claude_thinking(
+    value: object | None,
+    model: object | None = None,
+) -> str | None:
     normalized = str(value or "").strip()
-    return normalized if normalized in CLAUDE_THINKING_ALLOWLIST else None
+    allowlist = _claude_thinking_allowlist_for_model(model)
+    return normalized if normalized in allowlist else None
 
 
 def _normalize_codex_model(value: object | None) -> str | None:
@@ -1432,7 +1476,10 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
         default_agent_type=_normalize_agent_type(row["default_agent_type"]),
         default_workspace_mode=_normalize_workspace_mode(row["default_workspace_mode"]),
         claude_default_model=_normalize_claude_model(row["claude_default_model"]),
-        claude_default_thinking=_normalize_claude_thinking(row["claude_default_thinking"]),
+        claude_default_thinking=_normalize_claude_thinking(
+            row["claude_default_thinking"],
+            row["claude_default_model"],
+        ),
         codex_default_model=_normalize_codex_model(row["codex_default_model"]),
         codex_default_thinking=_normalize_codex_thinking(row["codex_default_thinking"]),
         updated_at=row["updated_at"],
@@ -1943,10 +1990,12 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
                 profile_id,
                 active_mode,
                 default_agent_type,
-                default_workspace_mode
-            ) VALUES (?, 'screenshot', 'claude', 'root')
+                default_workspace_mode,
+                claude_default_model,
+                claude_default_thinking
+            ) VALUES (?, 'screenshot', 'claude', 'root', ?, ?)
             """,
-            (normalized_profile_id,),
+            (normalized_profile_id, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
         )
         conn.commit()
         row = conn.execute(
@@ -2023,7 +2072,10 @@ def upsert_profile_state(
     normalized_default_agent_type = _normalize_agent_type(default_agent_type)
     normalized_default_workspace_mode = _normalize_workspace_mode(default_workspace_mode)
     normalized_claude_default_model = _normalize_claude_model(claude_default_model)
-    normalized_claude_default_thinking = _normalize_claude_thinking(claude_default_thinking)
+    normalized_claude_default_thinking = _normalize_claude_thinking(
+        claude_default_thinking,
+        normalized_claude_default_model,
+    )
     normalized_codex_default_model = _normalize_codex_model(codex_default_model)
     normalized_codex_default_thinking = _normalize_codex_thinking(codex_default_thinking)
 

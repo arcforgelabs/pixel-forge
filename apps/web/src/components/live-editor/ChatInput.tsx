@@ -46,15 +46,34 @@ interface AgentModelOption {
   label: string
 }
 
-// Claude uses `--model opus|sonnet|haiku|...` (aliases resolve to latest).
-// 1M vs 200K for Opus/Sonnet 4.6 is controlled via the Claude Defaults
-// toggles in Profile Settings, not exposed as separate options here.
+const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-7'
+const CLAUDE_4_7_THINKING_OPTIONS: AgentModelOption[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra High' },
+  { value: 'max', label: 'Max' },
+]
+const CLAUDE_LEGACY_THINKING_OPTIONS: AgentModelOption[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'max', label: 'Max' },
+]
+
+// Claude now uses explicit versioned model ids so Pixel Forge can keep the
+// Opus 4.7 default stable even when Anthropic advances the moving aliases.
+// The 1M Opus/Sonnet toggles in Profile Settings remain a separate legacy 4.6
+// compatibility control and are not exposed as distinct model ids here.
 // Codex uses `-m gpt-5.x`.
 const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
   claude: [
-    { value: 'opus', label: 'Opus' },
-    { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' },
+    { value: 'claude-opus-4-7', label: 'Opus 4.7' },
+    { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+    { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+    { value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
+    { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+    { value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
   ],
   codex: [
     { value: 'gpt-5.4', label: 'GPT 5.4' },
@@ -63,15 +82,11 @@ const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
   ],
 }
 
-// Claude uses `--effort low|medium|high|max`.
+// Claude Opus 4.7 uses adaptive thinking with `--effort low|medium|high|xhigh|max`.
+// Earlier Claude models exposed here keep the previous effort set.
 // Codex uses `-c model_reasoning_effort=minimal|low|medium|high|xhigh`.
 const AGENT_THINKING_OPTIONS: Record<string, AgentModelOption[]> = {
-  claude: [
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'max', label: 'Max' },
-  ],
+  claude: CLAUDE_LEGACY_THINKING_OPTIONS,
   codex: [
     { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
@@ -88,7 +103,19 @@ function getAgentModelOptions(agentType: string | null | undefined): AgentModelO
   return AGENT_MODEL_OPTIONS[agentType] ?? []
 }
 
-function getAgentThinkingOptions(agentType: string | null | undefined): AgentModelOption[] {
+function getClaudeThinkingOptions(model: string | null | undefined): AgentModelOption[] {
+  return (model || DEFAULT_CLAUDE_MODEL) === DEFAULT_CLAUDE_MODEL
+    ? CLAUDE_4_7_THINKING_OPTIONS
+    : CLAUDE_LEGACY_THINKING_OPTIONS
+}
+
+function getAgentThinkingOptionsForModel(
+  agentType: string | null | undefined,
+  model: string | null | undefined,
+): AgentModelOption[] {
+  if (agentType === 'claude') {
+    return getClaudeThinkingOptions(model)
+  }
   if (!agentType) {
     return []
   }
@@ -109,9 +136,10 @@ function formatAgentModelLabel(
 
 function formatAgentThinkingLabel(
   agentType: string | null | undefined,
+  model: string | null | undefined,
   thinking: string | null,
 ): string {
-  const options = getAgentThinkingOptions(agentType)
+  const options = getAgentThinkingOptionsForModel(agentType, model)
   if (!thinking) {
     return options[0]?.label ?? 'Default thinking'
   }
@@ -210,9 +238,18 @@ export function ChatInput() {
     : null
   const hasAgentModelOptions = agentModelOptions.length > 0
   const modelSelectionDisabled = agentSelectionLocked || !hasAgentModelOptions
-  const agentThinkingOptions = getAgentThinkingOptions(effectiveAgentType)
+  const resolvedAgentModel = activeAgentModel ?? agentModelOptions[0]?.value ?? null
+  const agentThinkingOptions = getAgentThinkingOptionsForModel(
+    effectiveAgentType,
+    resolvedAgentModel,
+  )
   const activeAgentThinking = effectiveAgentType
     ? draftAgentThinking[effectiveAgentType] ?? defaultAgentThinking[effectiveAgentType] ?? null
+    : null
+  const resolvedAgentThinking = agentThinkingOptions.some(
+    (option) => option.value === activeAgentThinking,
+  )
+    ? activeAgentThinking
     : null
   const hasAgentThinkingOptions = agentThinkingOptions.length > 0
   const thinkingSelectionDisabled = agentSelectionLocked || !hasAgentThinkingOptions
@@ -327,7 +364,7 @@ export function ChatInput() {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
-    sendMessage(input.trim(), attachments, activeAgentModel, activeAgentThinking)
+    sendMessage(input.trim(), attachments, activeAgentModel, resolvedAgentThinking)
     setInput('')
     setAttachments([])
     resetAttachmentOrdinals()
@@ -874,13 +911,13 @@ export function ChatInput() {
             {effectiveAgentType && (
               <div
                 className="min-w-0 truncate text-[10px] leading-none text-muted-foreground/70"
-                title={`${formatAgentLabel(effectiveAgentType)} · ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)} · ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`}
+                title={`${formatAgentLabel(effectiveAgentType)} · ${formatAgentModelLabel(effectiveAgentType, activeAgentModel)} · ${formatAgentThinkingLabel(effectiveAgentType, resolvedAgentModel, resolvedAgentThinking)}`}
               >
                 {formatAgentLabel(effectiveAgentType)}
                 <span className="mx-1 text-muted-foreground/40">·</span>
                 {formatAgentModelLabel(effectiveAgentType, activeAgentModel)}
                 <span className="mx-1 text-muted-foreground/40">·</span>
-                {formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}
+                {formatAgentThinkingLabel(effectiveAgentType, resolvedAgentModel, resolvedAgentThinking)}
               </div>
             )}
           </div>
@@ -1070,10 +1107,10 @@ export function ChatInput() {
                   agentSelectionLocked
                     ? 'Thinking effort is locked for this live lane'
                     : hasAgentThinkingOptions
-                      ? `Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`
+                      ? `Thinking: ${formatAgentThinkingLabel(effectiveAgentType, resolvedAgentModel, resolvedAgentThinking)}`
                       : `No thinking levels configured for ${formatAgentLabel(effectiveAgentType)}`
                 }
-                aria-label={`Thinking: ${formatAgentThinkingLabel(effectiveAgentType, activeAgentThinking)}`}
+                aria-label={`Thinking: ${formatAgentThinkingLabel(effectiveAgentType, resolvedAgentModel, resolvedAgentThinking)}`}
                 aria-expanded={showThinkingPicker}
               >
                 <Brain className="h-3.5 w-3.5" />
@@ -1081,7 +1118,7 @@ export function ChatInput() {
               {showThinkingPicker && hasAgentThinkingOptions && (
                 <div className="absolute bottom-full right-0 mb-1 min-w-[8rem] w-max max-w-[16rem] rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md py-1 z-50">
                   {agentThinkingOptions.map((option, index) => {
-                    const isSelected = activeAgentThinking === option.value || (activeAgentThinking === null && index === 0)
+                    const isSelected = resolvedAgentThinking === option.value || (resolvedAgentThinking === null && index === 0)
                     return (
                       <button
                         key={option.value}

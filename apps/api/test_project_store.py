@@ -251,8 +251,8 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(initial.active_live_editor_thread_id)
         self.assertEqual(initial.default_agent_type, "claude")
         self.assertEqual(initial.default_workspace_mode, "root")
-        self.assertIsNone(initial.claude_default_model)
-        self.assertIsNone(initial.claude_default_thinking)
+        self.assertEqual(initial.claude_default_model, "claude-opus-4-7")
+        self.assertEqual(initial.claude_default_thinking, "xhigh")
         self.assertIsNone(initial.codex_default_model)
         self.assertIsNone(initial.codex_default_thinking)
 
@@ -275,10 +275,19 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")
         self.assertEqual(saved.default_workspace_mode, "clone")
-        self.assertEqual(saved.claude_default_model, "sonnet")
+        self.assertEqual(saved.claude_default_model, "claude-sonnet-4-6")
         self.assertEqual(saved.claude_default_thinking, "high")
         self.assertEqual(saved.codex_default_model, "gpt-5.4")
         self.assertEqual(saved.codex_default_thinking, "xhigh")
+
+    def test_claude_profile_defaults_reject_effort_levels_unsupported_by_selected_model(self) -> None:
+        saved = project_store.upsert_profile_state(
+            claude_default_model="claude-opus-4-6",
+            claude_default_thinking="xhigh",
+        )
+
+        self.assertEqual(saved.claude_default_model, "claude-opus-4-6")
+        self.assertIsNone(saved.claude_default_thinking)
 
     def test_legacy_instance_session_rows_import_once_and_do_not_resurrect_after_delete(self) -> None:
         project_path = Path(self.tempdir.name) / "project"

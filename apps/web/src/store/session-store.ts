@@ -1227,8 +1227,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Agent selection
   defaultAgentType: "claude",
-  defaultAgentModels: { claude: null, codex: null },
-  defaultAgentThinking: { claude: null, codex: null },
+  defaultAgentModels: { claude: "claude-opus-4-7", codex: null },
+  defaultAgentThinking: { claude: "xhigh", codex: null },
   setDefaultAgentType: (agentType: string) => {
     const normalizedAgentType = normalizeAgentType(agentType);
     set({ defaultAgentType: normalizedAgentType });

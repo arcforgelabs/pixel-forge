@@ -111,9 +111,12 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
 
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   claude: [
-    { value: "opus", label: "Opus" },
-    { value: "sonnet", label: "Sonnet" },
-    { value: "haiku", label: "Haiku" },
+    { value: "claude-opus-4-7", label: "Opus 4.7" },
+    { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { value: "claude-opus-4-6", label: "Opus 4.6" },
+    { value: "claude-opus-4-5-20251101", label: "Opus 4.5" },
+    { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+    { value: "claude-sonnet-4-5-20250929", label: "Sonnet 4.5" },
   ],
   codex: [
     { value: "gpt-5.4", label: "GPT 5.4" },
@@ -122,13 +125,23 @@ const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = 
   ],
 };
 
+const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
+const CLAUDE_4_7_THINKING_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra High" },
+  { value: "max", label: "Max" },
+] as const;
+const CLAUDE_LEGACY_THINKING_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+] as const;
+
 const AGENT_THINKING_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-  ],
+  claude: [...CLAUDE_LEGACY_THINKING_OPTIONS],
   codex: [
     { value: "minimal", label: "Minimal" },
     { value: "low", label: "Low" },
@@ -137,6 +150,12 @@ const AGENT_THINKING_OPTIONS: Record<string, { value: string; label: string }[]>
     { value: "xhigh", label: "Extra High" },
   ],
 };
+
+function getClaudeThinkingOptions(model: string | null | undefined) {
+  return (model || DEFAULT_CLAUDE_MODEL) === DEFAULT_CLAUDE_MODEL
+    ? CLAUDE_4_7_THINKING_OPTIONS
+    : CLAUDE_LEGACY_THINKING_OPTIONS;
+}
 
 function formatRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -342,6 +361,13 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [claude1MOpus, setClaude1MOpus] = useState(true);
   const [claude1MSonnet, setClaude1MSonnet] = useState(false);
   const [claude1MLoaded, setClaude1MLoaded] = useState(false);
+  const activeClaudeDefaultModel = defaultAgentModels.claude ?? DEFAULT_CLAUDE_MODEL;
+  const activeClaudeThinkingOptions = getClaudeThinkingOptions(activeClaudeDefaultModel);
+  const activeClaudeDefaultThinking = activeClaudeThinkingOptions.some(
+    (option) => option.value === defaultAgentThinking.claude
+  )
+    ? defaultAgentThinking.claude
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1423,7 +1449,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   threadId: chat.threadId,
                                   agentDeckSessionId: chat.agentDeckSessionId,
                                   isActive: isActiveChat,
-                                  isReady: (claimedThread !== null || draftThreadKey !== null) && !Boolean(threadStatus?.isStreaming) && !Boolean(threadStatus?.isObservedStreaming),
+                                  isReady: (claimedThread !== null || draftThreadKey !== null) && !threadStatus?.isStreaming && !threadStatus?.isObservedStreaming,
                                   isStreaming: Boolean(threadStatus?.isStreaming) || Boolean(threadStatus?.isObservedStreaming),
                                   lastActiveLabel: chat.lastActive
                                     ? formatRelativeTime(chat.lastActive)
@@ -2333,7 +2359,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                             <Label className="text-xs text-muted-foreground">Model</Label>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/60">
-                                alias · latest
+                                pinned version
                               </span>
                               <Select
                                 value={defaultAgentModels.claude ?? "__none__"}
@@ -2358,7 +2384,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Thinking</Label>
                             <Select
-                              value={defaultAgentThinking.claude ?? "__none__"}
+                              value={activeClaudeDefaultThinking ?? "__none__"}
                               onValueChange={(value) =>
                                 setDefaultAgentThinking("claude", value === "__none__" ? null : value)
                               }
@@ -2368,7 +2394,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__none__">Tool default</SelectItem>
-                                {AGENT_THINKING_OPTIONS.claude.map((option) => (
+                                {activeClaudeThinkingOptions.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
                                   </SelectItem>
@@ -2382,7 +2408,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 Opus 1M context
                               </Label>
                               <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                                Pin Opus 4.6 to the 1M-token window. Included in Max/Team/Enterprise.
+                                Legacy 4.6-only alias pin. Opus 4.7 is the default profile model.
                               </p>
                             </div>
                             <Switch
@@ -2401,7 +2427,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 Sonnet 1M context
                               </Label>
                               <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                                Pin Sonnet 4.6 to the 1M-token window. Requires extra usage on Max plans.
+                                Legacy Sonnet 4.6 alias pin for the 1M-token window. Requires extra usage on Max plans.
                               </p>
                             </div>
                             <Switch

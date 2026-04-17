@@ -33,7 +33,7 @@ type ClaudeOptions struct {
 	// "sonnet" or "claude-sonnet-4-6"). Emitted as `--model <value>`.
 	Model string `json:"model,omitempty"`
 	// Effort sets the thinking effort level. Valid values are low, medium,
-	// high, max. Emitted as `--effort <value>`.
+	// high, max, plus xhigh on Claude Opus 4.7. Emitted as `--effort <value>`.
 	Effort string `json:"effort,omitempty"`
 
 	// Transient fields for worktree/clone fork (not persisted)
