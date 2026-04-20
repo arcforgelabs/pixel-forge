@@ -26,6 +26,7 @@ import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import ControllerUpdateApplyOverlay from "./components/layout/ControllerUpdateApplyOverlay";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
+import { browseForDirectory } from "./lib/browse-directory";
 import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
 import { FolderOpen } from "lucide-react";
 import type {
@@ -400,22 +401,11 @@ function App() {
     }
     setIsBrowsingForWorkspace(true);
     try {
-      const response = await fetch(`${HTTP_BACKEND_URL}/browse/directory`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          initial_path: projectPath ?? undefined,
-        }),
-      });
-      const result: { cancelled?: boolean; path?: string; message?: string } =
-        await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || `HTTP ${response.status}`);
-      }
-      if (result.cancelled || !result.path) {
+      const selectedPath = await browseForDirectory(projectPath ?? undefined);
+      if (!selectedPath) {
         return;
       }
-      await setProject({ path: result.path });
+      await setProject({ path: selectedPath });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to open folder picker"

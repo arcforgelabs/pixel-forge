@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, ipcMain, shell, webContents as electronWebContents } from 'electron'
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, shell, webContents as electronWebContents } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, promises as fsPromises, watchFile, unwatchFile } from 'node:fs'
 import os from 'node:os'
@@ -1154,6 +1154,27 @@ function sanitizeBootstrapState(payload) {
   }
 }
 
+async function normalizeDirectoryDialogPath(initialPath) {
+  const normalizedPath = normalizeText(initialPath)
+  if (!normalizedPath) {
+    return undefined
+  }
+
+  const resolvedPath = path.resolve(normalizedPath)
+  try {
+    const stats = await fsPromises.stat(resolvedPath)
+    return stats.isDirectory() ? resolvedPath : path.dirname(resolvedPath)
+  } catch {
+    const parentPath = path.dirname(resolvedPath)
+    try {
+      const parentStats = await fsPromises.stat(parentPath)
+      return parentStats.isDirectory() ? parentPath : undefined
+    } catch {
+      return undefined
+    }
+  }
+}
+
 function runShellCommand(command, cwd) {
   return new Promise((resolve, reject) => {
     const proc = spawn('bash', ['-lc', command], {
@@ -2176,6 +2197,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle('pixel-forge-app:get-preview-input-state', async (event) => {
     return readPreviewInputState(event.sender.id)
+  })
+
+  ipcMain.handle('pixel-forge-app:browse-for-directory', async (event, payload) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow ?? undefined
+    const defaultPath = await normalizeDirectoryDialogPath(payload?.initialPath)
+    const result = await dialog.showOpenDialog(ownerWindow, {
+      title: 'Choose Workspace',
+      defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (result.canceled) {
+      return null
+    }
+    return normalizeText(result.filePaths?.[0]) ?? null
   })
 
   ipcMain.handle('pixel-forge-app:open-agent-deck-surface', async (_event, payload) => {

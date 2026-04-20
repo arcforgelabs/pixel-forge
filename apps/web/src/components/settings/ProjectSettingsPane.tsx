@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { HTTP_BACKEND_URL } from "@/config";
+import { browseForDirectory } from "@/lib/browse-directory";
 import { useSessionStore, type SavedProject } from "@/store/session-store";
 import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
 import { FolderOpen, Globe, Wrench, X } from "lucide-react";
@@ -139,22 +140,13 @@ export function ProjectSettingsPane({ project, onClose }: Props) {
   const handleBrowseCustomPath = async () => {
     setIsBrowsing(true);
     try {
-      const response = await fetch(`${HTTP_BACKEND_URL}/browse/directory`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initial_path: project.path }),
-      });
-      const result: { cancelled?: boolean; path?: string; message?: string } =
-        await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || `HTTP ${response.status}`);
-      }
-      if (!result.cancelled && result.path) {
-        let rel = result.path;
+      const selectedPath = await browseForDirectory(project.path);
+      if (selectedPath) {
+        let rel = selectedPath;
         if (rel.startsWith(project.path)) {
           rel = rel.slice(project.path.length).replace(/^\/+/, "");
         }
-        setCustomOutputPath(rel || result.path);
+        setCustomOutputPath(rel || selectedPath);
       }
     } catch (error) {
       toast.error(

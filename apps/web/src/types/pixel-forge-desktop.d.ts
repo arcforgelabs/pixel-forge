@@ -292,6 +292,7 @@ export interface PixelForgeDesktopRuntimeInfo {
 export interface PixelForgeDesktopAppAPI {
   focusShell?(): Promise<{ ok: true }>
   getPreviewInputState?(): Promise<PixelForgeDesktopPreviewInputState>
+  browseForDirectory?(payload?: { initialPath?: string | null }): Promise<string | null>
   openAgentDeckSurface?(payload: { url: string }): Promise<{ ok: true }>
   applyControllerUpdate?(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
   applyPendingControllerUpdate?(payload: PixelForgeDesktopBootstrapState): Promise<{ ok: true }>
