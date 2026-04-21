@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -119,6 +120,41 @@ class _FakeAsyncClient:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class _FakeStreamingResponse:
+    def __init__(self, status_code: int, headers: dict[str, str], chunks: list[bytes]) -> None:
+        self.status_code = status_code
+        self.headers = httpx.Headers(headers)
+        self.chunks = chunks
+        self.closed = False
+
+    async def aiter_raw(self):  # type: ignore[no-untyped-def]
+        for chunk in self.chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _FakeStreamingClient:
+    def __init__(self, response: _FakeStreamingResponse | Exception) -> None:
+        self.response = response
+        self.requests: list[dict[str, object]] = []
+        self.closed = False
+
+    def build_request(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.requests.append(kwargs)
+        return kwargs
+
+    async def send(self, request, *, stream: bool = False):  # type: ignore[no-untyped-def]
+        self.requests.append({"sent": request, "stream": stream})
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class LocalTargetAliasProxyTest(unittest.IsolatedAsyncioTestCase):
@@ -316,6 +352,115 @@ class LocalTargetAliasProxyTest(unittest.IsolatedAsyncioTestCase):
                 "http://project-mirror-target-1234abcd.localhost:7102/",
             ],
         )
+
+    async def test_concurrent_restarts_reuse_target_started_by_first_request(self) -> None:
+        stale_record = local_targets.LocalTargetRecord(
+            kind="pixel-forge",
+            runtime_kind="mirror",
+            project_path="/tmp/project",
+            source_root="/tmp/project",
+            build_label="Live Runtime",
+            instance_slug="project-mirror-target-1234abcd",
+            api_port=7101,
+            web_port=7101,
+            web_host="project-mirror-target-1234abcd.localhost",
+            api_url="http://127.0.0.1:7101",
+            web_url="http://project-mirror-target-1234abcd.localhost:7101",
+            stable_url="http://project-mirror-target-1234abcd.localhost:7201",
+            state_dir="/tmp/state",
+            log_file="/tmp/state/logs/mirror.log",
+            pid=None,
+            target_mode=False,
+            already_running=False,
+            created_at="2026-03-23T00:00:00+0000",
+        )
+        restarted_record = replace(stale_record, pid=456, already_running=True)
+        local_target_proxy._TARGET_RESTART_LOCKS.clear()
+
+        with (
+            patch.object(
+                local_target_proxy,
+                "get_pixel_forge_target_by_host",
+                side_effect=[None, restarted_record],
+            ),
+            patch.object(
+                local_target_proxy,
+                "start_pixel_forge_target",
+                return_value=restarted_record,
+            ) as restart_mock,
+        ):
+            results = await asyncio.gather(
+                local_target_proxy._restart_pixel_forge_target(stale_record),
+                local_target_proxy._restart_pixel_forge_target(stale_record),
+            )
+
+        self.assertEqual([result.pid for result in results], [456, 456])
+        restart_mock.assert_called_once_with(
+            "/tmp/project",
+            runtime_kind="mirror",
+            source_root="/tmp/project",
+        )
+
+    async def test_event_stream_proxy_returns_streaming_response(self) -> None:
+        target_record = local_targets.LocalTargetRecord(
+            kind="pixel-forge",
+            runtime_kind="mirror",
+            project_path="/tmp/project",
+            source_root="/tmp/project",
+            build_label="Live Runtime",
+            instance_slug="project-mirror-target-1234abcd",
+            api_port=7101,
+            web_port=7101,
+            web_host="project-mirror-target-1234abcd.localhost",
+            api_url="http://127.0.0.1:7101",
+            web_url="http://project-mirror-target-1234abcd.localhost:7101",
+            stable_url="http://project-mirror-target-1234abcd.localhost:7201",
+            state_dir="/tmp/state",
+            log_file="/tmp/state/logs/mirror.log",
+            pid=123,
+            target_mode=False,
+            already_running=True,
+            created_at="2026-03-23T00:00:00+0000",
+        )
+        fake_response = _FakeStreamingResponse(
+            200,
+            headers={"content-type": "text/event-stream"},
+            chunks=[b": keepalive\n\n"],
+        )
+        fake_client = _FakeStreamingClient(fake_response)
+
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/events/status-bus",
+                "query_string": b"from_now=1",
+                "headers": [
+                    (b"host", b"project-mirror-target-1234abcd.localhost:7201"),
+                    (b"accept", b"text/event-stream"),
+                ],
+                "client": ("127.0.0.1", 12345),
+                "server": ("project-mirror-target-1234abcd.localhost", 7201),
+            }
+        )
+
+        with patch.object(local_target_proxy.httpx, "AsyncClient", return_value=fake_client):
+            response = await local_target_proxy.proxy_local_target_http(request, target_record)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/event-stream")
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        self.assertEqual(body, b": keepalive\n\n")
+        self.assertTrue(fake_client.closed)
+        self.assertTrue(fake_response.closed)
+        self.assertEqual(
+            fake_client.requests[0]["url"],
+            "http://project-mirror-target-1234abcd.localhost:7101/api/events/status-bus?from_now=1",
+        )
+        self.assertTrue(fake_client.requests[1]["stream"])
 
 
 if __name__ == "__main__":

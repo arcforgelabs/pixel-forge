@@ -6,6 +6,7 @@ from urllib.parse import ParseResult, urlparse, urlunparse
 
 import httpx
 from fastapi import Request, Response, WebSocket
+from fastapi.responses import StreamingResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketDisconnect
 import websockets
@@ -43,6 +44,26 @@ _HOP_BY_HOP_REQUEST_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+
+_TARGET_RESTART_LOCKS: dict[str, asyncio.Lock] = {}
+_TARGET_RESTART_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _restart_lock_for_target(target_record: LocalTargetRecord) -> asyncio.Lock:
+    lock_key = "::".join(
+        [
+            target_record.instance_slug,
+            target_record.runtime_kind,
+            target_record.project_path,
+            target_record.source_root,
+        ]
+    )
+    async with _TARGET_RESTART_LOCKS_GUARD:
+        lock = _TARGET_RESTART_LOCKS.get(lock_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _TARGET_RESTART_LOCKS[lock_key] = lock
+        return lock
 
 
 def _host_from_scope(scope: Scope) -> str:
@@ -147,15 +168,102 @@ def _response_headers(
 async def _restart_pixel_forge_target(
     target_record: LocalTargetRecord,
 ) -> LocalTargetRecord:
-    return await asyncio.to_thread(
-        start_pixel_forge_target,
-        target_record.project_path,
-        runtime_kind=target_record.runtime_kind,
-        source_root=target_record.source_root,
+    lock = await _restart_lock_for_target(target_record)
+    async with lock:
+        live_record = get_pixel_forge_target_by_host(target_record.web_host)
+        if live_record is not None and live_record.already_running:
+            return live_record
+
+        return await asyncio.to_thread(
+            start_pixel_forge_target,
+            target_record.project_path,
+            runtime_kind=target_record.runtime_kind,
+            source_root=target_record.source_root,
+        )
+
+
+def _accepts_event_stream(request: Request) -> bool:
+    return "text/event-stream" in request.headers.get("accept", "").lower()
+
+
+async def _proxy_local_target_stream(
+    request: Request,
+    target_record: AliasTargetRecord,
+) -> Response:
+    live_target_record = target_record
+    if isinstance(target_record, LocalTargetRecord) and not target_record.already_running:
+        live_target_record = await _restart_pixel_forge_target(target_record)
+
+    client = httpx.AsyncClient(follow_redirects=False, timeout=None)
+    upstream_response: httpx.Response | None = None
+    try:
+        upstream_request = client.build_request(
+            method=request.method,
+            url=_build_upstream_url(
+                live_target_record.web_url,
+                request.url.path,
+                request.scope.get("query_string", b""),
+            ),
+            headers=_build_forward_headers(request),
+        )
+        upstream_response = await client.send(upstream_request, stream=True)
+    except httpx.ConnectError:
+        if upstream_response is not None:
+            await upstream_response.aclose()
+        if isinstance(live_target_record, LocalTargetRecord):
+            live_target_record = await _restart_pixel_forge_target(live_target_record)
+            try:
+                upstream_request = client.build_request(
+                    method=request.method,
+                    url=_build_upstream_url(
+                        live_target_record.web_url,
+                        request.url.path,
+                        request.scope.get("query_string", b""),
+                    ),
+                    headers=_build_forward_headers(request),
+                )
+                upstream_response = await client.send(upstream_request, stream=True)
+            except httpx.ConnectError:
+                await client.aclose()
+                return Response(
+                    content=f"Cannot connect to local target {live_target_record.instance_slug}",
+                    status_code=502,
+                    media_type="text/plain",
+                )
+        else:
+            await client.aclose()
+            return Response(
+                content=f"Cannot connect to local target {live_target_record.instance_slug}",
+                status_code=502,
+                media_type="text/plain",
+            )
+
+    async def body_stream():
+        try:
+            async for chunk in upstream_response.aiter_raw():
+                yield chunk
+        finally:
+            await upstream_response.aclose()
+            await client.aclose()
+
+    response = StreamingResponse(
+        body_stream(),
+        status_code=upstream_response.status_code,
     )
+    response.raw_headers = tuple(
+        _response_headers(
+            upstream_response,
+            request=request,
+            target_record=live_target_record,
+        )
+    )
+    return response
 
 
 async def proxy_local_target_http(request: Request, target_record: AliasTargetRecord) -> Response:
+    if _accepts_event_stream(request):
+        return await _proxy_local_target_stream(request, target_record)
+
     live_target_record = target_record
     if isinstance(target_record, LocalTargetRecord) and not target_record.already_running:
         live_target_record = await _restart_pixel_forge_target(target_record)
@@ -322,12 +430,18 @@ async def proxy_local_target_websocket(
             else:
                 await websocket.send_bytes(message)
 
+    forward_tasks = [
+        asyncio.create_task(forward_to_target()),
+        asyncio.create_task(forward_to_client()),
+    ]
     try:
-        await asyncio.gather(
-            forward_to_target(),
-            forward_to_client(),
-            return_exceptions=True,
+        done, pending = await asyncio.wait(
+            forward_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
         )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*done, *pending, return_exceptions=True)
     finally:
         if target_ws is not None:
             await target_ws.close()
