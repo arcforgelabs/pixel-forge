@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tromino Forge · Pixel Forge Logo</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="../../packages/logo-forge-core/index.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -274,6 +275,7 @@
             background: var(--anthropic-orange); color: white;
             border-color: var(--anthropic-orange);
         }
+        .surface-chip:disabled { opacity: 0.4; cursor: not-allowed; }
         .backdrop-toggle {
             display: flex; align-items: center; gap: 6px;
             font-size: 12px; color: var(--anthropic-dark);
@@ -314,6 +316,7 @@
             border-radius: var(--preview-thumb-radius, 0%); overflow: hidden;
             box-shadow: 0 2px 6px rgba(20, 20, 19, 0.25);
             display: flex; align-items: center; justify-content: center;
+            background: var(--preview-bg, transparent);
         }
         .preview-thumb {
             display: block;
@@ -366,7 +369,7 @@
             width: 100%; max-width: 1000px;
             border-radius: 12px; overflow: hidden;
             box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
-            background: white;
+            background: var(--preview-bg, transparent);
             transition: max-width 0.2s ease;
         }
         #canvas-container canvas {
@@ -547,21 +550,22 @@
                     <button class="button" onclick="resetParameters()">Reset</button>
                     <button class="button secondary" onclick="downloadPNG()">Save PNG</button>
                 </div>
-                <button class="button tertiary" onclick="downloadSVG()">Save SVG</button>
+                <button class="button tertiary" style="margin-bottom: 8px;" onclick="downloadSVG()">Save SVG</button>
+                <button class="button" id="pack-button" onclick="downloadPack()">Download pack (zip)</button>
             </div>
         </div>
 
         <div class="canvas-area">
             <div class="preview-controls">
                 <div class="surface-selector">
-                    <span class="surface-selector-label">Surface</span>
-                    <button type="button" class="surface-chip active" data-surface="configured" onclick="setMainSurface('configured')">Configured</button>
-                    <button type="button" class="surface-chip" data-surface="black" onclick="setMainSurface('black')">Black</button>
-                    <button type="button" class="surface-chip" data-surface="white" onclick="setMainSurface('white')">White</button>
+                    <span class="surface-selector-label">Preview background</span>
+                    <button type="button" class="surface-chip active" data-surface="configured" onclick="setPreviewBackgroundSurface('configured')">Configured</button>
+                    <button type="button" class="surface-chip" data-surface="black" onclick="setPreviewBackgroundSurface('black')">Black</button>
+                    <button type="button" class="surface-chip" data-surface="white" onclick="setPreviewBackgroundSurface('white')">White</button>
                 </div>
                 <label class="backdrop-toggle">
-                    <input type="checkbox" id="showBackground" checked onchange="setShowBackground(this.checked)">
-                    <span>Show background</span>
+                    <input type="checkbox" id="showPreviewBackground" checked onchange="setPreviewShowBackground(this.checked)">
+                    <span>Show preview background (preview only)</span>
                 </label>
             </div>
             <div class="preview-strip" aria-label="Size previews">
@@ -629,13 +633,46 @@
         const defaultParams = { ...LFC.DEFAULT_PARAMS };
         let params = { ...defaultParams };
 
-        // Preview-layer state (separate from params — these don't change the mark
-        // itself, just how it's presented on the canvas/thumbnails).
-        let previewSurface = 'configured'; // 'configured' | 'black' | 'white'
-        let previewShowBackground = true;
-        // Export-layer state. When false, PNG/SVG omit the background rect
-        // so the export is a transparent shape-only artifact.
+        // Export-layer state. The background is treated as a separate layer
+        // that only exists at export time — the main canvas always renders
+        // leaves-only on transparent. When true, exports composite the
+        // resolved surface color under the leaves.
         let exportIncludeBackground = true;
+
+        // Preview-background state. Purely a preview-time visualization — the
+        // canvas itself always stays transparent and exports always use
+        // params.background (the Colors > Background picker). These chips let
+        // you check the mark against different surfaces without changing what
+        // gets baked into PNG / SVG / zip exports.
+        //   surface: 'configured' uses params.background; 'black'/'white' override.
+        //   show:    toggles the CSS-backed layer behind canvas + thumbnails.
+        let previewBackgroundSurface = 'configured';
+        let previewShowBackground = true;
+
+        function resolveSurfaceColor() {
+            if (previewBackgroundSurface === 'black') return '#000000';
+            if (previewBackgroundSurface === 'white') return '#ffffff';
+            return params.background;
+        }
+
+        function applyPreviewBackgroundStyle() {
+            const color = previewShowBackground ? resolveSurfaceColor() : 'transparent';
+            document.documentElement.style.setProperty('--preview-bg', color);
+        }
+
+        function setPreviewBackgroundSurface(surface) {
+            if (surface !== 'configured' && surface !== 'black' && surface !== 'white') return;
+            previewBackgroundSurface = surface;
+            for (const chip of document.querySelectorAll('.surface-chip')) {
+                chip.classList.toggle('active', chip.dataset.surface === surface);
+            }
+            applyPreviewBackgroundStyle();
+        }
+
+        function setPreviewShowBackground(show) {
+            previewShowBackground = !!show;
+            applyPreviewBackgroundStyle();
+        }
 
         // 2D boolean grid — gridState[row][col] === true iff filled. Single source
         // of truth for the pattern; currentPattern is derived on every change.
@@ -649,12 +686,6 @@
         let lastLeaves = [];
         let lastLogoBox = { x: 0, y: 0, size: 0 };
         let lastRenderMeta = { margin: 0, logoBoxSize: 0, iconCornerPx: 0 };
-
-        function resolveSurfaceColor(surface) {
-            if (surface === 'black') return '#000000';
-            if (surface === 'white') return '#ffffff';
-            return params.background;
-        }
 
         function setup() {
             const canvas = createCanvas(1200, 1200);
@@ -671,13 +702,13 @@
             randomSeed(params.seed);
             noiseSeed(params.seed);
 
-            background(resolveSurfaceColor(previewSurface));
+            // The canvas is leaves-only on fully transparent pixels. There is
+            // no inner background rect — the "background" is a separate layer
+            // that only exists at export time (see composeExport).
+            clear();
 
             if (!currentPattern) return;
 
-            // Hand off to the core. It returns re-centered leaves plus the clip
-            // geometry a renderer needs. We feed p5's seeded noise() so colors
-            // match the interactive surface exactly.
             const result = renderLeaves({
                 pattern: currentPattern,
                 params,
@@ -688,20 +719,12 @@
             const { leaves, logoBox, meta } = result;
             const { margin, logoBoxSize, iconCornerPx } = meta;
 
-            // Clip icon content (background + leaves) to a rounded-rect so the
-            // icon corner radius reads as silhouette geometry. Transparent
-            // mode still respects the rounded outline because the clip wraps
-            // leaves too.
+            // Icon corner radius shapes the leaf silhouette: leaves that reach
+            // the icon edge are clipped by the rounded-rect outline.
             drawingContext.save();
             drawingContext.beginPath();
             drawingContext.roundRect(margin, margin, logoBoxSize, logoBoxSize, iconCornerPx);
             drawingContext.clip();
-
-            if (previewShowBackground) {
-                noStroke();
-                fill(params.background);
-                rect(margin, margin, logoBoxSize, logoBoxSize);
-            }
 
             noStroke();
             for (const leaf of leaves) {
@@ -736,6 +759,9 @@
         function updateColor(id, value) {
             params[id] = value;
             document.getElementById(`${id}-value`).textContent = value;
+            if (id === 'background' && previewBackgroundSurface === 'configured') {
+                applyPreviewBackgroundStyle();
+            }
             redraw();
         }
 
@@ -902,13 +928,13 @@
             document.getElementById('patternPreset').value = 'L-TR';
             renderGrid();
             updateSeedDisplay();
-            // Reset preview + export layer state too
-            previewShowBackground = true;
-            document.getElementById('showBackground').checked = true;
             exportIncludeBackground = true;
             document.getElementById('exportIncludeBackground').checked = true;
-            setMainSurface('configured');
+            previewShowBackground = true;
+            document.getElementById('showPreviewBackground').checked = true;
+            setPreviewBackgroundSurface('configured');
             updatePreviewThumbRadius(0);
+            redraw();
         }
 
         // Redraw every size-strip thumbnail from the current p5 canvas. Uses
@@ -958,50 +984,62 @@
             if (parseInt(slider.value, 10) !== pct) slider.value = pct;
         }
 
-        function setMainSurface(surface) {
-            previewSurface = surface;
-            for (const chip of document.querySelectorAll('.surface-chip')) {
-                chip.classList.toggle('active', chip.dataset.surface === surface);
-            }
-            redraw();
-        }
-
-        function setShowBackground(show) {
-            previewShowBackground = !!show;
-            redraw();
-        }
-
         function setExportIncludeBackground(include) {
             exportIncludeBackground = !!include;
         }
 
-        // Render the canvas with export semantics (background per the export
-        // toggle, not the preview toggle), invoke fn while that frame is live,
-        // then restore the preview view. saveCanvas reads toDataURL synchronously
-        // so this is safe.
-        function withExportFrame(fn) {
-            const restore = previewShowBackground;
-            previewShowBackground = exportIncludeBackground;
-            redraw();
-            try {
-                fn();
-            } finally {
-                previewShowBackground = restore;
-                redraw();
+        // Composite the cached leaves onto an offscreen canvas at the given
+        // size. The background, when included, is ONE region: the whole frame
+        // (or the whole app-icon silhouette for app-icon variants). There is
+        // no separate treatment for the margin vs the icon box — either the
+        // whole image has the background, or the whole image is transparent.
+        //
+        //   includeBackground   when true, fills the whole frame with params.background
+        //   appIconRadiusPct    0–50; when > 0, clips the whole `size × size`
+        //                       to a rounded-rect app-icon silhouette.
+        function composeExport(size, includeBackground, appIconRadiusPct) {
+            const mainCanvas = document.querySelector('#canvas-container canvas');
+            const c = document.createElement('canvas');
+            c.width = size;
+            c.height = size;
+            const ctx = c.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+
+            const radiusPct = appIconRadiusPct || 0;
+            if (radiusPct > 0) {
+                const r = (radiusPct / 100) * size;
+                ctx.beginPath();
+                ctx.roundRect(0, 0, size, size, r);
+                ctx.clip();
             }
+
+            if (includeBackground) {
+                ctx.fillStyle = params.background;
+                ctx.fillRect(0, 0, size, size);
+            }
+
+            ctx.drawImage(mainCanvas, 0, 0, size, size);
+            return c;
         }
 
         function downloadPNG() {
-            withExportFrame(function () {
-                saveCanvas(`pixel-forge-logo-${params.seed}`, 'png');
-            });
+            const canvas = composeExport(1024, exportIncludeBackground, 0);
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pixel-forge-logo-${params.seed}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 'image/png');
         }
 
-        function downloadSVG() {
-            // Serialize the current canvas (scaled uniformly) as <rect> primitives.
-            // Honors corner radius via a clipPath; honors the export-background toggle so
-            // "transparent" previews export as transparent SVGs.
-            const size = 1024;
+        // Serialize the current cached leaves (scaled uniformly) as <rect> primitives.
+        // Honors the icon corner radius via a clipPath; callers control whether the
+        // inner background rect is included for transparent vs opaque exports.
+        function buildSVGString(size, includeBackground) {
             const scale = size / width;
             const { margin, logoBoxSize, iconCornerPx } = lastRenderMeta;
             const lx0 = (margin * scale).toFixed(2);
@@ -1012,10 +1050,10 @@
 
             let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">`;
             svg += `<defs><clipPath id="iconClip"><rect x="${lx0}" y="${ly0}" width="${lw0}" height="${lh0}" rx="${r0}" ry="${r0}"/></clipPath></defs>`;
-            svg += `<g clip-path="url(#iconClip)">`;
-            if (exportIncludeBackground) {
-                svg += `<rect x="${lx0}" y="${ly0}" width="${lw0}" height="${lh0}" fill="${params.background}"/>`;
+            if (includeBackground) {
+                svg += `<rect x="0" y="0" width="${size}" height="${size}" fill="${params.background}"/>`;
             }
+            svg += `<g clip-path="url(#iconClip)">`;
             for (const leaf of lastLeaves) {
                 const lx = (leaf.x * scale).toFixed(2);
                 const ly = (leaf.y * scale).toFixed(2);
@@ -1026,7 +1064,11 @@
                 svg += `<rect x="${lx}" y="${ly}" width="${lw}" height="${lh}"${radiusAttr} fill="${leaf.color}"/>`;
             }
             svg += `</g></svg>`;
+            return svg;
+        }
 
+        function downloadSVG() {
+            const svg = buildSVGString(1024, exportIncludeBackground);
             const blob = new Blob([svg], { type: 'image/svg+xml' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1038,10 +1080,86 @@
             URL.revokeObjectURL(url);
         }
 
+        function canvasToPngBlob(canvas) {
+            return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        }
+
+        async function downloadPack() {
+            if (typeof JSZip === 'undefined') {
+                alert('JSZip failed to load — cannot build pack.');
+                return;
+            }
+            const button = document.getElementById('pack-button');
+            const originalLabel = button ? button.textContent : '';
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'Building pack…';
+            }
+            try {
+                const zip = new JSZip();
+                const MAIN_SIZE = 1024;
+                const PREVIEW_SIZES = [24, 48, 128, 256];
+                const APP_ICON_RADII = [0, 10, 50];
+
+                zip.file(
+                    'main/logo-1024-bg.png',
+                    await canvasToPngBlob(composeExport(MAIN_SIZE, true, 0))
+                );
+                zip.file(
+                    'main/logo-1024-transparent.png',
+                    await canvasToPngBlob(composeExport(MAIN_SIZE, false, 0))
+                );
+
+                for (const s of PREVIEW_SIZES) {
+                    zip.file(
+                        `previews/${s}-bg.png`,
+                        await canvasToPngBlob(composeExport(s, true, 0))
+                    );
+                    zip.file(
+                        `previews/${s}-transparent.png`,
+                        await canvasToPngBlob(composeExport(s, false, 0))
+                    );
+                }
+
+                // App-icon variants always include a background so they read as
+                // conventional OS-masked icons rather than floating shapes.
+                for (const r of APP_ICON_RADII) {
+                    for (const s of PREVIEW_SIZES) {
+                        zip.file(
+                            `app-icons/r${r}/${s}.png`,
+                            await canvasToPngBlob(composeExport(s, true, r))
+                        );
+                    }
+                }
+
+                zip.file('main/logo-bg.svg', buildSVGString(1024, true));
+                zip.file('main/logo-transparent.svg', buildSVGString(1024, false));
+
+                const blob = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pixel-forge-logo-${params.seed}-pack.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error('downloadPack failed', err);
+                alert('Failed to build pack. See console for details.');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalLabel || 'Download pack (zip)';
+                }
+            }
+        }
+
         window.addEventListener('load', function() {
             updateSeedDisplay();
             renderGrid();
             updatePreviewSize(document.getElementById('previewScale').value);
+            applyPreviewBackgroundStyle();
         });
     </script>
 </body>
