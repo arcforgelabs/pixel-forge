@@ -740,33 +740,28 @@ function App() {
           </div>
         )}
 
-        {/* Both panes rendered, visibility toggled to preserve state */}
-        <div
-          className={`flex-1 min-h-0 overflow-auto ${
-            showMainContent && activeMode === "screenshot" ? "" : "hidden"
-          }`}
-        >
-          <div className="py-2">
-            {appState === AppState.INITIAL && (
-              <StartPane
-                doCreate={doCreate}
-                importFromCode={importFromCode}
-              />
-            )}
+        {showMainContent && activeMode === "screenshot" && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <div className="py-2">
+              {appState === AppState.INITIAL && (
+                <StartPane
+                  doCreate={doCreate}
+                  importFromCode={importFromCode}
+                />
+              )}
 
-            {(appState === AppState.CODING || appState === AppState.CODE_READY) && (
-              <PreviewPane doUpdate={doUpdate} reset={reset} settings={settings} />
-            )}
+              {(appState === AppState.CODING || appState === AppState.CODE_READY) && (
+                <PreviewPane doUpdate={doUpdate} reset={reset} settings={settings} />
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div
-          className={`flex-1 min-h-0 overflow-hidden ${
-            showMainContent && activeMode === "live-editor" ? "" : "hidden"
-          }`}
-        >
-          <LiveEditorPane advancedMode={settings.advancedMode} />
-        </div>
+        {showMainContent && activeMode === "live-editor" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <LiveEditorPane advancedMode={settings.advancedMode} />
+          </div>
+        )}
 
         {/* Settings page — full-width surface; SettingsSidebar portals its content here. */}
         <div
