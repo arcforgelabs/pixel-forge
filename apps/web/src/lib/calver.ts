@@ -1,18 +1,18 @@
 // CalVer per SPECS.md REQ-S-014:
-//   stable:     YYYY.M.D
-//   correction: YYYY.M.D-N       (post-release, N >= 1, sorts after base)
-//   prerelease: YYYY.M.D-beta.N  (N >= 1, sorts before base)
+//   stable date tag:          YYYY.M.D
+//   same-day release ordinal: YYYY.M.D-N       (N >= 1, sorts after base)
+//   prerelease:               YYYY.M.D-beta.N  (N >= 1, sorts before base)
 
 type CalverParts = {
   year: number;
   month: number;
   day: number;
   beta?: number;
-  correction?: number;
+  releaseOrdinal?: number;
 };
 
 const STABLE = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)$/;
-const CORRECTION = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-([1-9]\d*)$/;
+const RELEASE_ORDINAL = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-([1-9]\d*)$/;
 const BETA = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/;
 
 function parseCalver(value: string | null | undefined): CalverParts | null {
@@ -32,13 +32,13 @@ function parseCalver(value: string | null | undefined): CalverParts | null {
       beta: Number(beta[4]),
     };
   }
-  const correction = CORRECTION.exec(v);
-  if (correction) {
+  const releaseOrdinal = RELEASE_ORDINAL.exec(v);
+  if (releaseOrdinal) {
     return {
-      year: Number(correction[1]),
-      month: Number(correction[2]),
-      day: Number(correction[3]),
-      correction: Number(correction[4]),
+      year: Number(releaseOrdinal[1]),
+      month: Number(releaseOrdinal[2]),
+      day: Number(releaseOrdinal[3]),
+      releaseOrdinal: Number(releaseOrdinal[4]),
     };
   }
   return null;
@@ -46,7 +46,7 @@ function parseCalver(value: string | null | undefined): CalverParts | null {
 
 function suffixRank(parts: CalverParts): number {
   if (parts.beta !== undefined) return -1;
-  if (parts.correction !== undefined) return 1;
+  if (parts.releaseOrdinal !== undefined) return 1;
   return 0;
 }
 
@@ -66,8 +66,8 @@ export function compareCalver(
   const rr = suffixRank(R);
   if (lr !== rr) return lr > rr ? 1 : -1;
 
-  const lNum = L.beta ?? L.correction ?? 0;
-  const rNum = R.beta ?? R.correction ?? 0;
+  const lNum = L.beta ?? L.releaseOrdinal ?? 0;
+  const rNum = R.beta ?? R.releaseOrdinal ?? 0;
   if (lNum === rNum) return 0;
   return lNum > rNum ? 1 : -1;
 }

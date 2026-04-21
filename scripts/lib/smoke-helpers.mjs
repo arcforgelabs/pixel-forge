@@ -266,6 +266,7 @@ export async function writeVersionSet(rootPath, version) {
     path.join(rootPath, 'package.json'),
     path.join(rootPath, 'apps', 'web', 'package.json'),
     path.join(rootPath, 'apps', 'desktop', 'package.json'),
+    path.join(rootPath, 'packages', 'sdk-node', 'package.json'),
   ]
 
   for (const filePath of packageFiles) {

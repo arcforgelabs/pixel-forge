@@ -13,14 +13,54 @@ import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
 import type { ChatAttachment } from './store/chat-store'
 import { ToolCard } from './ToolCard'
-import { AlertTriangle, ArrowDown, CheckCircle2, Copy, Download, FileText, RefreshCw, RotateCcw, X } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpToLine, CheckCircle2, Copy, Download, FileText, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { splitTextWithInlineAttachments } from './composer-attachments'
+import {
+  findSubmittedPromptBeforeIndex,
+  findLatestSubmittedPrompt,
+  LIVE_EDITOR_MESSAGE_ATTRIBUTE,
+  scrollToLiveEditorMessage,
+} from './chat-navigation'
 import toast from 'react-hot-toast'
 
 interface ChatMessagesProps {
   onRefreshPreview?: () => void
   onApplyControllerUpdate?: () => void
   onLoadPreviewUpdate?: () => void
+}
+
+interface FloatingNavButtonProps {
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+}
+
+function FloatingNavButton({
+  icon: Icon,
+  label,
+  onClick,
+}: FloatingNavButtonProps) {
+  return (
+    <div className="pointer-events-auto group relative">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onClick}
+        aria-label={label}
+        className="h-8 w-8 rounded-full border border-border/50 bg-background/90 p-0 text-muted-foreground shadow-[0_10px_28px_hsl(0_0%_0%/0.18)] backdrop-blur-md transition-all hover:border-border hover:bg-background hover:text-foreground focus-visible:ring-primary/40"
+      >
+        <Icon className="h-3.5 w-3.5" />
+      </Button>
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max -translate-x-1/2 translate-y-1 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
+        <div className="relative rounded-xl border border-border/60 bg-background/95 px-2.5 py-1.5 text-[11px] font-medium tracking-[0.01em] text-foreground shadow-[0_18px_40px_hsl(0_0%_0%/0.22)] backdrop-blur-md">
+          {label}
+          <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-border/60 bg-background/95" />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function attachmentLabel(attachment: ChatAttachment, index: number): string {
@@ -88,6 +128,7 @@ export function ChatMessages({
   const scrollSaveRafRef = useRef<number | null>(null)
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
   const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
+  const lastSubmittedPrompt = findLatestSubmittedPrompt(messages)
 
   const closeLightbox = useCallback(() => setLightboxImage(null), [])
   const togglePasteExpanded = useCallback((id: string) => {
@@ -148,6 +189,42 @@ export function ChatMessages({
       )
     }
   }, [retryMessageInCurrentChat])
+
+  const jumpToPrompt = useCallback((messageId: string) => {
+    const container = scrollContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const didScroll = scrollToLiveEditorMessage(messageId, container)
+    if (!didScroll) {
+      return
+    }
+
+    isAtBottomRef.current = false
+    setIsAtBottom(false)
+  }, [])
+
+  const jumpToLastPrompt = useCallback(() => {
+    if (!lastSubmittedPrompt) {
+      return
+    }
+    jumpToPrompt(lastSubmittedPrompt.id)
+  }, [jumpToPrompt, lastSubmittedPrompt])
+
+  const jumpToConversationStart = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) {
+      return
+    }
+
+    container.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    })
+    isAtBottomRef.current = false
+    setIsAtBottom(false)
+  }, [])
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -368,9 +445,21 @@ export function ChatMessages({
         )}
 
         {/* Message list */}
-        {messages.map((msg) => (
+        {messages.map((msg, index) => {
+          const promptTarget =
+            msg.role === 'system' && msg.systemTone === 'success'
+              ? findSubmittedPromptBeforeIndex(messages, index)
+              : null
+
+          return (
           <div
             key={msg.id}
+            {...(msg.role === 'user'
+              ? {
+                  [LIVE_EDITOR_MESSAGE_ATTRIBUTE]: msg.id,
+                  tabIndex: -1,
+                }
+              : {})}
             className={`flex w-full min-w-0 ${
               msg.role === 'user' ? 'justify-end' : 'justify-start'
             }`}
@@ -394,36 +483,58 @@ export function ChatMessages({
                     )}
                     <span className="break-words [overflow-wrap:anywhere]">{msg.content}</span>
                   </div>
-                  {msg.isRemoteComplete && onRefreshPreview && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
-                      onClick={onRefreshPreview}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Refresh Preview
-                    </Button>
-                  )}
-                  {msg.canLoadPreviewUpdate && onLoadPreviewUpdate && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
-                      onClick={onLoadPreviewUpdate}
-                    >
-                      Load Updated Preview
-                    </Button>
-                  )}
-                  {msg.canApplyControllerUpdate && onApplyControllerUpdate && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
-                      onClick={onApplyControllerUpdate}
-                    >
-                      Load Updated Pixel Forge
-                    </Button>
+                  {((
+                    msg.isRemoteComplete && onRefreshPreview
+                  ) || (
+                    msg.canLoadPreviewUpdate && onLoadPreviewUpdate
+                  ) || (
+                    msg.canApplyControllerUpdate && onApplyControllerUpdate
+                  ) || promptTarget) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {msg.isRemoteComplete && onRefreshPreview && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
+                          onClick={onRefreshPreview}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Refresh Preview
+                        </Button>
+                      )}
+                      {msg.canLoadPreviewUpdate && onLoadPreviewUpdate && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                          onClick={onLoadPreviewUpdate}
+                        >
+                          Load Updated Preview
+                        </Button>
+                      )}
+                      {msg.canApplyControllerUpdate && onApplyControllerUpdate && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                          onClick={onApplyControllerUpdate}
+                        >
+                          Load Updated Pixel Forge
+                        </Button>
+                      )}
+                      {promptTarget && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 border-border/60 bg-background/60 text-foreground hover:bg-muted/60"
+                          onClick={() => jumpToPrompt(promptTarget.id)}
+                          title="Scroll back to the submitted prompt"
+                        >
+                          <ArrowUp className="h-3.5 w-3.5" />
+                          Jump to Prompt
+                        </Button>
+                      )}
+                    </div>
                   )}
                   {msg.systemTone === 'error' && msg.replayDraft && (
                     <div className="mt-2 flex items-center gap-1.5">
@@ -538,7 +649,8 @@ export function ChatMessages({
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
 
         {/* Streaming message */}
         {isStreaming && currentStreamContent && (
@@ -631,22 +743,38 @@ export function ChatMessages({
       )}
     </div>
 
-      {/* Scroll-to-bottom button */}
-      {!isAtBottom && (
-        <button
-          type="button"
-          onClick={() => {
-            scrollContainerRef.current?.scrollTo({
-              top: scrollContainerRef.current.scrollHeight,
-              behavior: 'smooth',
-            })
-          }}
-          className="absolute bottom-10 right-3 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-background/90 shadow-md ring-1 ring-border/50 text-muted-foreground transition-colors hover:text-foreground hover:ring-border"
-          aria-label="Scroll to bottom"
-          title="Scroll to bottom"
-        >
-          <ArrowDown className="h-3.5 w-3.5" />
-        </button>
+      {/* Floating chat navigation */}
+      {(lastSubmittedPrompt || !isAtBottom) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10">
+          {lastSubmittedPrompt && (
+            <div className="absolute right-1/2 mr-2 flex items-center gap-2">
+              <FloatingNavButton
+                icon={ArrowUp}
+                label="Jump to latest submitted prompt"
+                onClick={jumpToLastPrompt}
+              />
+              <FloatingNavButton
+                icon={ArrowUpToLine}
+                label="Jump to start of conversation"
+                onClick={jumpToConversationStart}
+              />
+            </div>
+          )}
+          {!isAtBottom && (
+            <div className="flex justify-center">
+              <FloatingNavButton
+                icon={ArrowDown}
+                label="Scroll to latest reply"
+                onClick={() => {
+                  scrollContainerRef.current?.scrollTo({
+                    top: scrollContainerRef.current.scrollHeight,
+                    behavior: 'smooth',
+                  })
+                }}
+              />
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

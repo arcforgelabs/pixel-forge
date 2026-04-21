@@ -14,18 +14,18 @@ const versionFiles = [
 ]
 
 // CalVer per SPECS.md REQ-S-014:
-//   stable:     YYYY.M.D
-//   correction: YYYY.M.D-N       (same-day post-release, N >= 1)
-//   prerelease: YYYY.M.D-beta.N  (N >= 1)
+//   stable date tag:          YYYY.M.D
+//   same-day release ordinal: YYYY.M.D-N       (N >= 1)
+//   prerelease:               YYYY.M.D-beta.N  (N >= 1)
 const STABLE_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)$/
-const CORRECTION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-([1-9]\d*)$/
+const RELEASE_ORDINAL_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-([1-9]\d*)$/
 const BETA_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/
 
 function isValidCalver(value) {
   if (typeof value !== 'string') return false
   const v = value.trim()
-  if (!STABLE_REGEX.test(v) && !CORRECTION_REGEX.test(v) && !BETA_REGEX.test(v)) return false
-  const match = STABLE_REGEX.exec(v) ?? CORRECTION_REGEX.exec(v) ?? BETA_REGEX.exec(v)
+  if (!STABLE_REGEX.test(v) && !RELEASE_ORDINAL_REGEX.test(v) && !BETA_REGEX.test(v)) return false
+  const match = STABLE_REGEX.exec(v) ?? RELEASE_ORDINAL_REGEX.exec(v) ?? BETA_REGEX.exec(v)
   const [, y, m, d] = match
   const year = Number(y), month = Number(m), day = Number(d)
   if (month < 1 || month > 12 || day < 1 || day > 31) return false

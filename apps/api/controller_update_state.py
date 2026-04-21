@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -12,11 +13,21 @@ from typing import Any
 from uuid import uuid4
 
 from runtime_config import shared_state_dir
-from runtime_version import read_version_for_project
+from runtime_version import read_runtime_version, read_version_for_project
 
 
 PENDING_CONTROLLER_UPDATE_FILE = "pending-controller-update.json"
 CONTROLLER_UPDATE_SNAPSHOTS_DIR = "controller-updates"
+VERSION_PACKAGE_RELATIVE_PATHS = (
+    Path("package.json"),
+    Path("apps/web/package.json"),
+    Path("apps/desktop/package.json"),
+    Path("packages/sdk-node/package.json"),
+)
+STABLE_OR_RELEASE_VERSION_REGEX = re.compile(
+    r"^(\d{4})\.([1-9]\d?)\.([1-9]\d?)(?:-([1-9]\d*))?$"
+)
+BETA_VERSION_REGEX = re.compile(r"^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$")
 
 
 def pending_controller_update_path() -> Path:
@@ -36,6 +47,90 @@ def _normalize_text(value: Any) -> str | None:
         return None
     trimmed = value.strip()
     return trimmed or None
+
+
+def _normalize_version_text(value: Any) -> str | None:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return None
+    return normalized[1:] if normalized.startswith("v") else normalized
+
+
+def _release_date_prefix(now: datetime | None = None) -> str:
+    current = now or datetime.now()
+    return f"{current.year}.{current.month}.{current.day}"
+
+
+def _is_supported_calver_version(value: Any) -> bool:
+    normalized = _normalize_version_text(value)
+    return bool(
+        normalized
+        and (
+            STABLE_OR_RELEASE_VERSION_REGEX.match(normalized)
+            or BETA_VERSION_REGEX.match(normalized)
+        )
+    )
+
+
+def _release_ordinal_for_date(value: Any, date_prefix: str) -> int | None:
+    normalized = _normalize_version_text(value)
+    if not normalized:
+        return None
+    match = STABLE_OR_RELEASE_VERSION_REGEX.match(normalized)
+    if not match:
+        return None
+    prefix = f"{match.group(1)}.{int(match.group(2))}.{int(match.group(3))}"
+    if prefix != date_prefix:
+        return None
+    ordinal = match.group(4)
+    return int(ordinal) if ordinal else 0
+
+
+def _resolve_controller_release_version(project_path: str) -> str | None:
+    source_version = read_version_for_project(project_path)
+    if source_version and not _is_supported_calver_version(source_version):
+        return source_version
+
+    date_prefix = _release_date_prefix()
+    existing_pending = read_pending_controller_update()
+    candidate_ordinals = [
+        _release_ordinal_for_date(read_runtime_version(), date_prefix),
+        _release_ordinal_for_date(
+            existing_pending.get("version") if existing_pending else None,
+            date_prefix,
+        ),
+    ]
+    max_existing_ordinal = max(
+        [0, *(ordinal for ordinal in candidate_ordinals if ordinal is not None)]
+    )
+    source_ordinal = _release_ordinal_for_date(source_version, date_prefix)
+
+    if source_ordinal is not None and source_ordinal > max_existing_ordinal:
+        return _normalize_version_text(source_version)
+
+    return f"{date_prefix}-{max_existing_ordinal + 1}"
+
+
+def _write_controller_snapshot_version(snapshot_path: str, version: str | None) -> None:
+    normalized = _normalize_text(version)
+    if not normalized:
+        return
+
+    root = Path(snapshot_path).expanduser().resolve()
+    (root / "VERSION").write_text(f"{normalized}\n", encoding="utf-8")
+
+    for relative_path in VERSION_PACKAGE_RELATIVE_PATHS:
+        package_path = root / relative_path
+        if not package_path.is_file():
+            continue
+        try:
+            payload = json.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payload["version"] = normalized
+        package_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def normalize_project_root(project_path: str | Path) -> Path:
@@ -301,10 +396,8 @@ def write_pending_controller_update(payload: dict[str, Any]) -> dict[str, Any]:
         normalized["snapshotPath"] = create_controller_update_snapshot(
             normalized["projectPath"], normalized["id"]
         )
-    normalized["version"] = (
-        read_version_for_project(normalized["snapshotPath"])
-        or normalized["version"]
-    )
+    normalized["version"] = _resolve_controller_release_version(normalized["projectPath"])
+    _write_controller_snapshot_version(normalized["snapshotPath"], normalized["version"])
     path = pending_controller_update_path()
     path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
     return normalized

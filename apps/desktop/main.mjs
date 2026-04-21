@@ -43,6 +43,15 @@ const DISMISSED_CONTROLLER_UPDATE_ID_PATH = path.join(
 )
 const BOOTSTRAP_STATE_PATH = path.join(APP_STATE_DIR, 'controller-bootstrap-state.json')
 const IS_UPDATER_UI_MODE = process.argv.includes('--pixel-forge-updater-ui')
+const VERSION_FILE_RELATIVE_PATH = 'VERSION'
+const VERSION_PACKAGE_RELATIVE_PATHS = [
+  'package.json',
+  path.join('apps', 'web', 'package.json'),
+  path.join('apps', 'desktop', 'package.json'),
+  path.join('packages', 'sdk-node', 'package.json'),
+]
+const STABLE_OR_RELEASE_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)(?:-([1-9]\d*))?$/
+const BETA_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/
 
 app.setName(process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge')
 app.commandLine.appendSwitch('remote-debugging-address', CONTROLLER_CDP_HOST)
@@ -378,6 +387,88 @@ async function copyControllerSnapshotTree(sourceRoot, destinationRoot, relativeP
   await fsPromises.chmod(destinationPath, stat.mode)
 }
 
+function releaseDatePrefix(date = new Date()) {
+  return `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()}`
+}
+
+function normalizeVersionText(value) {
+  return normalizeText(value)?.replace(/^v/, '') ?? null
+}
+
+function isSupportedCalverVersion(value) {
+  const normalized = normalizeVersionText(value)
+  return Boolean(
+    normalized
+    && (
+      STABLE_OR_RELEASE_VERSION_REGEX.test(normalized)
+      || BETA_VERSION_REGEX.test(normalized)
+    )
+  )
+}
+
+function releaseOrdinalForDate(value, datePrefix) {
+  const normalized = normalizeVersionText(value)
+  if (!normalized) {
+    return null
+  }
+  const match = STABLE_OR_RELEASE_VERSION_REGEX.exec(normalized)
+  if (!match) {
+    return null
+  }
+  const prefix = `${match[1]}.${Number(match[2])}.${Number(match[3])}`
+  if (prefix !== datePrefix) {
+    return null
+  }
+  return match[4] ? Number(match[4]) : 0
+}
+
+async function resolveControllerReleaseVersion(projectPath) {
+  const sourceVersion = await readProjectVersion(projectPath)
+  if (sourceVersion && !isSupportedCalverVersion(sourceVersion)) {
+    return sourceVersion
+  }
+
+  const datePrefix = releaseDatePrefix()
+  const currentPending = await readPendingControllerUpdate()
+  const candidateOrdinals = [
+    await readControllerVersion(),
+    currentPending?.version,
+  ]
+    .map((version) => releaseOrdinalForDate(version, datePrefix))
+    .filter((ordinal) => typeof ordinal === 'number')
+  const maxExistingOrdinal = Math.max(0, ...candidateOrdinals)
+  const sourceOrdinal = releaseOrdinalForDate(sourceVersion, datePrefix)
+
+  if (typeof sourceOrdinal === 'number' && sourceOrdinal > maxExistingOrdinal) {
+    return normalizeVersionText(sourceVersion)
+  }
+
+  return `${datePrefix}-${maxExistingOrdinal + 1}`
+}
+
+async function writeControllerSnapshotVersion(snapshotPath, version) {
+  const normalizedVersion = normalizeText(version)
+  if (!normalizedVersion) {
+    return
+  }
+
+  await fsPromises.writeFile(
+    path.join(snapshotPath, VERSION_FILE_RELATIVE_PATH),
+    `${normalizedVersion}\n`,
+    'utf-8',
+  )
+
+  for (const relativePath of VERSION_PACKAGE_RELATIVE_PATHS) {
+    const packagePath = path.join(snapshotPath, relativePath)
+    if (!existsSync(packagePath)) {
+      continue
+    }
+    const payload = JSON.parse(await fsPromises.readFile(packagePath, 'utf-8'))
+    payload.version = normalizedVersion
+    await fsPromises.writeFile(packagePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+  }
+}
+
 function isInstallableProjectRoot(candidatePath) {
   if (!candidatePath) {
     return false
@@ -649,11 +740,13 @@ async function syncPendingControllerUpdate() {
 
 async function stagePendingControllerUpdate(payload) {
   const normalized = sanitizePendingControllerUpdate(payload)
-  normalized.version = await readProjectVersion(normalized.projectPath)
+  const releaseVersion = await resolveControllerReleaseVersion(normalized.projectPath)
   normalized.snapshotPath = await createControllerUpdateSnapshot(
     normalized.projectPath,
     normalized.id,
   )
+  normalized.version = releaseVersion
+  await writeControllerSnapshotVersion(normalized.snapshotPath, normalized.version)
   await writeJsonFile(PENDING_CONTROLLER_UPDATE_PATH, normalized)
   await writeDismissedControllerUpdateId(null)
   pendingUpdateSnapshot = null
