@@ -79,12 +79,14 @@ from project_store import (
     get_project_session_by_agent_deck_session_id,
     list_project_sessions,
     list_project_urls,
+    get_project_logo_forge_state,
     list_projects,
     project_name_for_path,
     touch_project_url,
     update_session_title,
     upsert_project,
     upsert_profile_state,
+    upsert_project_logo_forge_state,
     purge_hidden_profile_history,
     upsert_session,
 )
@@ -470,7 +472,7 @@ class ProjectSessionUpsertRequest(BaseModel):
 class ProfileStateRequest(BaseModel):
     profile_id: str | None = None
     active_project_path: str | None = None
-    active_mode: Literal["screenshot", "live-editor"] = "screenshot"
+    active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
     default_agent_type: Literal["claude", "codex"] = "claude"
     default_workspace_mode: Literal["clone", "root"] = "root"
@@ -575,7 +577,7 @@ class WorkspacePreviewStartRequest(BaseModel):
 class PendingControllerUpdateRequest(BaseModel):
     project_path: str
     preview_url: str | None = None
-    active_mode: Literal["live-editor", "screenshot"] | None = None
+    active_mode: Literal["live-editor", "screenshot", "logo-forge"] | None = None
     summary: str | None = None
     source: str | None = None
     request_id: str | None = None
@@ -588,7 +590,7 @@ class PendingPreviewUpdateRequest(BaseModel):
     project_path: str
     workspace_path: str
     preview_url: str | None = None
-    active_mode: Literal["live-editor", "screenshot"] | None = None
+    active_mode: Literal["live-editor", "screenshot", "logo-forge"] | None = None
     summary: str | None = None
     source: str | None = None
     request_id: str | None = None
@@ -1029,6 +1031,27 @@ async def remove_project(project_path: str):
 @app.get("/api/projects/{project_path:path}/urls")
 async def get_project_urls(project_path: str):
     return {"urls": _serialize_project_urls(list_project_urls(project_path))}
+
+
+@app.get("/api/projects/{project_path:path}/logo-forge-state")
+async def get_project_logo_forge_state_endpoint(project_path: str):
+    state = get_project_logo_forge_state(project_path)
+    return {"state": state}
+
+
+class LogoForgeStateRequest(BaseModel):
+    state: dict[str, object] | None = None
+
+
+@app.post("/api/projects/{project_path:path}/logo-forge-state")
+async def upsert_project_logo_forge_state_endpoint(
+    project_path: str, request: LogoForgeStateRequest
+):
+    try:
+        upsert_project_logo_forge_state(project_path, request.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"state": get_project_logo_forge_state(project_path)}
 
 
 @app.post("/api/projects/{project_path:path}/urls")

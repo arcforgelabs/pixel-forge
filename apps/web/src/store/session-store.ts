@@ -7,7 +7,7 @@ import type {
 } from "@/types/pixel-forge-desktop";
 import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
 
-export type ActiveMode = "screenshot" | "live-editor";
+export type ActiveMode = "screenshot" | "live-editor" | "logo-forge";
 export type OutputMode = "scratch" | "custom";
 export type PersistedLiveEditorPreviewMode = "proxy" | "browser" | null;
 export type PersistedLiveEditorPanelTab = "chat" | "elements";
@@ -436,7 +436,11 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
     profileId: profileState.profile_id,
     activeProjectPath: profileState.active_project_path,
     activeMode:
-      profileState.active_mode === "live-editor" ? "live-editor" : "screenshot",
+      profileState.active_mode === "live-editor"
+        ? "live-editor"
+        : profileState.active_mode === "logo-forge"
+          ? "logo-forge"
+          : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
     defaultAgentType: normalizeAgentType(profileState.default_agent_type),
     defaultWorkspaceMode: normalizeWorkspaceMode(profileState.default_workspace_mode),

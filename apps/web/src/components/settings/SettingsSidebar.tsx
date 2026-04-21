@@ -53,6 +53,7 @@ import {
   PanelLeft,
   Camera,
   Pencil,
+  Sparkles,
   FolderOpen,
   ChevronDown,
   MessageSquare,
@@ -1182,9 +1183,23 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         }
       },
     },
+    {
+      key: "logo-forge",
+      icon: <Sparkles className="h-4 w-4" />,
+      label: "Logo Forge",
+      active: activeMode === "logo-forge",
+      disabled: false,
+      onClick: () => {
+        switchMode("logo-forge");
+      },
+    },
   ];
-  const modeTabValue: "screenshot" | "live-editor" =
-    activeMode === "live-editor" ? "live-editor" : "screenshot";
+  const modeTabValue: "screenshot" | "live-editor" | "logo-forge" =
+    activeMode === "live-editor"
+      ? "live-editor"
+      : activeMode === "logo-forge"
+        ? "logo-forge"
+        : "screenshot";
 
   const [settingsPortalTarget, setSettingsPortalTarget] =
     useState<HTMLElement | null>(null);

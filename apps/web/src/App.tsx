@@ -13,7 +13,7 @@ import useBrowserTabIndicator from "./hooks/useBrowserTabIndicator";
 // import TipLink from "./components/messages/TipLink";
 import { useAppStore } from "./store/app-store";
 import { useProjectStore } from "./store/project-store";
-import { useSessionStore } from "./store/session-store";
+import { useSessionStore, type ActiveMode } from "./store/session-store";
 // Sidebar removed — screenshot workflow sidebar no longer rendered
 import PreviewPane from "./components/preview/PreviewPane";
 // GenerationSettings moved into SettingsSidebar
@@ -25,6 +25,7 @@ import ModeTabBar from "./components/layout/ModeTabBar";
 import ControllerUpdateNotice from "./components/layout/ControllerUpdateNotice";
 import ControllerUpdateApplyOverlay from "./components/layout/ControllerUpdateApplyOverlay";
 import LiveEditorPane from "./components/live-editor/LiveEditorPane";
+import { LogoForgePane } from "./components/logo-forge/LogoForgePane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { browseForDirectory } from "./lib/browse-directory";
 import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
@@ -369,7 +370,13 @@ function App() {
       persistProfile: false,
     })
       .then(() => {
-        switchMode(profileState?.activeMode === "live-editor" ? "live-editor" : "screenshot");
+        const restored: ActiveMode =
+          profileState?.activeMode === "live-editor"
+            ? "live-editor"
+            : profileState?.activeMode === "logo-forge"
+              ? "logo-forge"
+              : "screenshot";
+        switchMode(restored);
       })
       .catch((error) => {
         console.error("[app] Failed to restore default profile state:", error);
@@ -760,6 +767,12 @@ function App() {
         {showMainContent && activeMode === "live-editor" && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <LiveEditorPane advancedMode={settings.advancedMode} />
+          </div>
+        )}
+
+        {showMainContent && activeMode === "logo-forge" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <LogoForgePane />
           </div>
         )}
 

@@ -220,7 +220,7 @@ def normalize_pending_controller_update(payload: dict[str, Any]) -> dict[str, An
         raise ValueError("projectPath is required")
 
     active_mode = _normalize_text(payload.get("activeMode") or payload.get("active_mode"))
-    if active_mode not in {"live-editor", "screenshot", None}:
+    if active_mode not in {"live-editor", "screenshot", "logo-forge", None}:
         active_mode = None
 
     preview_url = _normalize_text(payload.get("previewUrl") or payload.get("preview_url"))

@@ -230,7 +230,7 @@ export interface PixelForgeDesktopPreviewBridge {
 export interface PixelForgeDesktopBootstrapState {
   projectPath: string | null
   previewUrl: string | null
-  activeMode: 'screenshot' | 'live-editor' | null
+  activeMode: 'screenshot' | 'live-editor' | 'logo-forge' | null
 }
 
 export interface PixelForgeDesktopPendingControllerUpdate {
@@ -239,7 +239,7 @@ export interface PixelForgeDesktopPendingControllerUpdate {
   snapshotPath: string | null
   version: string | null
   previewUrl: string | null
-  activeMode: 'screenshot' | 'live-editor' | null
+  activeMode: 'screenshot' | 'live-editor' | 'logo-forge' | null
   summary: string
   source: string
   requestId: string | null
@@ -255,7 +255,7 @@ export interface PixelForgePendingPreviewUpdate {
   workspacePath: string
   snapshotPath: string | null
   previewUrl: string | null
-  activeMode: 'screenshot' | 'live-editor' | null
+  activeMode: 'screenshot' | 'live-editor' | 'logo-forge' | null
   summary: string
   source: string
   requestId: string | null
@@ -307,7 +307,7 @@ export interface PixelForgeDesktopAppAPI {
   stageControllerUpdate?(payload: {
     projectPath: string
     previewUrl?: string | null
-    activeMode?: 'screenshot' | 'live-editor' | null
+    activeMode?: 'screenshot' | 'live-editor' | 'logo-forge' | null
     summary?: string | null
     source?: string | null
     requestId?: string | null

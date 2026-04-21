@@ -954,7 +954,7 @@ function resetThreadRuntimeState(
 async function stageControllerUpdateNotice(options: {
   projectPath: string
   previewUrl: string | null
-  activeMode: 'live-editor' | 'screenshot'
+  activeMode: 'live-editor' | 'screenshot' | 'logo-forge'
   requestId: string | null
 }) {
   if (typeof fetch === 'undefined') {
@@ -1012,7 +1012,7 @@ async function stagePreviewUpdateNotice(options: {
   projectPath: string
   workspacePath: string
   previewUrl: string | null
-  activeMode: 'live-editor' | 'screenshot'
+  activeMode: 'live-editor' | 'screenshot' | 'logo-forge'
   requestId: string | null
   agentDeckSessionId: string | null
 }) {

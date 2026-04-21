@@ -79,7 +79,7 @@ def normalize_pending_preview_update(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("workspacePath is required")
 
     active_mode = _normalize_text(payload.get("activeMode") or payload.get("active_mode"))
-    if active_mode not in {"live-editor", "screenshot", None}:
+    if active_mode not in {"live-editor", "screenshot", "logo-forge", None}:
         active_mode = None
 
     return {

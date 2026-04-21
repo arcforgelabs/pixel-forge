@@ -922,6 +922,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN codex_default_thinking TEXT"
                 )
+        existing_projects_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(projects)").fetchall()
+        }
+        if "logo_forge_state_json" not in existing_projects_columns:
+            conn.execute(
+                "ALTER TABLE projects ADD COLUMN logo_forge_state_json TEXT"
+            )
         conn.execute(
             """
             UPDATE sessions
@@ -1111,7 +1119,11 @@ def _row_to_url_record(row: sqlite3.Row) -> ProjectUrlRecord:
 
 
 def _normalize_active_mode(value: object | None) -> str:
-    return "live-editor" if value == "live-editor" else "screenshot"
+    if value == "live-editor":
+        return "live-editor"
+    if value == "logo-forge":
+        return "logo-forge"
+    return "screenshot"
 
 
 def _normalize_agent_type(value: object | None) -> str:
@@ -1927,6 +1939,39 @@ def get_project(project_path: str) -> ProjectRecord | None:
         last_opened=row["last_opened"],
         urls=list_project_urls(normalized_path),
     )
+
+
+def get_project_logo_forge_state(project_path: str) -> dict[str, object] | None:
+    normalized_path = normalize_project_path(project_path)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT logo_forge_state_json FROM projects WHERE path = ?",
+            (normalized_path,),
+        ).fetchone()
+    if row is None:
+        return None
+    raw = row["logo_forge_state_json"]
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def upsert_project_logo_forge_state(
+    project_path: str, state: dict[str, object] | None
+) -> bool:
+    normalized_path = normalize_project_path(project_path)
+    serialized = json.dumps(state) if isinstance(state, dict) else None
+    with _connect() as conn:
+        result = conn.execute(
+            "UPDATE projects SET logo_forge_state_json = ? WHERE path = ?",
+            (serialized, normalized_path),
+        )
+        conn.commit()
+        return result.rowcount > 0
 
 
 def list_projects() -> list[ProjectRecord]:
