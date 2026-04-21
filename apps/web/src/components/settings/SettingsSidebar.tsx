@@ -707,6 +707,16 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       return;
     }
 
+    setExpandedProjectPaths((current) =>
+      current.includes(targetProjectPath)
+        ? current
+        : [...current, targetProjectPath]
+    );
+
+    if (loadingProjectPaths.includes(targetProjectPath)) {
+      return;
+    }
+
     setLoadingProjectPaths((current) =>
       current.includes(targetProjectPath)
         ? current
@@ -715,11 +725,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
     try {
       await refreshProjectChats(targetProjectPath);
-      setExpandedProjectPaths((current) =>
-        current.includes(targetProjectPath)
-          ? current
-          : [...current, targetProjectPath]
-      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to load project chats"

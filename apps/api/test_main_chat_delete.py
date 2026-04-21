@@ -16,7 +16,6 @@ from agent_deck_bridge import (
     AgentDeckDeleteAssessment,
     AgentDeckSessionInfo,
 )
-from project_chats import ProjectChatRecord
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
@@ -108,20 +107,21 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
 class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
     async def test_create_project_chat_generates_unique_chat_thread_id(self) -> None:
         expected_thread_id = "chat-1234567890ab"
-        created_chat = ProjectChatRecord(
-            id=expected_thread_id,
+        created_session = SimpleNamespace(
+            id=1,
+            profile_id="default",
             project_path="/tmp/project",
-            title=f"Chat {expected_thread_id[:8]}",
             thread_id=expected_thread_id,
             workspace_path="/tmp/project",
             backend="agent-deck",
+            origin_kind="managed",
             agent_deck_session_id=None,
             agent_deck_session_title=f"Chat {expected_thread_id[:8]}",
             agent_deck_tool=None,
-            agent_deck_session_status=None,
-            binding_state="attached",
-            workspace_kind="root",
-            origin_kind="managed",
+            editor_state={
+                "draftAgentType": "claude",
+                "draftWorkspaceMode": "root",
+            },
             created_at="2026-03-21T00:00:00Z",
             last_active="2026-03-21T00:00:00Z",
         )
@@ -135,19 +135,29 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
                 "uuid4",
                 Mock(return_value=SimpleNamespace(hex="1234567890abcdef1234567890abcdef")),
             ),
-            patch.object(main, "upsert_session", Mock()) as upsert_session,
+            patch.object(main, "list_project_sessions", Mock(return_value=[])),
+            patch.object(
+                main,
+                "upsert_session",
+                Mock(return_value=created_session),
+            ) as upsert_session,
             patch.object(
                 main,
                 "_load_reconciled_project_chats",
-                AsyncMock(return_value=("/tmp/project", [created_chat])),
-            ),
+                AsyncMock(),
+            ) as load_chats,
         ):
             payload = await main.create_project_chat(
                 "/tmp/project",
-                main.AgentDeckSessionRequest(agent_type="claude", title=None, workspace_mode="root"),
+                main.AgentDeckSessionRequest(
+                    agent_type="claude",
+                    title=None,
+                    workspace_mode="root",
+                ),
             )
 
         upsert_session.assert_called_once()
+        load_chats.assert_not_awaited()
         self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
         self.assertEqual(
             upsert_session.call_args.kwargs["editor_state"],
@@ -158,6 +168,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(payload["thread_id"], expected_thread_id)
         self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
+        self.assertEqual(payload["binding_state"], "detached")
 
 
 class BackfillChatHistoryTest(unittest.TestCase):

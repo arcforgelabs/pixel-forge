@@ -91,6 +91,7 @@ from project_store import (
 from project_chats import (
     find_project_chat_by_agent_deck_session_id,
     find_project_chat_by_thread_id,
+    ProjectChatRecord,
     reconcile_project_chats,
 )
 from pydantic import BaseModel
@@ -737,6 +738,41 @@ def serialize_project_chat(chat_record) -> dict[str, object]:
     }
 
 
+def _project_chat_from_session_record(session_record) -> ProjectChatRecord:
+    normalized_project_path = normalize_project_path(session_record.project_path)
+    normalized_workspace_path = normalize_project_path(session_record.workspace_path)
+    thread_id = session_record.thread_id
+    title = (
+        session_record.agent_deck_session_title.strip()
+        if isinstance(session_record.agent_deck_session_title, str)
+        and session_record.agent_deck_session_title.strip()
+        else f"Chat {thread_id[:8]}"
+    )
+    return ProjectChatRecord(
+        id=thread_id,
+        project_path=normalized_project_path,
+        title=title,
+        thread_id=thread_id,
+        workspace_path=normalized_workspace_path,
+        backend=session_record.backend,
+        agent_deck_session_id=session_record.agent_deck_session_id,
+        agent_deck_session_title=session_record.agent_deck_session_title,
+        agent_deck_tool=session_record.agent_deck_tool,
+        agent_deck_session_status=None,
+        binding_state=(
+            "attached" if session_record.agent_deck_session_id else "detached"
+        ),
+        workspace_kind=(
+            "root"
+            if normalized_workspace_path == normalized_project_path
+            else "clone"
+        ),
+        origin_kind=session_record.origin_kind,
+        created_at=session_record.created_at,
+        last_active=session_record.last_active,
+    )
+
+
 def serialize_profile_state(profile_state) -> dict[str, object]:
     return {
         "profile_id": profile_state.profile_id,
@@ -1145,22 +1181,26 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
-    # Reuse an existing empty draft chat instead of creating a new one.
-    _, existing_chats = await _load_reconciled_project_chats(normalized_project_path)
-    for existing in existing_chats:
+    # Reuse an existing empty draft chat without paying for live Agent Deck
+    # reconciliation. Draft creation is a local persisted-state operation.
+    for existing in list_project_sessions(normalized_project_path):
         thread_id = existing.thread_id or ""
         if (
-            existing.binding_state in ("detached", "unbound")
+            not existing.agent_deck_session_id
             and thread_id.startswith("chat-")
             and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
         ):
-            return serialize_project_chat(existing)
+            return serialize_project_chat(_project_chat_from_session_record(existing))
 
     thread_id = f"chat-{uuid4().hex[:12]}"
-    draft_title = request.title.strip() if request.title and request.title.strip() else f"Chat {thread_id[:8]}"
+    draft_title = (
+        request.title.strip()
+        if request.title and request.title.strip()
+        else f"Chat {thread_id[:8]}"
+    )
 
     try:
-        upsert_session(
+        created_session = upsert_session(
             normalized_project_path,
             thread_id=thread_id,
             backend="agent-deck",
@@ -1176,18 +1216,7 @@ async def create_project_chat(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    _, chats = await _load_reconciled_project_chats(normalized_project_path)
-    created_chat = find_project_chat_by_thread_id(
-        chats,
-        thread_id,
-    )
-    if created_chat is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Created chat could not be reconciled",
-        )
-
-    return serialize_project_chat(created_chat)
+    return serialize_project_chat(_project_chat_from_session_record(created_session))
 
 
 @app.post("/api/projects/{project_path:path}/chat-items/rename")
