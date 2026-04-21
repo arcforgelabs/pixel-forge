@@ -187,7 +187,7 @@ def _sanitize_bootstrap_state(payload: Any) -> dict[str, str | None]:
     return {
         "projectPath": _normalize_text(payload.get("projectPath")) if isinstance(payload, dict) else None,
         "previewUrl": _normalize_text(payload.get("previewUrl")) if isinstance(payload, dict) else None,
-        "activeMode": active_mode if active_mode in {"live-editor", "screenshot"} else None,
+        "activeMode": active_mode if active_mode in {"live-editor", "screenshot", "logo-forge"} else None,
     }
 
 
@@ -1215,7 +1215,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage = controller_update_subparsers.add_parser("stage", help="Stage a controller update snapshot")
     stage.add_argument("--project", dest="project_path", required=True, help="Canonical Pixel Forge project root")
     stage.add_argument("--preview-url", dest="preview_url")
-    stage.add_argument("--mode", dest="active_mode", choices=["live-editor", "screenshot"])
+    stage.add_argument("--mode", dest="active_mode", choices=["live-editor", "screenshot", "logo-forge"])
     stage.add_argument("--summary", dest="summary")
     stage.add_argument("--source", dest="source", default="manual")
     stage.add_argument("--request-id", dest="request_id")
@@ -1240,7 +1240,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply = controller_update_subparsers.add_parser("apply", help="Apply the staged controller update")
     apply.add_argument("--project", dest="project_path", help="Project path to restore after relaunch")
     apply.add_argument("--preview-url", dest="preview_url")
-    apply.add_argument("--mode", dest="active_mode", choices=["live-editor", "screenshot"])
+    apply.add_argument("--mode", dest="active_mode", choices=["live-editor", "screenshot", "logo-forge"])
     apply.add_argument("--detach", action="store_true", help="Start the apply flow and return immediately")
     apply.add_argument("--show-ui", action="store_true", help="Open the detached updater window")
     apply.add_argument(
