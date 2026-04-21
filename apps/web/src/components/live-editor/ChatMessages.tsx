@@ -18,7 +18,6 @@ import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpToLine, CheckCircle2, Copy, D
 import { splitTextWithInlineAttachments } from './composer-attachments'
 import {
   findSubmittedPromptBeforeIndex,
-  findLatestSubmittedPrompt,
   LIVE_EDITOR_MESSAGE_ATTRIBUTE,
   scrollToLiveEditorMessage,
 } from './chat-navigation'
@@ -34,13 +33,22 @@ interface FloatingNavButtonProps {
   icon: LucideIcon
   label: string
   onClick: () => void
+  tooltipSide?: 'top' | 'bottom'
 }
 
 function FloatingNavButton({
   icon: Icon,
   label,
   onClick,
+  tooltipSide = 'top',
 }: FloatingNavButtonProps) {
+  const tooltipPositionClassName = tooltipSide === 'bottom'
+    ? 'top-full mt-2 translate-y-[-0.25rem] group-hover:translate-y-0 group-focus-within:translate-y-0'
+    : 'bottom-full mb-2 translate-y-1 group-hover:translate-y-0 group-focus-within:translate-y-0'
+  const arrowClassName = tooltipSide === 'bottom'
+    ? 'bottom-full translate-y-1/2 border-l border-t'
+    : 'top-full -translate-y-1/2 border-b border-r'
+
   return (
     <div className="pointer-events-auto group relative">
       <Button
@@ -53,10 +61,10 @@ function FloatingNavButton({
       >
         <Icon className="h-3.5 w-3.5" />
       </Button>
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max -translate-x-1/2 translate-y-1 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
+      <div className={`pointer-events-none absolute left-1/2 z-20 w-max -translate-x-1/2 opacity-0 transition-all duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPositionClassName}`}>
         <div className="relative rounded-xl border border-border/60 bg-background/95 px-2.5 py-1.5 text-[11px] font-medium tracking-[0.01em] text-foreground shadow-[0_18px_40px_hsl(0_0%_0%/0.22)] backdrop-blur-md">
           {label}
-          <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-border/60 bg-background/95" />
+          <span className={`absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-border/60 bg-background/95 ${arrowClassName}`} />
         </div>
       </div>
     </div>
@@ -124,11 +132,12 @@ export function ChatMessages({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  const isNearTopRef = useRef(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [isNearTop, setIsNearTop] = useState(true)
   const scrollSaveRafRef = useRef<number | null>(null)
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
   const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
-  const lastSubmittedPrompt = findLatestSubmittedPrompt(messages)
 
   const closeLightbox = useCallback(() => setLightboxImage(null), [])
   const togglePasteExpanded = useCallback((id: string) => {
@@ -190,6 +199,16 @@ export function ChatMessages({
     }
   }, [retryMessageInCurrentChat])
 
+  const updateScrollFlags = useCallback((container: HTMLDivElement) => {
+    const atBottom =
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 100
+    const nearTop = container.scrollTop <= 100
+    isAtBottomRef.current = atBottom
+    isNearTopRef.current = nearTop
+    setIsAtBottom(atBottom)
+    setIsNearTop(nearTop)
+  }, [])
+
   const jumpToPrompt = useCallback((messageId: string) => {
     const container = scrollContainerRef.current
     if (!container) {
@@ -202,15 +221,10 @@ export function ChatMessages({
     }
 
     isAtBottomRef.current = false
+    isNearTopRef.current = container.scrollTop <= 100
     setIsAtBottom(false)
+    setIsNearTop(isNearTopRef.current)
   }, [])
-
-  const jumpToLastPrompt = useCallback(() => {
-    if (!lastSubmittedPrompt) {
-      return
-    }
-    jumpToPrompt(lastSubmittedPrompt.id)
-  }, [jumpToPrompt, lastSubmittedPrompt])
 
   const jumpToConversationStart = useCallback(() => {
     const container = scrollContainerRef.current
@@ -223,7 +237,9 @@ export function ChatMessages({
       behavior: 'smooth',
     })
     isAtBottomRef.current = false
+    isNearTopRef.current = true
     setIsAtBottom(false)
+    setIsNearTop(true)
   }, [])
 
   // Close lightbox on Escape
@@ -247,17 +263,15 @@ export function ChatMessages({
       // No saved position → jump to bottom
       container.scrollTop = container.scrollHeight
     }
+    updateScrollFlags(container)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeThreadKey])
+  }, [activeThreadKey, updateScrollFlags])
 
   // Track whether user is pinned to bottom and save scroll position
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return
-    const atBottom =
-      container.scrollTop + container.clientHeight >= container.scrollHeight - 100
-    isAtBottomRef.current = atBottom
-    setIsAtBottom(atBottom)
+    updateScrollFlags(container)
     // Throttle saves to one per animation frame
     if (scrollSaveRafRef.current !== null) return
     scrollSaveRafRef.current = requestAnimationFrame(() => {
@@ -265,7 +279,7 @@ export function ChatMessages({
       const c = scrollContainerRef.current
       if (c) saveChatScrollPosition(activeThreadKey, c.scrollTop)
     })
-  }, [activeThreadKey, saveChatScrollPosition])
+  }, [activeThreadKey, saveChatScrollPosition, updateScrollFlags])
 
   // Auto-scroll to bottom only when already pinned to bottom.
   // Use instant behavior when the element is hidden (display:none) so the browser
@@ -280,7 +294,8 @@ export function ChatMessages({
       top: container.scrollHeight,
       behavior: isVisible ? 'smooth' : 'instant',
     })
-  }, [messages, currentStreamContent])
+    updateScrollFlags(container)
+  }, [messages, currentStreamContent, updateScrollFlags])
 
   const renderInlineUserContent = useCallback((
     content: string,
@@ -744,24 +759,20 @@ export function ChatMessages({
     </div>
 
       {/* Floating chat navigation */}
-      {(lastSubmittedPrompt || !isAtBottom) && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10">
-          {lastSubmittedPrompt && (
-            <div className="absolute right-1/2 mr-2 flex items-center gap-2">
-              <FloatingNavButton
-                icon={ArrowUp}
-                label="Jump to latest submitted prompt"
-                onClick={jumpToLastPrompt}
-              />
+      {(messages.length > 0 || !isAtBottom) && (
+        <>
+          {messages.length > 0 && !isNearTop && (
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center">
               <FloatingNavButton
                 icon={ArrowUpToLine}
                 label="Jump to start of conversation"
                 onClick={jumpToConversationStart}
+                tooltipSide="bottom"
               />
             </div>
           )}
           {!isAtBottom && (
-            <div className="flex justify-center">
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center">
               <FloatingNavButton
                 icon={ArrowDown}
                 label="Scroll to latest reply"
@@ -774,7 +785,7 @@ export function ChatMessages({
               />
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   )
