@@ -57,6 +57,12 @@ app.setName(process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge')
 app.commandLine.appendSwitch('remote-debugging-address', CONTROLLER_CDP_HOST)
 app.commandLine.appendSwitch('remote-debugging-port', CONTROLLER_CDP_PORT)
 
+const SHOULD_RUN_APP = IS_UPDATER_UI_MODE || app.requestSingleInstanceLock()
+
+if (!SHOULD_RUN_APP) {
+  app.exit(0)
+}
+
 let mainWindow = null
 let agentDeckSurfaceWindow = null
 let updaterWindow = null
@@ -1121,6 +1127,21 @@ function destroyOwnedPreviewContexts(ownerContextId) {
   previewContexts.delete(ownerContextId)
 }
 
+function destroyAllPreviewSurfaces() {
+  for (const previewRecord of Array.from(previewViews.values())) {
+    try {
+      if (!previewRecord.view.webContents.isDestroyed()) {
+        previewRecord.view.webContents.destroy()
+      }
+    } catch {
+      // Ignore teardown races while Electron is quitting.
+    }
+  }
+  previewViews.clear()
+  previewKeyByWebContentsId.clear()
+  previewContexts.clear()
+}
+
 function registerViewEvents(ownerContextId, tabId, view) {
   const previewKey = makePreviewKey(ownerContextId, tabId)
   const webContentsId = view.webContents.id
@@ -2001,6 +2022,27 @@ async function createMainWindow() {
   })
 }
 
+function focusOrCreateMainWindow() {
+  if (IS_UPDATER_UI_MODE) {
+    return
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createMainWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+if (SHOULD_RUN_APP && !IS_UPDATER_UI_MODE) {
+  app.on('second-instance', () => {
+    focusOrCreateMainWindow()
+  })
+}
+
 function openAgentDeckSurfaceWindow(url) {
   const targetUrl = typeof url === 'string' ? url.trim() : ''
   if (!targetUrl) {
@@ -2046,6 +2088,7 @@ function openAgentDeckSurfaceWindow(url) {
   return { ok: true }
 }
 
+if (SHOULD_RUN_APP) {
 app.whenReady().then(() => {
   if (IS_UPDATER_UI_MODE) {
     ipcMain.handle('pixel-forge-updater:get-state', async () => {
@@ -2069,7 +2112,7 @@ app.whenReady().then(() => {
   watchFile(PENDING_CONTROLLER_UPDATE_PATH, { interval: 1000 }, () => {
     void syncPendingControllerUpdate()
   })
-  void createMainWindow()
+  focusOrCreateMainWindow()
 
   ipcMain.handle('pixel-forge-preview:load', async (event, payload) => {
     const ownerContextId = event.sender.id
@@ -2388,17 +2431,19 @@ app.whenReady().then(() => {
     })
   })
 
-app.on('activate', () => {
-    if (!IS_UPDATER_UI_MODE && BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow()
+  app.on('activate', () => {
+    if (!IS_UPDATER_UI_MODE) {
+      focusOrCreateMainWindow()
     }
   })
 })
+}
 
 app.on('window-all-closed', () => {
   app.quit()
 })
 
 app.on('before-quit', () => {
+  destroyAllPreviewSurfaces()
   unwatchFile(PENDING_CONTROLLER_UPDATE_PATH)
 })
