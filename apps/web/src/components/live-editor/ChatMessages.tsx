@@ -33,24 +33,15 @@ interface FloatingNavButtonProps {
   icon: LucideIcon
   label: string
   onClick: () => void
-  tooltipSide?: 'top' | 'bottom'
 }
 
 function FloatingNavButton({
   icon: Icon,
   label,
   onClick,
-  tooltipSide = 'top',
 }: FloatingNavButtonProps) {
-  const tooltipPositionClassName = tooltipSide === 'bottom'
-    ? 'top-full mt-2 translate-y-[-0.25rem] group-hover:translate-y-0 group-focus-within:translate-y-0'
-    : 'bottom-full mb-2 translate-y-1 group-hover:translate-y-0 group-focus-within:translate-y-0'
-  const arrowClassName = tooltipSide === 'bottom'
-    ? 'bottom-full translate-y-1/2 border-l border-t'
-    : 'top-full -translate-y-1/2 border-b border-r'
-
   return (
-    <div className="pointer-events-auto group relative">
+    <div className="pointer-events-auto relative">
       <Button
         type="button"
         variant="ghost"
@@ -61,12 +52,6 @@ function FloatingNavButton({
       >
         <Icon className="h-3.5 w-3.5" />
       </Button>
-      <div className={`pointer-events-none absolute left-1/2 z-20 w-max -translate-x-1/2 opacity-0 transition-all duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${tooltipPositionClassName}`}>
-        <div className="relative rounded-xl border border-border/60 bg-background/95 px-2.5 py-1.5 text-[11px] font-medium tracking-[0.01em] text-foreground shadow-[0_18px_40px_hsl(0_0%_0%/0.22)] backdrop-blur-md">
-          {label}
-          <span className={`absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-border/60 bg-background/95 ${arrowClassName}`} />
-        </div>
-      </div>
     </div>
   )
 }
@@ -447,9 +432,13 @@ export function ChatMessages({
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <span className="text-lg font-bold text-primary">//</span>
-            </div>
+            <img
+              src="/brand/forge-mark.svg"
+              alt=""
+              aria-hidden="true"
+              className="mb-3 h-10 w-10"
+              draggable={false}
+            />
             <p className="text-sm font-medium text-foreground/80">
               Ready to edit
             </p>
@@ -767,7 +756,6 @@ export function ChatMessages({
                 icon={ArrowUpToLine}
                 label="Jump to start of conversation"
                 onClick={jumpToConversationStart}
-                tooltipSide="bottom"
               />
             </div>
           )}

@@ -1283,7 +1283,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                 {/* Expandable project list */}
                 {projectsExpanded && (
-                  <div className="ml-3 flex flex-col gap-0.5 border-l border-border/30 pl-3 py-1">
+                  <div className="flex flex-col gap-0.5 py-1">
                     {visibleProjects.length === 0 && (
                       <span className="text-xs text-muted-foreground py-1">No projects yet</span>
                     )}
@@ -1425,7 +1425,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           </div>
 
                           {isExpanded && (
-                            <div className="ml-2 flex flex-col gap-0.5 border-l border-border/30 pl-2 py-0.5">
+                            <div className="flex flex-col gap-0.5 py-0.5">
                               {chats.map((chat) => {
                                 const claimedThread = chat.threadId
                                   ? projectSessionsForRow.find(
