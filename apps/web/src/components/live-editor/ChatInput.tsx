@@ -96,6 +96,78 @@ const AGENT_THINKING_OPTIONS: Record<string, AgentModelOption[]> = {
   ],
 }
 
+const COMPOSER_DRAFT_STORAGE_PREFIX = 'pixel-forge:live-editor-composer:'
+const MAX_PERSISTED_COMPOSER_DRAFT_CHARS = 3_500_000
+
+interface PersistedComposerDraft {
+  input: string
+  attachments: ChatAttachment[]
+  caretIndex: number
+  updatedAt: number
+}
+
+function composerDraftStorageKey(threadKey: string): string {
+  return `${COMPOSER_DRAFT_STORAGE_PREFIX}${encodeURIComponent(threadKey)}`
+}
+
+function readPersistedComposerDraft(threadKey: string): PersistedComposerDraft | null {
+  if (typeof window === 'undefined' || !threadKey.trim()) {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(composerDraftStorageKey(threadKey))
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as Partial<PersistedComposerDraft>
+    return {
+      input: typeof parsed.input === 'string' ? parsed.input : '',
+      attachments: Array.isArray(parsed.attachments) ? parsed.attachments : [],
+      caretIndex: Number.isFinite(parsed.caretIndex) ? Number(parsed.caretIndex) : 0,
+      updatedAt: Number.isFinite(parsed.updatedAt) ? Number(parsed.updatedAt) : Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writePersistedComposerDraft(
+  threadKey: string,
+  input: string,
+  attachments: ChatAttachment[],
+  caretIndex: number
+) {
+  if (typeof window === 'undefined' || !threadKey.trim()) {
+    return
+  }
+
+  const key = composerDraftStorageKey(threadKey)
+  if (!input.trim() && attachments.length === 0) {
+    window.localStorage.removeItem(key)
+    return
+  }
+
+  const payload: PersistedComposerDraft = {
+    input,
+    attachments,
+    caretIndex,
+    updatedAt: Date.now(),
+  }
+  let serialized = JSON.stringify(payload)
+  if (serialized.length > MAX_PERSISTED_COMPOSER_DRAFT_CHARS) {
+    serialized = JSON.stringify({ ...payload, attachments: [] })
+  }
+  window.localStorage.setItem(key, serialized)
+}
+
+function clearPersistedComposerDraft(threadKey: string) {
+  if (typeof window === 'undefined' || !threadKey.trim()) {
+    return
+  }
+  window.localStorage.removeItem(composerDraftStorageKey(threadKey))
+}
+
 function getAgentModelOptions(agentType: string | null | undefined): AgentModelOption[] {
   if (!agentType) {
     return []
@@ -176,6 +248,7 @@ export function ChatInput() {
   const [isDragActive, setIsDragActive] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const skipNextDraftPersistRef = useRef(false)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showThinkingPicker, setShowThinkingPicker] = useState(false)
@@ -364,6 +437,7 @@ export function ChatInput() {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
+    clearPersistedComposerDraft(activeThreadKey)
     sendMessage(input.trim(), attachments, activeAgentModel, resolvedAgentThinking)
     setInput('')
     setAttachments([])
@@ -433,6 +507,31 @@ export function ChatInput() {
       textarea.style.overflowY = textarea.scrollHeight > 384 ? 'auto' : 'hidden'
     }
   }, [input])
+
+  useEffect(() => {
+    const draft = readPersistedComposerDraft(activeThreadKey)
+    skipNextDraftPersistRef.current = true
+    if (!draft) {
+      setInput('')
+      setAttachments([])
+      resetAttachmentOrdinals()
+      setCaretIndex(0)
+      return
+    }
+
+    setInput(draft.input)
+    setAttachments(draft.attachments)
+    syncAttachmentOrdinalsFromAttachments(draft.attachments)
+    setCaretIndex(Math.min(draft.caretIndex, draft.input.length))
+  }, [activeThreadKey, syncAttachmentOrdinalsFromAttachments])
+
+  useEffect(() => {
+    if (skipNextDraftPersistRef.current) {
+      skipNextDraftPersistRef.current = false
+      return
+    }
+    writePersistedComposerDraft(activeThreadKey, input, attachments, caretIndex)
+  }, [activeThreadKey, attachments, caretIndex, input])
 
   useEffect(() => {
     if (skillsLoaded || skillsLoading) {
