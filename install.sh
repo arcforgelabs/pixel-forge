@@ -160,6 +160,26 @@ backup_install_dir() {
     cp -a "$INSTALL_DIR"/. "$BACKUP_DIR"/
 }
 
+find_go_binary() {
+    if command -v go >/dev/null 2>&1; then
+        command -v go
+        return 0
+    fi
+    local candidate
+    for candidate in \
+        "$HOME/go-1.21/bin/go" \
+        "$HOME/go/bin/go" \
+        "/usr/local/go/bin/go" \
+        "/opt/go/bin/go" \
+        "/snap/bin/go"; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 install_agent_deck_foundation_binary() {
     if [ ! -d "$AGENT_DECK_FOUNDATION_INSTALL_DIR/cmd/agent-deck" ]; then
         return
@@ -168,13 +188,14 @@ install_agent_deck_foundation_binary() {
     local prebuilt_build_binary="$AGENT_DECK_BUNDLED_BINARY_PATH"
     local fallback_bundled_binary="$AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH"
 
-    if command -v go >/dev/null 2>&1; then
-        echo "Building bundled Agent Deck binary..."
+    local go_bin
+    if go_bin="$(find_go_binary)"; then
+        echo "Building bundled Agent Deck binary with $go_bin..."
         rm -rf "$AGENT_DECK_FOUNDATION_BUILD_DIR"
         mkdir -p "$AGENT_DECK_FOUNDATION_BUILD_DIR"
         (
             cd "$AGENT_DECK_FOUNDATION_INSTALL_DIR"
-            "$(command -v go)" build -o "$AGENT_DECK_BUNDLED_BINARY_PATH" ./cmd/agent-deck
+            "$go_bin" build -o "$AGENT_DECK_BUNDLED_BINARY_PATH" ./cmd/agent-deck
         )
         cp "$AGENT_DECK_BUNDLED_BINARY_PATH" "$fallback_bundled_binary"
         chmod +x "$fallback_bundled_binary"
