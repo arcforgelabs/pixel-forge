@@ -1,0 +1,20 @@
+{
+  "name": "@pixel-forge/logo-forge-core",
+  "version": "2026.4.21",
+  "description": "Pure pattern + leaf-generation algorithm behind the Pixel Forge logo forge. No DOM, no p5.",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [
+    "pixel-forge",
+    "logo",
+    "tromino",
+    "generative",
+    "fractal"
+  ],
+  "license": "MIT"
+}

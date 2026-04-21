@@ -65,7 +65,7 @@ Mirror runtimes apply the same pattern. `_ensure_mirror_runtime` in `apps/api/lo
 
 ### Versioning
 
-Pixel Forge uses date-based CalVer per `SPECS.md` REQ-S-014 / REQ-S-015. Accepted tag shapes are `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction, `N >= 1`), and `YYYY.M.D-beta.N` (prerelease). Ordering: `YYYY.M.D-beta.N < YYYY.M.D < YYYY.M.D-1 < YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere.
+Pixel Forge uses date-based CalVer per `SPECS.md` REQ-S-014 / REQ-S-015. Accepted tag shapes are `YYYY.M.D` (stable date tag), `YYYY.M.D-N` (same-day release ordinal, `N >= 1`), and `YYYY.M.D-beta.N` (prerelease). Ordering: `YYYY.M.D-beta.N < YYYY.M.D < YYYY.M.D-1 < YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere.
 
 Version surfaces kept in lock-step: `VERSION`, root `package.json`, `apps/web/package.json`, `apps/desktop/package.json`, `packages/sdk-node/package.json`. `scripts/check-version-sync.mjs` (invoked by `pnpm check:version` and `pnpm verify`) enforces both drift and CalVer format; UI-side comparisons use `apps/web/src/lib/calver.ts`.
 
@@ -193,6 +193,15 @@ The important boundary is:
 - Each turn now also has one canonical typed payload in the shared kernel and request pack. `turn-input.json` is the durable artifact projection, `turn_input` mirrors the same payload into `workstation_events`, and the live dispatch string now keeps the operator prompt intact while adding only direct `@file` refs to the typed turn bundle and mirrors.
 - A real operator run has now proven direct CDP attach and live control on an authenticated warm preview tab, and a fresh installed Pixel Forge rerun has now proven the repaired clone-backed attach receipt lane end to end. The next gap is no longer attach proof or typed turn assembly at Pixel Forge’s layer; it is native ingress and inspection ownership. The last mile still depends on a string turn plus direct refs and agent-side live-inspection choreography instead of one thin first-party structured bridge into the native Claude/Codex session.
 - Agent Deck runtime-owned hooks, events, logs, conductor assets, update cache, and daemon env now resolve from the same dev-owned Agent Deck home instead of sharing the stable standalone `~/.agent-deck` tree.
+
+### Project-Scoped Creative Tools
+
+- Pixel Forge is growing a third operator surface alongside Screenshot and Live Editor: project-scoped creative authoring tools. The first instance is the Logo Forge — the recursive-tromino mark generator for Pixel Forge-family brand assets.
+- The model matches how projects already own chats and sessions: switching the active project in the controller switches which save state the tool is editing. Two different Pixel Forge projects can hold two different in-progress forges and stay independent without the operator juggling files or a separate app.
+- Algorithm ownership is separated from surface ownership. The pure algorithm (pattern parsing, leaf collection, color math, centering, corner-clip geometry) lives in `packages/logo-forge-core` as a UMD module with no DOM or p5 dependency, and accepts a noise function by injection. Both the standalone editor (`design/logo/tromino-forge.html`) and the future in-app tool slot consume that same package, so the two surfaces cannot drift on visual output.
+- The standalone editor stays the zero-build iteration surface. It is served from repo root via `design/logo/serve.sh` so the relative `<script>` reference into `packages/logo-forge-core/index.js` resolves; export fidelity (PNG/SVG with backdrop toggle honored, rounded-rect clip) is intentionally identical to what the in-app slot will produce.
+- In-app integration uses the existing project-scoped state model: Logo Forge save state (pattern, params, palette, corner radius, recursion depth, seed, preview surface and backdrop) belongs in the shared control-plane store next to the project profile that already carries active project, active mode, and active Live Editor thread. Reinstalls, controller updates, and shell restarts must keep each project's logo state intact, so browser localStorage is not an acceptable home for this state.
+- The tool slot itself has not been scaffolded yet. When it lands, it extends `ActiveMode` in `apps/web/src/store/session-store.ts` from `"screenshot" | "live-editor"` to include `"logo-forge"`, adds a third pane in `apps/web/src/App.tsx` that mirrors the live-editor visibility-toggle pattern, and imports the core package directly — the pnpm workspace already wires `@pixel-forge/logo-forge-core` through the `packages/*` glob in `pnpm-workspace.yaml`.
 
 ### Agent Adapter Boundary
 

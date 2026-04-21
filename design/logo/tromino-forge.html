@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tromino Forge · Pixel Forge Logo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script src="../../packages/logo-forge-core/index.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --anthropic-dark: #141413;
+            --anthropic-light: #faf9f5;
+            --anthropic-mid-gray: #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange: #d97757;
+            --anthropic-blue: #6a9bcc;
+            --anthropic-green: #788c5d;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh;
+            color: var(--anthropic-dark);
+        }
+        .container { display: flex; min-height: 100vh; padding: 20px; gap: 20px; }
+        .sidebar {
+            width: 320px; flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 24px; border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+            overflow-y: auto; overflow-x: hidden;
+        }
+        .sidebar h1 {
+            font-family: 'Lora', serif;
+            font-size: 24px; font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+        .sidebar .subtitle {
+            color: var(--anthropic-mid-gray);
+            font-size: 14px; margin-bottom: 32px; line-height: 1.4;
+        }
+        .control-section { margin-bottom: 32px; }
+        .control-section h3 {
+            font-size: 16px; font-weight: 600;
+            color: var(--anthropic-dark);
+            margin-bottom: 16px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .control-section h3::before {
+            content: '•'; color: var(--anthropic-orange); font-weight: bold;
+        }
+        .seed-input {
+            width: 100%;
+            background: var(--anthropic-light);
+            padding: 12px; border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px; margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            text-align: center;
+        }
+        .seed-input:focus {
+            outline: none;
+            border-color: var(--anthropic-orange);
+            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
+            background: white;
+        }
+        .seed-controls {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+        }
+        .regen-button { margin-bottom: 0; }
+        .control-group { margin-bottom: 20px; }
+        .control-group label {
+            display: block; font-size: 14px; font-weight: 500;
+            color: var(--anthropic-dark); margin-bottom: 8px;
+        }
+        .slider-container { display: flex; align-items: center; gap: 12px; }
+        .slider-container input[type="range"] {
+            flex: 1; height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px; outline: none;
+            -webkit-appearance: none;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%; cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1); background: #c86641;
+        }
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px; height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%; border: none; cursor: pointer;
+        }
+        .value-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px; color: var(--anthropic-mid-gray);
+            min-width: 60px; text-align: right;
+        }
+        .pattern-grid {
+            display: grid;
+            gap: 4px;
+            background: #1d2525;
+            padding: 6px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 240px;
+            margin: 0 auto;
+            border: 1px solid var(--anthropic-light-gray);
+        }
+        .pattern-cell {
+            aspect-ratio: 1;
+            width: 100%;
+            min-width: 0;
+            border: none;
+            cursor: pointer;
+            background: #33403a;
+            border-radius: 3px;
+            padding: 0;
+            outline: none;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: background 0.12s ease, transform 0.08s ease;
+        }
+        .pattern-cell:hover {
+            background: #42524b;
+            transform: scale(1.04);
+        }
+        .pattern-cell.filled {
+            background: #81e3b9;
+        }
+        .pattern-cell.filled:hover {
+            background: #9beec8;
+        }
+        .size-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .size-stepper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--anthropic-light);
+            border: 1px solid var(--anthropic-light-gray);
+            border-radius: 6px;
+            padding: 4px;
+        }
+        .size-stepper .size-label {
+            font-size: 11px;
+            color: var(--anthropic-mid-gray);
+            flex: 1;
+            padding-left: 4px;
+        }
+        .size-stepper button {
+            width: 22px; height: 22px;
+            border: none;
+            background: var(--anthropic-light-gray);
+            color: var(--anthropic-dark);
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .size-stepper button:hover { background: var(--anthropic-mid-gray); color: white; }
+        .size-stepper button:disabled {
+            opacity: 0.35; cursor: not-allowed;
+        }
+        .size-stepper .size-value {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            min-width: 16px;
+            text-align: center;
+        }
+        .pattern-preset {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid var(--anthropic-light-gray);
+            border-radius: 8px;
+            background: var(--anthropic-light);
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px;
+            outline: none;
+            cursor: pointer;
+        }
+        .pattern-preset:focus { border-color: var(--anthropic-orange); }
+        .pattern-hint {
+            font-size: 11px;
+            color: var(--anthropic-mid-gray);
+            margin-top: 6px;
+            line-height: 1.4;
+            font-family: 'Courier New', monospace;
+        }
+        .pattern-dims {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--anthropic-mid-gray);
+            margin-top: 6px;
+        }
+        .color-group { margin-bottom: 16px; }
+        .color-group label {
+            display: block; font-size: 12px;
+            color: var(--anthropic-mid-gray); margin-bottom: 4px;
+        }
+        .color-picker-container { display: flex; align-items: center; gap: 8px; }
+        .color-picker-container input[type="color"] {
+            width: 32px; height: 32px; border: none;
+            border-radius: 6px; cursor: pointer;
+            background: none; padding: 0;
+        }
+        .color-value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px; color: var(--anthropic-mid-gray);
+        }
+        .button {
+            background: var(--anthropic-orange); color: white;
+            border: none; padding: 10px 16px;
+            border-radius: 6px; font-size: 14px; font-weight: 500;
+            cursor: pointer; transition: all 0.2s ease; width: 100%;
+        }
+        .button:hover { background: #c86641; transform: translateY(-1px); }
+        .button:active { transform: translateY(0); }
+        .button.secondary { background: var(--anthropic-blue); }
+        .button.secondary:hover { background: #5a8bb8; }
+        .button.tertiary { background: var(--anthropic-green); }
+        .button.tertiary:hover { background: #6b7b52; }
+        .button-row { display: flex; gap: 8px; }
+        .button-row .button { flex: 1; }
+        .canvas-area {
+            flex: 1; display: flex;
+            flex-direction: column;
+            align-items: center; justify-content: center;
+            min-width: 0;
+            gap: 16px;
+        }
+        .preview-controls {
+            display: flex; align-items: center;
+            gap: 16px; flex-wrap: wrap;
+            padding: 10px 16px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
+        }
+        .surface-selector { display: flex; align-items: center; gap: 6px; }
+        .surface-selector-label {
+            font-size: 12px; color: var(--anthropic-mid-gray);
+            font-weight: 500; margin-right: 4px;
+        }
+        .surface-chip {
+            padding: 6px 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            background: var(--anthropic-light);
+            color: var(--anthropic-dark);
+            border-radius: 6px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 12px; font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+        .surface-chip:hover { border-color: var(--anthropic-orange); }
+        .surface-chip.active {
+            background: var(--anthropic-orange); color: white;
+            border-color: var(--anthropic-orange);
+        }
+        .backdrop-toggle {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px; color: var(--anthropic-dark);
+            cursor: pointer; user-select: none;
+        }
+        .backdrop-toggle input[type="checkbox"] {
+            width: 14px; height: 14px;
+            accent-color: var(--anthropic-orange);
+            cursor: pointer;
+        }
+        .preview-strip {
+            display: flex; align-items: flex-end;
+            gap: 22px;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 10px;
+            box-shadow: 0 6px 16px rgba(20, 20, 19, 0.06);
+        }
+        .preview-chip {
+            background: transparent; border: none;
+            padding: 8px 10px;
+            display: flex; flex-direction: column;
+            align-items: center; gap: 8px;
+            cursor: pointer; border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            transition: background 0.15s ease, transform 0.12s ease;
+        }
+        .preview-chip:hover {
+            background: rgba(217, 119, 87, 0.08);
+            transform: translateY(-2px);
+        }
+        .preview-chip.active {
+            background: rgba(217, 119, 87, 0.14);
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.3);
+        }
+        .preview-thumb-wrap {
+            border-radius: var(--preview-thumb-radius, 0%); overflow: hidden;
+            box-shadow: 0 2px 6px rgba(20, 20, 19, 0.25);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .preview-thumb {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .preview-label {
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            color: var(--anthropic-mid-gray);
+            letter-spacing: 0.02em;
+            text-align: center;
+            line-height: 1.2;
+        }
+        .preview-label strong {
+            display: block;
+            color: var(--anthropic-dark);
+            font-weight: 600;
+            font-size: 11px;
+        }
+        .preview-size-row {
+            display: flex; align-items: center; gap: 12px;
+            width: 100%; max-width: 560px;
+            padding: 10px 16px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 8px;
+        }
+        .preview-size-row label {
+            font-size: 12px; color: var(--anthropic-mid-gray);
+            min-width: 80px; font-weight: 500;
+        }
+        .preview-size-row input[type="range"] {
+            flex: 1; height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px; outline: none;
+            -webkit-appearance: none;
+        }
+        .preview-size-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            background: var(--anthropic-orange);
+            border-radius: 50%; cursor: pointer;
+        }
+        .preview-size-row input[type="range"]::-moz-range-thumb {
+            width: 14px; height: 14px;
+            background: var(--anthropic-orange);
+            border-radius: 50%; border: none; cursor: pointer;
+        }
+        .preview-size-row .value-display { min-width: 64px; }
+        #canvas-container {
+            width: 100%; max-width: 1000px;
+            border-radius: 12px; overflow: hidden;
+            box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
+            background: white;
+            transition: max-width 0.2s ease;
+        }
+        #canvas-container canvas {
+            display: block;
+            width: 100% !important;
+            height: auto !important;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .loading {
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; color: var(--anthropic-mid-gray); padding: 40px;
+        }
+        @media (max-width: 600px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; }
+            .canvas-area { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Tromino Forge</h1>
+            <div class="subtitle">Recursive pattern forge. Click cells to draw a grid, it fractalizes. Each filled cell contains a mini version of the whole.</div>
+
+            <div class="control-section">
+                <h3>Seed</h3>
+                <input type="number" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
+                <div class="seed-controls">
+                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
+                    <button class="button secondary" onclick="nextSeed()">Next →</button>
+                </div>
+                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Pattern</h3>
+
+                <div class="control-group">
+                    <label>Preset</label>
+                    <select id="patternPreset" class="pattern-preset" onchange="loadPreset(this.value)">
+                        <option value="">— choose a preset —</option>
+                        <option value="L-TR" selected>L · void top-right</option>
+                        <option value="L-TL">L · void top-left</option>
+                        <option value="L-BR">L · void bottom-right</option>
+                        <option value="L-BL">L · void bottom-left</option>
+                        <option value="diag-bs">Diagonal \</option>
+                        <option value="diag-fs">Diagonal /</option>
+                        <option value="full2">Full 2×2</option>
+                        <option value="F">F</option>
+                        <option value="T">T</option>
+                        <option value="plus">Plus</option>
+                        <option value="cross">Cross (X)</option>
+                        <option value="H">H</option>
+                        <option value="checker">Checker 3×3</option>
+                        <option value="frame">Frame 3×3</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Grid — click cells to toggle</label>
+                    <div class="size-controls">
+                        <div class="size-stepper">
+                            <span class="size-label">cols</span>
+                            <button type="button" id="cols-minus" onclick="stepSize('cols', -1)">−</button>
+                            <span class="size-value" id="cols-display">2</span>
+                            <button type="button" id="cols-plus" onclick="stepSize('cols', 1)">+</button>
+                        </div>
+                        <div class="size-stepper">
+                            <span class="size-label">rows</span>
+                            <button type="button" id="rows-minus" onclick="stepSize('rows', -1)">−</button>
+                            <span class="size-value" id="rows-display">2</span>
+                            <button type="button" id="rows-plus" onclick="stepSize('rows', 1)">+</button>
+                        </div>
+                    </div>
+                    <div id="patternGrid" class="pattern-grid" aria-label="Pattern grid"></div>
+                    <div class="pattern-dims" id="pattern-dims">2 × 2 · 3 cells</div>
+                    <div class="pattern-hint">click to toggle · drag to paint in the first cell's new state · presets above</div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Parameters</h3>
+
+                <div class="control-group">
+                    <label>Recursion Depth</label>
+                    <div class="slider-container">
+                        <input type="range" id="recursionDepth" min="1" max="5" step="1" value="1" oninput="updateParam('recursionDepth', this.value)">
+                        <span class="value-display" id="recursionDepth-value">1</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Gap Ratio</label>
+                    <div class="slider-container">
+                        <input type="range" id="gapRatio" min="0" max="0.4" step="0.005" value="0.04" oninput="updateParam('gapRatio', this.value)">
+                        <span class="value-display" id="gapRatio-value">0.04</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Shade Spread</label>
+                    <div class="slider-container">
+                        <input type="range" id="shadeSpread" min="0" max="25" step="1" value="14" oninput="updateParam('shadeSpread', this.value)">
+                        <span class="value-display" id="shadeSpread-value">14</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Highlight Boost</label>
+                    <div class="slider-container">
+                        <input type="range" id="highlightBoost" min="0" max="20" step="1" value="8" oninput="updateParam('highlightBoost', this.value)">
+                        <span class="value-display" id="highlightBoost-value">8</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Jitter</label>
+                    <div class="slider-container">
+                        <input type="range" id="jitter" min="0" max="10" step="0.5" value="0" oninput="updateParam('jitter', this.value)">
+                        <span class="value-display" id="jitter-value">0</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Logo Margin</label>
+                    <div class="slider-container">
+                        <input type="range" id="marginRatio" min="0" max="0.3" step="0.01" value="0.08" oninput="updateParam('marginRatio', this.value)">
+                        <span class="value-display" id="marginRatio-value">0.08</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Pixel Corner Radius</label>
+                    <div class="slider-container">
+                        <input type="range" id="cornerRadius" min="0" max="1" step="0.01" value="0" oninput="updateParam('cornerRadius', this.value)">
+                        <span class="value-display" id="cornerRadius-value">0</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Icon Corner Radius</label>
+                    <div class="slider-container">
+                        <input type="range" id="iconCornerRadius" min="0" max="0.5" step="0.01" value="0" oninput="updateParam('iconCornerRadius', this.value)">
+                        <span class="value-display" id="iconCornerRadius-value">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Colors</h3>
+
+                <div class="color-group">
+                    <label>Forge Green (base)</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="baseGreen" value="#81e3b9" onchange="updateColor('baseGreen', this.value)">
+                        <span class="color-value" id="baseGreen-value">#81e3b9</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Background</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="background" value="#1d2525" onchange="updateColor('background', this.value)">
+                        <span class="color-value" id="background-value">#1d2525</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Actions</h3>
+                <label class="backdrop-toggle" style="margin-bottom: 10px;">
+                    <input type="checkbox" id="exportIncludeBackground" checked onchange="setExportIncludeBackground(this.checked)">
+                    <span>Include background in export</span>
+                </label>
+                <div class="button-row" style="margin-bottom: 8px;">
+                    <button class="button" onclick="resetParameters()">Reset</button>
+                    <button class="button secondary" onclick="downloadPNG()">Save PNG</button>
+                </div>
+                <button class="button tertiary" onclick="downloadSVG()">Save SVG</button>
+            </div>
+        </div>
+
+        <div class="canvas-area">
+            <div class="preview-controls">
+                <div class="surface-selector">
+                    <span class="surface-selector-label">Surface</span>
+                    <button type="button" class="surface-chip active" data-surface="configured" onclick="setMainSurface('configured')">Configured</button>
+                    <button type="button" class="surface-chip" data-surface="black" onclick="setMainSurface('black')">Black</button>
+                    <button type="button" class="surface-chip" data-surface="white" onclick="setMainSurface('white')">White</button>
+                </div>
+                <label class="backdrop-toggle">
+                    <input type="checkbox" id="showBackground" checked onchange="setShowBackground(this.checked)">
+                    <span>Show background</span>
+                </label>
+            </div>
+            <div class="preview-strip" aria-label="Size previews">
+                <button type="button" class="preview-chip" data-size="24" onclick="setPreviewSize(24)">
+                    <div class="preview-thumb-wrap" style="width:24px;height:24px">
+                        <canvas class="preview-thumb" data-size="24"></canvas>
+                    </div>
+                    <span class="preview-label"><strong>24</strong>favicon</span>
+                </button>
+                <button type="button" class="preview-chip" data-size="48" onclick="setPreviewSize(48)">
+                    <div class="preview-thumb-wrap" style="width:48px;height:48px">
+                        <canvas class="preview-thumb" data-size="48"></canvas>
+                    </div>
+                    <span class="preview-label"><strong>48</strong>app icon</span>
+                </button>
+                <button type="button" class="preview-chip" data-size="128" onclick="setPreviewSize(128)">
+                    <div class="preview-thumb-wrap" style="width:128px;height:128px">
+                        <canvas class="preview-thumb" data-size="128"></canvas>
+                    </div>
+                    <span class="preview-label"><strong>128</strong>dock</span>
+                </button>
+                <button type="button" class="preview-chip" data-size="256" onclick="setPreviewSize(256)">
+                    <div class="preview-thumb-wrap" style="width:256px;height:256px">
+                        <canvas class="preview-thumb" data-size="256"></canvas>
+                    </div>
+                    <span class="preview-label"><strong>256</strong>hero</span>
+                </button>
+            </div>
+            <div class="preview-size-row">
+                <label>Thumb radius</label>
+                <input type="range" id="previewThumbRadius" min="0" max="50" step="1" value="0" oninput="updatePreviewThumbRadius(this.value)">
+                <span class="value-display" id="previewThumbRadius-value">0%</span>
+            </div>
+            <div class="preview-size-row">
+                <label>Preview size</label>
+                <input type="range" id="previewScale" min="64" max="1200" step="1" value="1000" oninput="updatePreviewSize(this.value)">
+                <span class="value-display" id="previewScale-value">1000 px</span>
+            </div>
+            <div id="canvas-container">
+                <div class="loading">Forging the mark…</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════════════════════════
+        // TROMINO FORGE — the Pixel Forge mark as a recursive L-tromino
+        // ═══════════════════════════════════════════════════════════════════════
+        // Algorithm lives in @pixel-forge/logo-forge-core (packages/logo-forge-core).
+        // This file is the browser shell: p5 canvas, UI handlers, export glue.
+
+        const LFC = window.LogoForgeCore;
+        const {
+            PRESETS,
+            DEFAULT_PATTERN_TEXT,
+            MIN_DIM,
+            MAX_DIM,
+            parsePattern,
+            gridFromPattern,
+            patternFromGrid,
+            hexToHSL,
+            renderLeaves,
+        } = LFC;
+
+        const defaultParams = { ...LFC.DEFAULT_PARAMS };
+        let params = { ...defaultParams };
+
+        // Preview-layer state (separate from params — these don't change the mark
+        // itself, just how it's presented on the canvas/thumbnails).
+        let previewSurface = 'configured'; // 'configured' | 'black' | 'white'
+        let previewShowBackground = true;
+        // Export-layer state. When false, PNG/SVG omit the background rect
+        // so the export is a transparent shape-only artifact.
+        let exportIncludeBackground = true;
+
+        // 2D boolean grid — gridState[row][col] === true iff filled. Single source
+        // of truth for the pattern; currentPattern is derived on every change.
+        let gridState = gridFromPattern(parsePattern(DEFAULT_PATTERN_TEXT));
+        let currentPattern = patternFromGrid(gridState);
+
+        // Base HSL extracted from baseGreen. Computed on each render.
+        let baseHSL = { h: 145, s: 42, l: 58 };
+
+        // Cached leaves for export.
+        let lastLeaves = [];
+        let lastLogoBox = { x: 0, y: 0, size: 0 };
+        let lastRenderMeta = { margin: 0, logoBoxSize: 0, iconCornerPx: 0 };
+
+        function resolveSurfaceColor(surface) {
+            if (surface === 'black') return '#000000';
+            if (surface === 'white') return '#ffffff';
+            return params.background;
+        }
+
+        function setup() {
+            const canvas = createCanvas(1200, 1200);
+            canvas.parent('canvas-container');
+            pixelDensity(2);
+            noSmooth();
+            noLoop();
+            document.querySelector('.loading').style.display = 'none';
+            redraw();
+        }
+
+        function draw() {
+            baseHSL = hexToHSL(params.baseGreen);
+            randomSeed(params.seed);
+            noiseSeed(params.seed);
+
+            background(resolveSurfaceColor(previewSurface));
+
+            if (!currentPattern) return;
+
+            // Hand off to the core. It returns re-centered leaves plus the clip
+            // geometry a renderer needs. We feed p5's seeded noise() so colors
+            // match the interactive surface exactly.
+            const result = renderLeaves({
+                pattern: currentPattern,
+                params,
+                canvasSize: width,
+                baseHSL,
+                noiseFn: noise,
+            });
+            const { leaves, logoBox, meta } = result;
+            const { margin, logoBoxSize, iconCornerPx } = meta;
+
+            // Clip icon content (background + leaves) to a rounded-rect so the
+            // icon corner radius reads as silhouette geometry. Transparent
+            // mode still respects the rounded outline because the clip wraps
+            // leaves too.
+            drawingContext.save();
+            drawingContext.beginPath();
+            drawingContext.roundRect(margin, margin, logoBoxSize, logoBoxSize, iconCornerPx);
+            drawingContext.clip();
+
+            if (previewShowBackground) {
+                noStroke();
+                fill(params.background);
+                rect(margin, margin, logoBoxSize, logoBoxSize);
+            }
+
+            noStroke();
+            for (const leaf of leaves) {
+                const [r, g, b] = leaf.rgb;
+                fill(r, g, b);
+                if (leaf.cornerPx > 0) {
+                    rect(leaf.x, leaf.y, leaf.w, leaf.h, leaf.cornerPx);
+                } else {
+                    rect(leaf.x, leaf.y, leaf.w, leaf.h);
+                }
+            }
+
+            drawingContext.restore();
+
+            lastLeaves = leaves;
+            lastLogoBox = logoBox;
+            lastRenderMeta = meta;
+            renderThumbnails();
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UI HANDLERS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function updateParam(name, value) {
+            const num = Number(value);
+            params[name] = Number.isFinite(num) ? num : value;
+            document.getElementById(`${name}-value`).textContent = value;
+            redraw();
+        }
+
+        function updateColor(id, value) {
+            params[id] = value;
+            document.getElementById(`${id}-value`).textContent = value;
+            redraw();
+        }
+
+        // Drag-paint state. null = not painting. true/false = the value to write
+        // into any cell the pointer touches. Set on pointerdown to the inverse
+        // of the cell that started the gesture; cleared on pointerup/cancel.
+        let dragPaintMode = null;
+
+        // Re-render the clickable cell buttons from gridState. Called whenever
+        // the grid is resized or a preset is loaded.
+        function renderGrid() {
+            const container = document.getElementById('patternGrid');
+            container.innerHTML = '';
+            const rows = gridState.length;
+            const cols = gridState[0].length;
+            container.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+            container.style.gridTemplateRows = '';
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const cell = document.createElement('button');
+                    cell.type = 'button';
+                    cell.className = 'pattern-cell' + (gridState[r][c] ? ' filled' : '');
+                    cell.dataset.row = String(r);
+                    cell.dataset.col = String(c);
+                    cell.addEventListener('pointerdown', onCellPointerDown);
+                    cell.addEventListener('pointerenter', onCellPointerEnter);
+                    container.appendChild(cell);
+                }
+            }
+            document.getElementById('cols-display').textContent = cols;
+            document.getElementById('rows-display').textContent = rows;
+            document.getElementById('cols-minus').disabled = cols <= MIN_DIM;
+            document.getElementById('cols-plus').disabled = cols >= MAX_DIM;
+            document.getElementById('rows-minus').disabled = rows <= MIN_DIM;
+            document.getElementById('rows-plus').disabled = rows >= MAX_DIM;
+            syncPatternFromGrid();
+        }
+
+        function onCellPointerDown(e) {
+            // Only respond to primary button (left mouse / single touch / pen).
+            if (e.button !== undefined && e.button !== 0) return;
+            e.preventDefault();
+            // Browsers implicitly pointer-capture the first button on touch/pen,
+            // which suppresses pointerenter on siblings. Release it so the drag
+            // can cross cells.
+            if (e.target.releasePointerCapture) {
+                try { e.target.releasePointerCapture(e.pointerId); } catch (_) {}
+            }
+            const r = parseInt(e.currentTarget.dataset.row, 10);
+            const c = parseInt(e.currentTarget.dataset.col, 10);
+            dragPaintMode = !gridState[r][c];
+            applyPaint(r, c);
+        }
+
+        function onCellPointerEnter(e) {
+            if (dragPaintMode === null) return;
+            const r = parseInt(e.currentTarget.dataset.row, 10);
+            const c = parseInt(e.currentTarget.dataset.col, 10);
+            applyPaint(r, c);
+        }
+
+        function applyPaint(r, c) {
+            if (gridState[r][c] === dragPaintMode) return;
+            gridState[r][c] = dragPaintMode;
+            const cell = document.querySelector(
+                `#patternGrid .pattern-cell[data-row="${r}"][data-col="${c}"]`
+            );
+            if (cell) cell.classList.toggle('filled', dragPaintMode);
+            document.getElementById('patternPreset').value = '';
+            syncPatternFromGrid();
+        }
+
+        function endDragPaint() { dragPaintMode = null; }
+        window.addEventListener('pointerup', endDragPaint);
+        window.addEventListener('pointercancel', endDragPaint);
+        window.addEventListener('blur', endDragPaint);
+
+        function syncPatternFromGrid() {
+            currentPattern = patternFromGrid(gridState);
+            const rows = gridState.length;
+            const cols = gridState[0].length;
+            const cellCount = currentPattern ? currentPattern.cells.length : 0;
+            const dims = document.getElementById('pattern-dims');
+            if (cellCount === 0) {
+                dims.textContent = `${cols} × ${rows} · click a cell to begin`;
+            } else {
+                dims.textContent = `${cols} × ${rows} · ${cellCount} cell${cellCount === 1 ? '' : 's'}`;
+            }
+            redraw();
+        }
+
+        function stepSize(axis, delta) {
+            const rows = gridState.length;
+            const cols = gridState[0].length;
+            const newRows = axis === 'rows' ? Math.max(MIN_DIM, Math.min(MAX_DIM, rows + delta)) : rows;
+            const newCols = axis === 'cols' ? Math.max(MIN_DIM, Math.min(MAX_DIM, cols + delta)) : cols;
+            if (newRows === rows && newCols === cols) return;
+            const next = [];
+            for (let r = 0; r < newRows; r++) {
+                const row = [];
+                for (let c = 0; c < newCols; c++) {
+                    row.push(r < rows && c < cols ? gridState[r][c] : false);
+                }
+                next.push(row);
+            }
+            gridState = next;
+            document.getElementById('patternPreset').value = '';
+            renderGrid();
+        }
+
+        function loadPreset(key) {
+            if (!key || !PRESETS[key]) return;
+            const parsed = parsePattern(PRESETS[key]);
+            if (!parsed) return;
+            gridState = gridFromPattern(parsed);
+            renderGrid();
+            document.getElementById('patternPreset').value = key;
+        }
+
+        function updateSeedDisplay() {
+            document.getElementById('seed-input').value = params.seed;
+        }
+
+        function updateSeed() {
+            const input = document.getElementById('seed-input');
+            const newSeed = parseInt(input.value, 10);
+            if (Number.isFinite(newSeed) && newSeed > 0) {
+                params.seed = newSeed;
+                redraw();
+            } else {
+                updateSeedDisplay();
+            }
+        }
+
+        function previousSeed() {
+            params.seed = Math.max(1, params.seed - 1);
+            updateSeedDisplay();
+            redraw();
+        }
+
+        function nextSeed() {
+            params.seed = params.seed + 1;
+            updateSeedDisplay();
+            redraw();
+        }
+
+        function randomSeedAndUpdate() {
+            params.seed = Math.floor(Math.random() * 999999) + 1;
+            updateSeedDisplay();
+            redraw();
+        }
+
+        function resetParameters() {
+            params = {...defaultParams};
+            for (const key of ['recursionDepth', 'gapRatio', 'shadeSpread', 'highlightBoost', 'jitter', 'marginRatio', 'cornerRadius', 'iconCornerRadius']) {
+                document.getElementById(key).value = params[key];
+                document.getElementById(`${key}-value`).textContent = params[key];
+            }
+            for (const key of ['baseGreen', 'background']) {
+                document.getElementById(key).value = params[key];
+                document.getElementById(`${key}-value`).textContent = params[key];
+            }
+            gridState = gridFromPattern(parsePattern(DEFAULT_PATTERN_TEXT));
+            document.getElementById('patternPreset').value = 'L-TR';
+            renderGrid();
+            updateSeedDisplay();
+            // Reset preview + export layer state too
+            previewShowBackground = true;
+            document.getElementById('showBackground').checked = true;
+            exportIncludeBackground = true;
+            document.getElementById('exportIncludeBackground').checked = true;
+            setMainSurface('configured');
+            updatePreviewThumbRadius(0);
+        }
+
+        // Redraw every size-strip thumbnail from the current p5 canvas. Uses
+        // drawImage with smoothing disabled so small sizes stay sharp — any
+        // downsampling artifact would be a lie about how the mark renders.
+        function renderThumbnails() {
+            const mainCanvas = document.querySelector('#canvas-container canvas');
+            if (!mainCanvas) return;
+            const dpr = window.devicePixelRatio >= 2 ? 2 : 1;
+            for (const thumb of document.querySelectorAll('.preview-thumb')) {
+                const size = parseInt(thumb.dataset.size, 10);
+                const bufferSize = size * dpr;
+                if (thumb.width !== bufferSize) thumb.width = bufferSize;
+                if (thumb.height !== bufferSize) thumb.height = bufferSize;
+                thumb.style.width = size + 'px';
+                thumb.style.height = size + 'px';
+                const ctx = thumb.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+                ctx.clearRect(0, 0, bufferSize, bufferSize);
+                ctx.drawImage(mainCanvas, 0, 0, bufferSize, bufferSize);
+            }
+        }
+
+        function updatePreviewSize(value) {
+            const px = Math.max(64, Math.min(1200, parseInt(value, 10) || 1000));
+            document.getElementById('previewScale-value').textContent = px + ' px';
+            document.getElementById('canvas-container').style.maxWidth = px + 'px';
+            const slider = document.getElementById('previewScale');
+            if (parseInt(slider.value, 10) !== px) slider.value = px;
+            for (const chip of document.querySelectorAll('.preview-chip')) {
+                chip.classList.toggle('active', parseInt(chip.dataset.size, 10) === px);
+            }
+        }
+
+        function setPreviewSize(value) {
+            updatePreviewSize(value);
+        }
+
+        // Visual-only mask applied to the size-strip thumbnails. Does not
+        // affect the rendered mark — simulates how the icon would look under
+        // an OS that rounds app icons (iOS / macOS big-sur style).
+        function updatePreviewThumbRadius(value) {
+            const pct = Math.max(0, Math.min(50, parseInt(value, 10) || 0));
+            document.getElementById('previewThumbRadius-value').textContent = pct + '%';
+            document.documentElement.style.setProperty('--preview-thumb-radius', pct + '%');
+            const slider = document.getElementById('previewThumbRadius');
+            if (parseInt(slider.value, 10) !== pct) slider.value = pct;
+        }
+
+        function setMainSurface(surface) {
+            previewSurface = surface;
+            for (const chip of document.querySelectorAll('.surface-chip')) {
+                chip.classList.toggle('active', chip.dataset.surface === surface);
+            }
+            redraw();
+        }
+
+        function setShowBackground(show) {
+            previewShowBackground = !!show;
+            redraw();
+        }
+
+        function setExportIncludeBackground(include) {
+            exportIncludeBackground = !!include;
+        }
+
+        // Render the canvas with export semantics (background per the export
+        // toggle, not the preview toggle), invoke fn while that frame is live,
+        // then restore the preview view. saveCanvas reads toDataURL synchronously
+        // so this is safe.
+        function withExportFrame(fn) {
+            const restore = previewShowBackground;
+            previewShowBackground = exportIncludeBackground;
+            redraw();
+            try {
+                fn();
+            } finally {
+                previewShowBackground = restore;
+                redraw();
+            }
+        }
+
+        function downloadPNG() {
+            withExportFrame(function () {
+                saveCanvas(`pixel-forge-logo-${params.seed}`, 'png');
+            });
+        }
+
+        function downloadSVG() {
+            // Serialize the current canvas (scaled uniformly) as <rect> primitives.
+            // Honors corner radius via a clipPath; honors the export-background toggle so
+            // "transparent" previews export as transparent SVGs.
+            const size = 1024;
+            const scale = size / width;
+            const { margin, logoBoxSize, iconCornerPx } = lastRenderMeta;
+            const lx0 = (margin * scale).toFixed(2);
+            const ly0 = (margin * scale).toFixed(2);
+            const lw0 = (logoBoxSize * scale).toFixed(2);
+            const lh0 = (logoBoxSize * scale).toFixed(2);
+            const r0 = (iconCornerPx * scale).toFixed(2);
+
+            let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">`;
+            svg += `<defs><clipPath id="iconClip"><rect x="${lx0}" y="${ly0}" width="${lw0}" height="${lh0}" rx="${r0}" ry="${r0}"/></clipPath></defs>`;
+            svg += `<g clip-path="url(#iconClip)">`;
+            if (exportIncludeBackground) {
+                svg += `<rect x="${lx0}" y="${ly0}" width="${lw0}" height="${lh0}" fill="${params.background}"/>`;
+            }
+            for (const leaf of lastLeaves) {
+                const lx = (leaf.x * scale).toFixed(2);
+                const ly = (leaf.y * scale).toFixed(2);
+                const lw = (leaf.w * scale).toFixed(2);
+                const lh = (leaf.h * scale).toFixed(2);
+                const lr = ((leaf.cornerPx || 0) * scale);
+                const radiusAttr = lr > 0 ? ` rx="${lr.toFixed(2)}" ry="${lr.toFixed(2)}"` : '';
+                svg += `<rect x="${lx}" y="${ly}" width="${lw}" height="${lh}"${radiusAttr} fill="${leaf.color}"/>`;
+            }
+            svg += `</g></svg>`;
+
+            const blob = new Blob([svg], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `pixel-forge-logo-${params.seed}.svg`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        window.addEventListener('load', function() {
+            updateSeedDisplay();
+            renderGrid();
+            updatePreviewSize(document.getElementById('previewScale').value);
+        });
+    </script>
+</body>
+</html>
