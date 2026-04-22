@@ -155,6 +155,19 @@
     return { cols: cols, rows: rows, cells: cells };
   }
 
+  function patternTextFromGrid(grid) {
+    if (!grid || grid.length === 0 || !grid[0] || grid[0].length === 0) {
+      return DEFAULT_PATTERN_TEXT;
+    }
+    const rows = Math.max(MIN_DIM, Math.min(MAX_DIM, grid.length));
+    const cols = Math.max(MIN_DIM, Math.min(MAX_DIM, grid[0].length));
+    return grid.slice(0, rows).map(function (row) {
+      return Array.from({ length: cols }, function (_, col) {
+        return row[col] ? 'X' : '.';
+      }).join('');
+    }).join('\n');
+  }
+
   function shadeOffsetForCell(col, row, cols, rows) {
     const cx = cols > 1 ? (col - (cols - 1) / 2) / ((cols - 1) / 2) : 0;
     const cy = rows > 1 ? (row - (rows - 1) / 2) / ((rows - 1) / 2) : 0;
@@ -314,6 +327,7 @@
     parsePattern: parsePattern,
     gridFromPattern: gridFromPattern,
     patternFromGrid: patternFromGrid,
+    patternTextFromGrid: patternTextFromGrid,
     shadeOffsetForCell: shadeOffsetForCell,
     lightnessForPath: lightnessForPath,
     collectLeaves: collectLeaves,

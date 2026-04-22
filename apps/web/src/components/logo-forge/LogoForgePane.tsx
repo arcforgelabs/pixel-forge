@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useSessionStore } from "@/store/session-store";
 import { useLogoForgeStore } from "./store/logo-forge-store";
-import { parsePattern, type LogoForgeParams } from "./core";
+import {
+  gridFromPattern,
+  parsePattern,
+  patternFromGrid,
+  type LogoForgeParams,
+} from "./core";
 import LogoForgeCanvas from "./LogoForgeCanvas";
 import LogoForgeSidebar from "./LogoForgeSidebar";
 import { canvasToPngBlob, composeExportCanvas } from "./export/compose";
@@ -42,7 +47,12 @@ export function LogoForgePane() {
   }, [state, stateKey, updateProjectState]);
 
   const pattern = useMemo(
-    () => (state ? parsePattern(state.patternText) : null),
+    () =>
+      state
+        ? patternFromGrid(
+            state.patternGrid ?? gridFromPattern(parsePattern(state.patternText))
+          )
+        : null,
     [state]
   );
 
@@ -57,11 +67,16 @@ export function LogoForgePane() {
   );
 
   const handlePatternTextChange = useCallback(
-    (patternText: string, presetKey: string | null) => {
+    (
+      patternText: string,
+      presetKey: string | null,
+      patternGrid?: boolean[][]
+    ) => {
       updateProjectState(stateKey, (prev) => ({
         ...prev,
         patternText,
-        lastPreset: presetKey ?? prev.lastPreset,
+        patternGrid: patternGrid ?? gridFromPattern(parsePattern(patternText)),
+        lastPreset: presetKey,
       }));
     },
     [stateKey, updateProjectState]
@@ -196,6 +211,7 @@ export function LogoForgePane() {
             renderSize={512}
             previewSurface={state.previewSurface}
             previewShowBackground={state.previewShowBackground}
+            appIconRadiusPct={state.exportAppIconRadiusPct}
           />
           <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
             Hero · 512px
@@ -210,6 +226,7 @@ export function LogoForgePane() {
                 renderSize={size}
                 previewSurface={state.previewSurface}
                 previewShowBackground={state.previewShowBackground}
+                appIconRadiusPct={state.exportAppIconRadiusPct}
               />
               <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 {size}

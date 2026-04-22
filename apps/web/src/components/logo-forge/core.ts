@@ -231,6 +231,20 @@ export function patternFromGrid(grid: boolean[][]): ParsedPattern | null {
   return { cols, rows, cells };
 }
 
+export function patternTextFromGrid(grid: boolean[][]): string {
+  if (!grid || grid.length === 0 || !grid[0] || grid[0].length === 0) {
+    return DEFAULT_PATTERN_TEXT;
+  }
+  const rows = Math.max(MIN_DIM, Math.min(MAX_DIM, grid.length));
+  const cols = Math.max(MIN_DIM, Math.min(MAX_DIM, grid[0].length));
+  return grid
+    .slice(0, rows)
+    .map((row) =>
+      Array.from({ length: cols }, (_, col) => (row[col] ? "X" : ".")).join("")
+    )
+    .join("\n");
+}
+
 function shadeOffsetForCell(
   col: number,
   row: number,

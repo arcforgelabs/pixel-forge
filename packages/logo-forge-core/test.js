@@ -42,6 +42,25 @@ test('gridFromPattern / patternFromGrid roundtrip', function () {
   assert.equal(back.cells.length, original.cells.length);
 });
 
+test('patternTextFromGrid preserves empty cells and dimensions', function () {
+  const text = core.patternTextFromGrid([
+    [true, false, false],
+    [false, true, false],
+  ]);
+  assert.equal(text, 'X..\n.X.');
+  assert.equal(core.parsePattern(text).cols, 3);
+  assert.equal(core.parsePattern(text).rows, 2);
+});
+
+test('patternTextFromGrid can represent an empty editable grid', function () {
+  const text = core.patternTextFromGrid([
+    [false, false],
+    [false, false],
+  ]);
+  assert.equal(text, '..\n..');
+  assert.equal(core.parsePattern(text), null);
+});
+
 test('hexToHSL / hslToRGB: round-trips near baseGreen', function () {
   const hsl = core.hexToHSL('#81e3b9');
   const rgb = core.hslToRGB(hsl.h, hsl.s, hsl.l);

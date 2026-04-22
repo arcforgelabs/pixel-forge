@@ -3,7 +3,11 @@ import { HTTP_BACKEND_URL } from "@/config";
 import {
   DEFAULT_PARAMS,
   DEFAULT_PATTERN_TEXT,
+  MAX_DIM,
+  MIN_DIM,
+  gridFromPattern,
   parsePattern,
+  patternTextFromGrid,
   type LogoForgeParams,
   type ParsedPattern,
 } from "../core";
@@ -12,6 +16,7 @@ export type PreviewSurface = "configured" | "black" | "white";
 
 export interface LogoForgeProjectState {
   patternText: string;
+  patternGrid: boolean[][];
   params: LogoForgeParams;
   previewSurface: PreviewSurface;
   previewShowBackground: boolean;
@@ -21,8 +26,10 @@ export interface LogoForgeProjectState {
 }
 
 function defaultProjectState(): LogoForgeProjectState {
+  const patternGrid = gridFromPattern(parsePattern(DEFAULT_PATTERN_TEXT));
   return {
     patternText: DEFAULT_PATTERN_TEXT,
+    patternGrid,
     params: { ...DEFAULT_PARAMS },
     previewSurface: "configured",
     previewShowBackground: true,
@@ -32,19 +39,45 @@ function defaultProjectState(): LogoForgeProjectState {
   };
 }
 
+function coercePatternGrid(raw: unknown, fallbackText: string): boolean[][] {
+  const fallback = gridFromPattern(parsePattern(fallbackText));
+  if (!Array.isArray(raw) || raw.length < MIN_DIM || raw.length > MAX_DIM) {
+    return fallback;
+  }
+  const firstRow = raw[0];
+  if (
+    !Array.isArray(firstRow) ||
+    firstRow.length < MIN_DIM ||
+    firstRow.length > MAX_DIM
+  ) {
+    return fallback;
+  }
+  const cols = firstRow.length;
+  const grid: boolean[][] = [];
+  for (const row of raw) {
+    if (!Array.isArray(row) || row.length !== cols) return fallback;
+    grid.push(row.map((cell) => cell === true));
+  }
+  return grid;
+}
+
 function coerceProjectState(raw: unknown): LogoForgeProjectState {
   const base = defaultProjectState();
   if (!raw || typeof raw !== "object") return base;
   const obj = raw as Partial<LogoForgeProjectState> & {
     params?: Partial<LogoForgeParams>;
   };
+  const rawPatternText =
+    typeof obj.patternText === "string" ? obj.patternText : base.patternText;
+  const patternGrid = coercePatternGrid(obj.patternGrid, rawPatternText);
+  const patternText = patternTextFromGrid(patternGrid);
   const params: LogoForgeParams = {
     ...base.params,
     ...(obj.params ?? {}),
   };
   return {
-    patternText:
-      typeof obj.patternText === "string" ? obj.patternText : base.patternText,
+    patternText,
+    patternGrid,
     params,
     previewSurface:
       obj.previewSurface === "black" || obj.previewSurface === "white"
@@ -219,6 +252,6 @@ export const useLogoForgeStore = create<LogoForgeStore>((set, get) => ({
   parsedPatternFor: (projectPath) => {
     const state = get().stateByProject[projectPath];
     if (!state) return null;
-    return parsePattern(state.patternText);
+    return parsePattern(patternTextFromGrid(state.patternGrid));
   },
 }));

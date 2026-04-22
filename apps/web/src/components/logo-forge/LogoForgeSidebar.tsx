@@ -1,3 +1,11 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, ArrowRight, Shuffle } from "lucide-react";
-import { PRESETS, type LogoForgeParams } from "./core";
+import { ArrowLeft, ArrowRight, Minus, Plus, Shuffle } from "lucide-react";
+import {
+  MAX_DIM,
+  MIN_DIM,
+  PRESETS,
+  gridFromPattern,
+  parsePattern,
+  patternTextFromGrid,
+  type LogoForgeParams,
+} from "./core";
 import type {
   LogoForgeProjectState,
   PreviewSurface,
@@ -19,7 +35,11 @@ import type {
 interface Props {
   state: LogoForgeProjectState;
   onParamsChange: (updater: (prev: LogoForgeParams) => LogoForgeParams) => void;
-  onPatternTextChange: (patternText: string, presetKey: string | null) => void;
+  onPatternTextChange: (
+    patternText: string,
+    presetKey: string | null,
+    patternGrid?: boolean[][]
+  ) => void;
   onPreviewSurfaceChange: (surface: PreviewSurface) => void;
   onPreviewShowBackgroundChange: (show: boolean) => void;
   onExportIncludeBackgroundChange: (include: boolean) => void;
@@ -77,6 +97,61 @@ function SliderRow({
   );
 }
 
+interface SizeStepperProps {
+  label: string;
+  value: number;
+  canDecrease: boolean;
+  canIncrease: boolean;
+  onStep: (delta: number) => void;
+}
+
+function SizeStepper({
+  label,
+  value,
+  canDecrease,
+  canIncrease,
+  onStep,
+}: SizeStepperProps) {
+  return (
+    <div className="flex items-center gap-1 rounded-md border border-border/60 bg-background/60 p-1">
+      <span className="min-w-0 flex-1 pl-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        disabled={!canDecrease}
+        aria-label={`Decrease ${label}`}
+        onClick={() => onStep(-1)}
+      >
+        <Minus className="h-3.5 w-3.5" />
+      </Button>
+      <span className="w-5 text-center text-xs font-mono text-foreground/80">
+        {value}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        disabled={!canIncrease}
+        aria-label={`Increase ${label}`}
+        onClick={() => onStep(1)}
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function resizeGrid(grid: boolean[][], rows: number, cols: number): boolean[][] {
+  return Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: cols }, (_, col) => grid[row]?.[col] === true)
+  );
+}
+
 export function LogoForgeSidebar({
   state,
   onParamsChange,
@@ -93,6 +168,47 @@ export function LogoForgeSidebar({
   activeProjectPath,
 }: Props) {
   const params = state.params;
+  const stateGrid = useMemo(
+    () => state.patternGrid ?? gridFromPattern(parsePattern(state.patternText)),
+    [state.patternGrid, state.patternText]
+  );
+  const [draftGrid, setDraftGrid] = useState<boolean[][]>(stateGrid);
+  const gridRef = useRef<boolean[][]>(stateGrid);
+  const [dragPaintMode, setDragPaintMode] = useState<boolean | null>(null);
+  const dragPaintModeRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    gridRef.current = stateGrid;
+    setDraftGrid(stateGrid);
+  }, [stateGrid]);
+
+  useEffect(() => {
+    dragPaintModeRef.current = dragPaintMode;
+  }, [dragPaintMode]);
+
+  useEffect(() => {
+    const endDragPaint = () => {
+      dragPaintModeRef.current = null;
+      setDragPaintMode(null);
+    };
+    window.addEventListener("pointerup", endDragPaint);
+    window.addEventListener("pointercancel", endDragPaint);
+    window.addEventListener("blur", endDragPaint);
+    return () => {
+      window.removeEventListener("pointerup", endDragPaint);
+      window.removeEventListener("pointercancel", endDragPaint);
+      window.removeEventListener("blur", endDragPaint);
+    };
+  }, []);
+
+  const commitGrid = useCallback(
+    (grid: boolean[][], presetKey: string | null) => {
+      gridRef.current = grid;
+      setDraftGrid(grid);
+      onPatternTextChange(patternTextFromGrid(grid), presetKey, grid);
+    },
+    [onPatternTextChange]
+  );
 
   const updateParam = <K extends keyof LogoForgeParams>(
     key: K,
@@ -105,7 +221,67 @@ export function LogoForgeSidebar({
     if (!key) return;
     const patternText = PRESETS[key];
     if (!patternText) return;
-    onPatternTextChange(patternText, key);
+    const parsed = parsePattern(patternText);
+    if (!parsed) return;
+    commitGrid(gridFromPattern(parsed), key);
+  };
+
+  const rows = draftGrid.length;
+  const cols = draftGrid[0]?.length ?? 0;
+  const filledCount = draftGrid.reduce(
+    (count, row) => count + row.filter(Boolean).length,
+    0
+  );
+
+  const handleGridStep = (axis: "rows" | "cols", delta: number) => {
+    const current = gridRef.current;
+    const currentRows = current.length;
+    const currentCols = current[0]?.length ?? MIN_DIM;
+    const nextRows =
+      axis === "rows"
+        ? Math.max(MIN_DIM, Math.min(MAX_DIM, currentRows + delta))
+        : currentRows;
+    const nextCols =
+      axis === "cols"
+        ? Math.max(MIN_DIM, Math.min(MAX_DIM, currentCols + delta))
+        : currentCols;
+    if (nextRows === currentRows && nextCols === currentCols) return;
+    commitGrid(resizeGrid(current, nextRows, nextCols), null);
+  };
+
+  const setGridCell = (row: number, col: number, value: boolean) => {
+    const current = gridRef.current;
+    if (current[row]?.[col] === value) return;
+    const next = current.map((cells) => cells.slice());
+    if (!next[row]) return;
+    next[row][col] = value;
+    commitGrid(next, null);
+  };
+
+  const handleCellPointerDown = (
+    row: number,
+    col: number,
+    event: PointerEvent<HTMLButtonElement>
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    if (event.currentTarget.releasePointerCapture) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Some pointer implementations do not capture this element.
+      }
+    }
+    const nextValue = !(gridRef.current[row]?.[col] === true);
+    dragPaintModeRef.current = nextValue;
+    setDragPaintMode(nextValue);
+    setGridCell(row, col, nextValue);
+  };
+
+  const handleCellPointerEnter = (row: number, col: number) => {
+    const paintValue = dragPaintModeRef.current;
+    if (paintValue === null) return;
+    setGridCell(row, col, paintValue);
   };
 
   const handleSeedStep = (delta: number) => {
@@ -197,6 +373,60 @@ export function LogoForgeSidebar({
             ))}
           </SelectContent>
         </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <SizeStepper
+            label="Cols"
+            value={cols}
+            canDecrease={cols > MIN_DIM}
+            canIncrease={cols < MAX_DIM}
+            onStep={(delta) => handleGridStep("cols", delta)}
+          />
+          <SizeStepper
+            label="Rows"
+            value={rows}
+            canDecrease={rows > MIN_DIM}
+            canIncrease={rows < MAX_DIM}
+            onStep={(delta) => handleGridStep("rows", delta)}
+          />
+        </div>
+        <div
+          className="grid w-full gap-1 rounded-md border border-border/60 bg-background/80 p-1.5"
+          style={{
+            gridTemplateColumns: `repeat(${Math.max(1, cols)}, minmax(0, 1fr))`,
+          }}
+          aria-label="Pattern grid"
+        >
+          {draftGrid.map((row, rowIndex) =>
+            row.map((filled, colIndex) => (
+              <button
+                key={`${rowIndex}-${colIndex}`}
+                type="button"
+                aria-pressed={filled}
+                aria-label={`${filled ? "Filled" : "Empty"} pattern cell ${
+                  rowIndex + 1
+                }, ${colIndex + 1}`}
+                onPointerDown={(event) =>
+                  handleCellPointerDown(rowIndex, colIndex, event)
+                }
+                onPointerEnter={() =>
+                  handleCellPointerEnter(rowIndex, colIndex)
+                }
+                onDragStart={(event) => event.preventDefault()}
+                className={`aspect-square min-w-0 rounded-[3px] border border-border/40 transition-[background-color,filter] hover:brightness-110 focus:outline-none focus:ring-1 focus:ring-ring ${
+                  filled ? "" : "bg-secondary"
+                }`}
+                style={{
+                  backgroundColor: filled ? params.baseGreen : undefined,
+                  touchAction: "none",
+                }}
+              />
+            ))
+          )}
+        </div>
+        <span className="text-[11px] font-mono text-muted-foreground">
+          {cols} x {rows} · {filledCount} cell
+          {filledCount === 1 ? "" : "s"}
+        </span>
       </section>
 
       <section className="flex flex-col gap-3">

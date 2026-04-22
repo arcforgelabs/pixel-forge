@@ -8,6 +8,7 @@ interface Props {
   renderSize: number;
   previewSurface: "configured" | "black" | "white";
   previewShowBackground: boolean;
+  appIconRadiusPct?: number;
 }
 
 function surfaceColor(
@@ -25,6 +26,7 @@ export function LogoForgeCanvas({
   renderSize,
   previewSurface,
   previewShowBackground,
+  appIconRadiusPct = 0,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -32,31 +34,35 @@ export function LogoForgeCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = renderSize * dpr;
-    canvas.height = renderSize * dpr;
+    const pixelSize = Math.round(renderSize * dpr);
+    canvas.width = pixelSize;
+    canvas.height = pixelSize;
     canvas.style.width = `${renderSize}px`;
     canvas.style.height = `${renderSize}px`;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, renderSize, renderSize);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pixelSize, pixelSize);
     ctx.imageSmoothingEnabled = false;
     paintLogoToCanvas(canvas, {
       pattern,
       params,
-      pixelSize: renderSize,
+      pixelSize,
     });
   }, [pattern, params, renderSize]);
 
   const backgroundColor = previewShowBackground
     ? surfaceColor(previewSurface, params.background)
     : "transparent";
+  const radiusPct = Math.max(0, Math.min(50, appIconRadiusPct));
+  const appIconRadiusPx = (radiusPct / 100) * renderSize;
 
   return (
     <div
-      className="relative flex items-center justify-center rounded-md"
+      className="relative flex items-center justify-center overflow-hidden"
       style={{
         background: backgroundColor,
+        borderRadius: appIconRadiusPx,
         width: renderSize,
         height: renderSize,
       }}

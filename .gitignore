@@ -4,6 +4,7 @@ node_modules/
 app/playwright-report/
 app/test-results/
 results/
+.playwright-mcp/
 
 # Session/temporary docs
 CLAUDE-CODE-NATIVE.md
