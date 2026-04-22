@@ -1060,7 +1060,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       >
         <button
           onClick={item.onSelect}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pl-4 pr-2 py-1 text-xs"
           title={item.label}
         >
           <MessageSquare className="h-3 w-3 flex-shrink-0" />
