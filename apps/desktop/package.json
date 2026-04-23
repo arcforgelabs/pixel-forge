@@ -1,5 +1,7 @@
 {
   "name": "pixel-forge-desktop",
+  "productName": "Pixel Forge",
+  "desktopName": "pixel-forge.desktop",
   "private": true,
   "version": "2026.4.21-1",
   "type": "module",

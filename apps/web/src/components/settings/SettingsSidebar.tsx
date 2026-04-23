@@ -61,6 +61,7 @@ import {
   Settings as SettingsIcon,
   BookOpen,
   Loader2,
+  Plus,
   MoreVertical,
   PencilLine,
   Trash2,
@@ -1223,7 +1224,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     <>
       <div
         className={`
-          flex h-screen flex-shrink-0 overflow-hidden
+          flex h-full flex-shrink-0 overflow-hidden
           transition-[width] duration-200 ease-in-out
           ${settingsSidebarOpen ? "w-64" : "w-0"}
         `}
@@ -1299,9 +1300,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                 {/* Expandable project list */}
                 {projectsExpanded && (
                   <div className="flex flex-col gap-0.5 py-1">
-                    {visibleProjects.length === 0 && (
-                      <span className="text-xs text-muted-foreground py-1">No projects yet</span>
-                    )}
                     {visibleProjects.map((project) => {
                       const isActive = project.path === projectPath;
                       const isExpanded = expandedProjectPaths.includes(project.path);
@@ -1525,15 +1523,18 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         onOpenWorkspacePicker();
                       }}
                       disabled={isOpeningWorkspace}
-                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 border-t border-border/20 mt-1 pt-2 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="flex items-center gap-3 rounded-md px-3 py-1.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 border-t border-border/20 mt-1 pt-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isOpeningWorkspace ? (
                         <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Opening…
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                          <span className="truncate">Opening…</span>
                         </>
                       ) : (
-                        "+ New project"
+                        <>
+                          <Plus className="h-4 w-4 shrink-0" />
+                          <span className="truncate">New project</span>
+                        </>
                       )}
                     </button>
                   </div>

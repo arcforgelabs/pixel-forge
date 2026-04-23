@@ -120,6 +120,15 @@
     @apply border-border;
   }
 
+  .pf-window-titlebar {
+    -webkit-app-region: drag;
+  }
+
+  .pf-window-control,
+  .pf-window-control * {
+    -webkit-app-region: no-drag;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);

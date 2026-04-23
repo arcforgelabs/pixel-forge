@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Pixel Forge
 Comment=Visual app editor — screenshot bootstrap and live editing
-Exec=bash -lc 'exec pixel-forge-shell'
+Exec=bash -lc "exec pixel-forge-shell"
 Icon=pixel-forge
 Terminal=false
 Type=Application

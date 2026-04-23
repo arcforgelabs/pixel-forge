@@ -68,5 +68,11 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
       ipcRenderer.invoke('pixel-forge-app:stage-controller-update', payload),
     dismissPendingControllerUpdate: () =>
       ipcRenderer.invoke('pixel-forge-app:dismiss-controller-update'),
+    minimizeWindow: () =>
+      ipcRenderer.invoke('pixel-forge-window:minimize'),
+    toggleMaximizeWindow: () =>
+      ipcRenderer.invoke('pixel-forge-window:toggle-maximize'),
+    closeWindow: () =>
+      ipcRenderer.invoke('pixel-forge-window:close'),
   },
 })

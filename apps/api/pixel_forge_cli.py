@@ -217,6 +217,7 @@ def _sanitize_apply_state(payload: Any) -> dict[str, Any]:
         "progress": progress,
         "message": _normalize_text(payload.get("message")) or "",
         "error": _normalize_text(payload.get("error")),
+        "startedAt": _normalize_text(payload.get("startedAt")),
         "updatedAt": _normalize_text(payload.get("updatedAt")) or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -233,6 +234,19 @@ def _write_apply_state(payload: dict[str, Any]) -> None:
         except FileNotFoundError:
             pass
         return
+    if normalized["status"] in {"running", "done", "error"} and not normalized["startedAt"]:
+        existing = _sanitize_apply_state(_read_json(apply_state_path()))
+        if (
+            existing["status"] == "running"
+            and existing.get("startedAt")
+            and (
+                not normalized["updateId"]
+                or existing.get("updateId") == normalized["updateId"]
+            )
+        ):
+            normalized["startedAt"] = existing["startedAt"]
+        else:
+            normalized["startedAt"] = normalized["updatedAt"]
     _write_json(apply_state_path(), normalized)
 
 
@@ -280,6 +294,25 @@ def _resolve_node_executable() -> str:
     resolved = shutil.which("node")
     if resolved:
         return resolved
+    home = Path.home()
+    candidates: list[Path] = [
+        home / ".local" / "bin" / "node",
+        home / "bin" / "node",
+        home / ".bun" / "bin" / "node",
+        home / ".cargo" / "bin" / "node",
+    ]
+    nvm_versions = home / ".nvm" / "versions" / "node"
+    if nvm_versions.is_dir():
+        candidates.extend(
+            sorted(
+                nvm_versions.glob("*/bin/node"),
+                key=lambda candidate: candidate.stat().st_mtime,
+                reverse=True,
+            )
+        )
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
     raise SystemExit("Node.js is required for controller-update apply")
 
 

@@ -52,8 +52,32 @@ const VERSION_PACKAGE_RELATIVE_PATHS = [
 ]
 const STABLE_OR_RELEASE_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)(?:-([1-9]\d*))?$/
 const BETA_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/
+const APP_DISPLAY_NAME = process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge'
+const DESKTOP_WM_CLASS = process.env.PIXEL_FORGE_DESKTOP_WM_CLASS || `${INSTANCE_SLUG}-desktop`
+const DESKTOP_ICON_PATH = [
+  process.env.PIXEL_FORGE_DESKTOP_ICON_PATH,
+  process.env.PIXEL_FORGE_INSTALL_DIR
+    ? path.join(process.env.PIXEL_FORGE_INSTALL_DIR, 'frontend', 'favicon', 'app.png')
+    : null,
+  path.join(__dirname, '..', 'frontend', 'favicon', 'app.png'),
+  path.join(__dirname, '..', 'web', 'public', 'favicon', 'app.png'),
+].find((candidate) => candidate && existsSync(candidate))
 
-app.setName(process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge')
+function desktopWindowOptions(options = {}) {
+  const baseOptions = {
+    title: APP_DISPLAY_NAME,
+  }
+  if (DESKTOP_ICON_PATH) {
+    baseOptions.icon = DESKTOP_ICON_PATH
+  }
+  return {
+    ...baseOptions,
+    ...options,
+  }
+}
+
+app.setName(APP_DISPLAY_NAME)
+app.commandLine.appendSwitch('class', DESKTOP_WM_CLASS)
 app.commandLine.appendSwitch('remote-debugging-address', CONTROLLER_CDP_HOST)
 app.commandLine.appendSwitch('remote-debugging-port', CONTROLLER_CDP_PORT)
 
@@ -78,6 +102,7 @@ let controllerUpdateApplyState = {
   progress: 0,
   message: '',
   error: null,
+  startedAt: null,
   updatedAt: null,
 }
 
@@ -320,6 +345,7 @@ function sanitizeControllerUpdateApplyState(payload) {
         ? 'done'
         : 'idle'
   const progress = Math.max(0, Math.min(100, Math.round(Number(payload?.progress) || 0)))
+  const startedAt = normalizeText(payload?.startedAt)
   const updatedAt = normalizeText(payload?.updatedAt) || new Date().toISOString()
   return {
     status,
@@ -328,12 +354,27 @@ function sanitizeControllerUpdateApplyState(payload) {
     progress,
     message: normalizeText(payload?.message) || '',
     error: normalizeText(payload?.error),
+    startedAt,
     updatedAt,
   }
 }
 
 function setControllerUpdateApplyState(payload) {
-  controllerUpdateApplyState = sanitizeControllerUpdateApplyState(payload)
+  const nextPayload = { ...(payload ?? {}) }
+  const status = normalizeText(nextPayload.status)
+  if (
+    (status === 'running' || status === 'done' || status === 'error')
+    && !normalizeText(nextPayload.startedAt)
+  ) {
+    const previousStartedAt = normalizeText(controllerUpdateApplyState?.startedAt)
+    const previousUpdateId = normalizeText(controllerUpdateApplyState?.updateId)
+    const nextUpdateId = normalizeText(nextPayload.updateId)
+    nextPayload.startedAt =
+      previousStartedAt && (!nextUpdateId || previousUpdateId === nextUpdateId)
+        ? previousStartedAt
+        : new Date().toISOString()
+  }
+  controllerUpdateApplyState = sanitizeControllerUpdateApplyState(nextPayload)
   void persistControllerUpdateApplyState(controllerUpdateApplyState)
   broadcastAppEvent({
     type: 'controller-update-apply-state-changed',
@@ -803,6 +844,24 @@ async function readRuntimeInfo() {
       acpxBridgeAvailable: false,
       installedAt: null,
     }
+  }
+}
+
+async function isShellReady(timeoutMs = 2500) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+  try {
+    const response = await fetch(SHELL_URL, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    return response.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -1385,13 +1444,50 @@ function reportControllerUpdateStartError(error, updateId = null) {
   setControllerUpdateApplyState(state)
 }
 
+function browserWindowFromIpcEvent(event) {
+  return BrowserWindow.fromWebContents(event.sender)
+}
+
+function registerWindowControlHandlers() {
+  ipcMain.handle('pixel-forge-window:minimize', async (event) => {
+    const window = browserWindowFromIpcEvent(event)
+    if (window && !window.isDestroyed()) {
+      window.minimize()
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('pixel-forge-window:toggle-maximize', async (event) => {
+    const window = browserWindowFromIpcEvent(event)
+    if (window && !window.isDestroyed() && window.isMaximizable()) {
+      if (window.isMaximized()) {
+        window.unmaximize()
+      } else {
+        window.maximize()
+      }
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('pixel-forge-window:close', async (event) => {
+    const window = browserWindowFromIpcEvent(event)
+    if (window && !window.isDestroyed()) {
+      window.close()
+    }
+    return { ok: true }
+  })
+}
+
 function createUpdaterWindow() {
-  updaterWindow = new BrowserWindow({
-    width: 520,
-    height: 220,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
+  updaterWindow = new BrowserWindow(desktopWindowOptions({
+    width: 620,
+    height: 280,
+    minWidth: 520,
+    minHeight: 240,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    frame: false,
     fullscreenable: false,
     autoHideMenuBar: true,
     backgroundColor: '#0b0d10',
@@ -1403,7 +1499,7 @@ function createUpdaterWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
-  })
+  }))
 
   updaterWindow.loadFile(path.join(__dirname, 'updater.html'))
   updaterWindow.on('closed', () => {
@@ -1926,7 +2022,7 @@ async function showPickListOverlay(ownerContextId, payload) {
     maxY
   )
 
-  pickerOverlayWindow = new BrowserWindow({
+  pickerOverlayWindow = new BrowserWindow(desktopWindowOptions({
     parent: mainWindow,
     x,
     y,
@@ -1949,7 +2045,7 @@ async function showPickListOverlay(ownerContextId, payload) {
       nodeIntegration: false,
       sandbox: false,
     },
-  })
+  }))
 
   pickerOverlayWindow.on('blur', () => {
     setTimeout(() => {
@@ -1981,11 +2077,12 @@ async function showPickListOverlay(ownerContextId, payload) {
 }
 
 async function createMainWindow() {
-  mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow(desktopWindowOptions({
     width: 1680,
     height: 1100,
     minWidth: 1200,
     minHeight: 800,
+    frame: false,
     backgroundColor: '#0b0d10',
     autoHideMenuBar: true,
     webPreferences: {
@@ -1994,7 +2091,7 @@ async function createMainWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
-  })
+  }))
 
   mainWindow.maximize()
   await mainWindow.webContents.session.clearCache()
@@ -2058,7 +2155,7 @@ function openAgentDeckSurfaceWindow(url) {
     return { ok: true }
   }
 
-  agentDeckSurfaceWindow = new BrowserWindow({
+  agentDeckSurfaceWindow = new BrowserWindow(desktopWindowOptions({
     width: 1440,
     height: 960,
     minWidth: 960,
@@ -2071,7 +2168,7 @@ function openAgentDeckSurfaceWindow(url) {
       nodeIntegration: false,
       sandbox: false,
     },
-  })
+  }))
 
   agentDeckSurfaceWindow.webContents.setWindowOpenHandler(({ url: nextUrl }) => {
     shell.openExternal(nextUrl)
@@ -2090,16 +2187,29 @@ function openAgentDeckSurfaceWindow(url) {
 
 if (SHOULD_RUN_APP) {
 app.whenReady().then(() => {
+  registerWindowControlHandlers()
+
   if (IS_UPDATER_UI_MODE) {
     ipcMain.handle('pixel-forge-updater:get-state', async () => {
-      return (await recoverControllerUpdateApplyState())
-        ?? sanitizeControllerUpdateApplyState({
-          status: 'idle',
-          phase: 'idle',
+      try {
+        return (await recoverControllerUpdateApplyState())
+          ?? sanitizeControllerUpdateApplyState({
+            status: 'idle',
+            phase: 'idle',
+            progress: 0,
+            message: '',
+            error: null,
+          })
+      } catch (error) {
+        console.warn('[pixel-forge] Updater state read failed:', error)
+        return sanitizeControllerUpdateApplyState({
+          status: 'running',
+          phase: 'preparing',
           progress: 0,
-          message: '',
+          message: 'Checking updater state...',
           error: null,
         })
+      }
     })
     createUpdaterWindow()
     return
@@ -2111,6 +2221,9 @@ app.whenReady().then(() => {
   })
   watchFile(PENDING_CONTROLLER_UPDATE_PATH, { interval: 1000 }, () => {
     void syncPendingControllerUpdate()
+  })
+  watchFile(CONTROLLER_UPDATE_APPLY_STATE_PATH, { interval: 1000 }, () => {
+    void syncControllerUpdateApplyStateFromDisk()
   })
   focusOrCreateMainWindow()
 
@@ -2446,4 +2559,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   destroyAllPreviewSurfaces()
   unwatchFile(PENDING_CONTROLLER_UPDATE_PATH)
+  unwatchFile(CONTROLLER_UPDATE_APPLY_STATE_PATH)
 })

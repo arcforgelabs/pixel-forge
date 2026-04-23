@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RETIRED_LANE_ENV_STRIP_SNIPPET=$(cat <<'RETIRED_LANE_STRIP'
 _pf_allow_retired_lane_env="${PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV:-0}"
 if [ "$_pf_allow_retired_lane_env" != "1" ]; then
-    _pf_lane_markers="${PIXEL_FORGE_INSTALL_NAME:-} ${PIXEL_FORGE_INSTANCE_SLUG:-} ${PIXEL_FORGE_CLI_NAME:-} ${PIXEL_FORGE_SHELL_NAME:-} ${PIXEL_FORGE_INSTALL_DIR:-} ${PIXEL_FORGE_BACKUP_DIR:-} ${PIXEL_FORGE_SERVICE_NAME:-} ${PIXEL_FORGE_SHARED_STATE_DIR:-} ${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-} ${PIXEL_FORGE_SKILLS_INSTALL_DIR:-} ${PIXEL_FORGE_DB_PATH:-} ${PIXEL_FORGE_AGENT_DECK_PROFILE:-} ${PIXEL_FORGE_AGENT_DECK_HOME:-} ${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-} ${PIXEL_FORGE_AGENT_DECK_CMD:-} ${PIXEL_FORGE_URL_HOST:-} ${PIXEL_FORGE_WEB_HOST:-} ${PIXEL_FORGE_SHELL_URL:-} ${PIXEL_FORGE_PREVIEW_PARTITION:-} ${PIXEL_FORGE_RUNTIME_DIR:-} ${AGENTDECK_PROFILE:-} ${AGENTDECK_DIR:-} ${AGENT_DECK_DIR:-}"
+    _pf_lane_markers="${PIXEL_FORGE_INSTALL_NAME:-} ${PIXEL_FORGE_INSTANCE_SLUG:-} ${PIXEL_FORGE_CLI_NAME:-} ${PIXEL_FORGE_SHELL_NAME:-} ${PIXEL_FORGE_INSTALL_DIR:-} ${PIXEL_FORGE_BACKUP_DIR:-} ${PIXEL_FORGE_SERVICE_NAME:-} ${PIXEL_FORGE_SHARED_STATE_DIR:-} ${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-} ${PIXEL_FORGE_SKILLS_INSTALL_DIR:-} ${PIXEL_FORGE_DB_PATH:-} ${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-} ${PIXEL_FORGE_DESKTOP_FILE_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-} ${PIXEL_FORGE_DESKTOP_WM_CLASS:-} ${PIXEL_FORGE_DESKTOP_ICON_PATH:-} ${PIXEL_FORGE_AGENT_DECK_PROFILE:-} ${PIXEL_FORGE_AGENT_DECK_HOME:-} ${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-} ${PIXEL_FORGE_AGENT_DECK_CMD:-} ${PIXEL_FORGE_URL_HOST:-} ${PIXEL_FORGE_WEB_HOST:-} ${PIXEL_FORGE_SHELL_URL:-} ${PIXEL_FORGE_PREVIEW_PARTITION:-} ${PIXEL_FORGE_RUNTIME_DIR:-} ${AGENTDECK_PROFILE:-} ${AGENTDECK_DIR:-} ${AGENT_DECK_DIR:-}"
     case "$_pf_lane_markers" in
         *pixel-forge-alpha*|*pixel-forge-workstation-v2*)
             echo "Ignoring retired Pixel Forge lane env overrides from the current shell." >&2
@@ -31,6 +31,12 @@ if [ "$_pf_allow_retired_lane_env" != "1" ]; then
                 PIXEL_FORGE_LEGACY_SHARED_STATE_DIR \
                 PIXEL_FORGE_SKILLS_INSTALL_DIR \
                 PIXEL_FORGE_DB_PATH \
+                PIXEL_FORGE_DESKTOP_ENTRY_NAME \
+                PIXEL_FORGE_DESKTOP_FILE_NAME \
+                PIXEL_FORGE_DESKTOP_ICON_NAME \
+                PIXEL_FORGE_DESKTOP_ICON_SOURCE \
+                PIXEL_FORGE_DESKTOP_WM_CLASS \
+                PIXEL_FORGE_DESKTOP_ICON_PATH \
                 PIXEL_FORGE_AGENT_DECK_PROFILE \
                 PIXEL_FORGE_AGENT_DECK_HOME \
                 PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT \
@@ -112,6 +118,7 @@ DESKTOP_ENTRY_NAME="${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-Pixel Forge}"
 DESKTOP_FILE_NAME="${PIXEL_FORGE_DESKTOP_FILE_NAME:-${INSTALL_NAME}.desktop}"
 DESKTOP_ICON_NAME="${PIXEL_FORGE_DESKTOP_ICON_NAME:-${INSTALL_NAME}}"
 DESKTOP_ICON_SOURCE="${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-$SCRIPT_DIR/apps/web/public/favicon/app.png}"
+DESKTOP_WM_CLASS="${PIXEL_FORGE_DESKTOP_WM_CLASS:-${INSTALL_NAME}-desktop}"
 
 # Legacy cleanup: pixel-forge-alpha (the alpha lane that preceded this unified install).
 LEGACY_ALPHA_INSTALL_NAME="pixel-forge-alpha"
@@ -469,6 +476,18 @@ build_python() {
     echo "[python] done."
 }
 
+write_desktop_identity_metadata() {
+    node - "$INSTALL_DIR/desktop/package.json" "$DESKTOP_ENTRY_NAME" "$DESKTOP_FILE_NAME" <<'NODE'
+const fs = require('fs')
+
+const [packagePath, productName, desktopName] = process.argv.slice(2)
+const payload = JSON.parse(fs.readFileSync(packagePath, 'utf8'))
+payload.productName = productName
+payload.desktopName = desktopName
+fs.writeFileSync(packagePath, `${JSON.stringify(payload, null, 2)}\n`)
+NODE
+}
+
 build_desktop() {
     if [ ! -f "$DESKTOP_SOURCE_DIR/package.json" ]; then
         echo "Error: missing desktop shell package.json at $DESKTOP_SOURCE_DIR/package.json." >&2
@@ -489,11 +508,13 @@ build_desktop() {
             rm -rf "$INSTALL_DIR/desktop/node_modules"
             mv "$INSTALL_DIR/.desktop-node_modules.tmp" "$INSTALL_DIR/desktop/node_modules"
         fi
+        write_desktop_identity_metadata
         return 0
     fi
     echo "[desktop] installing electron + source..."
     rm -rf "$INSTALL_DIR/desktop"
     cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
+    write_desktop_identity_metadata
     local electron_spec
     electron_spec="$(node -p "require('$DESKTOP_SOURCE_DIR/package.json').dependencies.electron")"
     (
@@ -694,6 +715,10 @@ INSTALL_DIR="\${PIXEL_FORGE_INSTALL_DIR:-$INSTALL_DIR}"
 BACKUP_DIR="\${PIXEL_FORGE_BACKUP_DIR:-$BACKUP_DIR}"
 CLI_NAME="\${PIXEL_FORGE_CLI_NAME:-$CLI_NAME}"
 SHELL_NAME="\${PIXEL_FORGE_SHELL_NAME:-$SHELL_NAME}"
+DESKTOP_ENTRY_NAME="\${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-$DESKTOP_ENTRY_NAME}"
+DESKTOP_FILE_NAME="\${PIXEL_FORGE_DESKTOP_FILE_NAME:-$DESKTOP_FILE_NAME}"
+DESKTOP_WM_CLASS="\${PIXEL_FORGE_DESKTOP_WM_CLASS:-$DESKTOP_WM_CLASS}"
+DESKTOP_ICON_PATH="\${PIXEL_FORGE_DESKTOP_ICON_PATH:-\$INSTALL_DIR/frontend/favicon/app.png}"
 SERVICE="\${PIXEL_FORGE_SERVICE_NAME:-$SERVICE_NAME}"
 PORT="\${PIXEL_FORGE_PORT:-$PORT}"
 API_PORT="\${PIXEL_FORGE_API_PORT:-$API_PORT}"
@@ -724,6 +749,10 @@ export PIXEL_FORGE_INSTALL_DIR="\$INSTALL_DIR"
 export PIXEL_FORGE_BACKUP_DIR="\$BACKUP_DIR"
 export PIXEL_FORGE_CLI_NAME="\$CLI_NAME"
 export PIXEL_FORGE_SHELL_NAME="\$SHELL_NAME"
+export PIXEL_FORGE_DESKTOP_ENTRY_NAME="\$DESKTOP_ENTRY_NAME"
+export PIXEL_FORGE_DESKTOP_FILE_NAME="\$DESKTOP_FILE_NAME"
+export PIXEL_FORGE_DESKTOP_WM_CLASS="\$DESKTOP_WM_CLASS"
+export PIXEL_FORGE_DESKTOP_ICON_PATH="\$DESKTOP_ICON_PATH"
 export PIXEL_FORGE_BIN_DIR="\$LAUNCHER_DIR"
 export PIXEL_FORGE_SERVICE_NAME="\$SERVICE"
 export PIXEL_FORGE_PORT="\$PORT"
@@ -772,7 +801,7 @@ if [ ! -x "\$ELECTRON_BIN" ]; then
 fi
 
 export PIXEL_FORGE_SHELL_URL="\$URL"
-exec "\$ELECTRON_BIN" --no-sandbox "\$INSTALL_DIR/desktop" "\$@"
+exec "\$ELECTRON_BIN" --no-sandbox "--class=\$PIXEL_FORGE_DESKTOP_WM_CLASS" "\$INSTALL_DIR/desktop" "\$@"
 SHELL
 
 chmod +x "$BIN_DIR/${SHELL_NAME}"
@@ -868,20 +897,20 @@ else
 [Desktop Entry]
 Name=${DESKTOP_ENTRY_NAME}
 Comment=Visual app editor - screenshot bootstrap and live editing
-Exec=bash -lc 'exec ${SHELL_NAME}'
+Exec=bash -lc "exec ${SHELL_NAME}"
 Icon=${DESKTOP_ICON_NAME}
 Terminal=false
 Type=Application
 Categories=Development;WebDevelopment;
 StartupNotify=true
-StartupWMClass=pixel-forge-desktop
+StartupWMClass=${DESKTOP_WM_CLASS}
 DESKTOP
 
     cat > "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}" << DESKTOP
 [Desktop Entry]
 Name=${AGENT_DECK_TUI_DESKTOP_ENTRY_NAME}
 Comment=Agent Deck terminal app bundled with Pixel Forge
-Exec=bash -lc 'exec ${AGENT_DECK_TUI_LAUNCHER_NAME}'
+Exec=bash -lc "exec ${AGENT_DECK_TUI_LAUNCHER_NAME}"
 Icon=${AGENT_DECK_TUI_ICON_NAME}
 Terminal=false
 Type=Application

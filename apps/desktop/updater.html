@@ -7,12 +7,11 @@
       :root {
         color-scheme: dark;
         --bg: #0b0d10;
-        --card: rgba(17, 20, 24, 0.96);
+        --panel: rgba(16, 20, 24, 0.96);
         --border: rgba(72, 223, 166, 0.24);
         --muted: #94a3b8;
         --text: #f8fafc;
         --accent: #48dfa6;
-        --track: rgba(148, 163, 184, 0.16);
       }
 
       * {
@@ -22,163 +21,319 @@
       body {
         margin: 0;
         min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background:
-          radial-gradient(circle at top, rgba(72, 223, 166, 0.08), transparent 45%),
-          var(--bg);
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
         font-family:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
           "Segoe UI", sans-serif;
+      }
+
+      .titlebar {
+        height: 38px;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-bottom: 1px solid rgba(72, 223, 166, 0.18);
+        background: linear-gradient(to bottom, rgba(22, 27, 32, 0.96), rgba(12, 16, 20, 0.96));
+        user-select: none;
+        -webkit-app-region: drag;
+      }
+
+      .titlebar-title {
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .window-controls {
+        position: absolute;
+        top: 0;
+        right: 6px;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        -webkit-app-region: no-drag;
+      }
+
+      .window-controls * {
+        -webkit-app-region: no-drag;
+      }
+
+      .window-control {
+        width: 34px;
+        height: 30px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      .window-control:hover {
+        background: rgba(148, 163, 184, 0.12);
         color: var(--text);
       }
 
-      .card {
-        width: min(460px, calc(100vw - 28px));
-        border-radius: 20px;
-        border: 1px solid var(--border);
-        background: var(--card);
-        padding: 22px;
-        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+      .window-control.close:hover {
+        background: rgba(248, 113, 113, 0.16);
+        color: #fecaca;
       }
 
-      .eyebrow {
-        font-size: 11px;
+      .window-body {
+        height: calc(100vh - 38px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 28px 28px;
+      }
+
+      .panel {
+        width: min(520px, 100%);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--panel);
+        padding: 24px;
+        box-shadow: 0 24px 72px rgba(0, 0, 0, 0.36);
+      }
+
+      .main-row {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        border: 3px solid rgba(148, 163, 184, 0.22);
+        border-top-color: var(--accent);
+        animation: spin 880ms linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .timer {
+        min-width: 82px;
+        font-variant-numeric: tabular-nums;
+        font-size: 31px;
         font-weight: 700;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      .activity-wrap {
+        margin-top: 18px;
+        overflow: hidden;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: rgba(3, 7, 18, 0.46);
+      }
+
+      .activity-line {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        color: var(--muted);
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 13px;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .prompt {
         color: var(--accent);
       }
 
-      .phase {
-        margin-top: 10px;
-        font-size: 20px;
-        font-weight: 600;
-      }
-
-      .message {
-        margin-top: 10px;
-        color: var(--muted);
-        line-height: 1.5;
-        min-height: 42px;
-      }
-
-      .progress {
-        margin-top: 16px;
-        height: 10px;
-        width: 100%;
+      .activity-text {
+        min-width: 0;
         overflow: hidden;
-        border-radius: 999px;
-        background: var(--track);
+        text-overflow: ellipsis;
       }
 
-      .progress-bar {
-        height: 100%;
-        width: 8%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, rgba(72, 223, 166, 0.82), rgba(108, 244, 190, 1));
-        transition: width 220ms ease;
+      .cursor {
+        width: 7px;
+        height: 15px;
+        flex: 0 0 auto;
+        background: var(--accent);
+        opacity: 0.9;
+        animation: blink 900ms steps(2, jump-none) infinite;
       }
 
-      .meta {
-        margin-top: 12px;
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        font-size: 12px;
-        color: var(--muted);
-      }
-
-      .error {
-        margin-top: 14px;
-        padding: 12px;
-        border-radius: 14px;
-        border: 1px solid rgba(248, 113, 113, 0.35);
-        background: rgba(127, 29, 29, 0.22);
-        color: #fecaca;
-        display: none;
-        white-space: pre-wrap;
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
       }
     </style>
   </head>
   <body>
-    <main class="card">
-      <div class="eyebrow">Updating Pixel Forge</div>
-      <div id="phase" class="phase">Preparing</div>
-      <div id="message" class="message">Starting the update runner…</div>
-      <div class="progress">
-        <div id="progress-bar" class="progress-bar"></div>
+    <header class="titlebar">
+      <div class="titlebar-title">Updating Pixel Forge</div>
+      <div class="window-controls">
+        <button class="window-control" type="button" aria-label="Minimize" data-window-action="minimize">−</button>
+        <button class="window-control" type="button" aria-label="Maximize" data-window-action="maximize">□</button>
+        <button class="window-control close" type="button" aria-label="Close" data-window-action="close">×</button>
       </div>
-      <div class="meta">
-        <span id="hint">This window will close when the update is done.</span>
-        <span id="progress-label">0%</span>
-      </div>
-      <div id="error" class="error"></div>
-    </main>
+    </header>
+    <div class="window-body">
+      <main class="panel">
+        <div class="main-row">
+          <div class="spinner" aria-hidden="true"></div>
+          <div id="timer" class="timer">00:00</div>
+        </div>
+        <div class="activity-wrap">
+          <div class="activity-line">
+            <span class="prompt">$</span>
+            <span id="activity" class="activity-text">starting update runner</span>
+            <span class="cursor" aria-hidden="true"></span>
+          </div>
+        </div>
+      </main>
+    </div>
 
     <script>
-      const phaseEl = document.getElementById("phase");
-      const messageEl = document.getElementById("message");
-      const progressBarEl = document.getElementById("progress-bar");
-      const progressLabelEl = document.getElementById("progress-label");
-      const errorEl = document.getElementById("error");
+      const timerEl = document.getElementById("timer");
+      const activityEl = document.getElementById("activity");
+      let startedAtMs = Date.now();
+      let latestState = null;
+      let activityIndex = 0;
+      let doneTimer = null;
 
-      function labelForPhase(phase) {
-        switch (phase) {
+      const fallbackSteps = [
+        "starting update runner",
+        "checking updater state",
+        "waiting for controller handoff",
+      ];
+
+      function parseTime(value) {
+        if (typeof value !== "string" || !value.trim()) {
+          return null;
+        }
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function formatDuration(ms) {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const seconds = totalSeconds % 60;
+        const minutes = Math.floor(totalSeconds / 60) % 60;
+        const hours = Math.floor(totalSeconds / 3600);
+        const pair = (value) => String(value).padStart(2, "0");
+        if (hours > 0) {
+          return `${hours}:${pair(minutes)}:${pair(seconds)}`;
+        }
+        return `${pair(minutes)}:${pair(seconds)}`;
+      }
+
+      function stepsForState(state) {
+        switch (state?.phase) {
+          case "preparing":
+            return [
+              "checking staged update snapshot",
+              "resolving install source",
+              "starting detached updater",
+            ];
           case "installing":
-            return "Installing";
+            return [
+              "bash ./install.sh",
+              "building changed frontend assets",
+              "syncing Pixel Forge runtime files",
+            ];
           case "restarting":
-            return "Restarting";
+            return [
+              "pixel-forge restart",
+              "stopping old controller service",
+              "starting updated controller service",
+            ];
           case "waiting":
-            return "Waiting";
+            return [
+              "curl /api/runtime-info",
+              "checking controller version",
+              "waiting for Pixel Forge to answer",
+            ];
           case "finalizing":
-            return "Finalizing";
+            return [
+              "clearing staged update record",
+              "writing runtime metadata",
+              "cleaning old update snapshot",
+            ];
           case "relaunching":
-            return "Relaunching";
+            return [
+              "launching Pixel Forge shell",
+              "restoring previous workspace",
+              "loading updated controller",
+            ];
           case "done":
-            return "Done";
-          case "error":
-            return "Error";
+            return ["updated Pixel Forge is ready"];
           default:
-            return "Preparing";
+            return fallbackSteps;
         }
       }
 
-      let doneTimer = null;
+      function tick() {
+        timerEl.textContent = formatDuration(Date.now() - startedAtMs);
+      }
+
+      function advanceActivity() {
+        const steps = stepsForState(latestState);
+        activityEl.textContent = steps[activityIndex % steps.length];
+        activityIndex += 1;
+      }
+
+      document.querySelectorAll("[data-window-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const action = button.getAttribute("data-window-action");
+          if (action === "minimize") {
+            void window.pixelForgeUpdater.window.minimize();
+          } else if (action === "maximize") {
+            void window.pixelForgeUpdater.window.toggleMaximize();
+          } else if (action === "close") {
+            void window.pixelForgeUpdater.window.close();
+          }
+        });
+      });
 
       async function poll() {
-        const state = await window.pixelForgeUpdater.getState();
-        const progress = Math.max(8, Number(state?.progress || 0));
-
-        phaseEl.textContent = labelForPhase(state?.phase);
-        messageEl.textContent =
-          state?.message || "Applying the staged controller update…";
-        progressBarEl.style.width = `${progress}%`;
-        progressLabelEl.textContent = `${Math.round(Number(state?.progress || 0))}%`;
-
-        if (state?.status === "error") {
-          errorEl.style.display = "block";
-          errorEl.textContent = state?.error || "Unknown updater error.";
-          return;
-        }
-
-        if (state?.status === "done" || state?.phase === "done") {
-          if (!doneTimer) {
-            doneTimer = window.setTimeout(() => {
-              window.close();
-            }, 900);
+        try {
+          const state = await window.pixelForgeUpdater.getState();
+          latestState = state;
+          const startedAt = parseTime(state?.startedAt);
+          if (startedAt) {
+            startedAtMs = startedAt;
           }
-          return;
+          if (state?.status === "done" || state?.phase === "done") {
+            latestState = { ...state, phase: "done" };
+            if (!doneTimer) {
+              doneTimer = window.setTimeout(() => {
+                window.close();
+              }, 900);
+            }
+          }
+        } catch {
+          latestState = null;
         }
-
-        errorEl.style.display = "none";
+        tick();
       }
 
       void poll();
+      advanceActivity();
       window.setInterval(() => {
         void poll();
       }, 500);
+      window.setInterval(tick, 250);
+      window.setInterval(advanceActivity, 900);
     </script>
   </body>
 </html>

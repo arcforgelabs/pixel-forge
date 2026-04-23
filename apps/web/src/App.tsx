@@ -29,13 +29,58 @@ import { LogoForgePane } from "./components/logo-forge/LogoForgePane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { browseForDirectory } from "./lib/browse-directory";
 import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Maximize2, Minus, X } from "lucide-react";
 import type {
   PixelForgeDesktopControllerUpdateApplyState,
   PixelForgeDesktopBootstrapState,
   PixelForgeDesktopPendingControllerUpdate,
   PixelForgeDesktopRuntimeInfo,
 } from "./types/pixel-forge-desktop";
+
+function DesktopWindowTitleBar() {
+  const desktopApp = getDesktopApp();
+  if (
+    !hasDesktopAppMethod(desktopApp, "minimizeWindow") ||
+    !hasDesktopAppMethod(desktopApp, "toggleMaximizeWindow") ||
+    !hasDesktopAppMethod(desktopApp, "closeWindow")
+  ) {
+    return null;
+  }
+
+  return (
+    <header className="pf-window-titlebar relative z-50 flex h-9 shrink-0 items-center justify-center border-b border-border/50 bg-card/95 text-foreground shadow-sm">
+      <div className="pointer-events-none select-none text-[13px] font-semibold tracking-tight">
+        Pixel Forge
+      </div>
+      <div className="pf-window-control absolute right-1 top-0 flex h-full items-center">
+        <button
+          type="button"
+          className="flex h-8 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          aria-label="Minimize"
+          onClick={() => void desktopApp.minimizeWindow()}
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className="flex h-8 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          aria-label="Maximize"
+          onClick={() => void desktopApp.toggleMaximizeWindow()}
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className="flex h-8 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive-foreground"
+          aria-label="Close"
+          onClick={() => void desktopApp.closeWindow()}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </header>
+  );
+}
 
 function App() {
   const {
@@ -714,19 +759,21 @@ function App() {
   const showMainContent = !viewingSettings && !projectSettingsPath;
 
   return (
-    <div className="dark:bg-background dark:text-foreground flex flex-row h-screen overflow-hidden">
-      {/* Settings drawer - pushes main content */}
-      <SettingsSidebar
-        settings={settings}
-        setSettings={setSettings}
-        onOpenWorkspacePicker={() => {
-          void browseAndOpenWorkspace();
-        }}
-        isOpeningWorkspace={isBrowsingForWorkspace}
-      />
+    <div className="dark:bg-background dark:text-foreground flex h-screen flex-col overflow-hidden">
+      <DesktopWindowTitleBar />
+      <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
+        {/* Settings drawer - pushes main content */}
+        <SettingsSidebar
+          settings={settings}
+          setSettings={setSettings}
+          onOpenWorkspacePicker={() => {
+            void browseAndOpenWorkspace();
+          }}
+          isOpeningWorkspace={isBrowsingForWorkspace}
+        />
 
-      {/* Main content */}
-      <main className="relative flex flex-col flex-1 min-w-0 h-screen overflow-hidden">
+        {/* Main content */}
+        <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mode Tab Bar */}
         <ModeTabBar />
         <ControllerUpdateNotice />
@@ -787,7 +834,8 @@ function App() {
           id="pf-project-settings-pane-root"
           className={`flex-1 min-h-0 overflow-hidden ${projectSettingsPath ? "" : "hidden"}`}
         />
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

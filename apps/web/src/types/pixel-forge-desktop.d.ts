@@ -279,6 +279,8 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
   progress: number
   message: string
   error: string | null
+  startedAt?: string | null
+  updatedAt?: string | null
 }
 
 export interface PixelForgeDesktopRuntimeInfo {
@@ -304,6 +306,9 @@ export interface PixelForgeDesktopAppAPI {
   getDismissedControllerUpdateId?(): Promise<string | null>
   setDismissedControllerUpdateId?(updateId: string | null): Promise<string | null>
   getControllerUpdateApplyState?(): Promise<PixelForgeDesktopControllerUpdateApplyState>
+  minimizeWindow?(): Promise<{ ok: true }>
+  toggleMaximizeWindow?(): Promise<{ ok: true }>
+  closeWindow?(): Promise<{ ok: true }>
   stageControllerUpdate?(payload: {
     projectPath: string
     previewUrl?: string | null

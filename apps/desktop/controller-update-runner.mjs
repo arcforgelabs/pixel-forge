@@ -65,6 +65,7 @@ const applyStatePath = path.join(stateDir, 'controller-update-apply-state.json')
 const pendingUpdatePath = path.join(stateDir, 'pending-controller-update.json')
 const runnerLogPath = path.join(stateDir, 'controller-update-runner.log')
 const cleanupQueuePath = path.join(stateDir, 'controller-update-cleanup-queue.json')
+let updateStartedAt = null
 
 async function appendLog(message) {
   if (!stateDir) {
@@ -220,6 +221,8 @@ PY
 }
 
 async function setState(payload) {
+  const now = new Date().toISOString()
+  const startedAt = await resolveUpdateStartedAt(now)
   await writeJsonFile(applyStatePath, {
     status: 'running',
     updateId,
@@ -227,12 +230,15 @@ async function setState(payload) {
     progress: 0,
     message: '',
     error: null,
-    updatedAt: new Date().toISOString(),
+    startedAt,
+    updatedAt: now,
     ...payload,
   })
 }
 
 async function setError(error) {
+  const now = new Date().toISOString()
+  const startedAt = await resolveUpdateStartedAt(now)
   await writeJsonFile(applyStatePath, {
     status: 'error',
     updateId,
@@ -240,8 +246,30 @@ async function setError(error) {
     progress: 100,
     message: 'Failed to apply the staged Pixel Forge update.',
     error: error instanceof Error ? error.message : String(error || 'Unknown error'),
-    updatedAt: new Date().toISOString(),
+    startedAt,
+    updatedAt: now,
   })
+}
+
+async function resolveUpdateStartedAt(fallback) {
+  if (updateStartedAt) {
+    return updateStartedAt
+  }
+
+  const existingState = await readJsonFile(applyStatePath)
+  const existingStartedAt = normalizeText(existingState?.startedAt)
+  const existingUpdateId = normalizeText(existingState?.updateId)
+  const existingStatus = normalizeText(existingState?.status)
+  if (
+    existingStartedAt
+    && existingStatus === 'running'
+    && (!updateId || existingUpdateId === updateId)
+  ) {
+    updateStartedAt = existingStartedAt
+  } else {
+    updateStartedAt = fallback
+  }
+  return updateStartedAt
 }
 
 function runShellCommand(command, cwd) {
