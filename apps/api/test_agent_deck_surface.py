@@ -20,6 +20,7 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
             "PIXEL_FORGE_DB_PATH": os.environ.get("PIXEL_FORGE_DB_PATH"),
             "PIXEL_FORGE_AGENT_DECK_SURFACE_HOST": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_HOST"),
             "PIXEL_FORGE_AGENT_DECK_SURFACE_PORT": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_PORT"),
+            "PIXEL_FORGE_AGENT_DECK_SURFACE_URL": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_URL"),
         }
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
         os.environ["PIXEL_FORGE_RUNTIME_DIR"] = str(Path(self.tempdir.name) / "runtime")
@@ -27,6 +28,7 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
         os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
         os.environ["PIXEL_FORGE_AGENT_DECK_SURFACE_HOST"] = "127.0.0.1"
         os.environ["PIXEL_FORGE_AGENT_DECK_SURFACE_PORT"] = "8842"
+        os.environ.pop("PIXEL_FORGE_AGENT_DECK_SURFACE_URL", None)
 
     def tearDown(self) -> None:
         for key, value in self.original_env.items():
@@ -50,6 +52,10 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
         self.assertEqual(status["url"], "http://127.0.0.1:8842")
         self.assertEqual(status["homeDir"], str(Path(self.tempdir.name) / "agent-deck"))
         self.assertEqual(status["dbPath"], str(Path(self.tempdir.name) / "pixel-forge.db"))
+        self.assertEqual(
+            status["governance"]["tmuxTmpdir"],
+            str(Path(self.tempdir.name) / "agent-deck" / "tmux"),
+        )
 
     def test_ensure_agent_deck_surface_started_launches_standalone_server(self) -> None:
         process = Mock()
@@ -71,5 +77,6 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
         self.assertEqual(launched_command[-2], "web-standalone")
         self.assertEqual(launched_command[-1], "-listen=127.0.0.1:8842")
         self.assertEqual(launched_env["PIXEL_FORGE_DB_PATH"], str(Path(self.tempdir.name) / "pixel-forge.db"))
+        self.assertEqual(launched_env["TMUX_TMPDIR"], str(Path(self.tempdir.name) / "agent-deck" / "tmux"))
         self.assertTrue(status["ready"])
         self.assertEqual(status["pid"], 43210)

@@ -57,6 +57,30 @@ This install lane is the canonical installed `pixel-forge` controller. It owns t
 
 Mirror runtimes apply the same pattern. `_ensure_mirror_runtime` in `apps/api/local_targets.py` stores cache markers under `<state_dir>/.build-cache/*.sha256` keyed by `requirements.txt` hash (pip install) and the web source tree hash (tsc + vite build).
 
+### Agent Deck Memory Governance
+
+Pixel Forge owns a separate Agent Deck runtime home and tmux socket under `~/.pixel-forge/agent-deck`. Agent Deck launches from Pixel Forge strip inherited `TMUX` / `TMUX_PANE`, set `TMUX_TMPDIR=<agent-deck-home>/tmux`, and run through `scripts/agent-deck.sh`. On Linux systems with user systemd available, that runner executes the vendored Agent Deck binary inside `pixel-forge-agent-deck.slice` with memory accounting and adaptive `MemoryHigh`, `MemoryMax`, and `MemorySwapMax` values. If systemd scope creation is unavailable, the runner falls back to the same isolated tmux socket without cgroup limits.
+
+Default budget derivation:
+
+- `effective_ram = min(cgroup memory.max, /proc/meminfo MemTotal)` with an 8 GiB fallback.
+- `reserve = max(2 GiB, 20% of effective_ram)` for the desktop and controller.
+- `agent_pool = max(1 GiB, effective_ram - reserve)`.
+- `MemoryHigh = max(2 GiB, 75% of agent_pool)`, capped by `MemoryMax`.
+- `MemoryMax = 90% of agent_pool`, capped to the pool.
+- `MemorySwapMax = min(2 GiB, max(512 MiB, 10% of effective_ram))`.
+- warm-session admission defaults to `floor(agent_pool / 2 GiB)`, clamped to 2-12 sessions.
+
+Tuning env:
+
+- `PIXEL_FORGE_EFFECTIVE_RAM_BYTES`
+- `PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH`
+- `PIXEL_FORGE_AGENT_DECK_MEMORY_MAX`
+- `PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX`
+- `PIXEL_FORGE_AGENT_DECK_MAX_WARM_SESSIONS`
+- `PIXEL_FORGE_AGENT_DECK_MEMORY_SCOPE=0` to disable systemd scopes.
+- `PIXEL_FORGE_AGENT_DECK_ADMISSION_CONTROL=0` to disable launch admission.
+
 ### Branch Truth
 
 - `master` is the source branch of record for the canonical Pixel Forge lane.
@@ -96,6 +120,7 @@ When developing Pixel Forge itself from the repo checkout, the repo-local `./pix
 - This clone is the canonical Pixel Forge dev lane. The default runtime/install identity is `2026.4.14`, `pixel-forge`, `pixel-forge-shell`, `pixel-forge.localhost`, and `~/.pixel-forge`.
 - Hidden install/runtime metadata for that lane now needs to derive from the same lane identity root instead of per-surface hardcoding: service names, CLI names, URL hosts, state roots, preview partitions, and agent-facing request-pack commands should all flow from the active runtime identity config.
 - The lane now carries an intentional in-workspace Agent Deck foundation boundary under `foundations/agent-deck/`. `scripts/agent-deck.sh` is the single build/run boundary for that imported source, and both dev and install launchers export `AGENTDECK_PROFILE=pixel-forge` plus an isolated Agent Deck home at `~/.pixel-forge/agent-deck`.
+- Pixel Forge-owned Agent Deck launches now use a Pixel Forge-scoped tmux socket, machine-adaptive memory budgets, optional systemd user scopes, launch admission control, and per-session RSS/swap/process metadata. This is the crash-protection layer for session growth; allocator trimming loops are not part of the primary strategy.
 - The product path is the desktop shell over the installed FastAPI backend and built frontend.
 - The dev lane now ships two separate Agent Deck operator surfaces over the same dev-owned runtime: a dedicated terminal app launcher for the real TUI and a separate web surface for browser/shell embedding.
 - The dev lane now also owns one integrated Agent Deck web surface on `127.0.0.1:8422` by default. Pixel Forge can start it through `/api/agent-deck-surface`, `pixel-forge agent-deck-surface ...`, or the Settings-side operator action, and the desktop shell can open it in a second Pixel Forge window.

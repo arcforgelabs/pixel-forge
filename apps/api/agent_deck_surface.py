@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_deck_runtime import agent_deck_command, agent_deck_env, agent_deck_profile
+from memory_governance import agent_deck_governance_status
 from runtime_config import (
     agent_deck_home_dir,
     agent_deck_surface_host,
@@ -111,6 +112,7 @@ def read_agent_deck_surface_status() -> dict[str, Any]:
         "dbPath": str(shared_db_path()),
         "logFile": str(agent_deck_surface_log_file()),
         "pidFile": str(agent_deck_surface_pid_file()),
+        "governance": agent_deck_governance_status(agent_deck_home_dir()),
     }
 
 

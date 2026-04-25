@@ -62,6 +62,16 @@ func TestNewSessionStatusFlicker(t *testing.T) {
 	}
 }
 
+func TestParseProcStatusMemory(t *testing.T) {
+	rss, swap := parseProcStatusMemory([]byte("Name:\ttest\nVmRSS:\t  1234 kB\nVmSwap:\t 56 kB\n"))
+	if rss != 1234*1024 {
+		t.Fatalf("rss = %d, want %d", rss, 1234*1024)
+	}
+	if swap != 56*1024 {
+		t.Fatalf("swap = %d, want %d", swap, 56*1024)
+	}
+}
+
 // TestInstance_CanFork tests the CanFork method for Claude session forking
 func TestInstance_CanFork(t *testing.T) {
 	inst := NewInstance("test", "/tmp/test")

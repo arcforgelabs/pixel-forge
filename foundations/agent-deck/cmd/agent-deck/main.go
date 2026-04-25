@@ -1366,33 +1366,40 @@ func handleList(profile string, args []string) {
 	if *jsonOutput {
 		// JSON output for scripting
 		type sessionJSON struct {
-			ID            string    `json:"id"`
-			Title         string    `json:"title"`
-			Path          string    `json:"path"`
-			Group         string    `json:"group"`
-			Tool          string    `json:"tool"`
-			Command       string    `json:"command,omitempty"`
-			Status        string    `json:"status"`
-			Profile       string    `json:"profile"`
-			CreatedAt     time.Time `json:"created_at"`
-			SSHHost       string    `json:"ssh_host,omitempty"`
-			SSHRemotePath string    `json:"ssh_remote_path,omitempty"`
+			ID              string    `json:"id"`
+			Title           string    `json:"title"`
+			Path            string    `json:"path"`
+			Group           string    `json:"group"`
+			Tool            string    `json:"tool"`
+			Command         string    `json:"command,omitempty"`
+			Status          string    `json:"status"`
+			Profile         string    `json:"profile"`
+			CreatedAt       time.Time `json:"created_at"`
+			SSHHost         string    `json:"ssh_host,omitempty"`
+			SSHRemotePath   string    `json:"ssh_remote_path,omitempty"`
+			MemoryRSSBytes  int64     `json:"memory_rss_bytes"`
+			MemorySwapBytes int64     `json:"memory_swap_bytes"`
+			ProcessCount    int       `json:"process_count"`
 		}
 		sessions := make([]sessionJSON, len(instances))
 		for i, inst := range instances {
 			_ = inst.UpdateStatus()
+			resourceUsage := inst.ResourceUsage()
 			sessions[i] = sessionJSON{
-				ID:            inst.ID,
-				Title:         inst.Title,
-				Path:          inst.ProjectPath,
-				Group:         inst.GroupPath,
-				Tool:          inst.Tool,
-				Command:       inst.Command,
-				Status:        StatusString(inst.Status),
-				Profile:       storage.Profile(),
-				CreatedAt:     inst.CreatedAt,
-				SSHHost:       inst.SSHHost,
-				SSHRemotePath: inst.SSHRemotePath,
+				ID:              inst.ID,
+				Title:           inst.Title,
+				Path:            inst.ProjectPath,
+				Group:           inst.GroupPath,
+				Tool:            inst.Tool,
+				Command:         inst.Command,
+				Status:          StatusString(inst.Status),
+				Profile:         storage.Profile(),
+				CreatedAt:       inst.CreatedAt,
+				SSHHost:         inst.SSHHost,
+				SSHRemotePath:   inst.SSHRemotePath,
+				MemoryRSSBytes:  resourceUsage.RSSBytes,
+				MemorySwapBytes: resourceUsage.SwapBytes,
+				ProcessCount:    resourceUsage.ProcessCount,
 			}
 		}
 		output, err := json.MarshalIndent(sessions, "", "  ")
@@ -1440,16 +1447,19 @@ func handleListAllProfiles(jsonOutput bool) {
 
 	if jsonOutput {
 		type sessionJSON struct {
-			ID            string    `json:"id"`
-			Title         string    `json:"title"`
-			Path          string    `json:"path"`
-			Group         string    `json:"group"`
-			Tool          string    `json:"tool"`
-			Command       string    `json:"command,omitempty"`
-			Profile       string    `json:"profile"`
-			CreatedAt     time.Time `json:"created_at"`
-			SSHHost       string    `json:"ssh_host,omitempty"`
-			SSHRemotePath string    `json:"ssh_remote_path,omitempty"`
+			ID              string    `json:"id"`
+			Title           string    `json:"title"`
+			Path            string    `json:"path"`
+			Group           string    `json:"group"`
+			Tool            string    `json:"tool"`
+			Command         string    `json:"command,omitempty"`
+			Profile         string    `json:"profile"`
+			CreatedAt       time.Time `json:"created_at"`
+			SSHHost         string    `json:"ssh_host,omitempty"`
+			SSHRemotePath   string    `json:"ssh_remote_path,omitempty"`
+			MemoryRSSBytes  int64     `json:"memory_rss_bytes"`
+			MemorySwapBytes int64     `json:"memory_swap_bytes"`
+			ProcessCount    int       `json:"process_count"`
 		}
 		var allSessions []sessionJSON
 
@@ -1463,17 +1473,21 @@ func handleListAllProfiles(jsonOutput bool) {
 				continue
 			}
 			for _, inst := range instances {
+				resourceUsage := inst.ResourceUsage()
 				allSessions = append(allSessions, sessionJSON{
-					ID:            inst.ID,
-					Title:         inst.Title,
-					Path:          inst.ProjectPath,
-					Group:         inst.GroupPath,
-					Tool:          inst.Tool,
-					Command:       inst.Command,
-					Profile:       profileName,
-					CreatedAt:     inst.CreatedAt,
-					SSHHost:       inst.SSHHost,
-					SSHRemotePath: inst.SSHRemotePath,
+					ID:              inst.ID,
+					Title:           inst.Title,
+					Path:            inst.ProjectPath,
+					Group:           inst.GroupPath,
+					Tool:            inst.Tool,
+					Command:         inst.Command,
+					Profile:         profileName,
+					CreatedAt:       inst.CreatedAt,
+					SSHHost:         inst.SSHHost,
+					SSHRemotePath:   inst.SSHRemotePath,
+					MemoryRSSBytes:  resourceUsage.RSSBytes,
+					MemorySwapBytes: resourceUsage.SwapBytes,
+					ProcessCount:    resourceUsage.ProcessCount,
 				})
 			}
 		}

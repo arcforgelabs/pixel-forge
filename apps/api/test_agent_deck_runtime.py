@@ -19,6 +19,8 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
             "AGENT_DECK_DIR": os.environ.get("AGENT_DECK_DIR"),
             "PIXEL_FORGE_AGENT_DECK_PROFILE": os.environ.get("PIXEL_FORGE_AGENT_DECK_PROFILE"),
             "AGENTDECK_PROFILE": os.environ.get("AGENTDECK_PROFILE"),
+            "TMUX": os.environ.get("TMUX"),
+            "TMUX_PANE": os.environ.get("TMUX_PANE"),
         }
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
         os.environ.pop("PIXEL_FORGE_AGENT_DECK_HOME", None)
@@ -26,6 +28,8 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
         os.environ.pop("AGENT_DECK_DIR", None)
         os.environ.pop("PIXEL_FORGE_AGENT_DECK_PROFILE", None)
         os.environ.pop("AGENTDECK_PROFILE", None)
+        os.environ["TMUX"] = "/tmp/tmux-1000/default,1,0"
+        os.environ["TMUX_PANE"] = "%1"
 
     def tearDown(self) -> None:
         for key, value in self.original_env.items():
@@ -43,3 +47,7 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
         self.assertEqual(env["AGENT_DECK_DIR"], expected)
         self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "pixel-forge")
         self.assertEqual(env["AGENTDECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["TMUX_TMPDIR"], str(Path(expected) / "tmux"))
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR"], str(Path(expected) / "tmux"))
+        self.assertNotIn("TMUX", env)
+        self.assertNotIn("TMUX_PANE", env)

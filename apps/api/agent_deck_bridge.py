@@ -14,6 +14,7 @@ from uuid import uuid4
 from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
 from agent_deck_runtime import agent_deck_command, agent_deck_env
 from live_editor_threads import LiveEditorThreadRecord
+from memory_governance import plan_agent_deck_launch_admission
 
 
 CLAUDE_DIR_NAME_RE = re.compile(r"[^a-zA-Z0-9-]")
@@ -130,6 +131,9 @@ class AgentDeckSessionTarget:
     command: str | None
     status: str | None
     created_at: str | None
+    memory_rss_bytes: int | None = None
+    memory_swap_bytes: int | None = None
+    process_count: int | None = None
 
 
 @dataclass(slots=True)
@@ -479,6 +483,40 @@ async def _run_agent_deck_json_array_command(
     return payload
 
 
+def _payload_int(payload: dict[str, object], key: str) -> int | None:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+async def _enforce_agent_deck_launch_admission() -> None:
+    payload = await _run_agent_deck_json_array_command(["ls", "-json"])
+    sessions = [entry for entry in payload if isinstance(entry, dict)]
+    decision = plan_agent_deck_launch_admission(sessions)
+
+    for session_id in decision.stop_idle_session_ids:
+        code, stdout, stderr = await _run_agent_deck_command(["session", "stop", session_id, "-q"])
+        if code != 0 and not _is_missing_session_error(stderr.strip() or stdout.strip()):
+            raise AgentDeckBridgeError(
+                stderr.strip()
+                or stdout.strip()
+                or f"Failed to park idle Agent Deck session `{session_id}` before launch"
+            )
+
+    if not decision.allowed:
+        raise AgentDeckBridgeError(decision.reason or "Agent Deck launch blocked by memory governance")
+
+
 def _convert_to_claude_dir_name(path: str) -> str:
     return CLAUDE_DIR_NAME_RE.sub("-", path)
 
@@ -573,6 +611,7 @@ async def _launch_new_session(
     agent_model: str | None = None,
     agent_thinking: str | None = None,
 ) -> dict[str, object]:
+    await _enforce_agent_deck_launch_admission()
     normalized_agent_type = agent_type.strip().lower() or "claude"
     launch_path = (
         _normalize_path(workspace_path)
@@ -681,6 +720,9 @@ def _payload_to_session_target(payload: dict[str, object]) -> AgentDeckSessionTa
         command=command,
         status=str(payload.get("status")).strip() if isinstance(payload.get("status"), str) and str(payload.get("status")).strip() else None,
         created_at=str(payload.get("created_at")).strip() if isinstance(payload.get("created_at"), str) and str(payload.get("created_at")).strip() else None,
+        memory_rss_bytes=_payload_int(payload, "memory_rss_bytes"),
+        memory_swap_bytes=_payload_int(payload, "memory_swap_bytes"),
+        process_count=_payload_int(payload, "process_count"),
     )
 
 
@@ -1102,6 +1144,7 @@ async def launch_agent_deck_closeout_session(
         f"-m={prompt}",
         context.repo_root,
     ]
+    await _enforce_agent_deck_launch_admission()
     payload = await _run_agent_deck_json_object_command(args)
     return _payload_to_session_target(payload)
 

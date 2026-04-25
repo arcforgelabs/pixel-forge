@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import shlex
+from pathlib import Path
 
+from memory_governance import agent_deck_governance_env
 from runtime_config import agent_deck_home_dir, shared_db_path, source_root
 from state_root_migration import default_agent_deck_profile
 
@@ -44,4 +46,7 @@ def agent_deck_env() -> dict[str, str]:
     else:
         env.setdefault("AGENTDECK_DIR", home_dir)
         env.setdefault("AGENT_DECK_DIR", home_dir)
+    env.update(agent_deck_governance_env(Path(home_dir)))
+    for key in ("TMUX", "TMUX_PANE"):
+        env.pop(key, None)
     return env

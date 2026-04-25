@@ -466,6 +466,78 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sessions, [])
 
+    async def test_launch_admission_parks_oldest_idle_session_before_starting_new_one(self) -> None:
+        async def run_command(args, cwd=None):
+            if args[:2] == ["ls", "-json"]:
+                return (
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": "busy",
+                                "title": "busy",
+                                "path": "/tmp/project",
+                                "status": "running",
+                                "created_at": "2026-01-02T00:00:00Z",
+                            },
+                            {
+                                "id": "idle",
+                                "title": "idle",
+                                "path": "/tmp/project",
+                                "status": "idle",
+                                "created_at": "2026-01-01T00:00:00Z",
+                            },
+                        ]
+                    ),
+                    "",
+                )
+            if args[:3] == ["session", "stop", "idle"]:
+                return (0, "", "")
+            raise AssertionError(f"Unexpected agent-deck command: {args!r} cwd={cwd!r}")
+
+        with (
+            patch.dict(
+                agent_deck_bridge.os.environ,
+                {"PIXEL_FORGE_AGENT_DECK_MAX_WARM_SESSIONS": "2"},
+                clear=False,
+            ),
+            patch.object(agent_deck_bridge, "_run_agent_deck_command", side_effect=run_command) as run_mock,
+        ):
+            await agent_deck_bridge._enforce_agent_deck_launch_admission()
+
+        self.assertEqual(run_mock.await_count, 2)
+
+    async def test_launch_admission_refuses_when_active_sessions_fill_budget(self) -> None:
+        async def run_command(args, cwd=None):
+            if args[:2] == ["ls", "-json"]:
+                return (
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": "busy",
+                                "title": "busy",
+                                "path": "/tmp/project",
+                                "status": "running",
+                                "created_at": "2026-01-01T00:00:00Z",
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            raise AssertionError(f"Unexpected agent-deck command: {args!r} cwd={cwd!r}")
+
+        with (
+            patch.dict(
+                agent_deck_bridge.os.environ,
+                {"PIXEL_FORGE_AGENT_DECK_MAX_WARM_SESSIONS": "1"},
+                clear=False,
+            ),
+            patch.object(agent_deck_bridge, "_run_agent_deck_command", side_effect=run_command),
+        ):
+            with self.assertRaisesRegex(agent_deck_bridge.AgentDeckBridgeError, "memory budget"):
+                await agent_deck_bridge._enforce_agent_deck_launch_admission()
+
     async def test_list_project_sessions_removes_missing_isolated_rows_before_surfacing(self) -> None:
         async def run_command(args, cwd=None):
             if args[:2] == ["ls", "-json"]:

@@ -723,6 +723,10 @@ func handleSessionShow(profile string, args []string) {
 		"tool":                inst.Tool,
 		"created_at":          inst.CreatedAt.Format(time.RFC3339),
 	}
+	resourceUsage := inst.ResourceUsage()
+	jsonData["memory_rss_bytes"] = resourceUsage.RSSBytes
+	jsonData["memory_swap_bytes"] = resourceUsage.SwapBytes
+	jsonData["process_count"] = resourceUsage.ProcessCount
 
 	if inst.Command != "" {
 		jsonData["command"] = inst.Command
@@ -811,6 +815,14 @@ func handleSessionShow(profile string, args []string) {
 			sb.WriteString(fmt.Sprintf("Tmux:    %s\n", tmuxSession.Name))
 		}
 	}
+	if resourceUsage.ProcessCount > 0 {
+		sb.WriteString(fmt.Sprintf(
+			"Memory:  rss=%s swap=%s processes=%d\n",
+			formatBytes(resourceUsage.RSSBytes),
+			formatBytes(resourceUsage.SwapBytes),
+			resourceUsage.ProcessCount,
+		))
+	}
 
 	out.Print(sb.String(), jsonData)
 }
@@ -824,6 +836,21 @@ func mcpInfoForJSON(mcpInfo *session.MCPInfo) map[string]interface{} {
 		"global":  mcpInfo.Global,
 		"project": mcpInfo.Project,
 	}
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	value := float64(bytes)
+	for _, unit := range units {
+		value /= 1024
+		if value < 1024 {
+			return fmt.Sprintf("%.1f %s", value, unit)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", value/1024)
 }
 
 // handleSessionSet updates a session property

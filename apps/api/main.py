@@ -717,6 +717,9 @@ def serialize_agent_deck_session_target(
         "command": session_target.command,
         "status": session_target.status,
         "created_at": session_target.created_at,
+        "memory_rss_bytes": session_target.memory_rss_bytes,
+        "memory_swap_bytes": session_target.memory_swap_bytes,
+        "process_count": session_target.process_count,
     }
 
 

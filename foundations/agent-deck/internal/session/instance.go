@@ -53,6 +53,14 @@ const (
 
 const wrapperPlaceholder = "{command}"
 
+// ProcessResourceUsage is a best-effort point-in-time memory snapshot for the
+// tmux pane process tree backing one Agent Deck session.
+type ProcessResourceUsage struct {
+	RSSBytes     int64 `json:"rss_bytes"`
+	SwapBytes    int64 `json:"swap_bytes"`
+	ProcessCount int   `json:"process_count"`
+}
+
 const (
 	hookFastPathWindow             = 2 * time.Minute
 	codexHookRunningFastPathWindow = 20 * time.Second
@@ -1494,6 +1502,57 @@ func collectProcessTreePIDsViaPgrep(rootPID int) []int {
 		}
 	}
 	return allPIDs
+}
+
+// ResourceUsage returns RSS and swap usage for the tmux pane process tree.
+// It reads /proc directly on Linux and returns a zero snapshot elsewhere.
+func (i *Instance) ResourceUsage() ProcessResourceUsage {
+	pids := i.collectTmuxPaneProcessTreePIDs()
+	if len(pids) == 0 {
+		return ProcessResourceUsage{}
+	}
+
+	var usage ProcessResourceUsage
+	for _, pid := range pids {
+		rssBytes, swapBytes := readProcStatusMemory(pid)
+		usage.RSSBytes += rssBytes
+		usage.SwapBytes += swapBytes
+		usage.ProcessCount++
+	}
+	return usage
+}
+
+func readProcStatusMemory(pid int) (rssBytes int64, swapBytes int64) {
+	if pid <= 0 {
+		return 0, 0
+	}
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "status"))
+	if err != nil {
+		return 0, 0
+	}
+	return parseProcStatusMemory(data)
+}
+
+func parseProcStatusMemory(data []byte) (rssBytes int64, swapBytes int64) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		kib, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSuffix(fields[0], ":") {
+		case "VmRSS":
+			rssBytes = kib * 1024
+		case "VmSwap":
+			swapBytes = kib * 1024
+		}
+	}
+	return rssBytes, swapBytes
 }
 
 func isLikelyCodexProcessPID(pid int) bool {

@@ -84,6 +84,9 @@ export interface AgentDeckSessionTarget {
   command: string | null;
   status: string | null;
   createdAt: string | null;
+  memoryRssBytes?: number | null;
+  memorySwapBytes?: number | null;
+  processCount?: number | null;
 }
 
 export interface SkillRegistryLocation {
@@ -377,6 +380,9 @@ interface ApiAgentDeckSessionTarget {
   command: string | null;
   status: string | null;
   created_at: string | null;
+  memory_rss_bytes?: number | null;
+  memory_swap_bytes?: number | null;
+  process_count?: number | null;
 }
 
 interface ApiSkillRegistryLocation {
@@ -488,6 +494,9 @@ function normalizeAgentDeckTarget(
     command: session.command,
     status: session.status,
     createdAt: session.created_at,
+    memoryRssBytes: session.memory_rss_bytes ?? null,
+    memorySwapBytes: session.memory_swap_bytes ?? null,
+    processCount: session.process_count ?? null,
   };
 }
 
@@ -753,6 +762,9 @@ function ensureAgentDeckTargetPresent(
       command: null,
       status: "unknown",
       createdAt: null,
+      memoryRssBytes: null,
+      memorySwapBytes: null,
+      processCount: null,
     },
     ...targets,
   ];
@@ -777,6 +789,9 @@ function agentDeckTargetFromProjectChat(
       chat.agentDeckSessionStatus
       || (chat.bindingState === "attached" ? "unknown" : null),
     createdAt: chat.createdAt,
+    memoryRssBytes: null,
+    memorySwapBytes: null,
+    processCount: null,
   };
 }
 

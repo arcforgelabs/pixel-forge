@@ -29,6 +29,9 @@ export PIXEL_FORGE_AGENT_DECK_HOME="${PIXEL_FORGE_AGENT_DECK_HOME:-${PIXEL_FORGE
 export PIXEL_FORGE_DB_PATH="${PIXEL_FORGE_DB_PATH:-${PIXEL_FORGE_SHARED_STATE_DIR:-$HOME/.pixel-forge}/pixel-forge.db}"
 export AGENTDECK_DIR="${AGENTDECK_DIR:-$PIXEL_FORGE_AGENT_DECK_HOME}"
 export AGENT_DECK_DIR="${AGENT_DECK_DIR:-$AGENTDECK_DIR}"
+export PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR="${PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR:-$PIXEL_FORGE_AGENT_DECK_HOME/tmux}"
+export TMUX_TMPDIR="${TMUX_TMPDIR:-$PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR}"
+unset TMUX TMUX_PANE
 
 STATE_ROOT_MIGRATION_HELPER="${PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER:-$REPO_ROOT/ensure_state_root.py}"
 if [[ ! -f "$STATE_ROOT_MIGRATION_HELPER" ]]; then
@@ -43,7 +46,7 @@ if [[ ! -d "$FOUNDATION_ROOT/cmd/agent-deck" ]]; then
   exit 1
 fi
 
-mkdir -p "$PIXEL_FORGE_AGENT_DECK_HOME"
+mkdir -p "$PIXEL_FORGE_AGENT_DECK_HOME" "$TMUX_TMPDIR"
 
 needs_rebuild=0
 if [[ "$RUN_BIN" == "$BUILD_BIN" && ! -x "$BUILD_BIN" ]]; then
@@ -75,6 +78,104 @@ if [[ "$needs_rebuild" == "1" ]]; then
     )
     RUN_BIN="$BUILD_BIN"
   fi
+fi
+
+read_effective_memory_bytes() {
+  local cgroup_limit=""
+  local mem_total=""
+  if [[ -r /sys/fs/cgroup/memory.max ]]; then
+    cgroup_limit="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+  fi
+  if [[ -r /proc/meminfo ]]; then
+    mem_total="$(awk '/^MemTotal:/ { print $2 * 1024 }' /proc/meminfo 2>/dev/null || true)"
+  fi
+  if [[ "$cgroup_limit" =~ ^[0-9]+$ && "$mem_total" =~ ^[0-9]+$ ]]; then
+    if (( cgroup_limit < mem_total )); then
+      echo "$cgroup_limit"
+    else
+      echo "$mem_total"
+    fi
+  elif [[ "$cgroup_limit" =~ ^[0-9]+$ ]]; then
+    echo "$cgroup_limit"
+  elif [[ "$mem_total" =~ ^[0-9]+$ ]]; then
+    echo "$mem_total"
+  else
+    echo $((8 * 1024 * 1024 * 1024))
+  fi
+}
+
+derive_memory_scope_defaults() {
+  local gib=$((1024 * 1024 * 1024))
+  local mib=$((1024 * 1024))
+  local effective="${PIXEL_FORGE_EFFECTIVE_RAM_BYTES:-$(read_effective_memory_bytes)}"
+  [[ "$effective" =~ ^[0-9]+$ ]] || effective=$((8 * gib))
+  (( effective < 2 * gib )) && effective=$((2 * gib))
+
+  local reserve=$((effective / 5))
+  (( reserve < 2 * gib )) && reserve=$((2 * gib))
+  local pool=$((effective - reserve))
+  (( pool < gib )) && pool=$gib
+
+  local high=$((pool * 75 / 100))
+  (( high < 2 * gib )) && high=$((2 * gib))
+  local max=$((pool * 90 / 100))
+  (( max < high )) && max=$high
+  (( max > pool )) && max=$pool
+  (( high > max )) && high=$max
+  local swap=$((effective / 10))
+  (( swap < 512 * mib )) && swap=$((512 * mib))
+  (( swap > 2 * gib )) && swap=$((2 * gib))
+
+  export PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH_BYTES="${PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH_BYTES:-${PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH:-$high}}"
+  export PIXEL_FORGE_AGENT_DECK_MEMORY_MAX_BYTES="${PIXEL_FORGE_AGENT_DECK_MEMORY_MAX_BYTES:-${PIXEL_FORGE_AGENT_DECK_MEMORY_MAX:-$max}}"
+  export PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX_BYTES="${PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX_BYTES:-${PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX:-$swap}}"
+}
+
+should_use_memory_scope() {
+  case "${PIXEL_FORGE_AGENT_DECK_MEMORY_SCOPE:-1}" in
+    0|false|FALSE|no|NO|off|OFF) return 1 ;;
+  esac
+  case "${1:-}" in
+    ""|launch|web-standalone) ;;
+    session)
+      case "${2:-}" in
+        start|restart|fork) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+  [[ "${PIXEL_FORGE_AGENT_DECK_IN_MEMORY_SCOPE:-}" != "1" ]] || return 1
+  command -v systemd-run >/dev/null 2>&1 || return 1
+  systemctl --user show-environment >/dev/null 2>&1 || return 1
+  return 0
+}
+
+if should_use_memory_scope "$@"; then
+  derive_memory_scope_defaults
+  export PIXEL_FORGE_AGENT_DECK_IN_MEMORY_SCOPE=1
+  scope_slice="${PIXEL_FORGE_AGENT_DECK_SLICE:-pixel-forge-agent-deck.slice}"
+  preflight_unit="pixel-forge-agent-deck-preflight-$(date +%s%N)"
+  if ! systemd-run --user --scope --quiet --collect \
+    "--unit=$preflight_unit" \
+    "--slice=$scope_slice" \
+    -p MemoryAccounting=yes \
+    -p "MemoryHigh=$PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH_BYTES" \
+    -p "MemoryMax=$PIXEL_FORGE_AGENT_DECK_MEMORY_MAX_BYTES" \
+    -p "MemorySwapMax=$PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX_BYTES" \
+    true >/dev/null 2>&1; then
+    echo "Agent Deck memory scope unavailable; falling back to unscoped launch" >&2
+    exec "$RUN_BIN" "$@"
+  fi
+  scope_unit="pixel-forge-agent-deck-$(date +%s%N)"
+  exec systemd-run --user --scope --quiet --collect \
+    "--unit=$scope_unit" \
+    "--slice=$scope_slice" \
+    -p MemoryAccounting=yes \
+    -p "MemoryHigh=$PIXEL_FORGE_AGENT_DECK_MEMORY_HIGH_BYTES" \
+    -p "MemoryMax=$PIXEL_FORGE_AGENT_DECK_MEMORY_MAX_BYTES" \
+    -p "MemorySwapMax=$PIXEL_FORGE_AGENT_DECK_MEMORY_SWAP_MAX_BYTES" \
+    "$RUN_BIN" "$@"
 fi
 
 exec "$RUN_BIN" "$@"
