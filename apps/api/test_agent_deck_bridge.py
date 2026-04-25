@@ -30,6 +30,27 @@ def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionI
 
 
 class AgentDeckBridgeModelEffortArgsTest(unittest.TestCase):
+    def test_codex_allows_current_gpt_55_family_models(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "codex",
+            "gpt-5.5",
+            "xhigh",
+        )
+
+        self.assertEqual(
+            args,
+            ["--model", "gpt-5.5", "--effort", "xhigh"],
+        )
+
+    def test_codex_drops_retired_model_ids(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "codex",
+            "gpt-5.3",
+            "high",
+        )
+
+        self.assertEqual(args, ["--effort", "high"])
+
     def test_claude_alias_normalizes_to_explicit_opus_47_and_keeps_xhigh(self) -> None:
         args = agent_deck_bridge._resolve_agent_model_effort_args(
             "claude",

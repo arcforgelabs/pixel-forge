@@ -280,6 +280,24 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.codex_default_model, "gpt-5.4")
         self.assertEqual(saved.codex_default_thinking, "xhigh")
 
+    def test_codex_profile_defaults_accept_current_gpt_55_model(self) -> None:
+        saved = project_store.upsert_profile_state(
+            codex_default_model="gpt-5.5",
+            codex_default_thinking="xhigh",
+        )
+
+        self.assertEqual(saved.codex_default_model, "gpt-5.5")
+        self.assertEqual(saved.codex_default_thinking, "xhigh")
+
+    def test_codex_profile_defaults_drop_retired_model_ids(self) -> None:
+        saved = project_store.upsert_profile_state(
+            codex_default_model="gpt-5.3",
+            codex_default_thinking="high",
+        )
+
+        self.assertIsNone(saved.codex_default_model)
+        self.assertEqual(saved.codex_default_thinking, "high")
+
     def test_claude_profile_defaults_reject_effort_levels_unsupported_by_selected_model(self) -> None:
         saved = project_store.upsert_profile_state(
             claude_default_model="claude-opus-4-6",

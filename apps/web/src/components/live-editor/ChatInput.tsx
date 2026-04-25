@@ -65,7 +65,7 @@ const CLAUDE_LEGACY_THINKING_OPTIONS: AgentModelOption[] = [
 // Opus 4.7 default stable even when Anthropic advances the moving aliases.
 // The 1M Opus/Sonnet toggles in Profile Settings remain a separate legacy 4.6
 // compatibility control and are not exposed as distinct model ids here.
-// Codex uses `-m gpt-5.x`.
+// Codex currently exposes the live GPT-5.5 / GPT-5.4 family ids.
 const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
   claude: [
     { value: 'claude-opus-4-7', label: 'Opus 4.7' },
@@ -76,9 +76,10 @@ const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
     { value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
   ],
   codex: [
+    { value: 'gpt-5.5', label: 'GPT 5.5' },
     { value: 'gpt-5.4', label: 'GPT 5.4' },
-    { value: 'gpt-5.3', label: 'GPT 5.3' },
-    { value: 'gpt-5.2', label: 'GPT 5.2' },
+    { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+    { value: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
   ],
 }
 

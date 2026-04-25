@@ -47,7 +47,9 @@ CLAUDE_MODEL_ALLOWLIST = frozenset({
     "claude-haiku-4-5-20251001",
 })
 CLAUDE_EFFORT_ALLOWLIST = frozenset({"low", "medium", "high", "xhigh", "max"})
-CODEX_MODEL_ALLOWLIST = frozenset({"gpt-5.4", "gpt-5.3", "gpt-5.2"})
+CODEX_MODEL_ALLOWLIST = frozenset(
+    {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+)
 CODEX_EFFORT_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
 
 
