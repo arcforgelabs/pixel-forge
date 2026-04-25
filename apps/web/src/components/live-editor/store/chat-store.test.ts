@@ -771,6 +771,7 @@ describe('live editor selection history', () => {
     expect(createChatSpy).toHaveBeenCalledWith({
       agentType: 'codex',
       workspaceMode: 'root',
+      reuseEmptyDraft: false,
     })
     expect(useLiveEditorStore.getState().activeThreadKey).toBe('chat-replayed')
     expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual(['one'])

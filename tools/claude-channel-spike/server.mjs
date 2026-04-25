@@ -136,13 +136,38 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(port, host, () => {
-  const body = JSON.stringify({ ok: true, host, port }) + '\n'
-  writeFileSync(readyFile, body)
-  console.error(`[pixel-forge-channel] listening on http://${host}:${port}`)
-})
+let httpIngressListening = false
+
+const startHttpIngress = () =>
+  new Promise((resolve) => {
+    const onError = (error) => {
+      const reason = error?.code === 'EADDRINUSE'
+        ? `http://${host}:${port} is already in use`
+        : error?.message || String(error)
+      console.error(
+        `[pixel-forge-channel] HTTP ingress unavailable: ${reason}; MCP stdio remains active`,
+      )
+      resolve(false)
+    }
+
+    server.once('error', onError)
+    server.listen(port, host, () => {
+      server.off('error', onError)
+      httpIngressListening = true
+      const body = JSON.stringify({ ok: true, host, port }) + '\n'
+      writeFileSync(readyFile, body)
+      console.error(`[pixel-forge-channel] listening on http://${host}:${port}`)
+      resolve(true)
+    })
+  })
+
+await startHttpIngress()
 
 const shutdown = () => {
+  if (!httpIngressListening) {
+    process.exit(0)
+    return
+  }
   server.close(() => process.exit(0))
 }
 

@@ -698,6 +698,7 @@ describe("session-store chat creation", () => {
     expect(createChatBody).toMatchObject({
       agent_type: "codex",
       workspace_mode: "root",
+      reuse_empty_draft: true,
     });
   });
 
@@ -710,6 +711,21 @@ describe("session-store chat creation", () => {
     expect(createChatBody).toMatchObject({
       agent_type: "claude",
       workspace_mode: "root",
+      reuse_empty_draft: true,
+    });
+  });
+
+  it("can force a fresh draft chat for replay", async () => {
+    await useSessionStore.getState().createProjectChatSession({
+      agentType: "codex",
+      workspaceMode: "root",
+      reuseEmptyDraft: false,
+    });
+
+    expect(createChatBody).toMatchObject({
+      agent_type: "codex",
+      workspace_mode: "root",
+      reuse_empty_draft: false,
     });
   });
 

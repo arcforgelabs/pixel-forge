@@ -15,6 +15,7 @@ import mimetypes
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
@@ -156,6 +157,7 @@ TARGET_NUM_FRAMES = 16  # Extract up to 16 frames from video
 GRID_COLS = 4  # 4 columns in the frame grid
 FRAME_WIDTH = 480  # Width of each frame in the grid (larger = better quality)
 LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS = 8.0
+LIVE_EDITOR_AGENT_RESOLUTION_TIMEOUT_SECONDS = 45.0
 LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS = 60 * 60
 LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS = 20.0
 AGENT_DECK_NATIVE_EVENT_INGESTOR = AgentDeckNativeEventIngestor()
@@ -205,6 +207,75 @@ def _format_elapsed_duration(elapsed_seconds: float) -> str:
     if minutes:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def _safe_live_editor_file_segment(value: str | None, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", (value or "").strip()).strip(".-")
+    return cleaned or fallback
+
+
+def _project_relative_path(project_path: str, path: Path) -> str:
+    project_root = Path(project_path).resolve()
+    resolved_path = path.resolve()
+    try:
+        return str(resolved_path.relative_to(project_root))
+    except ValueError:
+        return str(resolved_path)
+
+
+def _write_live_editor_preflight_snapshot(
+    *,
+    project_path: str,
+    thread_id: str,
+    request_message: str,
+    element_context: str,
+    selection_tunnel: dict[str, object] | None,
+    attachments: list[dict[str, object]],
+    preview_url: str,
+    live_preview: object,
+    agent_type: object,
+    workspace_mode: object,
+    target_agent_deck_session_id: object,
+    agent_model: object,
+    agent_thinking: object,
+    selection_count: int,
+) -> Path:
+    project_root = Path(project_path).resolve()
+    safe_thread_id = _safe_live_editor_file_segment(thread_id, "thread")
+    recovery_root = project_root / ".pixel-forge" / "recovery" / safe_thread_id
+    recovery_root.mkdir(parents=True, exist_ok=True)
+    snapshot_id = (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        + f"-{uuid4().hex[:8]}"
+    )
+    snapshot_path = recovery_root / f"{snapshot_id}.json"
+    payload = {
+        "source": "pixel-forge",
+        "kind": "live-editor-pre-agent-deck-snapshot",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "thread_id": thread_id,
+        "project_path": str(project_root),
+        "prompt_text": request_message,
+        "preview_url": preview_url or None,
+        "agent_type": agent_type if isinstance(agent_type, str) else None,
+        "workspace_mode": workspace_mode if isinstance(workspace_mode, str) else None,
+        "target_agent_deck_session_id": (
+            target_agent_deck_session_id
+            if isinstance(target_agent_deck_session_id, str)
+            else None
+        ),
+        "agent_model": agent_model if isinstance(agent_model, str) else None,
+        "agent_thinking": agent_thinking if isinstance(agent_thinking, str) else None,
+        "selection": {
+            "count": selection_count,
+            "tunnel": selection_tunnel if isinstance(selection_tunnel, dict) else None,
+            "selected_elements_xml": element_context if element_context.strip() else None,
+        },
+        "live_preview": live_preview if isinstance(live_preview, dict) else None,
+        "attachments": attachments,
+    }
+    snapshot_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return snapshot_path
 
 
 async def _emit_live_editor_wait_heartbeat(
@@ -493,6 +564,7 @@ class AgentDeckSessionRequest(BaseModel):
     workspace_mode: Literal["clone", "root"] = "clone"
     agent_model: str | None = None
     agent_thinking: str | None = None
+    reuse_empty_draft: bool = True
 
 
 class ChatItemRenameRequest(BaseModel):
@@ -1207,16 +1279,17 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
-    # Reuse an existing empty draft chat without paying for live Agent Deck
-    # reconciliation. Draft creation is a local persisted-state operation.
-    for existing in list_project_sessions(normalized_project_path):
-        thread_id = existing.thread_id or ""
-        if (
-            not existing.agent_deck_session_id
-            and thread_id.startswith("chat-")
-            and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
-        ):
-            return serialize_project_chat(_project_chat_from_session_record(existing))
+    if request.reuse_empty_draft:
+        # Reuse an existing empty draft chat without paying for live Agent Deck
+        # reconciliation. Draft creation is a local persisted-state operation.
+        for existing in list_project_sessions(normalized_project_path):
+            thread_id = existing.thread_id or ""
+            if (
+                not existing.agent_deck_session_id
+                and thread_id.startswith("chat-")
+                and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
+            ):
+                return serialize_project_chat(_project_chat_from_session_record(existing))
 
     thread_id = f"chat-{uuid4().hex[:12]}"
     draft_title = (
@@ -3798,6 +3871,26 @@ async def live_editor_chat(websocket: WebSocket):
                 previous_request_id = thread.last_request_id
                 previous_agent_deck_session_id = thread.agent_deck_session_id
                 previous_live_preview_hash = thread.last_live_preview_hash
+                preflight_snapshot_path = _write_live_editor_preflight_snapshot(
+                    project_path=normalized_project_path,
+                    thread_id=thread.thread_id,
+                    request_message=request_message,
+                    element_context=element_context if isinstance(element_context, str) else "",
+                    selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
+                    attachments=attachments,
+                    preview_url=preview_url if isinstance(preview_url, str) else "",
+                    live_preview=live_preview,
+                    agent_type=agent_type,
+                    workspace_mode=workspace_mode,
+                    target_agent_deck_session_id=target_agent_deck_session_id,
+                    agent_model=agent_model,
+                    agent_thinking=agent_thinking,
+                    selection_count=selection_count,
+                )
+                preflight_snapshot_relative_path = _project_relative_path(
+                    normalized_project_path,
+                    preflight_snapshot_path,
+                )
 
                 await websocket.send_json(
                     {
@@ -3806,27 +3899,38 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
 
-                session_info = await ensure_agent_deck_session(
-                    normalized_project_path,
-                    thread,
-                    agent_type=agent_type,
-                    workspace_mode=(
-                        workspace_mode
-                        if isinstance(workspace_mode, str)
-                        else "clone"
-                    ),
-                    target_agent_deck_session_id=(
-                        target_agent_deck_session_id
-                        if isinstance(target_agent_deck_session_id, str)
-                        else None
-                    ),
-                    agent_model=(
-                        agent_model if isinstance(agent_model, str) else None
-                    ),
-                    agent_thinking=(
-                        agent_thinking if isinstance(agent_thinking, str) else None
-                    ),
-                )
+                try:
+                    session_info = await asyncio.wait_for(
+                        ensure_agent_deck_session(
+                            normalized_project_path,
+                            thread,
+                            agent_type=agent_type,
+                            workspace_mode=(
+                                workspace_mode
+                                if isinstance(workspace_mode, str)
+                                else "clone"
+                            ),
+                            target_agent_deck_session_id=(
+                                target_agent_deck_session_id
+                                if isinstance(target_agent_deck_session_id, str)
+                                else None
+                            ),
+                            agent_model=(
+                                agent_model if isinstance(agent_model, str) else None
+                            ),
+                            agent_thinking=(
+                                agent_thinking if isinstance(agent_thinking, str) else None
+                            ),
+                        ),
+                        timeout=LIVE_EDITOR_AGENT_RESOLUTION_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError as exc:
+                    raise AgentDeckBridgeError(
+                        "Timed out resolving Agent Deck session after "
+                        f"{int(LIVE_EDITOR_AGENT_RESOLUTION_TIMEOUT_SECONDS)}s. "
+                        "The request was not sent, but a recovery snapshot was "
+                        f"saved at `{preflight_snapshot_relative_path}`."
+                    ) from exc
                 _assert_agent_deck_lane_available(
                     normalized_project_path,
                     thread.thread_id,
@@ -3925,6 +4029,8 @@ async def live_editor_chat(websocket: WebSocket):
                         else None
                     ),
                 )
+                with suppress(OSError):
+                    preflight_snapshot_path.unlink()
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     last_request_id=request_pack.request_id,

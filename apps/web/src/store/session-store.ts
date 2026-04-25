@@ -250,6 +250,7 @@ interface SessionStore {
     agentType?: string;
     title?: string | null;
     workspaceMode?: DraftWorkspaceMode;
+    reuseEmptyDraft?: boolean;
   }) => Promise<ProjectChatRecord>;
   createAgentDeckTargetSession: (options?: {
     agentType?: string;
@@ -997,6 +998,7 @@ async function createProjectChat(
     agentType: string;
     title?: string | null;
     workspaceMode?: DraftWorkspaceMode;
+    reuseEmptyDraft?: boolean;
   }
 ): Promise<ProjectChatRecord> {
   const payload = await requestJson<ApiProjectChat>(
@@ -1007,6 +1009,7 @@ async function createProjectChat(
         agent_type: options.agentType,
         title: options.title ?? null,
         workspace_mode: options.workspaceMode ?? "clone",
+        reuse_empty_draft: options.reuseEmptyDraft ?? true,
       }),
     }
   );
@@ -1886,6 +1889,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
         workspaceMode: options?.workspaceMode ?? defaultWorkspaceMode,
+        reuseEmptyDraft: options?.reuseEmptyDraft ?? true,
       });
       const createdTarget = agentDeckTargetFromProjectChat(created);
       const createdSession = projectSessionFromProjectChat(created);

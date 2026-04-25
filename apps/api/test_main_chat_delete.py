@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -105,6 +106,103 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_create_project_chat_reuses_empty_draft_by_default(self) -> None:
+        existing_session = SimpleNamespace(
+            id=1,
+            profile_id="default",
+            project_path="/tmp/project",
+            thread_id="chat-existing123",
+            workspace_path="/tmp/project",
+            backend="agent-deck",
+            origin_kind="managed",
+            agent_deck_session_id=None,
+            agent_deck_session_title="Chat chat-exi",
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": "claude",
+                "draftWorkspaceMode": "root",
+            },
+            created_at="2026-03-21T00:00:00Z",
+            last_active="2026-03-21T00:00:00Z",
+        )
+
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "upsert_project", Mock()),
+            patch.object(main, "project_name_for_path", Mock(return_value="project")),
+            patch.object(main, "list_project_sessions", Mock(return_value=[existing_session])),
+            patch.object(main, "chat_has_primary_workstation_events", Mock(return_value=False)),
+            patch.object(main, "upsert_session", Mock()) as upsert_session,
+        ):
+            payload = await main.create_project_chat(
+                "/tmp/project",
+                main.AgentDeckSessionRequest(
+                    agent_type="claude",
+                    title=None,
+                    workspace_mode="root",
+                ),
+            )
+
+        upsert_session.assert_not_called()
+        self.assertEqual(payload["thread_id"], "chat-existing123")
+        self.assertEqual(payload["title"], "Chat chat-exi")
+
+    async def test_create_project_chat_can_force_fresh_draft_for_replay(self) -> None:
+        existing_session = SimpleNamespace(
+            id=1,
+            profile_id="default",
+            project_path="/tmp/project",
+            thread_id="chat-existing123",
+            workspace_path="/tmp/project",
+            backend="agent-deck",
+            origin_kind="managed",
+            agent_deck_session_id=None,
+            agent_deck_session_title="Chat chat-exi",
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": "claude",
+                "draftWorkspaceMode": "root",
+            },
+            created_at="2026-03-21T00:00:00Z",
+            last_active="2026-03-21T00:00:00Z",
+        )
+        expected_thread_id = "chat-fedcba098765"
+        created_session = SimpleNamespace(
+            **{
+                **existing_session.__dict__,
+                "id": 2,
+                "thread_id": expected_thread_id,
+                "agent_deck_session_title": f"Chat {expected_thread_id[:8]}",
+            }
+        )
+
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "upsert_project", Mock()),
+            patch.object(main, "project_name_for_path", Mock(return_value="project")),
+            patch.object(
+                main,
+                "uuid4",
+                Mock(return_value=SimpleNamespace(hex="fedcba0987654321fedcba0987654321")),
+            ),
+            patch.object(main, "list_project_sessions", Mock(return_value=[existing_session])),
+            patch.object(main, "chat_has_primary_workstation_events", Mock(return_value=False)),
+            patch.object(main, "upsert_session", Mock(return_value=created_session)) as upsert_session,
+        ):
+            payload = await main.create_project_chat(
+                "/tmp/project",
+                main.AgentDeckSessionRequest(
+                    agent_type="claude",
+                    title=None,
+                    workspace_mode="root",
+                    reuse_empty_draft=False,
+                ),
+            )
+
+        upsert_session.assert_called_once()
+        self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
+        self.assertEqual(payload["thread_id"], expected_thread_id)
+
     async def test_create_project_chat_generates_unique_chat_thread_id(self) -> None:
         expected_thread_id = "chat-1234567890ab"
         created_session = SimpleNamespace(
@@ -169,6 +267,43 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["thread_id"], expected_thread_id)
         self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
         self.assertEqual(payload["binding_state"], "detached")
+
+
+class LiveEditorPreflightSnapshotTest(unittest.TestCase):
+    def test_preflight_snapshot_persists_prompt_and_selection_before_agent_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            snapshot_path = main._write_live_editor_preflight_snapshot(
+                project_path=tempdir,
+                thread_id="chat-b91d262c1ccc",
+                request_message="Fix the selected elements",
+                element_context="<selected-elements />",
+                selection_tunnel={"selections": [{"label": "1", "xpath": "/html"}]},
+                attachments=[
+                    {
+                        "name": "selection-01.jpg",
+                        "mime_type": "image/jpeg",
+                        "data_url": "data:image/jpeg;base64,abc",
+                        "kind": "image",
+                    }
+                ],
+                preview_url="https://example.test/capture",
+                live_preview={"preview_tab_id": "tab-one"},
+                agent_type="codex",
+                workspace_mode="root",
+                target_agent_deck_session_id=None,
+                agent_model="gpt-5.5",
+                agent_thinking="xhigh",
+                selection_count=1,
+            )
+
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["kind"], "live-editor-pre-agent-deck-snapshot")
+        self.assertEqual(payload["thread_id"], "chat-b91d262c1ccc")
+        self.assertEqual(payload["prompt_text"], "Fix the selected elements")
+        self.assertEqual(payload["selection"]["count"], 1)
+        self.assertEqual(payload["selection"]["tunnel"]["selections"][0]["xpath"], "/html")
+        self.assertEqual(payload["attachments"][0]["name"], "selection-01.jpg")
 
 
 class BackfillChatHistoryTest(unittest.TestCase):

@@ -2839,6 +2839,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           replayDraft.editorState.draftWorkspaceMode
           ?? sourceThreadState.draftWorkspaceMode
           ?? 'clone',
+        reuseEmptyDraft: false,
       })
 
       if (!created.threadId) {
