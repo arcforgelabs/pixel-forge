@@ -73,6 +73,48 @@ class AgentDeckBridgeModelEffortArgsTest(unittest.TestCase):
         self.assertEqual(args, ["--model", "claude-opus-4-6"])
 
 
+class AgentDeckBridgeLaunchArgsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_launch_uses_yolo_bypass_with_model_overrides(self) -> None:
+        run_mock = AsyncMock(
+            return_value={
+                "id": "deck-a",
+                "title": "Chat chat-a",
+                "path": "/tmp/project",
+                "tool": "codex",
+            }
+        )
+
+        with (
+            patch.object(agent_deck_bridge, "_enforce_agent_deck_launch_admission", AsyncMock()),
+            patch.object(agent_deck_bridge, "_run_agent_deck_json_object_command", run_mock),
+        ):
+            await agent_deck_bridge._launch_new_session(
+                "/tmp/project",
+                session_title="Chat chat-a",
+                agent_type="codex",
+                workspace_mode="root",
+                agent_model="gpt-5.5",
+                agent_thinking="xhigh",
+            )
+
+        run_mock.assert_awaited_once_with(
+            [
+                "launch",
+                "-json",
+                "-no-wait",
+                "-t=Chat chat-a",
+                "-g=pixel-forge/project",
+                "-c=codex",
+                "--model",
+                "gpt-5.5",
+                "--effort",
+                "xhigh",
+                "--yolo",
+                "/tmp/project",
+            ]
+        )
+
+
 class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
     async def test_detached_lane_launches_with_persisted_pixel_forge_title(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

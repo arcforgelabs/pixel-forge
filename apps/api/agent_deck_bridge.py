@@ -636,6 +636,8 @@ async def _launch_new_session(
             normalized_agent_type, agent_model, agent_thinking
         )
     )
+    if normalized_agent_type == "codex":
+        args.append("--yolo")
     if workspace_mode == "clone":
         args.append(f"-clone={_clone_name(session_title)}")
     args.append(launch_path)

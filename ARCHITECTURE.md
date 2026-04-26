@@ -244,6 +244,7 @@ The important boundary is:
 - Agent Deck owns the visible native `claude` or `codex` session.
 - Pixel Forge owns visual context capture, request-pack writing, selection tunnel generation, and routing to the chosen Agent Deck session.
 - Fresh chats start as draft lanes with a chosen initial agent. The chat composer may change that choice only before first send; once the real lane exists, the agent choice is immutable until a fresh chat is created.
+- Fresh Codex lanes are launched through Agent Deck's explicit `--yolo` option, which stores Codex `yolo_mode=true` on the session and makes the raw `codex` command use `--dangerously-bypass-approvals-and-sandbox`. This is intentional for Pixel Forge-managed Codex lanes because Codex's `--full-auto` preset still allows approval prompts.
 - The first dispatch into a new or rebound session may still carry stable Pixel Forge setup context through the thread brief and typed turn bundle, but the visible turn now starts with the operator's own prompt rather than a large wrapper memo.
 - Later dispatches into that same session send the new operator prompt plus direct `@path` refs to the new turn bundle and mirrors while reusing the same stable thread brief behind the scenes.
 - Streaming comes from the native agent transcript path (`claude_session_id` + JSONL today for Claude).

@@ -53,6 +53,8 @@ func handleLaunch(profile string, args []string) {
 
 	// Resume session flag
 	resumeSession := fs.String("resume-session", "", "Claude session ID to resume")
+	yoloMode := fs.Bool("yolo", false, "Enable YOLO mode for Gemini or Codex sessions")
+	geminiYoloMode := fs.Bool("gemini-yolo", false, "Enable YOLO mode (alias for --yolo)")
 
 	// Model / thinking-effort overrides. These route into the detected
 	// tool's ToolOptions so the flags end up on the raw tool command
@@ -78,6 +80,7 @@ func handleLaunch(profile string, args []string) {
 		fmt.Println("  agent-deck launch /path/to/project -t \"My Agent\" -c claude -g work")
 		fmt.Println("  agent-deck launch . -c claude --mcp memory -m \"Research topic X\"")
 		fmt.Println("  agent-deck launch . -c claude -m \"Fix bug\" --no-wait")
+		fmt.Println("  agent-deck launch . -c codex --yolo")
 		fmt.Println("  agent-deck launch . -c \"codex --dangerously-bypass-approvals-and-sandbox\"")
 		fmt.Println("  agent-deck launch . -g ard --no-parent -c claude -m \"Run review\"")
 	}
@@ -352,6 +355,11 @@ func handleLaunch(profile string, args []string) {
 		opts.SessionMode = "resume"
 		opts.ResumeSessionID = *resumeSession
 		_ = newInstance.SetClaudeOptions(opts)
+	}
+
+	if err := applyCLIYoloOverride(newInstance, *yoloMode || *geminiYoloMode); err != nil {
+		out.Error(err.Error(), ErrCodeInvalidOperation)
+		os.Exit(1)
 	}
 
 	// Apply model / effort overrides. These must be set on the tool's
