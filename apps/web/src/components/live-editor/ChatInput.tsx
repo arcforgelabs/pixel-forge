@@ -30,6 +30,7 @@ import {
   resolveInlineAttachmentDeletion,
   shouldConvertPasteToAttachment,
 } from './composer-attachments'
+import { extractImageClipboardFiles } from '../clipboard-images'
 
 function formatAgentLabel(agentType: string | null | undefined): string {
   if (agentType === 'claude') {
@@ -712,10 +713,7 @@ export function ChatInput() {
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const selectionStart = e.currentTarget.selectionStart ?? 0
     const selectionEnd = e.currentTarget.selectionEnd ?? selectionStart
-    const clipboardFiles = Array.from(e.clipboardData.items)
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null)
+    const clipboardFiles = extractImageClipboardFiles(e.clipboardData)
 
     if (clipboardFiles.length > 0) {
       e.preventDefault()

@@ -105,6 +105,7 @@ do not treat /tmp/workspace as a skill.
                     "current_title": "Example App",
                     "attach_hints": {
                         "browser_url": "http://127.0.0.1:9222",
+                        "target_id": "target-1",
                     },
                 },
             )
@@ -118,6 +119,14 @@ do not treat /tmp/workspace as a skill.
             self.assertIn("## Turn Files", request_body)
             self.assertIn("live-preview-context.json", request_body)
             self.assertIn("## Live Preview", request_body)
+            self.assertIn("## Attach Hints", request_body)
+            self.assertIn("do not target a local Chrome profile", request_body)
+            self.assertIn("Attach browser URL: `http://127.0.0.1:9222`", request_body)
+            self.assertIn("Attach target ID: `target-1`", request_body)
+            self.assertIn(
+                "Recommended command: `npx -y chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222 --slim --no-usage-statistics`",
+                request_body,
+            )
             self.assertIn("Attach proof mode", request_body)
             self.assertIn("pixel-forge attach-proof --project . --request", request_body)
             self.assertIn("--status attempted --via chrome-devtools-mcp", request_body)

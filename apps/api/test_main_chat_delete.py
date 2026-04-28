@@ -476,6 +476,42 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("@.pixel-forge/requests/abcd/live-preview-context.json", prompt)
         self.assertNotIn("live_attach_proof_required", prompt)
 
+    def test_build_dispatch_prompt_includes_live_preview_attach_hints_inline(self) -> None:
+        prompt = main.build_live_editor_dispatch_prompt(
+            ".pixel-forge/requests/abcd/request.md",
+            turn_input_file_path=".pixel-forge/requests/abcd/turn-input.json",
+            turn_input_payload={
+                "prompt_text": "Inspect the active preview state.",
+                "artifacts": {
+                    "live_preview_context_file": ".pixel-forge/requests/abcd/live-preview-context.json",
+                },
+                "live_preview": {
+                    "attach_hints": {
+                        "browser_url": "http://127.0.0.1:9222",
+                        "target_id": "target-1",
+                        "target_url": "https://example.com/app",
+                        "page_websocket_url": "ws://127.0.0.1:9222/devtools/page/target-1",
+                        "recommended_command": "npx -y chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222 --slim --no-usage-statistics",
+                    }
+                },
+            },
+            tool="codex",
+        )
+
+        self.assertIn("Live preview attach hints:", prompt)
+        self.assertIn(
+            "Use the controller browser endpoint below for live inspection; do not target a local Chrome profile.",
+            prompt,
+        )
+        self.assertIn("Attach browser URL: `http://127.0.0.1:9222`", prompt)
+        self.assertIn("Attach target ID: `target-1`", prompt)
+        self.assertIn("Page websocket URL: `ws://127.0.0.1:9222/devtools/page/target-1`", prompt)
+        self.assertIn(
+            "Recommended command: `npx -y chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222 --slim --no-usage-statistics`",
+            prompt,
+        )
+        self.assertIn("Context files:", prompt)
+
     def test_build_dispatch_prompt_does_not_inline_controller_browserview_context(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",

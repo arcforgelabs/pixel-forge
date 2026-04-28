@@ -4,6 +4,7 @@ import { toast } from "react-hot-toast";
 import { URLS } from "../urls";
 import ScreenRecorder from "./recording/ScreenRecorder";
 import { ScreenRecorderState } from "../types";
+import { extractImageClipboardFiles } from "./clipboard-images";
 
 const baseStyle: CSSProperties = {
   flex: 1,
@@ -125,17 +126,7 @@ function ImageUpload({ setReferenceImages }: Props) {
         return;
       }
 
-      const clipboardData = event.clipboardData;
-      if (!clipboardData) return;
-
-      const items = clipboardData.items;
-      const imageFiles: File[] = [];
-      for (let i = 0; i < items.length; i++) {
-        const file = items[i].getAsFile();
-        if (file && file.type.startsWith("image/")) {
-          imageFiles.push(file);
-        }
-      }
+      const imageFiles = extractImageClipboardFiles(event.clipboardData);
 
       if (imageFiles.length === 0) return;
 

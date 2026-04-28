@@ -58,6 +58,13 @@ def _safe_name(name: str, fallback: str) -> str:
     return stripped or fallback
 
 
+def _normalize_text(value: object | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
 def normalize_requested_skills(skills: list[str] | None) -> list[str]:
     if not skills:
         return []
@@ -328,6 +335,60 @@ def _attach_proof_commands(
             '--note "<short failure reason>"'
         ),
     }
+
+
+def live_preview_attach_lines(
+    live_preview_context: dict[str, object] | None,
+) -> list[str]:
+    if not isinstance(live_preview_context, dict):
+        return []
+
+    attach_hints = live_preview_context.get("attach_hints")
+    if not isinstance(attach_hints, dict):
+        return []
+
+    browser_url = (
+        _normalize_text(attach_hints.get("browser_url"))
+        or _normalize_text(live_preview_context.get("devtools_browser_url"))
+    )
+    if not browser_url:
+        return []
+
+    lines = [
+        "- Use the controller browser endpoint below for live inspection; do not target a local Chrome profile.",
+        f"- Attach browser URL: `{browser_url}`",
+    ]
+
+    target_id = (
+        _normalize_text(attach_hints.get("target_id"))
+        or _normalize_text(live_preview_context.get("devtools_target_id"))
+    )
+    if target_id:
+        lines.append(f"- Attach target ID: `{target_id}`")
+
+    target_url = (
+        _normalize_text(attach_hints.get("target_url"))
+        or _normalize_text(live_preview_context.get("devtools_target_url"))
+    )
+    if target_url:
+        lines.append(f"- Attach target URL: `{target_url}`")
+
+    page_websocket_url = (
+        _normalize_text(attach_hints.get("page_websocket_url"))
+        or _normalize_text(live_preview_context.get("devtools_page_websocket_url"))
+    )
+    if page_websocket_url:
+        lines.append(f"- Page websocket URL: `{page_websocket_url}`")
+
+    recommended_command = _normalize_text(attach_hints.get("recommended_command"))
+    if not recommended_command:
+        recommended_command = (
+            f"npx -y chrome-devtools-mcp@latest --browserUrl {browser_url} "
+            "--slim --no-usage-statistics"
+        )
+    lines.append(f"- Recommended command: `{recommended_command}`")
+
+    return lines
 
 
 def _live_preview_attach_proof_payload(
@@ -737,6 +798,16 @@ def create_request_pack(
         )
         if live_inspection_mode:
             request_sections.append(f"- Live inspection mode: `{live_inspection_mode}`")
+        attach_lines = live_preview_attach_lines(live_preview_context)
+        if attach_lines:
+            request_sections.extend(
+                [
+                    "",
+                    "## Attach Hints",
+                    "",
+                    *attach_lines,
+                ]
+            )
         if attach_proof_payload is not None:
             request_sections.extend(
                 [

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import HistoryDisplay from "../history/HistoryDisplay";
 import Variants from "../variants/Variants";
 import UpdateImageUpload, { UpdateImagePreview } from "../UpdateImageUpload";
+import { extractImageClipboardFiles } from "../clipboard-images";
 
 interface SidebarProps {
   showSelectAndEditFeature: boolean;
@@ -46,8 +47,8 @@ function Sidebar({
     e.preventDefault();
     setIsDragging(false);
     
-    const files = Array.from(e.dataTransfer.files).filter(file => 
-      file.type === 'image/png' || file.type === 'image/jpeg'
+    const files = Array.from(e.dataTransfer.files).filter(file =>
+      file.type.startsWith('image/')
     );
     
     if (files.length > 0) {
@@ -58,6 +59,24 @@ function Sidebar({
       } catch (error) {
         console.error('Error reading files:', error);
       }
+    }
+  }, [updateImages, setUpdateImages]);
+
+  // Capture image pastes here so the update textarea never falls through to
+  // Chromium's default clipboard path when the user is pasting a screenshot.
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const imageFiles = extractImageClipboardFiles(e.clipboardData);
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    e.preventDefault();
+    try {
+      const newImagePromises = imageFiles.map(file => fileToDataURL(file));
+      const newImages = await Promise.all(newImagePromises);
+      setUpdateImages([...updateImages, ...newImages]);
+    } catch (error) {
+      console.error('Error reading pasted files:', error);
     }
   }, [updateImages, setUpdateImages]);
 
@@ -176,6 +195,7 @@ function Sidebar({
                 setIsDragging(false);
               }
             }}
+            onPaste={handlePaste}
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
           >

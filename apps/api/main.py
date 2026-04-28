@@ -100,7 +100,12 @@ from project_chats import (
 from pydantic import BaseModel
 from PIL import Image
 from moviepy import VideoFileClip
-from request_packs import create_request_pack, extract_requested_skills, normalize_requested_skills
+from request_packs import (
+    create_request_pack,
+    extract_requested_skills,
+    live_preview_attach_lines,
+    normalize_requested_skills,
+)
 from live_preview_context import (
     capture_live_preview_context,
     read_live_preview_context_artifact,
@@ -2949,6 +2954,18 @@ def build_live_editor_dispatch_prompt(
     if not prompt_text:
         prompt_text = "Use the attached Pixel Forge turn context."
 
+    live_preview_attach_block = ""
+    if isinstance(turn_input_payload, dict):
+        raw_live_preview = turn_input_payload.get("live_preview")
+        live_preview_attach_block_lines = live_preview_attach_lines(
+            raw_live_preview if isinstance(raw_live_preview, dict) else None
+        )
+        if live_preview_attach_block_lines:
+            live_preview_attach_block = (
+                "\n\nLive preview attach hints:\n"
+                + "\n".join(live_preview_attach_block_lines)
+            )
+
     reference_paths: list[str] = []
     seen_paths: set[str] = set()
     excluded_paths = {
@@ -2998,6 +3015,8 @@ def build_live_editor_dispatch_prompt(
 
     if not reference_paths:
         append_reference(request_file_path)
+
+    prompt_text = f"{prompt_text}{live_preview_attach_block}"
 
     if not reference_paths:
         return prompt_text
