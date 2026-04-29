@@ -134,8 +134,9 @@ export function SelectedElementsList({
   canUndo = false,
   canRedo = false,
 }: SelectedElementsListProps = {}) {
-  const { selectedElements, removeElement, clearElements } =
-    useLiveEditorStore()
+  const selectedElements = useLiveEditorStore((state) => state.selectedElements)
+  const removeElement = useLiveEditorStore((state) => state.removeElement)
+  const clearElements = useLiveEditorStore((state) => state.clearElements)
 
   // Use provided handlers or fall back to store-only operations
   const handleClearAll = onClearAll || clearElements

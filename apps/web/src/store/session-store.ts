@@ -1425,22 +1425,26 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       customOutputPath: nextCustomOutputPath,
     });
 
-    const [previewUrls, projectSessions, projectChats, agentDeckTargets] = await Promise.all([
-      previewUrl?.trim()
-        ? touchProjectUrl(savedProject.path, previewUrl.trim())
-        : fetchProjectUrls(savedProject.path),
-      fetchProjectSessions(savedProject.path),
-      fetchProjectChats(savedProject.path),
-      fetchAgentDeckTargets(savedProject.path).catch((error) => {
-        console.error("[session-store] Failed to load Agent Deck sessions:", error);
-        return [];
-      }),
+    const previewUrlsPromise = previewUrl?.trim()
+      ? touchProjectUrl(savedProject.path, previewUrl.trim())
+      : fetchProjectUrls(savedProject.path);
+    const projectSessionsPromise = fetchProjectSessions(savedProject.path);
+    const projectChatsPromise = fetchProjectChats(savedProject.path).catch((error) => {
+      console.error("[session-store] Failed to load project chats:", error);
+      return selectProjectChatsForPath(get(), savedProject.path);
+    });
+    const agentDeckTargetsPromise = fetchAgentDeckTargets(savedProject.path).catch((error) => {
+      console.error("[session-store] Failed to load Agent Deck sessions:", error);
+      return [];
+    });
+
+    const [previewUrls, projectSessions] = await Promise.all([
+      previewUrlsPromise,
+      projectSessionsPromise,
     ]);
 
     const currentPreviewUrl = previewUrl?.trim() || previewUrls[0] || null;
-    const hydratedSessions = projectSessions.map((session) =>
-      detachUnavailableAgentDeckSession(session, agentDeckTargets)
-    );
+    const hydratedSessions = projectSessions;
     const normalizedPreferredThreadId = preferredThreadId?.trim() || null;
     const currentSession =
       (normalizedPreferredThreadId
@@ -1448,10 +1452,6 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         : null)
       ?? hydratedSessions[0]
       ?? null;
-    const hydratedTargets = ensureAgentDeckTargetPresent(
-      agentDeckTargets,
-      currentSession
-    );
     const updatedProject: SavedProject = {
       ...savedProject,
       previewUrls,
@@ -1473,14 +1473,67 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         savedProject.path,
         hydratedSessions
       ),
-      projectChatsByProject: setProjectChatsForPath(
-        currentState.projectChatsByProject,
-        savedProject.path,
-        projectChats
+      projectChatsByProject: currentState.projectChatsByProject,
+      agentDeckTargets: ensureAgentDeckTargetPresent(
+        currentState.projectPath === savedProject.path ? currentState.agentDeckTargets : [],
+        currentSession
       ),
-      agentDeckTargets: hydratedTargets,
+      agentDeckTargetsLoading: true,
       pendingPreviewUpdate: null,
     }));
+
+    void Promise.all([projectChatsPromise, agentDeckTargetsPromise])
+      .then(([projectChats, agentDeckTargets]) => {
+        const nextHydratedSessions = projectSessions.map((session) =>
+          detachUnavailableAgentDeckSession(session, agentDeckTargets)
+        );
+        const nextCurrentSession =
+          (normalizedPreferredThreadId
+            ? nextHydratedSessions.find((session) => session.threadId === normalizedPreferredThreadId)
+            : null)
+          ?? nextHydratedSessions.find((session) => session.threadId === currentSession?.threadId)
+          ?? nextHydratedSessions[0]
+          ?? null;
+
+        set((currentState) => {
+          if (currentState.projectPath !== savedProject.path) {
+            return {}
+          }
+          const nextSelectedTargetId = nextCurrentSession?.agentDeckSessionId
+            ?? (currentState.selectedAgentDeckTargetId
+              && agentDeckTargets.some((target) => target.id === currentState.selectedAgentDeckTargetId)
+              ? currentState.selectedAgentDeckTargetId
+              : null);
+          return {
+            liveEditorSession: nextCurrentSession,
+            selectedAgentDeckTargetId:
+              nextSelectedTargetId,
+            projectSessionsByProject: setProjectSessionsForPath(
+              currentState.projectSessionsByProject,
+              savedProject.path,
+              nextHydratedSessions
+            ),
+            projectChatsByProject: setProjectChatsForPath(
+              currentState.projectChatsByProject,
+              savedProject.path,
+              projectChats
+            ),
+            agentDeckTargets: ensureAgentDeckTargetPresent(
+              agentDeckTargets,
+              nextCurrentSession
+            ),
+            agentDeckTargetsLoading: false,
+          }
+        });
+      })
+      .catch((error) => {
+        console.error("[session-store] Failed to finish deferred project metadata load:", error);
+        set((currentState) => (
+          currentState.projectPath === savedProject.path
+            ? { agentDeckTargetsLoading: false }
+            : {}
+        ));
+      });
 
     if (persistProfile) {
       void get()

@@ -2279,7 +2279,7 @@ async def wait_for_agent_deck_turn_completion(
     *,
     startup_timeout_seconds: float = 60.0,
     completion_timeout_seconds: float = 600.0,
-    poll_interval_seconds: float = 0.5,
+    poll_interval_seconds: float = 1.5,
 ) -> None:
     loop = asyncio.get_running_loop()
     startup_deadline = loop.time() + startup_timeout_seconds

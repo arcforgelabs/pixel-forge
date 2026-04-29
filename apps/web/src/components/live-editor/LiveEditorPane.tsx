@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import { normalizePersistedPreviewUrl } from '@/lib/preview-url'
 import type {
+  PixelForgeDesktopPreviewInputChangedField,
   PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPreviewTool,
 } from '@/types/pixel-forge-desktop'
@@ -170,6 +171,7 @@ interface BrowserPreviewEvent {
     | 'browser-element-deselected'
     | 'browser-selection-cleared'
     | 'browser-select-cancelled'
+    | 'browser-tab-suspended'
     | 'browser-tab-closed'
     | 'browser-load-failed'
     | 'browser-new-tab-requested'
@@ -532,6 +534,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(getDesktopPreview())
   const desktopAppRef = useRef(getDesktopApp())
+  const refreshInFlightRef = useRef(false)
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
   const [workspacePreviewDialogOpen, setWorkspacePreviewDialogOpen] = useState(false)
@@ -553,9 +556,13 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       if (cancelled) {
         return
       }
+      const nextTool = inputState?.armedTool === 'select' ? 'select' : null
+      if (useLiveEditorStore.getState().activePreviewTool === nextTool) {
+        return
+      }
       useLiveEditorStore
         .getState()
-        .setActivePreviewTool(inputState?.armedTool === 'select' ? 'select' : null)
+        .setActivePreviewTool(nextTool)
     }
 
     void desktopApp.getPreviewInputState()
@@ -572,8 +579,13 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
         inputState?: {
           armedTool?: PixelForgeDesktopPreviewTool | null
         } | null
+        changedFields?: PixelForgeDesktopPreviewInputChangedField[]
       }>
-      if (event.detail?.type === 'preview-input-state-changed') {
+      if (
+        event.detail?.type === 'preview-input-state-changed'
+        && Array.isArray(event.detail.changedFields)
+        && event.detail.changedFields.includes('armedTool')
+      ) {
         applyInputState(event.detail.inputState)
       }
     }
@@ -588,48 +600,46 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   // We need a ref to loadApp so goBack/goForward can call it without circular deps
   const loadAppRef = useRef<((url?: string, options?: LoadAppOptions) => Promise<void>) | null>(null)
 
-  const {
-    connect,
-    disconnectAll,
-    openStatusBus,
-    activeThreadKey,
-    activateThread,
-    hydrateProjectThreads,
-    persistThreadState,
-    getTargetAgentDeckSessionId,
-    draftAgentType,
-    activePreviewTool,
-    targetUrl,
-    activeTab,
-    viewportMode,
-    authIssue,
-    showUrlHistory,
-    previewTabs,
-    activePreviewTabId,
-    urlHistory,
-    urlHistoryCursor,
-    setActivePreviewTool,
-    setTargetAgentDeckSessionId,
-    setTargetUrl,
-    setActiveTab,
-    setViewportMode,
-    setAuthIssue,
-    setShowUrlHistory,
-    setPreviewTabs,
-    setActivePreviewTabId,
-    setUrlHistory,
-    setUrlHistoryCursor,
-    addElement,
-    removeElement,
-    removeElements,
-    replaceElement,
-    clearElements,
-    undoSelectionChange,
-    redoSelectionChange,
-    selectedElements,
-    selectionUndoStack,
-    selectionRedoStack,
-  } = useLiveEditorStore()
+  const connect = useLiveEditorStore((state) => state.connect)
+  const disconnectAll = useLiveEditorStore((state) => state.disconnectAll)
+  const openStatusBus = useLiveEditorStore((state) => state.openStatusBus)
+  const activeThreadKey = useLiveEditorStore((state) => state.activeThreadKey)
+  const activateThread = useLiveEditorStore((state) => state.activateThread)
+  const hydrateProjectThreads = useLiveEditorStore((state) => state.hydrateProjectThreads)
+  const persistThreadState = useLiveEditorStore((state) => state.persistThreadState)
+  const getTargetAgentDeckSessionId = useLiveEditorStore((state) => state.getTargetAgentDeckSessionId)
+  const draftAgentType = useLiveEditorStore((state) => state.draftAgentType)
+  const activePreviewTool = useLiveEditorStore((state) => state.activePreviewTool)
+  const targetUrl = useLiveEditorStore((state) => state.targetUrl)
+  const activeTab = useLiveEditorStore((state) => state.activeTab)
+  const viewportMode = useLiveEditorStore((state) => state.viewportMode)
+  const authIssue = useLiveEditorStore((state) => state.authIssue)
+  const showUrlHistory = useLiveEditorStore((state) => state.showUrlHistory)
+  const previewTabs = useLiveEditorStore((state) => state.previewTabs)
+  const activePreviewTabId = useLiveEditorStore((state) => state.activePreviewTabId)
+  const urlHistory = useLiveEditorStore((state) => state.urlHistory)
+  const urlHistoryCursor = useLiveEditorStore((state) => state.urlHistoryCursor)
+  const setActivePreviewTool = useLiveEditorStore((state) => state.setActivePreviewTool)
+  const setTargetAgentDeckSessionId = useLiveEditorStore((state) => state.setTargetAgentDeckSessionId)
+  const setTargetUrl = useLiveEditorStore((state) => state.setTargetUrl)
+  const setActiveTab = useLiveEditorStore((state) => state.setActiveTab)
+  const setViewportMode = useLiveEditorStore((state) => state.setViewportMode)
+  const setAuthIssue = useLiveEditorStore((state) => state.setAuthIssue)
+  const setShowUrlHistory = useLiveEditorStore((state) => state.setShowUrlHistory)
+  const setPreviewTabs = useLiveEditorStore((state) => state.setPreviewTabs)
+  const setActivePreviewTabId = useLiveEditorStore((state) => state.setActivePreviewTabId)
+  const setUrlHistory = useLiveEditorStore((state) => state.setUrlHistory)
+  const setUrlHistoryCursor = useLiveEditorStore((state) => state.setUrlHistoryCursor)
+  const addElement = useLiveEditorStore((state) => state.addElement)
+  const removeElement = useLiveEditorStore((state) => state.removeElement)
+  const removeElements = useLiveEditorStore((state) => state.removeElements)
+  const replaceElement = useLiveEditorStore((state) => state.replaceElement)
+  const clearElements = useLiveEditorStore((state) => state.clearElements)
+  const undoSelectionChange = useLiveEditorStore((state) => state.undoSelectionChange)
+  const redoSelectionChange = useLiveEditorStore((state) => state.redoSelectionChange)
+  const selectedElements = useLiveEditorStore((state) => state.selectedElements)
+  const selectionUndoStack = useLiveEditorStore((state) => state.selectionUndoStack)
+  const selectionRedoStack = useLiveEditorStore((state) => state.selectionRedoStack)
 
   const scopedUrlHistory = useMemo(() => {
     const entries: string[] = []
@@ -2221,28 +2231,32 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   ])
 
   const refreshApp = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return
+    }
     const activePreviewTab = getActivePreviewTab()
     if (!activePreviewTab) {
       return
     }
 
-    if (activePreviewTab.mode === 'browser' && activePreviewTab.browserTabId) {
-      await sendBrowserCommand(activePreviewTab.browserTabId, 'refresh')
-      if (desktopPreviewRef.current) {
-        window.setTimeout(() => {
-          void updateEmbeddedPreviewBounds()
-        }, 120)
-      }
-      toast.success(hasEmbeddedBrowserPreview ? 'Preview refreshed' : 'Browser refreshed', { duration: 1000 })
-      return
-    }
-
-    const iframe = iframeRefs.current[activePreviewTab.id]
-    if (!iframe || iframe.src === 'about:blank') {
-      return
-    }
-
+    refreshInFlightRef.current = true
     try {
+      if (activePreviewTab.mode === 'browser' && activePreviewTab.browserTabId) {
+        await sendBrowserCommand(activePreviewTab.browserTabId, 'refresh')
+        if (desktopPreviewRef.current) {
+          window.setTimeout(() => {
+            void updateEmbeddedPreviewBounds()
+          }, 120)
+        }
+        toast.success(hasEmbeddedBrowserPreview ? 'Preview refreshed' : 'Browser refreshed', { duration: 1000 })
+        return
+      }
+
+      const iframe = iframeRefs.current[activePreviewTab.id]
+      if (!iframe || iframe.src === 'about:blank') {
+        return
+      }
+
       const nextUrl = new URL(iframe.src)
       nextUrl.searchParams.set('_pf_t', String(Date.now()))
       const nextFrameSrc = nextUrl.toString()
@@ -2257,6 +2271,8 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       toast.success('Refreshed', { duration: 1000 })
     } catch (error) {
       console.error('[live-editor] Failed to refresh active preview tab:', error)
+    } finally {
+      refreshInFlightRef.current = false
     }
   }, [
     getActivePreviewTab,
@@ -2660,6 +2676,30 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
         setAuthIssue({ status, url: failingUrl })
       }
       toast.error(`Preview load failed: ${payload.data?.errorDescription || 'Unknown error'}`)
+      return
+    }
+
+    if (payload.type === 'browser-tab-suspended') {
+      const nextUrl = normalizePersistedPreviewUrl(
+        typeof payload.url === 'string' ? payload.url : sourceTab.url,
+        sourceTab.url,
+      ) || sourceTab.url
+      const nextTitle = typeof payload.title === 'string' ? payload.title : sourceTab.title
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry, index) =>
+          entry.id === sourceTab.id
+            ? {
+                ...entry,
+                browserTabId: null,
+                url: nextUrl,
+                title: getPreviewTabTitle(nextUrl, nextTitle, index + 1),
+                canGoBack: false,
+                canGoForward: false,
+                snapshotDataUrl: null,
+              }
+            : entry
+        )
+      )
       return
     }
 

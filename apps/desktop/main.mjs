@@ -26,6 +26,10 @@ const DEFAULT_CONTROLLER_CDP_PORT = (() => {
 const CONTROLLER_CDP_HOST = process.env.PIXEL_FORGE_CONTROLLER_CDP_HOST || '127.0.0.1'
 const CONTROLLER_CDP_PORT = process.env.PIXEL_FORGE_CONTROLLER_CDP_PORT || DEFAULT_CONTROLLER_CDP_PORT
 const PREVIEW_PARTITION = process.env.PIXEL_FORGE_PREVIEW_PARTITION || `persist:${INSTANCE_SLUG}-preview`
+const MAX_RESIDENT_PREVIEW_VIEWS = Math.max(
+  2,
+  Number.parseInt(process.env.PIXEL_FORGE_MAX_RESIDENT_PREVIEW_VIEWS || '12', 10) || 12,
+)
 const APP_STATE_DIR = path.resolve(
   process.env.PIXEL_FORGE_STATE_DIR
   || process.env.PIXEL_FORGE_SHARED_STATE_DIR
@@ -109,6 +113,7 @@ let controllerUpdateApplyState = {
 const previewViews = new Map()
 const previewContexts = new Map()
 const previewKeyByWebContentsId = new Map()
+const suspendedPreviewKeys = new Set()
 
 function getMainPreviewContextId() {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -264,22 +269,23 @@ function sendAppEventToContext(ownerContextId, event) {
   targetContents.send('pixel-forge-app:event', event)
 }
 
-function emitPreviewInputState(ownerContextId) {
+function emitPreviewInputState(ownerContextId, changedFields = []) {
   sendAppEventToContext(ownerContextId, {
     type: 'preview-input-state-changed',
     inputState: readPreviewInputState(ownerContextId),
+    changedFields: Array.isArray(changedFields) ? changedFields : [],
   })
 }
 
 function updatePreviewInputState(ownerContextId, updates = {}) {
   const context = ensurePreviewContext(ownerContextId)
-  let changed = false
+  const changedFields = []
 
   if (Object.prototype.hasOwnProperty.call(updates, 'focusedSurface')) {
     const nextFocusedSurface = normalizeFocusedSurface(updates.focusedSurface)
     if (context.focusedSurface !== nextFocusedSurface) {
       context.focusedSurface = nextFocusedSurface
-      changed = true
+      changedFields.push('focusedSurface')
     }
   }
 
@@ -287,12 +293,12 @@ function updatePreviewInputState(ownerContextId, updates = {}) {
     const nextArmedTool = normalizePreviewTool(updates.armedTool)
     if (context.armedTool !== nextArmedTool) {
       context.armedTool = nextArmedTool
-      changed = true
+      changedFields.push('armedTool')
     }
   }
 
-  if (changed) {
-    emitPreviewInputState(ownerContextId)
+  if (changedFields.length > 0) {
+    emitPreviewInputState(ownerContextId, changedFields)
   }
 
   return readPreviewInputState(ownerContextId)
@@ -312,6 +318,12 @@ function sendPreviewEvent(ownerContextId, event) {
     return
   }
   targetContents.send('pixel-forge-preview:event', event)
+}
+
+function touchPreviewRecord(previewRecord) {
+  if (previewRecord) {
+    previewRecord.lastUsedAt = Date.now()
+  }
 }
 
 function broadcastAppEvent(event) {
@@ -1256,6 +1268,11 @@ function registerViewEvents(ownerContextId, tabId, view) {
   })
 
   view.webContents.on('destroyed', () => {
+    if (suspendedPreviewKeys.delete(previewKey)) {
+      previewKeyByWebContentsId.delete(webContentsId)
+      applyAllPreviewViews()
+      return
+    }
     destroyOwnedPreviewContexts(webContentsId)
     const previewRecord = previewViews.get(previewKey)
     if (previewRecord) {
@@ -1530,6 +1547,7 @@ function getOrCreatePreviewView(ownerContextId, tabId) {
   const previewKey = makePreviewKey(ownerContextId, tabId)
   const existing = previewViews.get(previewKey)
   if (existing) {
+    touchPreviewRecord(existing)
     return existing.view
   }
 
@@ -1552,6 +1570,7 @@ function getOrCreatePreviewView(ownerContextId, tabId) {
     reportedTitle: null,
     surfaceKind: 'dom',
     pdfContext: null,
+    lastUsedAt: Date.now(),
   })
   previewKeyByWebContentsId.set(view.webContents.id, previewKey)
   registerViewEvents(ownerContextId, tabId, view)
@@ -1654,6 +1673,7 @@ function emitPreviewBrowserLocationChanged(ownerContextId, previewRecord) {
   if (!previewRecord || !view || view.webContents.isDestroyed()) {
     return
   }
+  touchPreviewRecord(previewRecord)
 
   sendPreviewEvent(ownerContextId, {
     type: 'browser-location-changed',
@@ -1677,6 +1697,62 @@ function buildPreviewLoadResponse(previewRecord, fallbackUrl = '') {
     did_navigate: true,
     can_go_back: previewCanGoBack(view),
     can_go_forward: previewCanGoForward(view),
+  }
+}
+
+function suspendPreviewRecord(previewRecord) {
+  if (!previewRecord?.view || previewRecord.view.webContents.isDestroyed()) {
+    return false
+  }
+
+  const context = previewContexts.get(previewRecord.ownerContextId)
+  if (context?.activeTabId === previewRecord.tabId || context?.attachedView === previewRecord.view) {
+    return false
+  }
+
+  const fallbackUrl = previewRecord.view.webContents.getURL() || previewRecord.reportedUrl || ''
+  const url = currentPreviewUrl(previewRecord, fallbackUrl)
+  const title = currentPreviewTitle(previewRecord, url)
+  const webContentsId = previewRecord.webContentsId
+
+  destroyOwnedPreviewContexts(webContentsId)
+  if (context?.attachedView === previewRecord.view && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.contentView.removeChildView(previewRecord.view)
+    context.attachedView = null
+  }
+
+  previewViews.delete(previewRecord.key)
+  previewKeyByWebContentsId.delete(webContentsId)
+  suspendedPreviewKeys.add(previewRecord.key)
+  previewRecord.view.webContents.destroy()
+  sendPreviewEvent(previewRecord.ownerContextId, {
+    type: 'browser-tab-suspended',
+    browser_tab_id: previewRecord.tabId,
+    url,
+    title,
+    can_go_back: false,
+    can_go_forward: false,
+  })
+  return true
+}
+
+function enforcePreviewViewBudget() {
+  if (previewViews.size <= MAX_RESIDENT_PREVIEW_VIEWS) {
+    return
+  }
+
+  const candidates = Array.from(previewViews.values())
+    .filter((previewRecord) => {
+      const context = previewContexts.get(previewRecord.ownerContextId)
+      return context?.activeTabId !== previewRecord.tabId && context?.attachedView !== previewRecord.view
+    })
+    .sort((left, right) => (left.lastUsedAt || 0) - (right.lastUsedAt || 0))
+
+  for (const previewRecord of candidates) {
+    if (previewViews.size <= MAX_RESIDENT_PREVIEW_VIEWS) {
+      break
+    }
+    suspendPreviewRecord(previewRecord)
   }
 }
 
@@ -1791,6 +1867,7 @@ async function loadPreviewUrl(ownerContextId, tabId, url) {
   const context = ensurePreviewContext(ownerContextId)
   context.activeTabId = tabId
   context.visible = true
+  touchPreviewRecord(previewRecord)
   applyAllPreviewViews()
   try {
     const resolvedTargetUrl = await resolvePreviewTarget(previewRecord, url)
@@ -1802,6 +1879,7 @@ async function loadPreviewUrl(ownerContextId, tabId, url) {
     }
     await settleAbortedNavigation(view, url)
   }
+  enforcePreviewViewBudget()
   return buildPreviewLoadResponse(previewRecord, url)
 }
 
@@ -1833,6 +1911,7 @@ function sendPreviewCommand(ownerContextId, tabId, command) {
   if (!previewRecord) {
     throw new Error(`Unknown preview tab: ${tabId}`)
   }
+  touchPreviewRecord(previewRecord)
   const view = previewRecord.view
   view.webContents.send('pixel-forge-preview:command', command)
   return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
@@ -2250,8 +2329,10 @@ app.whenReady().then(() => {
     const context = ensurePreviewContext(ownerContextId)
     context.activeTabId = tabId
     context.visible = true
+    touchPreviewRecord(previewRecord)
     applyAllPreviewViews()
     emitPreviewInputState(ownerContextId)
+    enforcePreviewViewBudget()
     return { ok: true }
   })
 
@@ -2265,8 +2346,10 @@ app.whenReady().then(() => {
     const context = ensurePreviewContext(ownerContextId)
     context.activeTabId = tabId
     context.visible = true
+    touchPreviewRecord(previewRecord)
     applyAllPreviewViews()
     emitPreviewInputState(ownerContextId)
+    enforcePreviewViewBudget()
     return { ok: true }
   })
 
@@ -2280,9 +2363,11 @@ app.whenReady().then(() => {
     const context = ensurePreviewContext(ownerContextId)
     context.activeTabId = tabId
     context.visible = true
+    touchPreviewRecord(previewRecord)
     applyAllPreviewViews()
     previewRecord.view.webContents.focus()
     updatePreviewInputState(ownerContextId, { focusedSurface: 'preview' })
+    enforcePreviewViewBudget()
     return { ok: true }
   })
 
@@ -2302,6 +2387,7 @@ app.whenReady().then(() => {
       throw new Error(`Unknown preview tab: ${tabId}`)
     }
     const view = previewRecord.view
+    touchPreviewRecord(previewRecord)
     await view.webContents.reload()
     return buildPreviewLoadResponse(previewRecord, view.webContents.getURL())
   })

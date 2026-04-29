@@ -145,6 +145,28 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_list_recent_workstation_events_returns_bounded_ascending_window(self) -> None:
+        for index in range(5):
+            workstation_events.append_workstation_event(
+                str(self.project_path),
+                "thread-a",
+                agent_deck_session_id="deck-a",
+                event_type="turn_chunk",
+                payload={"chunk": f"chunk-{index}"},
+            )
+
+        events = workstation_events.list_recent_workstation_events(
+            str(self.project_path),
+            "thread-a",
+            limit=3,
+        )
+
+        self.assertEqual([event.payload["chunk"] for event in events], [
+            "chunk-2",
+            "chunk-3",
+            "chunk-4",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

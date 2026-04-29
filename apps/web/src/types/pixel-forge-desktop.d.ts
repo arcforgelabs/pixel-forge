@@ -140,6 +140,12 @@ export interface PixelForgeDesktopPreviewInputState {
   armedTool: PixelForgeDesktopPreviewTool
 }
 
+export type PixelForgeDesktopPreviewInputChangedField =
+  | 'activePreviewTabId'
+  | 'previewVisible'
+  | 'focusedSurface'
+  | 'armedTool'
+
 export interface PixelForgeAppliedSelection {
   id: string
   selectorKind: 'dom' | 'region'

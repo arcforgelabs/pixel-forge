@@ -33,10 +33,13 @@ import {
   selectActiveProjectSessions,
   useSessionStore,
 } from '../../../store/session-store'
+
+const OBSERVED_THREAD_RECENT_EVENT_LIMIT = 80
 import {
   buildSelectionArtifacts,
   type SelectionRecord,
 } from '../selection-engine'
+import { createPlainTextDataUrl } from '../composer-attachments'
 import { isCloneWorkspaceBound } from '../mirror-targets'
 import {
   buildCompletionSummary,
@@ -908,6 +911,16 @@ function buildAttachmentSummary(attachments: ChatAttachment[]): string {
   return `Attached ${parts.join(', ')}.`
 }
 
+function resolveAttachmentDataUrl(attachment: ChatAttachment): string {
+  if (attachment.dataUrl) {
+    return attachment.dataUrl
+  }
+  if (attachment.kind === 'paste' && attachment.textContent) {
+    return createPlainTextDataUrl(attachment.textContent)
+  }
+  return ''
+}
+
 function shouldMirrorSelectionAttachmentsToAssistant(
   content: string,
   selectionAttachments: ChatAttachment[]
@@ -1706,6 +1719,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     )
     if (fromNow) {
       eventStreamUrl.searchParams.set('from_now', '1')
+      eventStreamUrl.searchParams.set('recent_limit', String(OBSERVED_THREAD_RECENT_EVENT_LIMIT))
     }
 
     const eventSource = new EventSource(
@@ -1779,16 +1793,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       boundSession?.agentDeckSessionId
       ?? threadState.targetAgentDeckSessionId
       ?? null
-    const hasNonObservedMessages = threadState.messages.some(
-      (message) => !message.observedSessionId
-    )
-
     if (!agentDeckSessionId || !canObserveThreadEvents(threadState)) {
       stopObservedThreadStreaming()
       return
     }
 
-    const fromNow = hasNonObservedMessages
+    const fromNow = true
 
     if (
       observedThreadKey === activeThreadKey
@@ -2775,7 +2785,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           payload.attachments = requestAttachments.map((attachment) => ({
             name: attachment.name,
             mime_type: attachment.mimeType,
-            data_url: attachment.dataUrl,
+            data_url: resolveAttachmentDataUrl(attachment),
             kind: attachment.kind,
           }))
         }
@@ -3053,9 +3063,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
     setActivePreviewTool: (tool) => {
       const activeThreadKey = get().activeThreadKey
+      const nextTool = tool === 'select' ? 'select' : null
+      const currentTool = get().threadStates[activeThreadKey]?.activePreviewTool ?? null
+      if (currentTool === nextTool) {
+        return
+      }
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
-        activePreviewTool: tool === 'select' ? 'select' : null,
+        activePreviewTool: nextTool,
       }))
       scheduleThreadPersistence(activeThreadKey)
     },
@@ -3302,10 +3317,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
     chatScrollPositions: {},
     saveChatScrollPosition: (threadKey: string, scrollTop: number) => {
+      const nextScrollTop = Math.round(scrollTop)
+      if (get().chatScrollPositions[threadKey] === nextScrollTop) {
+        return
+      }
       set((state) => ({
         chatScrollPositions: {
           ...state.chatScrollPositions,
-          [threadKey]: scrollTop,
+          [threadKey]: nextScrollTop,
         },
       }))
     },

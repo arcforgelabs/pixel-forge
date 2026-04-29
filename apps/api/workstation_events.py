@@ -245,6 +245,33 @@ def list_workstation_events(
     return [_row_to_event_record(row) for row in rows]
 
 
+def list_recent_workstation_events(
+    project_path: str,
+    chat_id: str,
+    *,
+    limit: int = 100,
+) -> list[WorkstationEventRecord]:
+    normalized_project_path = normalize_project_path(project_path)
+    normalized_chat_id = chat_id.strip()
+    if not normalized_chat_id:
+        return []
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, project_path, chat_id, agent_deck_session_id, event_type, payload_json, created_at
+            FROM workstation_events
+            WHERE project_path = ?
+              AND chat_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (normalized_project_path, normalized_chat_id, max(limit, 1)),
+        ).fetchall()
+
+    return [_row_to_event_record(row) for row in reversed(rows)]
+
+
 def append_workstation_event(
     project_path: str,
     chat_id: str,

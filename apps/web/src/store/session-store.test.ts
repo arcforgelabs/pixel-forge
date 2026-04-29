@@ -408,11 +408,15 @@ describe("session-store thread switching", () => {
       persistProfile: false,
     });
 
-    expect(useSessionStore.getState().liveEditorSession).toMatchObject({
-      threadId: "thread-a",
-      agentDeckSessionId: null,
-      agentDeckSessionTitle: null,
-      agentDeckTool: null,
+    expect(useSessionStore.getState().agentDeckTargetsLoading).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().liveEditorSession).toMatchObject({
+        threadId: "thread-a",
+        agentDeckSessionId: null,
+        agentDeckSessionTitle: null,
+        agentDeckTool: null,
+      });
     });
     expect(getActiveProjectSessions()[0]).toMatchObject({
       threadId: "thread-a",
@@ -424,6 +428,8 @@ describe("session-store thread switching", () => {
       bindingState: "detached",
       agentDeckSessionId: "dead-session-a",
     });
+    expect(useSessionStore.getState().selectedAgentDeckTargetId).toBeNull();
+    expect(useSessionStore.getState().agentDeckTargetsLoading).toBe(false);
     expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 

@@ -134,6 +134,7 @@ from workstation_events import (
     latest_workstation_event,
     latest_workstation_event_id,
     list_status_bus_events,
+    list_recent_workstation_events,
     list_workstation_events,
     sync_chat_activity_event,
 )
@@ -1718,6 +1719,7 @@ async def stream_project_chat_events(
     chat_id: str,
     request: Request,
     from_now: bool = False,
+    recent_limit: int = 0,
 ):
     normalized_project_path = normalize_project_path(project_path)
     normalized_chat_id = chat_id.strip()
@@ -1728,9 +1730,11 @@ async def stream_project_chat_events(
     if get_project_session(normalized_project_path, normalized_chat_id) is None:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    _backfill_chat_history_from_jsonl(normalized_project_path, normalized_chat_id)
+    if not from_now:
+        _backfill_chat_history_from_jsonl(normalized_project_path, normalized_chat_id)
 
     async def event_stream():
+        bounded_recent_limit = min(max(recent_limit, 0), 200)
         last_event_id = (
             latest_workstation_event_id(
                 normalized_project_path,
@@ -1739,6 +1743,24 @@ async def stream_project_chat_events(
             if from_now
             else 0
         )
+        if from_now and bounded_recent_limit > 0:
+            recent_events = list_recent_workstation_events(
+                normalized_project_path,
+                normalized_chat_id,
+                limit=bounded_recent_limit,
+            )
+            for event in recent_events:
+                if await request.is_disconnected():
+                    return
+                last_event_id = max(last_event_id, event.id)
+                payload = json.dumps(
+                    {
+                        "id": event.id,
+                        "event_type": event.event_type,
+                        **event.payload,
+                    }
+                )
+                yield f"id: {event.id}\nevent: {event.event_type}\ndata: {payload}\n\n"
         while True:
             if await request.is_disconnected():
                 break

@@ -352,6 +352,22 @@ describe('live editor selection history', () => {
     expect(useLiveEditorStore.getState().previewTabs[0]?.browserTabId).toBe('browser-tab-two')
   })
 
+  it('does not publish duplicate preview tool updates', () => {
+    const store = useLiveEditorStore.getState()
+    store.setActivePreviewTool('select')
+
+    const listener = vi.fn()
+    const unsubscribe = useLiveEditorStore.subscribe(listener)
+
+    store.setActivePreviewTool('select')
+    expect(listener).not.toHaveBeenCalled()
+
+    store.setActivePreviewTool(null)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+  })
+
   it('does not immediately persist a blank untargeted local draft thread', async () => {
     vi.useFakeTimers()
     const persistSpy = vi
@@ -1302,6 +1318,46 @@ describe('live editor selection history', () => {
         proxy_session_id: null,
       },
     })
+  })
+
+  it('materializes pasted text attachments when sending without paste-time encoding', () => {
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage(
+      'Review [Paste #1]',
+      [
+        {
+          id: 'paste-1',
+          name: 'paste-1.txt',
+          mimeType: 'text/plain',
+          dataUrl: '',
+          kind: 'paste',
+          label: 'Paste #1',
+          inlineToken: '[Paste #1]',
+          textContent: 'large pasted context',
+        },
+      ]
+    )
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload.attachments).toHaveLength(1)
+    expect(payload.attachments[0]).toMatchObject({
+      name: 'paste-1.txt',
+      mime_type: 'text/plain',
+      kind: 'paste',
+    })
+    expect(
+      Buffer.from(
+        String(payload.attachments[0].data_url).split('base64,')[1],
+        'base64'
+      ).toString('utf8')
+    ).toBe('large pasted context')
   })
 
   it('includes controller preview inspection data in outbound live-edit payloads when available', async () => {

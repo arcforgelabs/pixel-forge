@@ -23,7 +23,6 @@ import {
 import {
   createInlineAttachmentLabel,
   createInlineAttachmentToken,
-  createPlainTextDataUrl,
   insertInlineTokens,
   pruneInlineAttachmentsFromText,
   removeInlineTokenText,
@@ -99,7 +98,10 @@ const AGENT_THINKING_OPTIONS: Record<string, AgentModelOption[]> = {
 }
 
 const COMPOSER_DRAFT_STORAGE_PREFIX = 'pixel-forge:live-editor-composer:'
-const MAX_PERSISTED_COMPOSER_DRAFT_CHARS = 3_500_000
+const MAX_PERSISTED_COMPOSER_DRAFT_CHARS = 250_000
+const COMPOSER_DRAFT_PERSIST_DELAY_MS = 300
+
+const composerDraftMemory = new Map<string, PersistedComposerDraft>()
 
 interface PersistedComposerDraft {
   input: string
@@ -117,8 +119,14 @@ function readPersistedComposerDraft(threadKey: string): PersistedComposerDraft |
     return null
   }
 
+  const key = composerDraftStorageKey(threadKey)
+  const memoryDraft = composerDraftMemory.get(key)
+  if (memoryDraft) {
+    return memoryDraft
+  }
+
   try {
-    const raw = window.localStorage.getItem(composerDraftStorageKey(threadKey))
+    const raw = window.localStorage.getItem(key)
     if (!raw) {
       return null
     }
@@ -134,7 +142,47 @@ function readPersistedComposerDraft(threadKey: string): PersistedComposerDraft |
   }
 }
 
-function writePersistedComposerDraft(
+function estimateComposerDraftChars(
+  input: string,
+  attachments: ChatAttachment[]
+): number {
+  return attachments.reduce((total, attachment) => (
+    total
+    + attachment.id.length
+    + attachment.name.length
+    + attachment.mimeType.length
+    + attachment.dataUrl.length
+    + (attachment.label?.length ?? 0)
+    + (attachment.inlineToken?.length ?? 0)
+    + (attachment.textContent?.length ?? 0)
+  ), input.length + 128)
+}
+
+function rememberComposerDraft(
+  threadKey: string,
+  input: string,
+  attachments: ChatAttachment[],
+  caretIndex: number
+) {
+  if (typeof window === 'undefined' || !threadKey.trim()) {
+    return
+  }
+
+  const key = composerDraftStorageKey(threadKey)
+  if (!input.trim() && attachments.length === 0) {
+    composerDraftMemory.delete(key)
+    return
+  }
+
+  composerDraftMemory.set(key, {
+    input,
+    attachments,
+    caretIndex,
+    updatedAt: Date.now(),
+  })
+}
+
+function persistComposerDraftToStorage(
   threadKey: string,
   input: string,
   attachments: ChatAttachment[],
@@ -150,24 +198,29 @@ function writePersistedComposerDraft(
     return
   }
 
-  const payload: PersistedComposerDraft = {
-    input,
-    attachments,
-    caretIndex,
-    updatedAt: Date.now(),
+  if (estimateComposerDraftChars(input, attachments) > MAX_PERSISTED_COMPOSER_DRAFT_CHARS) {
+    window.localStorage.removeItem(key)
+    return
   }
-  let serialized = JSON.stringify(payload)
-  if (serialized.length > MAX_PERSISTED_COMPOSER_DRAFT_CHARS) {
-    serialized = JSON.stringify({ ...payload, attachments: [] })
-  }
-  window.localStorage.setItem(key, serialized)
+
+  window.localStorage.setItem(
+    key,
+    JSON.stringify({
+      input,
+      attachments,
+      caretIndex,
+      updatedAt: Date.now(),
+    } satisfies PersistedComposerDraft)
+  )
 }
 
 function clearPersistedComposerDraft(threadKey: string) {
   if (typeof window === 'undefined' || !threadKey.trim()) {
     return
   }
-  window.localStorage.removeItem(composerDraftStorageKey(threadKey))
+  const key = composerDraftStorageKey(threadKey)
+  composerDraftMemory.delete(key)
+  window.localStorage.removeItem(key)
 }
 
 function getAgentModelOptions(agentType: string | null | undefined): AgentModelOption[] {
@@ -251,6 +304,13 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skipNextDraftPersistRef = useRef(false)
+  const draftPersistTimerRef = useRef<number | null>(null)
+  const latestDraftRef = useRef<{
+    threadKey: string
+    input: string
+    attachments: ChatAttachment[]
+    caretIndex: number
+  } | null>(null)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showThinkingPicker, setShowThinkingPicker] = useState(false)
@@ -268,19 +328,17 @@ export function ChatInput() {
     file: 0,
     paste: 0,
   })
-  const {
-    activeThreadKey,
-    sendMessage,
-    isStreaming,
-    pendingComposerSeed,
-    consumePendingComposerSeed,
-    selectedElements,
-    targetAgentDeckSessionId,
-    draftAgentType,
-    draftWorkspaceMode,
-    setDraftAgentType,
-    setDraftWorkspaceMode,
-  } = useLiveEditorStore()
+  const activeThreadKey = useLiveEditorStore((state) => state.activeThreadKey)
+  const sendMessage = useLiveEditorStore((state) => state.sendMessage)
+  const isStreaming = useLiveEditorStore((state) => state.isStreaming)
+  const pendingComposerSeed = useLiveEditorStore((state) => state.pendingComposerSeed)
+  const consumePendingComposerSeed = useLiveEditorStore((state) => state.consumePendingComposerSeed)
+  const selectedElements = useLiveEditorStore((state) => state.selectedElements)
+  const targetAgentDeckSessionId = useLiveEditorStore((state) => state.targetAgentDeckSessionId)
+  const draftAgentType = useLiveEditorStore((state) => state.draftAgentType)
+  const draftWorkspaceMode = useLiveEditorStore((state) => state.draftWorkspaceMode)
+  const setDraftAgentType = useLiveEditorStore((state) => state.setDraftAgentType)
+  const setDraftWorkspaceMode = useLiveEditorStore((state) => state.setDraftWorkspaceMode)
   const {
     defaultAgentType,
     defaultAgentModels,
@@ -435,10 +493,24 @@ export function ChatInput() {
     focusTextareaAt(nextCaret)
   }
 
+  const cancelPendingDraftPersist = useCallback(() => {
+    if (draftPersistTimerRef.current !== null) {
+      window.clearTimeout(draftPersistTimerRef.current)
+      draftPersistTimerRef.current = null
+    }
+  }, [])
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
+    cancelPendingDraftPersist()
+    latestDraftRef.current = {
+      threadKey: activeThreadKey,
+      input: '',
+      attachments: [],
+      caretIndex: 0,
+    }
     clearPersistedComposerDraft(activeThreadKey)
     sendMessage(input.trim(), attachments, activeAgentModel, resolvedAgentThinking)
     setInput('')
@@ -532,8 +604,42 @@ export function ChatInput() {
       skipNextDraftPersistRef.current = false
       return
     }
-    writePersistedComposerDraft(activeThreadKey, input, attachments, caretIndex)
-  }, [activeThreadKey, attachments, caretIndex, input])
+    rememberComposerDraft(activeThreadKey, input, attachments, caretIndex)
+    latestDraftRef.current = {
+      threadKey: activeThreadKey,
+      input,
+      attachments,
+      caretIndex,
+    }
+    cancelPendingDraftPersist()
+    draftPersistTimerRef.current = window.setTimeout(() => {
+      draftPersistTimerRef.current = null
+      const draft = latestDraftRef.current
+      if (!draft) {
+        return
+      }
+      persistComposerDraftToStorage(
+        draft.threadKey,
+        draft.input,
+        draft.attachments,
+        draft.caretIndex
+      )
+    }, COMPOSER_DRAFT_PERSIST_DELAY_MS)
+  }, [activeThreadKey, attachments, cancelPendingDraftPersist, caretIndex, input])
+
+  useEffect(() => () => {
+    cancelPendingDraftPersist()
+    const draft = latestDraftRef.current
+    if (!draft) {
+      return
+    }
+    persistComposerDraftToStorage(
+      draft.threadKey,
+      draft.input,
+      draft.attachments,
+      draft.caretIndex
+    )
+  }, [cancelPendingDraftPersist])
 
   useEffect(() => {
     if (skillsLoaded || skillsLoading) {
@@ -732,7 +838,7 @@ export function ChatInput() {
             id: `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             name: `paste-${sequence}.txt`,
             mimeType: 'text/plain',
-            dataUrl: createPlainTextDataUrl(pastedText),
+            dataUrl: '',
             kind: 'paste',
             label,
             inlineToken: createInlineAttachmentToken('paste', sequence),

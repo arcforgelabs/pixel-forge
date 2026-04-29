@@ -7,7 +7,7 @@
  * Pattern: Adapted from aim-up/dashboard/frontend/src/components/chat/ChatMessages.tsx
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { useLiveEditorStore } from './store/chat-store'
@@ -33,6 +33,270 @@ interface FloatingNavButtonProps {
   icon: LucideIcon
   label: string
   onClick: () => void
+}
+
+const INITIAL_VISIBLE_MESSAGE_COUNT = 80
+const MESSAGE_PAGE_SIZE = 80
+const MAX_COLLAPSED_MESSAGE_CHARS = 24_000
+const COLLAPSED_MESSAGE_HEAD_CHARS = 18_000
+const COLLAPSED_MESSAGE_TAIL_CHARS = 3_000
+
+const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  return <ReactMarkdown>{content}</ReactMarkdown>
+})
+
+function buildCollapsedMessageContent(content: string): string {
+  if (content.length <= MAX_COLLAPSED_MESSAGE_CHARS) {
+    return content
+  }
+  const hiddenChars = content.length - COLLAPSED_MESSAGE_HEAD_CHARS - COLLAPSED_MESSAGE_TAIL_CHARS
+  return [
+    content.slice(0, COLLAPSED_MESSAGE_HEAD_CHARS),
+    '',
+    `... ${hiddenChars.toLocaleString()} characters hidden ...`,
+    '',
+    content.slice(-COLLAPSED_MESSAGE_TAIL_CHARS),
+  ].join('\n')
+}
+
+interface MessageMarkdownProps {
+  content: string
+  expanded: boolean
+  onToggleExpanded?: () => void
+}
+
+function MessageMarkdown({
+  content,
+  expanded,
+  onToggleExpanded,
+}: MessageMarkdownProps) {
+  const isLong = content.length > MAX_COLLAPSED_MESSAGE_CHARS
+  const displayContent = isLong && !expanded
+    ? buildCollapsedMessageContent(content)
+    : content
+
+  return (
+    <div className="space-y-2">
+      <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
+        <MarkdownContent content={displayContent} />
+      </div>
+      {isLong && onToggleExpanded && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="rounded-md border border-border/50 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+        >
+          {expanded ? 'Collapse output' : 'Show full output'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+const MemoizedMessageMarkdown = memo(MessageMarkdown)
+
+interface StreamFrame {
+  content: string
+  statusMessage: string
+}
+
+function readStreamFrame(): StreamFrame {
+  const state = useLiveEditorStore.getState()
+  return {
+    content: state.currentStreamContent,
+    statusMessage: state.currentStatusMessage,
+  }
+}
+
+function useThrottledStreamFrame(delayMs: number): StreamFrame {
+  const [frame, setFrame] = useState<StreamFrame>(() => readStreamFrame())
+  const latestFrameRef = useRef<StreamFrame>(frame)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const flush = () => {
+      timerRef.current = null
+      const nextFrame = latestFrameRef.current
+      setFrame((currentFrame) => (
+        currentFrame.content === nextFrame.content
+        && currentFrame.statusMessage === nextFrame.statusMessage
+          ? currentFrame
+          : nextFrame
+      ))
+    }
+
+    const scheduleFlush = () => {
+      if (timerRef.current !== null) {
+        return
+      }
+      timerRef.current = window.setTimeout(flush, delayMs)
+    }
+
+    const unsubscribe = useLiveEditorStore.subscribe((state) => {
+      latestFrameRef.current = {
+        content: state.currentStreamContent,
+        statusMessage: state.currentStatusMessage,
+      }
+      scheduleFlush()
+    })
+
+    latestFrameRef.current = readStreamFrame()
+    scheduleFlush()
+
+    return () => {
+      unsubscribe()
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [delayMs])
+
+  return frame
+}
+
+interface StreamingAssistantMessageProps {
+  scrollContainerRef: RefObject<HTMLDivElement | null>
+  isAtBottomRef: RefObject<boolean>
+  updateScrollFlags: (container: HTMLDivElement) => void
+}
+
+function StreamingAssistantMessage({
+  scrollContainerRef,
+  isAtBottomRef,
+  updateScrollFlags,
+}: StreamingAssistantMessageProps) {
+  const { content, statusMessage } = useThrottledStreamFrame(150)
+
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container || !isAtBottomRef.current) {
+      return
+    }
+    container.scrollTop = container.scrollHeight
+    updateScrollFlags(container)
+  }, [content, isAtBottomRef, scrollContainerRef, updateScrollFlags])
+
+  if (!content) {
+    return (
+      <div className="flex w-full min-w-0 justify-start forge-msg-enter">
+        <div className="max-w-[calc(100%-1.5rem)] min-w-0 rounded-2xl rounded-bl-md bg-accent/50 px-4 py-3 ring-1 ring-border/30">
+          <div className="flex items-center gap-1.5">
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60" />
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:150ms]" />
+            <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:300ms]" />
+          </div>
+          {statusMessage && (
+            <p className="mt-2 text-[11px] text-muted-foreground/80">
+              {statusMessage}
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex w-full min-w-0 justify-start forge-msg-enter">
+      <div className="max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30">
+        <MessageMarkdown
+          content={content}
+          expanded={false}
+        />
+        {statusMessage && (
+          <p className="mt-2 text-[11px] text-muted-foreground/80">
+            {statusMessage}
+          </p>
+        )}
+        <span className="ml-1 inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-primary/70" />
+      </div>
+    </div>
+  )
+}
+
+const MemoizedStreamingAssistantMessage = memo(StreamingAssistantMessage)
+
+function scrollToConversationBottom(
+  container: HTMLDivElement,
+  updateScrollFlags: (container: HTMLDivElement) => void
+) {
+  container.scrollTop = container.scrollHeight
+  updateScrollFlags(container)
+}
+
+function useScrollFlags() {
+  const isAtBottomRef = useRef(true)
+  const isNearTopRef = useRef(true)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [isNearTop, setIsNearTop] = useState(true)
+
+  const updateScrollFlags = useCallback((container: HTMLDivElement) => {
+    const atBottom =
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 100
+    const nearTop = container.scrollTop <= 100
+    isAtBottomRef.current = atBottom
+    isNearTopRef.current = nearTop
+    setIsAtBottom(atBottom)
+    setIsNearTop(nearTop)
+  }, [])
+
+  return {
+    isAtBottom,
+    isAtBottomRef,
+    isNearTop,
+    isNearTopRef,
+    setIsAtBottom,
+    setIsNearTop,
+    updateScrollFlags,
+  }
+}
+
+function useRafScrollSaver(
+  scrollContainerRef: RefObject<HTMLDivElement | null>,
+  activeThreadKey: string,
+  saveChatScrollPosition: (threadKey: string, scrollTop: number) => void,
+  updateScrollFlags: (container: HTMLDivElement) => void
+) {
+  const scrollSaveRafRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (scrollSaveRafRef.current !== null) {
+      cancelAnimationFrame(scrollSaveRafRef.current)
+    }
+  }, [])
+
+  return useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    updateScrollFlags(container)
+    if (scrollSaveRafRef.current !== null) return
+    scrollSaveRafRef.current = requestAnimationFrame(() => {
+      scrollSaveRafRef.current = null
+      const currentContainer = scrollContainerRef.current
+      if (currentContainer) {
+        saveChatScrollPosition(activeThreadKey, currentContainer.scrollTop)
+      }
+    })
+  }, [activeThreadKey, saveChatScrollPosition, scrollContainerRef, updateScrollFlags])
+}
+
+function useRestoreThreadScroll(
+  scrollContainerRef: RefObject<HTMLDivElement | null>,
+  activeThreadKey: string,
+  updateScrollFlags: (container: HTMLDivElement) => void
+) {
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const saved = useLiveEditorStore.getState().chatScrollPositions[activeThreadKey]
+    if (saved !== undefined) {
+      container.scrollTop = saved
+    } else {
+      scrollToConversationBottom(container, updateScrollFlags)
+      return
+    }
+    updateScrollFlags(container)
+  }, [activeThreadKey, scrollContainerRef, updateScrollFlags])
 }
 
 function FloatingNavButton({
@@ -103,34 +367,60 @@ export function ChatMessages({
   onApplyControllerUpdate,
   onLoadPreviewUpdate,
 }: ChatMessagesProps) {
-  const {
-    replayMessageIntoNewChat,
-    retryMessageInCurrentChat,
-    messages,
-    isStreaming,
-    currentStreamContent,
-    currentStatusMessage,
-    activeThreadKey,
-    chatScrollPositions,
-    saveChatScrollPosition,
-  } = useLiveEditorStore()
+  const replayMessageIntoNewChat = useLiveEditorStore((state) => state.replayMessageIntoNewChat)
+  const retryMessageInCurrentChat = useLiveEditorStore((state) => state.retryMessageInCurrentChat)
+  const messages = useLiveEditorStore((state) => state.messages)
+  const isStreaming = useLiveEditorStore((state) => state.isStreaming)
+  const activeThreadKey = useLiveEditorStore((state) => state.activeThreadKey)
+  const saveChatScrollPosition = useLiveEditorStore((state) => state.saveChatScrollPosition)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const isAtBottomRef = useRef(true)
-  const isNearTopRef = useRef(true)
-  const [isAtBottom, setIsAtBottom] = useState(true)
-  const [isNearTop, setIsNearTop] = useState(true)
-  const scrollSaveRafRef = useRef<number | null>(null)
+  const {
+    isAtBottom,
+    isAtBottomRef,
+    isNearTop,
+    isNearTopRef,
+    setIsAtBottom,
+    setIsNearTop,
+    updateScrollFlags,
+  } = useScrollFlags()
   const [lightboxImage, setLightboxImage] = useState<ChatAttachment | null>(null)
   const [expandedPasteIds, setExpandedPasteIds] = useState<Record<string, boolean>>({})
+  const [expandedMessageIds, setExpandedMessageIds] = useState<Record<string, boolean>>({})
+  const [visibleMessageLimit, setVisibleMessageLimit] = useState(INITIAL_VISIBLE_MESSAGE_COUNT)
+  const hiddenMessageCount = Math.max(0, messages.length - visibleMessageLimit)
+  const visibleMessages = hiddenMessageCount > 0
+    ? messages.slice(hiddenMessageCount)
+    : messages
+  useRestoreThreadScroll(scrollContainerRef, activeThreadKey, updateScrollFlags)
+  const handleScroll = useRafScrollSaver(
+    scrollContainerRef,
+    activeThreadKey,
+    saveChatScrollPosition,
+    updateScrollFlags
+  )
 
   const closeLightbox = useCallback(() => setLightboxImage(null), [])
+  const showEarlierMessages = useCallback(() => {
+    setVisibleMessageLimit((current) => current + MESSAGE_PAGE_SIZE)
+  }, [])
   const togglePasteExpanded = useCallback((id: string) => {
     setExpandedPasteIds((current) => ({
       ...current,
       [id]: !current[id],
     }))
   }, [])
+  const toggleMessageExpanded = useCallback((id: string) => {
+    setExpandedMessageIds((current) => ({
+      ...current,
+      [id]: !current[id],
+    }))
+  }, [])
+
+  useEffect(() => {
+    setVisibleMessageLimit(INITIAL_VISIBLE_MESSAGE_COUNT)
+    setExpandedMessageIds({})
+  }, [activeThreadKey])
 
   const downloadImage = useCallback(() => {
     if (!lightboxImage) return
@@ -184,16 +474,6 @@ export function ChatMessages({
     }
   }, [retryMessageInCurrentChat])
 
-  const updateScrollFlags = useCallback((container: HTMLDivElement) => {
-    const atBottom =
-      container.scrollTop + container.clientHeight >= container.scrollHeight - 100
-    const nearTop = container.scrollTop <= 100
-    isAtBottomRef.current = atBottom
-    isNearTopRef.current = nearTop
-    setIsAtBottom(atBottom)
-    setIsNearTop(nearTop)
-  }, [])
-
   const jumpToPrompt = useCallback((messageId: string) => {
     const container = scrollContainerRef.current
     if (!container) {
@@ -209,7 +489,7 @@ export function ChatMessages({
     isNearTopRef.current = container.scrollTop <= 100
     setIsAtBottom(false)
     setIsNearTop(isNearTopRef.current)
-  }, [])
+  }, [isAtBottomRef, isNearTopRef, setIsAtBottom, setIsNearTop])
 
   const jumpToConversationStart = useCallback(() => {
     const container = scrollContainerRef.current
@@ -225,7 +505,7 @@ export function ChatMessages({
     isNearTopRef.current = true
     setIsAtBottom(false)
     setIsNearTop(true)
-  }, [])
+  }, [isAtBottomRef, isNearTopRef, setIsAtBottom, setIsNearTop])
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -237,50 +517,14 @@ export function ChatMessages({
     return () => window.removeEventListener('keydown', handler)
   }, [lightboxImage, closeLightbox])
 
-  // Restore scroll position instantly when switching to a different thread
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    const saved = chatScrollPositions[activeThreadKey]
-    if (saved !== undefined) {
-      container.scrollTop = saved
-    } else {
-      // No saved position → jump to bottom
-      container.scrollTop = container.scrollHeight
-    }
-    updateScrollFlags(container)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeThreadKey, updateScrollFlags])
-
-  // Track whether user is pinned to bottom and save scroll position
-  const handleScroll = useCallback(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    updateScrollFlags(container)
-    // Throttle saves to one per animation frame
-    if (scrollSaveRafRef.current !== null) return
-    scrollSaveRafRef.current = requestAnimationFrame(() => {
-      scrollSaveRafRef.current = null
-      const c = scrollContainerRef.current
-      if (c) saveChatScrollPosition(activeThreadKey, c.scrollTop)
-    })
-  }, [activeThreadKey, saveChatScrollPosition, updateScrollFlags])
-
   // Auto-scroll to bottom only when already pinned to bottom.
-  // Use instant behavior when the element is hidden (display:none) so the browser
-  // doesn't queue a smooth scroll that plays visually when the tab is reopened.
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container || !isAtBottomRef.current) {
       return
     }
-    const isVisible = container.offsetParent !== null
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: isVisible ? 'smooth' : 'instant',
-    })
-    updateScrollFlags(container)
-  }, [messages, currentStreamContent, updateScrollFlags])
+    scrollToConversationBottom(container, updateScrollFlags)
+  }, [isAtBottomRef, messages, updateScrollFlags])
 
   const renderInlineUserContent = useCallback((
     content: string,
@@ -448,8 +692,21 @@ export function ChatMessages({
           </div>
         )}
 
+        {hiddenMessageCount > 0 && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={showEarlierMessages}
+              className="rounded-full border border-border/50 bg-background/70 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              Load {Math.min(hiddenMessageCount, MESSAGE_PAGE_SIZE)} earlier messages
+            </button>
+          </div>
+        )}
+
         {/* Message list */}
-        {messages.map((msg, index) => {
+        {visibleMessages.map((msg, visibleIndex) => {
+          const index = hiddenMessageCount + visibleIndex
           const promptTarget =
             msg.role === 'system' && msg.systemTone === 'success'
               ? findSubmittedPromptBeforeIndex(messages, index)
@@ -631,9 +888,11 @@ export function ChatMessages({
               <div className="forge-msg-enter max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30">
                 <div className="space-y-2">
                   {msg.content && (
-                    <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    </div>
+                    <MemoizedMessageMarkdown
+                      content={msg.content}
+                      expanded={expandedMessageIds[msg.id] ?? false}
+                      onToggleExpanded={() => toggleMessageExpanded(msg.id)}
+                    />
                   )}
                   {msg.attachments && msg.attachments.length > 0 && (
                     renderAttachmentGallery(msg.attachments, 'assistant')
@@ -656,39 +915,12 @@ export function ChatMessages({
           )
         })}
 
-        {/* Streaming message */}
-        {isStreaming && currentStreamContent && (
-          <div className="flex w-full min-w-0 justify-start forge-msg-enter">
-            <div className="max-w-[calc(100%-1.5rem)] min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-accent/50 px-3.5 py-2.5 ring-1 ring-border/30">
-              <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words dark:prose-invert [overflow-wrap:anywhere]">
-                <ReactMarkdown>{currentStreamContent}</ReactMarkdown>
-              </div>
-              {currentStatusMessage && (
-                <p className="mt-2 text-[11px] text-muted-foreground/80">
-                  {currentStatusMessage}
-                </p>
-              )}
-              <span className="ml-1 inline-block h-3.5 w-0.5 animate-pulse rounded-full bg-primary/70" />
-            </div>
-          </div>
-        )}
-
-        {/* Loading indicator */}
-        {isStreaming && !currentStreamContent && (
-          <div className="flex w-full min-w-0 justify-start forge-msg-enter">
-            <div className="max-w-[calc(100%-1.5rem)] min-w-0 rounded-2xl rounded-bl-md bg-accent/50 px-4 py-3 ring-1 ring-border/30">
-              <div className="flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60" />
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:150ms]" />
-                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:300ms]" />
-              </div>
-              {currentStatusMessage && (
-                <p className="mt-2 text-[11px] text-muted-foreground/80">
-                  {currentStatusMessage}
-                </p>
-              )}
-            </div>
-          </div>
+        {isStreaming && (
+          <MemoizedStreamingAssistantMessage
+            scrollContainerRef={scrollContainerRef}
+            isAtBottomRef={isAtBottomRef}
+            updateScrollFlags={updateScrollFlags}
+          />
         )}
 
         {/* Scroll anchor */}
