@@ -391,6 +391,35 @@ def live_preview_attach_lines(
     return lines
 
 
+def live_preview_browser_broker_lines(
+    live_preview_context: dict[str, object] | None,
+) -> list[str]:
+    if not isinstance(live_preview_context, dict):
+        return []
+    if live_preview_context.get("browser_broker_available") is not True:
+        return []
+
+    lines = [
+        "- Use the Pixel Forge browser broker first when you need to inspect or control this warm tab.",
+    ]
+    tab_id = _normalize_text(live_preview_context.get("browser_broker_tab_id"))
+    if tab_id:
+        lines.append(f"- Browser broker tab ID: `{tab_id}`")
+
+    command_fields = (
+        ("Open a scoped tab", "browser_broker_open_command"),
+        ("Inspect current tab", "browser_broker_inspect_command"),
+        ("Capture screenshot", "browser_broker_screenshot_command"),
+        ("Raw DevTools target", "browser_broker_devtools_command"),
+    )
+    for label, key in command_fields:
+        command = _normalize_text(live_preview_context.get(key))
+        if command:
+            lines.append(f"- {label}: `{command}`")
+
+    return lines
+
+
 def _live_preview_attach_proof_payload(
     *,
     live_preview_context: dict[str, object] | None,
@@ -798,6 +827,16 @@ def create_request_pack(
         )
         if live_inspection_mode:
             request_sections.append(f"- Live inspection mode: `{live_inspection_mode}`")
+        browser_broker_lines = live_preview_browser_broker_lines(live_preview_context)
+        if browser_broker_lines:
+            request_sections.extend(
+                [
+                    "",
+                    "## Browser Broker Hints",
+                    "",
+                    *browser_broker_lines,
+                ]
+            )
         attach_lines = live_preview_attach_lines(live_preview_context)
         if attach_lines:
             request_sections.extend(

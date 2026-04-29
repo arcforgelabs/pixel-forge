@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('pixelForgeDesktop', {
     goForward: (tabId) => ipcRenderer.invoke('pixel-forge-preview:go-forward', { tabId }),
     refresh: (tabId) => ipcRenderer.invoke('pixel-forge-preview:refresh', { tabId }),
     inspect: (tabId, payload) => ipcRenderer.invoke('pixel-forge-preview:inspect', { tabId, ...payload }),
+    captureSnapshot: (tabId) =>
+      ipcRenderer.invoke('pixel-forge-preview:capture-snapshot', { tabId }),
     close: (tabId) => ipcRenderer.invoke('pixel-forge-preview:close', { tabId }),
     setTool: (tabId, tool) =>
       ipcRenderer.invoke('pixel-forge-preview:set-tool', { tabId, tool }),

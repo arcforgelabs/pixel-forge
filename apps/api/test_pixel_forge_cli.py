@@ -13,6 +13,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pixel_forge_cli
 
 
+class FakeHttpResponse:
+    def __init__(self, payload: dict[str, object], status: int = 200) -> None:
+        self.payload = payload
+        self.status = status
+
+    def __enter__(self) -> "FakeHttpResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
 class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
     def test_retired_lane_env_names_fall_back_to_canonical_names(self) -> None:
         with patch.dict(
@@ -304,6 +319,108 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
                 )
 
         self.assertEqual(str(context.exception), "--via is required")
+
+    def test_browser_open_posts_to_broker_with_scoped_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "browser-broker.json").write_text(
+                json.dumps(
+                    {
+                        "baseUrl": "http://127.0.0.1:7777",
+                        "token": "secret-token",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_dir = Path(tmpdir) / "project"
+            project_dir.mkdir()
+            stdout = io.StringIO()
+            with (
+                patch.object(pixel_forge_cli, "shared_state_dir", return_value=state_dir),
+                patch("pixel_forge_cli.urllib.request.urlopen") as urlopen,
+                patch("sys.stdout", stdout),
+            ):
+                urlopen.return_value = FakeHttpResponse(
+                    {
+                        "ok": True,
+                        "tab": {
+                            "tab_id": "tab-1",
+                            "url": "https://example.com/app",
+                        },
+                    }
+                )
+                exit_code = pixel_forge_cli._command_browser_open(
+                    argparse.Namespace(
+                        url="https://example.com/app",
+                        tab_id="tab-1",
+                        project=str(project_dir),
+                        chat="chat-1",
+                        background=False,
+                    )
+                )
+
+        self.assertEqual(exit_code, 0)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:7777/tabs")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.headers["Authorization"], "Bearer secret-token")
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["url"], "https://example.com/app")
+        self.assertEqual(body["tab_id"], "tab-1")
+        self.assertEqual(body["project_path"], str(project_dir.resolve()))
+        self.assertEqual(body["chat_id"], "chat-1")
+        self.assertEqual(body["owner_kind"], "agent")
+        self.assertTrue(body["activate"])
+        self.assertIn('"tab_id": "tab-1"', stdout.getvalue())
+
+    def test_browser_screenshot_writes_png_without_printing_data_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "browser-broker.json").write_text(
+                json.dumps(
+                    {
+                        "baseUrl": "http://127.0.0.1:7777/",
+                        "token": "secret-token",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = Path(tmpdir) / "shot.png"
+            stdout = io.StringIO()
+            with (
+                patch.object(pixel_forge_cli, "shared_state_dir", return_value=state_dir),
+                patch("pixel_forge_cli.urllib.request.urlopen") as urlopen,
+                patch("sys.stdout", stdout),
+            ):
+                urlopen.return_value = FakeHttpResponse(
+                    {
+                        "ok": True,
+                        "mime_type": "image/png",
+                        "data_url": "data:image/png;base64,UE5HREFUQQ==",
+                    }
+                )
+                exit_code = pixel_forge_cli._command_browser_screenshot(
+                    argparse.Namespace(
+                        tab_id="tab-1",
+                        selector="#app",
+                        out=str(output_path),
+                        project=None,
+                        chat=None,
+                    )
+                )
+                written_bytes = output_path.read_bytes()
+                request = urlopen.call_args.args[0]
+                body = json.loads(request.data.decode("utf-8"))
+                stdout_value = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(written_bytes, b"PNGDATA")
+        self.assertEqual(request.full_url, "http://127.0.0.1:7777/tabs/tab-1/screenshot")
+        self.assertEqual(body["selector"], "#app")
+        self.assertIn(f'"out": "{output_path.resolve()}"', stdout_value)
+        self.assertNotIn("data_url", stdout_value)
 
 
 if __name__ == "__main__":

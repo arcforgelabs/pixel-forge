@@ -177,6 +177,7 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                     "devtools_browser_url": "http://127.0.0.1:7301",
                     "devtools_target_id": "controller-target-1",
                     "devtools_target_url": "https://field.example.com/app",
+                    "devtools_page_websocket_url": "ws://127.0.0.1:7301/devtools/page/controller-target-1",
                 },
             },
             selection_tunnel=None,
@@ -192,6 +193,43 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["attach_hints"]["target_id"], "controller-target-1")
         self.assertNotIn("inspection", payload)
 
+    async def test_capture_live_preview_context_keeps_controller_context_when_cdp_attach_is_unavailable(self) -> None:
+        preview_manager = Mock()
+        preview_manager.inspect_tab = AsyncMock()
+
+        payload = await live_preview_context.capture_live_preview_context(
+            {
+                "preview_tab_id": "preview-1",
+                "mode": "browser",
+                "title": "Field",
+                "url": "https://field.example.com/app",
+                "browser_tab_id": "preview-1",
+                "proxy_session_id": None,
+                "inspection": {
+                    "live_inspection_available": True,
+                    "live_inspection_mode": "controller-browserview",
+                    "current_url": "https://field.example.com/app",
+                    "current_title": "Field",
+                    "visible_interactives": [
+                        {"tag_name": "button", "text": "Save"},
+                    ],
+                    "devtools_attach_available": False,
+                    "devtools_attach_unavailable_reason": "Controller CDP endpoint http://127.0.0.1:7301 is not reachable.",
+                    "devtools_target_id": "controller-target-1",
+                    "devtools_target_url": "https://field.example.com/app",
+                },
+            },
+            selection_tunnel=None,
+            preview_manager=preview_manager,
+        )
+
+        preview_manager.inspect_tab.assert_not_awaited()
+        self.assertTrue(payload["live_inspection_available"])
+        self.assertEqual(payload["live_inspection_mode"], "controller-browserview")
+        self.assertFalse(payload["live_attach_available"])
+        self.assertNotIn("attach_hints", payload)
+        self.assertIn("not reachable", payload["live_attach_unavailable_reason"])
+
     async def test_refresh_live_preview_context_reuses_stored_selection_hints(self) -> None:
         preview_manager = Mock()
         preview_manager.inspect_tab = AsyncMock(
@@ -203,6 +241,7 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                 "devtools_browser_url": "http://127.0.0.1:9222",
                 "devtools_target_id": "target-1",
                 "devtools_target_url": "https://example.com/app",
+                "devtools_page_websocket_url": "ws://127.0.0.1:9222/devtools/page/target-1",
             }
         )
 
@@ -234,6 +273,7 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
                 "live_inspection_mode": "controller-browserview",
                 "devtools_browser_url": "http://127.0.0.1:7301",
                 "devtools_target_id": "controller-target-1",
+                "devtools_page_websocket_url": "ws://127.0.0.1:7301/devtools/page/controller-target-1",
             },
             preview_manager=preview_manager,
         )
@@ -243,6 +283,26 @@ class LivePreviewContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["live_attach_available"])
         self.assertEqual(payload["live_attach_mode"], "controller-browserview")
         self.assertEqual(payload["attach_hints"]["target_id"], "controller-target-1")
+
+    async def test_refresh_live_preview_context_does_not_publish_stale_controller_attach_hints_without_websocket(self) -> None:
+        preview_manager = Mock()
+        preview_manager.inspect_tab = AsyncMock()
+
+        payload = await live_preview_context.refresh_live_preview_context(
+            {
+                "mode": "browser",
+                "browser_tab_id": "preview-1",
+                "live_inspection_mode": "controller-browserview",
+                "devtools_browser_url": "http://127.0.0.1:7301",
+                "devtools_target_id": "controller-target-1",
+            },
+            preview_manager=preview_manager,
+        )
+
+        preview_manager.inspect_tab.assert_not_awaited()
+        self.assertFalse(payload["live_context_fresh"])
+        self.assertFalse(payload.get("live_attach_available", False))
+        self.assertNotIn("attach_hints", payload)
 
 
 if __name__ == "__main__":

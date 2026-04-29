@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -46,6 +47,7 @@ from selection_tunnel_cli import selection_tunnel_path
 
 APPLY_STATE_FILE = "controller-update-apply-state.json"
 BOOTSTRAP_STATE_FILE = "controller-bootstrap-state.json"
+BROWSER_BROKER_STATE_FILE = "browser-broker.json"
 DEFAULT_INSTALL_NAME = "pixel-forge"
 DEFAULT_AGENT_DECK_TUI_LAUNCHER_NAME = "pixel-forge-agent-deck"
 DEFAULT_AGENT_DECK_TUI_TITLE = "Agent Deck"
@@ -166,6 +168,10 @@ def apply_state_path() -> Path:
 
 def bootstrap_state_path() -> Path:
     return shared_state_dir() / BOOTSTRAP_STATE_FILE
+
+
+def browser_broker_state_path() -> Path:
+    return shared_state_dir() / BROWSER_BROKER_STATE_FILE
 
 
 def _read_json(path: Path) -> dict[str, Any] | list[Any] | None:
@@ -589,6 +595,219 @@ def _command_agent_deck_surface_open(_args: argparse.Namespace) -> int:
         print(f"Open: {status['url']}")
     print(json.dumps(status, indent=2))
     return 0
+
+
+def _print_json(payload: Any) -> int:
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _read_browser_broker_manifest() -> dict[str, Any]:
+    payload = _read_json(browser_broker_state_path())
+    if not isinstance(payload, dict):
+        raise SystemExit(
+            "Pixel Forge browser broker is not running. Open the Pixel Forge desktop shell first."
+        )
+    base_url = _normalize_text(payload.get("baseUrl"))
+    token = _normalize_text(payload.get("token"))
+    if not base_url or not token:
+        raise SystemExit("Pixel Forge browser broker manifest is incomplete.")
+    return {
+        **payload,
+        "baseUrl": base_url,
+        "token": token,
+    }
+
+
+def _browser_broker_request(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    query: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    manifest = _read_browser_broker_manifest()
+    base_url = str(manifest["baseUrl"]).rstrip("/")
+    request_url = f"{base_url}/{path.lstrip('/')}"
+    query_pairs = {
+        key: value
+        for key, value in (query or {}).items()
+        if value is not None and value != ""
+    }
+    if query_pairs:
+        request_url = f"{request_url}?{urllib.parse.urlencode(query_pairs)}"
+
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        request_url,
+        data=body,
+        method=method.upper(),
+        headers={
+            "Authorization": f"Bearer {manifest['token']}",
+            **({"Content-Type": "application/json"} if body is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(response_payload, dict):
+                return response_payload
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            detail = {"error": exc.reason}
+        raise SystemExit(f"Browser broker request failed ({exc.code}): {detail}") from exc
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Browser broker request failed: {exc}") from exc
+    raise SystemExit("Browser broker returned a malformed response.")
+
+
+def _browser_tab_path(tab_id: str, action: str | None = None) -> str:
+    if not tab_id.strip():
+        raise SystemExit("tab_id is required")
+    encoded_tab_id = urllib.parse.quote(tab_id.strip(), safe="")
+    return f"/tabs/{encoded_tab_id}/{action}" if action else f"/tabs/{encoded_tab_id}"
+
+
+def _resolve_browser_project_path(value: str | None) -> str | None:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return None
+    return str(Path(normalized).expanduser().resolve())
+
+
+def _browser_scope_query(args: argparse.Namespace) -> dict[str, str | None]:
+    return {
+        "project_path": _resolve_browser_project_path(getattr(args, "project", None)),
+        "chat_id": _normalize_text(getattr(args, "chat", None)),
+    }
+
+
+def _browser_scope_payload(args: argparse.Namespace) -> dict[str, str | None]:
+    return {
+        "project_path": _resolve_browser_project_path(getattr(args, "project", None)),
+        "chat_id": _normalize_text(getattr(args, "chat", None)),
+    }
+
+
+def _command_browser_status(_args: argparse.Namespace) -> int:
+    return _print_json(_browser_broker_request("GET", "/status"))
+
+
+def _command_browser_tabs(args: argparse.Namespace) -> int:
+    return _print_json(_browser_broker_request("GET", "/tabs", query=_browser_scope_query(args)))
+
+
+def _command_browser_open(args: argparse.Namespace) -> int:
+    payload = {
+        **_browser_scope_payload(args),
+        "url": args.url,
+        "tab_id": _normalize_text(args.tab_id),
+        "owner_kind": "agent",
+        "activate": not bool(args.background),
+    }
+    return _print_json(_browser_broker_request("POST", "/tabs", payload=payload))
+
+
+def _command_browser_navigate(args: argparse.Namespace) -> int:
+    payload = {
+        **_browser_scope_payload(args),
+        "url": args.url,
+        "owner_kind": "agent",
+    }
+    return _print_json(
+        _browser_broker_request(
+            "POST",
+            _browser_tab_path(args.tab_id, "navigate"),
+            payload=payload,
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_inspect(args: argparse.Namespace) -> int:
+    return _print_json(
+        _browser_broker_request(
+            "GET",
+            _browser_tab_path(args.tab_id, "inspect"),
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_devtools(args: argparse.Namespace) -> int:
+    return _print_json(
+        _browser_broker_request(
+            "GET",
+            _browser_tab_path(args.tab_id, "devtools"),
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_click(args: argparse.Namespace) -> int:
+    return _print_json(
+        _browser_broker_request(
+            "POST",
+            _browser_tab_path(args.tab_id, "click"),
+            payload={"selector": args.selector},
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_type(args: argparse.Namespace) -> int:
+    return _print_json(
+        _browser_broker_request(
+            "POST",
+            _browser_tab_path(args.tab_id, "type"),
+            payload={
+                "selector": args.selector,
+                "text": args.text,
+                "clear": not bool(args.no_clear),
+            },
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_eval(args: argparse.Namespace) -> int:
+    expression = " ".join(args.expression).strip()
+    if not expression:
+        raise SystemExit("expression is required")
+    return _print_json(
+        _browser_broker_request(
+            "POST",
+            _browser_tab_path(args.tab_id, "evaluate"),
+            payload={"expression": expression},
+            query=_browser_scope_query(args),
+        )
+    )
+
+
+def _command_browser_screenshot(args: argparse.Namespace) -> int:
+    payload = _browser_broker_request(
+        "POST",
+        _browser_tab_path(args.tab_id, "screenshot"),
+        payload={"selector": _normalize_text(args.selector)},
+        query=_browser_scope_query(args),
+    )
+    out_path = _normalize_text(args.out)
+    if out_path:
+        data_url = _normalize_text(payload.get("data_url"))
+        if not data_url:
+            raise SystemExit("Browser broker did not return screenshot data.")
+        encoded = data_url.split(",", 1)[1] if "," in data_url else data_url
+        destination = Path(out_path).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(base64.b64decode(encoded))
+        payload = {
+            **payload,
+            "out": str(destination),
+        }
+        payload.pop("data_url", None)
+    return _print_json(payload)
 
 
 def _resolve_mirror_state_dir(slug: str) -> Path:
@@ -1190,6 +1409,73 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = agent_deck_surface_subparsers.add_parser(command_name, help=help_text)
         command.set_defaults(handler=handler)
+
+    browser = subparsers.add_parser(
+        "browser",
+        help="Control Pixel Forge-owned embedded browser tabs",
+    )
+    browser_subparsers = browser.add_subparsers(dest="browser_command", required=True)
+
+    def add_browser_scope_args(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--project", help="Restrict the command to a project path")
+        command.add_argument("--chat", help="Restrict the command to a Pixel Forge chat/thread id")
+
+    browser_status = browser_subparsers.add_parser("status", help="Show browser broker status")
+    browser_status.set_defaults(handler=_command_browser_status)
+
+    browser_tabs = browser_subparsers.add_parser("tabs", help="List broker-visible browser tabs")
+    add_browser_scope_args(browser_tabs)
+    browser_tabs.set_defaults(handler=_command_browser_tabs)
+
+    browser_open = browser_subparsers.add_parser("open", help="Open a URL in a broker-owned tab")
+    browser_open.add_argument("url", help="URL to open")
+    browser_open.add_argument("--tab-id", help="Optional explicit broker tab id")
+    browser_open.add_argument("--background", action="store_true", help="Open without activating the tab")
+    add_browser_scope_args(browser_open)
+    browser_open.set_defaults(handler=_command_browser_open)
+
+    browser_navigate = browser_subparsers.add_parser("navigate", help="Navigate an existing broker tab")
+    browser_navigate.add_argument("tab_id", help="Broker tab id")
+    browser_navigate.add_argument("url", help="URL to load")
+    add_browser_scope_args(browser_navigate)
+    browser_navigate.set_defaults(handler=_command_browser_navigate)
+
+    browser_inspect = browser_subparsers.add_parser("inspect", help="Inspect live DOM and preview metadata")
+    browser_inspect.add_argument("tab_id", help="Broker tab id")
+    add_browser_scope_args(browser_inspect)
+    browser_inspect.set_defaults(handler=_command_browser_inspect)
+
+    browser_devtools = browser_subparsers.add_parser("devtools", help="Print CDP target details for a tab")
+    browser_devtools.add_argument("tab_id", help="Broker tab id")
+    add_browser_scope_args(browser_devtools)
+    browser_devtools.set_defaults(handler=_command_browser_devtools)
+
+    browser_click = browser_subparsers.add_parser("click", help="Click an element by CSS selector")
+    browser_click.add_argument("tab_id", help="Broker tab id")
+    browser_click.add_argument("selector", help="CSS selector to click")
+    add_browser_scope_args(browser_click)
+    browser_click.set_defaults(handler=_command_browser_click)
+
+    browser_type = browser_subparsers.add_parser("type", help="Type text into an element by CSS selector")
+    browser_type.add_argument("tab_id", help="Broker tab id")
+    browser_type.add_argument("selector", help="CSS selector to type into")
+    browser_type.add_argument("text", help="Text to insert")
+    browser_type.add_argument("--no-clear", action="store_true", help="Do not clear the existing value first")
+    add_browser_scope_args(browser_type)
+    browser_type.set_defaults(handler=_command_browser_type)
+
+    browser_eval = browser_subparsers.add_parser("eval", help="Evaluate JavaScript in a broker tab")
+    browser_eval.add_argument("tab_id", help="Broker tab id")
+    browser_eval.add_argument("expression", nargs="+", help="JavaScript expression or script")
+    add_browser_scope_args(browser_eval)
+    browser_eval.set_defaults(handler=_command_browser_eval)
+
+    browser_screenshot = browser_subparsers.add_parser("screenshot", help="Capture a tab or element screenshot")
+    browser_screenshot.add_argument("tab_id", help="Broker tab id")
+    browser_screenshot.add_argument("--selector", help="Optional CSS selector to crop to")
+    browser_screenshot.add_argument("--out", help="Write the PNG to this path instead of printing data_url")
+    add_browser_scope_args(browser_screenshot)
+    browser_screenshot.set_defaults(handler=_command_browser_screenshot)
 
     tunnel = subparsers.add_parser("tunnel", help="Read a Pixel Forge selection tunnel artifact")
     tunnel.add_argument("--project", required=True, help="Workspace path that owns the request pack")

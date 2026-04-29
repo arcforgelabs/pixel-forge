@@ -19,8 +19,8 @@ importers:
   apps/desktop:
     dependencies:
       electron:
-        specifier: ^41.0.2
-        version: 41.0.2
+        specifier: ^41.3.0
+        version: 41.3.0
 
   apps/web:
     dependencies:
@@ -1489,6 +1489,7 @@ packages:
   basic-ftp@5.2.0:
     resolution: {integrity: sha512-VoMINM2rqJwJgfdHq6RiUudKt2BV+FY5ZFezP/ypmwayk68+NzzAQy4XXLlqsGD4MCzq3DrmNFD/uUmBJuGoXw==}
     engines: {node: '>=10.0.0'}
+    deprecated: Security vulnerability fixed in 5.2.1, please upgrade
 
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
@@ -1771,8 +1772,8 @@ packages:
   electron-to-chromium@1.5.313:
     resolution: {integrity: sha512-QBMrTWEf00GXZmJyx2lbYD45jpI3TUFnNIzJ5BBc8piGUDwMPa1GV6HJWTZVvY/eiN3fSopl7NRbgGp9sZ9LTA==}
 
-  electron@41.0.2:
-    resolution: {integrity: sha512-raotm/aO8kOs1jD8SI8ssJ7EKciQOY295AOOprl1TxW7B0At8m5Ae7qNU1xdMxofiHMR8cNEGi9PKD3U+yT/mA==}
+  electron@41.3.0:
+    resolution: {integrity: sha512-2Q5aeocmFdeheZGDUTrAvSR3t+n0c3d104AJWWEnt7syJU0tE4VdibMYaPtQ47QuXSoUf0/xSsfUUvu/uSXIfg==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -5119,7 +5120,7 @@ snapshots:
 
   electron-to-chromium@1.5.313: {}
 
-  electron@41.0.2:
+  electron@41.3.0:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 24.12.0

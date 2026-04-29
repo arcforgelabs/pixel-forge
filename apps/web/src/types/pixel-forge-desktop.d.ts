@@ -80,12 +80,22 @@ export interface PixelForgeDesktopLivePreviewInspection {
   visible_interactives: PixelForgeDesktopLivePreviewInteractive[]
   selection_matches: PixelForgeDesktopLivePreviewSelectionMatch[]
   devtools_browser_url?: string | null
+  devtools_attach_available?: boolean | null
+  devtools_attach_unavailable_reason?: string | null
   devtools_target_id?: string | null
   devtools_target_type?: string | null
   devtools_target_url?: string | null
   devtools_target_title?: string | null
   devtools_page_websocket_url?: string | null
   devtools_frontend_url?: string | null
+  browser_broker_available?: boolean | null
+  browser_broker_tab_id?: string | null
+  browser_broker_project_path?: string | null
+  browser_broker_chat_id?: string | null
+  browser_broker_open_command?: string | null
+  browser_broker_inspect_command?: string | null
+  browser_broker_screenshot_command?: string | null
+  browser_broker_devtools_command?: string | null
 }
 
 export interface PixelForgeBrowserPreviewInspectionResponse extends PixelForgeBrowserPreviewResponse {
@@ -185,7 +195,13 @@ export interface PixelForgeAppliedSelection {
 }
 
 export interface PixelForgeDesktopPreviewAPI {
-  load(payload: { tabId: string; url: string }): Promise<PixelForgeBrowserPreviewResponse>
+  load(payload: {
+    tabId: string
+    url: string
+    projectPath?: string | null
+    chatId?: string | null
+    ownerKind?: string | null
+  }): Promise<PixelForgeBrowserPreviewResponse>
   show(tabId: string): Promise<{ ok: true }>
   activate(tabId: string): Promise<{ ok: true }>
   focus(tabId: string): Promise<{ ok: true }>
@@ -196,6 +212,7 @@ export interface PixelForgeDesktopPreviewAPI {
     tabId: string,
     payload?: { selectionHints?: PixelForgeDesktopLivePreviewSelectionHint[] }
   ): Promise<PixelForgeBrowserPreviewInspectionResponse>
+  captureSnapshot(tabId: string): Promise<{ ok: true; snapshot_data_url: string | null }>
   close(tabId: string): Promise<{ ok: true }>
   setTool(tabId: string, tool: PixelForgeDesktopPreviewTool): Promise<PixelForgeBrowserPreviewResponse>
   setSelectMode(tabId: string, enabled: boolean): Promise<PixelForgeBrowserPreviewResponse>
@@ -206,7 +223,13 @@ export interface PixelForgeDesktopPreviewAPI {
     selections: PixelForgeAppliedSelection[],
     options?: { reveal?: boolean }
   ): Promise<PixelForgeBrowserPreviewResponse>
-  setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: true }>
+  setBounds(bounds: {
+    x: number
+    y: number
+    width: number
+    height: number
+    borderRadius?: number
+  }): Promise<{ ok: true }>
   hide(): Promise<{ ok: true }>
 }
 

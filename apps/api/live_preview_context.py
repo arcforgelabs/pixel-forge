@@ -140,10 +140,14 @@ def selection_hints_for_live_preview(
 
 
 def _attach_hints_for_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("devtools_attach_available") is False:
+        return None
+
     browser_url = _normalize_text(payload.get("devtools_browser_url"))
     target_id = _normalize_text(payload.get("devtools_target_id"))
     target_url = _normalize_text(payload.get("devtools_target_url"))
-    if not browser_url:
+    page_websocket_url = _normalize_text(payload.get("devtools_page_websocket_url"))
+    if not browser_url or not page_websocket_url:
         return None
 
     return {
@@ -151,7 +155,7 @@ def _attach_hints_for_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         "browser_url": browser_url,
         "target_id": target_id,
         "target_url": target_url,
-        "page_websocket_url": _normalize_text(payload.get("devtools_page_websocket_url")),
+        "page_websocket_url": page_websocket_url,
         "recommended_command": (
             f"npx -y chrome-devtools-mcp@latest --browserUrl {browser_url} --slim --no-usage-statistics"
         ),
@@ -201,7 +205,8 @@ async def capture_live_preview_context(
             payload["live_attach_available"] = False
             payload["live_attach_mode"] = None
             payload["live_attach_unavailable_reason"] = (
-                "This warm preview includes controller-captured live context, "
+                _normalize_text(payload.get("devtools_attach_unavailable_reason"))
+                or "This warm preview includes controller-captured live context, "
                 "but the preview substrate did not expose native CDP attach hints."
             )
         return payload
@@ -235,8 +240,6 @@ async def capture_live_preview_context(
 
     payload.update(
         {
-            "live_attach_available": True,
-            "live_attach_mode": "managed-browser",
             "live_inspection_available": True,
             "live_inspection_mode": "managed-browser",
             **inspection,
@@ -245,6 +248,16 @@ async def capture_live_preview_context(
     attach_hints = _attach_hints_for_payload(payload)
     if attach_hints is not None:
         payload["attach_hints"] = attach_hints
+        payload["live_attach_available"] = True
+        payload["live_attach_mode"] = "managed-browser"
+    else:
+        payload.pop("attach_hints", None)
+        payload["live_attach_available"] = False
+        payload["live_attach_mode"] = None
+        payload["live_attach_unavailable_reason"] = (
+            _normalize_text(payload.get("devtools_attach_unavailable_reason"))
+            or "Managed browser inspection did not expose a reachable CDP target websocket."
+        )
     return payload
 
 
@@ -265,6 +278,14 @@ async def refresh_live_preview_context(
             payload["attach_hints"] = attach_hints
             payload["live_attach_available"] = True
             payload["live_attach_mode"] = "controller-browserview"
+        else:
+            payload.pop("attach_hints", None)
+            payload["live_attach_available"] = False
+            payload["live_attach_mode"] = None
+            payload["live_attach_unavailable_reason"] = (
+                _normalize_text(payload.get("devtools_attach_unavailable_reason"))
+                or "Stored controller-browserview context does not include a reachable CDP target websocket."
+            )
         return payload
     if mode != "browser" or not browser_tab_id:
         payload["live_context_fresh"] = False
@@ -292,8 +313,6 @@ async def refresh_live_preview_context(
 
     payload.update(
         {
-            "live_attach_available": True,
-            "live_attach_mode": "managed-browser",
             "live_inspection_available": True,
             "live_inspection_mode": "managed-browser",
             "live_context_fresh": True,
@@ -303,4 +322,14 @@ async def refresh_live_preview_context(
     attach_hints = _attach_hints_for_payload(payload)
     if attach_hints is not None:
         payload["attach_hints"] = attach_hints
+        payload["live_attach_available"] = True
+        payload["live_attach_mode"] = "managed-browser"
+    else:
+        payload.pop("attach_hints", None)
+        payload["live_attach_available"] = False
+        payload["live_attach_mode"] = None
+        payload["live_attach_unavailable_reason"] = (
+            _normalize_text(payload.get("devtools_attach_unavailable_reason"))
+            or "Managed browser inspection did not expose a reachable CDP target websocket."
+        )
     return payload

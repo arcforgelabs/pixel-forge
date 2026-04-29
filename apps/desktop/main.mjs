@@ -1,6 +1,8 @@
 import { app, BrowserWindow, WebContentsView, dialog, ipcMain, shell, webContents as electronWebContents } from 'electron'
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, promises as fsPromises, watchFile, unwatchFile } from 'node:fs'
+import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +48,7 @@ const DISMISSED_CONTROLLER_UPDATE_ID_PATH = path.join(
   'dismissed-controller-update-id.txt',
 )
 const BOOTSTRAP_STATE_PATH = path.join(APP_STATE_DIR, 'controller-bootstrap-state.json')
+const BROWSER_BROKER_MANIFEST_PATH = path.join(APP_STATE_DIR, 'browser-broker.json')
 const IS_UPDATER_UI_MODE = process.argv.includes('--pixel-forge-updater-ui')
 const VERSION_FILE_RELATIVE_PATH = 'VERSION'
 const VERSION_PACKAGE_RELATIVE_PATHS = [
@@ -98,6 +101,9 @@ let pickerOverlayWindow = null
 let pickerOverlayResolver = null
 let pickerOverlaySettling = false
 let pickerOverlayOwnerContextId = null
+let browserBrokerServer = null
+let browserBrokerToken = null
+let browserBrokerUrl = null
 let pendingUpdateSnapshot = null
 let controllerUpdateApplyState = {
   status: 'idle',
@@ -137,7 +143,7 @@ function ensurePreviewContext(ownerContextId) {
     visible: false,
     focusedSurface: 'shell',
     armedTool: null,
-    bounds: { x: 0, y: 0, width: 0, height: 0 },
+    bounds: { x: 0, y: 0, width: 0, height: 0, borderRadius: 0 },
     attachedView: null,
   }
   previewContexts.set(ownerContextId, context)
@@ -211,10 +217,10 @@ function controllerDevtoolsBrowserUrl() {
   return `http://${CONTROLLER_CDP_HOST}:${port}`
 }
 
-async function readControllerDevtoolsTargets() {
+async function readControllerDevtoolsTargetSnapshot() {
   const browserUrl = controllerDevtoolsBrowserUrl()
   if (!browserUrl) {
-    return []
+    return { available: false, targets: [], error: 'Controller CDP port is disabled.' }
   }
 
   try {
@@ -223,11 +229,400 @@ async function readControllerDevtoolsTargets() {
       throw new Error(`HTTP ${response.status}`)
     }
     const payload = await response.json()
-    return Array.isArray(payload) ? payload : []
+    return { available: true, targets: Array.isArray(payload) ? payload : [], error: null }
   } catch (error) {
     console.warn('[desktop] Failed to read controller DevTools targets:', error)
-    return []
+    return {
+      available: false,
+      targets: [],
+      error: `Controller CDP endpoint ${browserUrl} is not reachable.`,
+    }
   }
+}
+
+function sendBrokerJson(response, statusCode, payload) {
+  response.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
+  response.end(`${JSON.stringify(payload, null, 2)}\n`)
+}
+
+async function readBrokerRequestJson(request) {
+  const chunks = []
+  for await (const chunk of request) {
+    chunks.push(Buffer.from(chunk))
+  }
+  if (chunks.length === 0) {
+    return {}
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim()
+  if (!raw) {
+    return {}
+  }
+  return JSON.parse(raw)
+}
+
+function brokerRequestAuthorized(request, url) {
+  if (!browserBrokerToken) {
+    return false
+  }
+  const authorization = request.headers.authorization || ''
+  if (authorization === `Bearer ${browserBrokerToken}`) {
+    return true
+  }
+  return url.searchParams.get('token') === browserBrokerToken
+}
+
+function brokerScopeFromUrl(url) {
+  return {
+    projectPath: normalizeText(url.searchParams.get('project_path')),
+    chatId: normalizeText(url.searchParams.get('chat_id')),
+  }
+}
+
+function brokerScopeFromPayload(payload = {}) {
+  return {
+    projectPath: normalizeText(payload.project_path) || normalizeText(payload.projectPath),
+    chatId:
+      normalizeText(payload.chat_id)
+      || normalizeText(payload.chatId)
+      || normalizeText(payload.thread_id)
+      || normalizeText(payload.threadId),
+  }
+}
+
+function brokerMainOwnerContextId() {
+  const ownerContextId = getMainPreviewContextId()
+  if (ownerContextId === null) {
+    throw new Error('Pixel Forge desktop shell is not ready.')
+  }
+  return ownerContextId
+}
+
+function brokerNewTabId(chatId) {
+  const chatPrefix = normalizeText(chatId)?.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 28) || 'agent'
+  return `broker-${chatPrefix}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`
+}
+
+async function openBrokerTab(payload = {}) {
+  const ownerContextId = brokerMainOwnerContextId()
+  const metadata = sanitizeBrowserBrokerMetadata({
+    ...payload,
+    ownerKind: normalizeText(payload.owner_kind) || normalizeText(payload.ownerKind) || 'agent',
+  })
+  const tabId = normalizeText(payload.tab_id) || normalizeText(payload.tabId) || brokerNewTabId(metadata.chatId)
+  const url = normalizeText(payload.url) || 'about:blank'
+  const activate = payload.activate !== false
+  const response = await loadPreviewUrl(ownerContextId, tabId, url, metadata)
+  const previewRecord = getPreviewRecord(ownerContextId, tabId)
+  if (!previewRecord) {
+    throw new Error(`Failed to create broker tab: ${tabId}`)
+  }
+  if (activate) {
+    const context = ensurePreviewContext(ownerContextId)
+    context.activeTabId = tabId
+    context.visible = true
+    applyAllPreviewViews()
+  }
+  const tab = brokerTabPayload(previewRecord)
+  sendPreviewEvent(ownerContextId, {
+    type: 'browser-broker-tab-opened',
+    browser_tab_id: tabId,
+    tab_id: tabId,
+    project_path: metadata.projectPath,
+    chat_id: metadata.chatId,
+    owner_kind: metadata.ownerKind,
+    url: response.target_url,
+    title: response.title,
+    can_go_back: response.can_go_back,
+    can_go_forward: response.can_go_forward,
+    activate,
+  })
+  return { ok: true, tab }
+}
+
+async function brokerEvaluate(previewRecord, expression) {
+  if (!previewRecord?.view || previewRecord.view.webContents.isDestroyed()) {
+    throw new Error('Preview tab is not resident.')
+  }
+  touchPreviewRecord(previewRecord)
+  const result = await previewRecord.view.webContents.executeJavaScript(String(expression || ''), true)
+  return { ok: true, result }
+}
+
+async function brokerClick(previewRecord, selector) {
+  if (!previewRecord?.view || previewRecord.view.webContents.isDestroyed()) {
+    throw new Error('Preview tab is not resident.')
+  }
+  const normalizedSelector = normalizeText(selector)
+  if (!normalizedSelector) {
+    throw new Error('selector is required')
+  }
+  touchPreviewRecord(previewRecord)
+  const target = await previewRecord.view.webContents.executeJavaScript(`
+    (() => {
+      const target = document.querySelector(${JSON.stringify(normalizedSelector)});
+      if (!target) {
+        return { ok: false, error: 'selector-not-found' };
+      }
+      target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      const rect = target.getBoundingClientRect();
+      return {
+        ok: true,
+        tagName: target.tagName,
+        text: (target.innerText || target.textContent || '').trim().slice(0, 300),
+        x: Math.max(0, Math.round(rect.left + rect.width / 2)),
+        y: Math.max(0, Math.round(rect.top + rect.height / 2)),
+        width: rect.width,
+        height: rect.height,
+      };
+    })()
+  `, true)
+  if (!target?.ok) {
+    return { ok: false, error: target?.error || 'selector-not-clickable' }
+  }
+  previewRecord.view.webContents.focus()
+  previewRecord.view.webContents.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+  previewRecord.view.webContents.sendInputEvent({ type: 'mouseDown', x: target.x, y: target.y, button: 'left', clickCount: 1 })
+  await sleep(30)
+  previewRecord.view.webContents.sendInputEvent({ type: 'mouseUp', x: target.x, y: target.y, button: 'left', clickCount: 1 })
+  return { ok: true, target }
+}
+
+async function brokerType(previewRecord, selector, text, options = {}) {
+  if (!previewRecord?.view || previewRecord.view.webContents.isDestroyed()) {
+    throw new Error('Preview tab is not resident.')
+  }
+  const normalizedSelector = normalizeText(selector)
+  if (!normalizedSelector) {
+    throw new Error('selector is required')
+  }
+  const normalizedText = typeof text === 'string' ? text : ''
+  touchPreviewRecord(previewRecord)
+  const focused = await previewRecord.view.webContents.executeJavaScript(`
+    (() => {
+      const target = document.querySelector(${JSON.stringify(normalizedSelector)});
+      if (!target) {
+        return { ok: false, error: 'selector-not-found' };
+      }
+      target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      target.focus();
+      if (${options.clear === false ? 'false' : 'true'} && 'value' in target) {
+        target.value = '';
+        target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      }
+      return {
+        ok: true,
+        tagName: target.tagName,
+        text: (target.innerText || target.textContent || '').trim().slice(0, 300),
+      };
+    })()
+  `, true)
+  if (!focused?.ok) {
+    return { ok: false, error: focused?.error || 'selector-not-typable' }
+  }
+  previewRecord.view.webContents.focus()
+  await previewRecord.view.webContents.insertText(normalizedText)
+  await previewRecord.view.webContents.executeJavaScript(`
+    (() => {
+      const target = document.querySelector(${JSON.stringify(normalizedSelector)});
+      if (!target) return;
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(normalizedText)} }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+    })()
+  `, true)
+  return { ok: true, target: focused }
+}
+
+async function brokerScreenshot(previewRecord, selector = null) {
+  if (!previewRecord?.view || previewRecord.view.webContents.isDestroyed()) {
+    throw new Error('Preview tab is not resident.')
+  }
+  touchPreviewRecord(previewRecord)
+  let rect = undefined
+  const normalizedSelector = normalizeText(selector)
+  if (normalizedSelector) {
+    const targetRect = await previewRecord.view.webContents.executeJavaScript(`
+      (() => {
+        const target = document.querySelector(${JSON.stringify(normalizedSelector)});
+        if (!target) {
+          return null;
+        }
+        target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const rect = target.getBoundingClientRect();
+        return {
+          x: Math.max(0, Math.floor(rect.left)),
+          y: Math.max(0, Math.floor(rect.top)),
+          width: Math.max(1, Math.ceil(rect.width)),
+          height: Math.max(1, Math.ceil(rect.height)),
+        };
+      })()
+    `, true)
+    if (!targetRect) {
+      return { ok: false, error: 'selector-not-found' }
+    }
+    rect = targetRect
+  }
+  const image = await previewRecord.view.webContents.capturePage(rect)
+  const png = image.toPNG()
+  return {
+    ok: true,
+    mime_type: 'image/png',
+    data_url: `data:image/png;base64,${png.toString('base64')}`,
+    size_bytes: png.length,
+    rect: rect ?? null,
+  }
+}
+
+async function handleBrowserBrokerRequest(request, response) {
+  const url = new URL(request.url || '/', browserBrokerUrl || 'http://127.0.0.1')
+  if (!brokerRequestAuthorized(request, url)) {
+    sendBrokerJson(response, 401, { error: 'unauthorized' })
+    return
+  }
+
+  try {
+    if (request.method === 'GET' && url.pathname === '/status') {
+      sendBrokerJson(response, 200, {
+        ok: true,
+        pid: process.pid,
+        base_url: browserBrokerUrl,
+        controller_cdp_url: controllerDevtoolsBrowserUrl(),
+        tab_count: previewViews.size,
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/tabs') {
+      sendBrokerJson(response, 200, { tabs: listBrokerTabs(brokerScopeFromUrl(url)) })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/tabs') {
+      const payload = await readBrokerRequestJson(request)
+      sendBrokerJson(response, 200, await openBrokerTab(payload))
+      return
+    }
+
+    const tabMatch = url.pathname.match(/^\/tabs\/([^/]+)(?:\/([^/]+))?$/)
+    if (tabMatch) {
+      const tabId = decodeURIComponent(tabMatch[1])
+      const action = tabMatch[2] || ''
+      const scope = brokerScopeFromUrl(url)
+      const previewRecord = getBrokerPreviewRecord(tabId, scope)
+      if (!previewRecord) {
+        sendBrokerJson(response, 404, { error: 'tab-not-found', tab_id: tabId })
+        return
+      }
+
+      if (request.method === 'GET' && !action) {
+        sendBrokerJson(response, 200, { tab: brokerTabPayload(previewRecord) })
+        return
+      }
+
+      if (request.method === 'POST' && action === 'navigate') {
+        const payload = await readBrokerRequestJson(request)
+        const targetUrl = normalizeText(payload.url)
+        if (!targetUrl) {
+          throw new Error('url is required')
+        }
+        const loadResponse = await loadPreviewUrl(previewRecord.ownerContextId, previewRecord.tabId, targetUrl, {
+          ...brokerScopeFromPayload(payload),
+          ownerKind: payload.owner_kind || payload.ownerKind || previewRecord.ownerKind,
+        })
+        sendBrokerJson(response, 200, { ok: true, response: loadResponse, tab: brokerTabPayload(previewRecord) })
+        return
+      }
+
+      if (request.method === 'GET' && action === 'inspect') {
+        const inspection = await inspectPreviewView(previewRecord.ownerContextId, previewRecord.tabId, [])
+        sendBrokerJson(response, 200, { ok: true, inspection })
+        return
+      }
+
+      if (request.method === 'GET' && action === 'devtools') {
+        const devtools = await inspectPreviewDevtoolsTarget(previewRecord.view)
+        sendBrokerJson(response, 200, { ok: true, ...devtools })
+        return
+      }
+
+      if (request.method === 'POST' && action === 'evaluate') {
+        const payload = await readBrokerRequestJson(request)
+        sendBrokerJson(response, 200, await brokerEvaluate(previewRecord, payload.expression || payload.script || payload.code))
+        return
+      }
+
+      if (request.method === 'POST' && action === 'click') {
+        const payload = await readBrokerRequestJson(request)
+        sendBrokerJson(response, 200, await brokerClick(previewRecord, payload.selector))
+        return
+      }
+
+      if (request.method === 'POST' && action === 'type') {
+        const payload = await readBrokerRequestJson(request)
+        sendBrokerJson(response, 200, await brokerType(previewRecord, payload.selector, payload.text, payload))
+        return
+      }
+
+      if (request.method === 'POST' && action === 'screenshot') {
+        const payload = await readBrokerRequestJson(request)
+        sendBrokerJson(response, 200, await brokerScreenshot(previewRecord, payload.selector))
+        return
+      }
+    }
+
+    sendBrokerJson(response, 404, { error: 'not-found' })
+  } catch (error) {
+    sendBrokerJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function writeBrowserBrokerManifest() {
+  if (!browserBrokerUrl || !browserBrokerToken) {
+    return
+  }
+  await ensureAppStateDir()
+  await fsPromises.writeFile(
+    BROWSER_BROKER_MANIFEST_PATH,
+    `${JSON.stringify({
+      version: 1,
+      pid: process.pid,
+      baseUrl: browserBrokerUrl,
+      token: browserBrokerToken,
+      controllerCdpUrl: controllerDevtoolsBrowserUrl(),
+      createdAt: new Date().toISOString(),
+    }, null, 2)}\n`,
+    'utf8',
+  )
+}
+
+function startBrowserBroker() {
+  if (browserBrokerServer) {
+    return
+  }
+  browserBrokerToken = randomBytes(24).toString('hex')
+  browserBrokerServer = createServer((request, response) => {
+    void handleBrowserBrokerRequest(request, response)
+  })
+  browserBrokerServer.listen(0, '127.0.0.1', () => {
+    const address = browserBrokerServer?.address()
+    if (address && typeof address === 'object') {
+      browserBrokerUrl = `http://127.0.0.1:${address.port}`
+      void writeBrowserBrokerManifest()
+      console.log(`[pixel-forge] Browser broker listening on ${browserBrokerUrl}`)
+    }
+  })
+}
+
+function stopBrowserBroker() {
+  if (browserBrokerServer) {
+    browserBrokerServer.close()
+    browserBrokerServer = null
+  }
+  browserBrokerUrl = null
+  browserBrokerToken = null
+  void fsPromises.rm(BROWSER_BROKER_MANIFEST_PATH, { force: true }).catch(() => {})
 }
 
 function getContextWebContents(ownerContextId) {
@@ -324,6 +719,126 @@ function touchPreviewRecord(previewRecord) {
   if (previewRecord) {
     previewRecord.lastUsedAt = Date.now()
   }
+}
+
+function sanitizeBrowserBrokerMetadata(payload = {}) {
+  return {
+    projectPath:
+      normalizeText(payload?.projectPath)
+      || normalizeText(payload?.project_path)
+      || null,
+    chatId:
+      normalizeText(payload?.chatId)
+      || normalizeText(payload?.chat_id)
+      || normalizeText(payload?.threadId)
+      || normalizeText(payload?.thread_id)
+      || null,
+    ownerKind:
+      normalizeText(payload?.ownerKind)
+      || normalizeText(payload?.owner_kind)
+      || null,
+  }
+}
+
+function updatePreviewRecordOwnership(previewRecord, metadata = {}) {
+  if (!previewRecord) {
+    return
+  }
+  const sanitized = sanitizeBrowserBrokerMetadata(metadata)
+  if (sanitized.projectPath) {
+    previewRecord.projectPath = sanitized.projectPath
+  }
+  if (sanitized.chatId) {
+    previewRecord.chatId = sanitized.chatId
+  }
+  if (sanitized.ownerKind) {
+    previewRecord.ownerKind = sanitized.ownerKind
+  }
+}
+
+function previewRecordMatchesBrokerScope(previewRecord, filters = {}) {
+  const projectPath = normalizeText(filters.projectPath) || normalizeText(filters.project_path)
+  const chatId =
+    normalizeText(filters.chatId)
+    || normalizeText(filters.chat_id)
+    || normalizeText(filters.threadId)
+    || normalizeText(filters.thread_id)
+  if (projectPath && previewRecord?.projectPath !== projectPath) {
+    return false
+  }
+  if (chatId && previewRecord?.chatId !== chatId) {
+    return false
+  }
+  return true
+}
+
+function brokerTabPayload(previewRecord) {
+  const view = previewRecord?.view
+  const targetUrl = currentPreviewUrl(previewRecord, view?.webContents.getURL() || '')
+  return {
+    tab_id: previewRecord?.tabId || '',
+    browser_tab_id: previewRecord?.tabId || '',
+    project_path: previewRecord?.projectPath ?? null,
+    chat_id: previewRecord?.chatId ?? null,
+    owner_kind: previewRecord?.ownerKind ?? null,
+    url: targetUrl,
+    title: currentPreviewTitle(previewRecord, targetUrl),
+    can_go_back: previewCanGoBack(view),
+    can_go_forward: previewCanGoForward(view),
+    web_contents_id: previewRecord?.webContentsId ?? null,
+    active:
+      Boolean(previewRecord)
+      && previewContexts.get(previewRecord.ownerContextId)?.activeTabId === previewRecord.tabId,
+    resident: Boolean(view && !view.webContents.isDestroyed()),
+    last_used_at: previewRecord?.lastUsedAt ?? null,
+  }
+}
+
+function browserBrokerContextPayload(previewRecord) {
+  if (!previewRecord || !browserBrokerUrl) {
+    return {
+      browser_broker_available: false,
+    }
+  }
+  const projectFlag = previewRecord.projectPath
+    ? ` --project ${JSON.stringify(previewRecord.projectPath)}`
+    : ''
+  const chatFlag = previewRecord.chatId
+    ? ` --chat ${JSON.stringify(previewRecord.chatId)}`
+    : ''
+  return {
+    browser_broker_available: true,
+    browser_broker_tab_id: previewRecord.tabId,
+    browser_broker_project_path: previewRecord.projectPath ?? null,
+    browser_broker_chat_id: previewRecord.chatId ?? null,
+    browser_broker_open_command:
+      `pixel-forge browser open <url>${projectFlag}${chatFlag}`,
+    browser_broker_inspect_command:
+      `pixel-forge browser inspect ${previewRecord.tabId}${projectFlag}${chatFlag}`,
+    browser_broker_screenshot_command:
+      `pixel-forge browser screenshot ${previewRecord.tabId}${projectFlag}${chatFlag} --out /tmp/pixel-forge-preview.png`,
+    browser_broker_devtools_command:
+      `pixel-forge browser devtools ${previewRecord.tabId}${projectFlag}${chatFlag}`,
+  }
+}
+
+function listBrokerTabs(filters = {}) {
+  return Array.from(previewViews.values())
+    .filter((previewRecord) => previewRecordMatchesBrokerScope(previewRecord, filters))
+    .sort((left, right) => (right.lastUsedAt || 0) - (left.lastUsedAt || 0))
+    .map((previewRecord) => brokerTabPayload(previewRecord))
+}
+
+function getBrokerPreviewRecord(tabId, filters = {}) {
+  const normalizedTabId = normalizeText(tabId)
+  if (!normalizedTabId) {
+    return null
+  }
+  const previewRecord = getPreviewRecordForTabId(normalizedTabId)
+  if (!previewRecord || !previewRecordMatchesBrokerScope(previewRecord, filters)) {
+    return null
+  }
+  return previewRecord
 }
 
 function broadcastAppEvent(event) {
@@ -1076,6 +1591,7 @@ function sanitizeBounds(bounds) {
     y: Math.max(0, Math.round(Number(bounds?.y) || 0)),
     width: Math.max(0, Math.round(Number(bounds?.width) || 0)),
     height: Math.max(0, Math.round(Number(bounds?.height) || 0)),
+    borderRadius: Math.max(0, Math.round(Number(bounds?.borderRadius) || 0)),
   }
 }
 
@@ -1133,6 +1649,9 @@ function applyPreviewView(ownerContextId) {
   if (context.attachedView !== view) {
     mainWindow.contentView.addChildView(view)
     context.attachedView = view
+  }
+  if (typeof view.setBorderRadius === 'function') {
+    view.setBorderRadius(Math.max(0, Math.round(Number(context.bounds.borderRadius) || 0)))
   }
   view.setBounds({
     x: baseBounds.x + context.bounds.x,
@@ -1543,10 +2062,11 @@ async function settleAbortedNavigation(view, fallbackUrl) {
   }
 }
 
-function getOrCreatePreviewView(ownerContextId, tabId) {
+function getOrCreatePreviewView(ownerContextId, tabId, metadata = {}) {
   const previewKey = makePreviewKey(ownerContextId, tabId)
   const existing = previewViews.get(previewKey)
   if (existing) {
+    updatePreviewRecordOwnership(existing, metadata)
     touchPreviewRecord(existing)
     return existing.view
   }
@@ -1570,8 +2090,12 @@ function getOrCreatePreviewView(ownerContextId, tabId) {
     reportedTitle: null,
     surfaceKind: 'dom',
     pdfContext: null,
+    projectPath: null,
+    chatId: null,
+    ownerKind: null,
     lastUsedAt: Date.now(),
   })
+  updatePreviewRecordOwnership(previewViews.get(previewKey), metadata)
   previewKeyByWebContentsId.set(view.webContents.id, previewKey)
   registerViewEvents(ownerContextId, tabId, view)
   return view
@@ -1861,9 +2385,10 @@ async function readPreviewPdfDocument(previewRecord, options = {}) {
   }
 }
 
-async function loadPreviewUrl(ownerContextId, tabId, url) {
-  const view = getOrCreatePreviewView(ownerContextId, tabId)
+async function loadPreviewUrl(ownerContextId, tabId, url, metadata = {}) {
+  const view = getOrCreatePreviewView(ownerContextId, tabId, metadata)
   const previewRecord = getPreviewRecord(ownerContextId, tabId)
+  updatePreviewRecordOwnership(previewRecord, metadata)
   const context = ensurePreviewContext(ownerContextId)
   context.activeTabId = tabId
   context.visible = true
@@ -1956,13 +2481,25 @@ async function inspectPreviewDevtoolsTarget(view) {
     return {}
   }
 
-  const targets = await readControllerDevtoolsTargets()
-  const matchedTarget = targets.find(
+  const targetSnapshot = await readControllerDevtoolsTargetSnapshot()
+  const matchedTarget = targetSnapshot.targets.find(
     (entry) => entry && typeof entry === 'object' && entry.id === targetId
   ) || null
+  const pageWebsocketUrl =
+    typeof matchedTarget?.webSocketDebuggerUrl === 'string'
+      ? matchedTarget.webSocketDebuggerUrl
+      : null
+  const devtoolsAttachAvailable = targetSnapshot.available && Boolean(pageWebsocketUrl)
 
   return {
-    devtools_browser_url: browserUrl,
+    ...(devtoolsAttachAvailable ? { devtools_browser_url: browserUrl } : {}),
+    devtools_attach_available: devtoolsAttachAvailable,
+    ...(devtoolsAttachAvailable
+      ? {}
+      : {
+          devtools_attach_unavailable_reason:
+            targetSnapshot.error || 'Controller CDP endpoint did not expose a websocket for this preview target.',
+        }),
     devtools_target_id: targetId,
     devtools_target_type: normalizeText(targetInfo?.type),
     devtools_target_url:
@@ -1973,10 +2510,7 @@ async function inspectPreviewDevtoolsTarget(view) {
       typeof matchedTarget?.title === 'string'
         ? matchedTarget.title
         : normalizeText(targetInfo?.title),
-    devtools_page_websocket_url:
-      typeof matchedTarget?.webSocketDebuggerUrl === 'string'
-        ? matchedTarget.webSocketDebuggerUrl
-        : null,
+    devtools_page_websocket_url: pageWebsocketUrl,
     devtools_frontend_url:
       typeof matchedTarget?.devtoolsFrontendUrl === 'string'
         ? matchedTarget.devtoolsFrontendUrl
@@ -2011,6 +2545,7 @@ async function inspectPreviewView(ownerContextId, tabId, selectionHints = []) {
       ? {
           ...inspection,
           ...devtoolsInspection,
+          ...browserBrokerContextPayload(previewRecord),
         }
       : (
           Object.keys(devtoolsInspection).length > 0
@@ -2024,6 +2559,7 @@ async function inspectPreviewView(ownerContextId, tabId, selectionHints = []) {
                 visible_interactives: [],
                 selection_matches: [],
                 ...devtoolsInspection,
+                ...browserBrokerContextPayload(previewRecord),
               }
             : null
         ),
@@ -2057,6 +2593,23 @@ async function capturePreviewRegion(tabId, rect) {
 
   const jpeg = output.toJPEG(80)
   return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+}
+
+async function capturePreviewSnapshot(ownerContextId, tabId) {
+  const previewRecord = getPreviewRecord(ownerContextId, tabId)
+  if (!previewRecord) {
+    throw new Error(`Unknown preview tab: ${tabId}`)
+  }
+  const view = previewRecord.view
+  if (!view || view.webContents.isDestroyed()) {
+    throw new Error(`Preview tab is not resident: ${tabId}`)
+  }
+  touchPreviewRecord(previewRecord)
+  const image = await view.webContents.capturePage()
+  return {
+    ok: true,
+    snapshot_data_url: `data:image/png;base64,${image.toPNG().toString('base64')}`,
+  }
 }
 
 async function showPickListOverlay(ownerContextId, payload) {
@@ -2305,6 +2858,7 @@ app.whenReady().then(() => {
     void syncControllerUpdateApplyStateFromDisk()
   })
   focusOrCreateMainWindow()
+  startBrowserBroker()
 
   ipcMain.handle('pixel-forge-preview:load', async (event, payload) => {
     const ownerContextId = event.sender.id
@@ -2314,7 +2868,16 @@ app.whenReady().then(() => {
     if (!tabId || !url) {
       throw new Error('tabId and url are required')
     }
-    const response = await loadPreviewUrl(ownerContextId, tabId, url)
+    const response = await loadPreviewUrl(ownerContextId, tabId, url, {
+      projectPath: payload?.projectPath,
+      project_path: payload?.project_path,
+      chatId: payload?.chatId,
+      chat_id: payload?.chat_id,
+      threadId: payload?.threadId,
+      thread_id: payload?.thread_id,
+      ownerKind: payload?.ownerKind,
+      owner_kind: payload?.owner_kind,
+    })
     emitPreviewInputState(ownerContextId)
     return response
   })
@@ -2398,6 +2961,10 @@ app.whenReady().then(() => {
       String(payload?.tabId || ''),
       Array.isArray(payload?.selectionHints) ? payload.selectionHints : [],
     )
+  })
+
+  ipcMain.handle('pixel-forge-preview:capture-snapshot', async (event, payload) => {
+    return capturePreviewSnapshot(event.sender.id, String(payload?.tabId || ''))
   })
 
   ipcMain.handle('pixel-forge-preview:set-bounds', async (event, bounds) => {
@@ -2643,6 +3210,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopBrowserBroker()
   destroyAllPreviewSurfaces()
   unwatchFile(PENDING_CONTROLLER_UPDATE_PATH)
   unwatchFile(CONTROLLER_UPDATE_APPLY_STATE_PATH)

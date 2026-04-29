@@ -175,7 +175,13 @@ interface BrowserPreviewEvent {
     | 'browser-tab-closed'
     | 'browser-load-failed'
     | 'browser-new-tab-requested'
+    | 'browser-broker-tab-opened'
   browser_tab_id: string
+  tab_id?: string
+  project_path?: string | null
+  chat_id?: string | null
+  owner_kind?: string | null
+  activate?: boolean
   url?: string
   title?: string
   can_go_back?: boolean
@@ -542,6 +548,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   const [workspacePreviewCandidatesLoading, setWorkspacePreviewCandidatesLoading] = useState(false)
   const [startingWorkspacePreviewCandidateId, setStartingWorkspacePreviewCandidateId] = useState<string | null>(null)
   const [isPixelForgeWorkspace, setIsPixelForgeWorkspace] = useState(false)
+  const [previewOcclusionSnapshot, setPreviewOcclusionSnapshot] = useState<string | null>(null)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
 
@@ -1292,13 +1299,13 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       return
     }
 
-    if (hasBlockingOverlay()) {
+    const activePreviewTab = getActivePreviewTab()
+    const host = previewHostRef.current
+
+    if (hasBlockingOverlay(host)) {
       await desktopPreview.hide()
       return
     }
-
-    const activePreviewTab = getActivePreviewTab()
-    const host = previewHostRef.current
 
     if (!activePreviewTab || activePreviewTab.mode !== 'browser' || !activePreviewTab.browserTabId || !host) {
       await desktopPreview.hide()
@@ -1311,16 +1318,38 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       return
     }
 
+    const computedStyle = window.getComputedStyle(host)
+    const borderRadius = Math.max(
+      Number.parseFloat(computedStyle.borderTopLeftRadius) || 0,
+      Number.parseFloat(computedStyle.borderTopRightRadius) || 0,
+      Number.parseFloat(computedStyle.borderBottomRightRadius) || 0,
+      Number.parseFloat(computedStyle.borderBottomLeftRadius) || 0,
+    )
+
     await desktopPreview.show(activePreviewTab.browserTabId)
     await desktopPreview.setBounds({
       x: rect.left,
       y: rect.top,
       width: rect.width,
       height: rect.height,
+      borderRadius,
     })
   }, [getActivePreviewTab])
 
-  useDesktopPreviewOverlayGuard(desktopPreviewRef, updateEmbeddedPreviewBounds)
+  const getActiveBrowserTabIdForOverlay = useCallback(() => {
+    const activePreviewTab = getActivePreviewTab()
+    return activePreviewTab?.mode === 'browser' ? activePreviewTab.browserTabId : null
+  }, [getActivePreviewTab])
+
+  useDesktopPreviewOverlayGuard(
+    desktopPreviewRef,
+    updateEmbeddedPreviewBounds,
+    {
+      previewHostRef,
+      getActiveTabId: getActiveBrowserTabIdForOverlay,
+      setSnapshot: setPreviewOcclusionSnapshot,
+    }
+  )
 
   const loadApp = useCallback(async (
     urlOverride?: string,
@@ -1380,6 +1409,9 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       const data = await desktopPreview.load({
         tabId: resolvedTabId,
         url: urlToLoad,
+        projectPath,
+        chatId: activeThreadKey,
+        ownerKind: 'operator',
       })
       const resolvedTargetUrl = normalizePersistedPreviewUrl(data.target_url, urlToLoad) || urlToLoad
 
@@ -1437,6 +1469,8 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     }
   }, [
     pushUrlHistory,
+    activeThreadKey,
+    projectPath,
     sendBrowserCommand,
     setActivePreviewTabId,
     setAuthIssue,
@@ -2556,6 +2590,110 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   ])
 
   const handleBrowserPreviewEvent = useCallback((payload: BrowserPreviewEvent) => {
+    if (payload.type === 'browser-broker-tab-opened') {
+      const brokerTabId = (payload.tab_id || payload.browser_tab_id || '').trim()
+      if (!brokerTabId) {
+        return
+      }
+
+      const payloadProjectPath = typeof payload.project_path === 'string'
+        ? payload.project_path.trim()
+        : ''
+      if (payloadProjectPath && payloadProjectPath !== projectPath) {
+        return
+      }
+
+      const payloadChatId = typeof payload.chat_id === 'string'
+        ? payload.chat_id.trim()
+        : ''
+      if (payloadChatId && payloadChatId !== activeThreadKey) {
+        return
+      }
+
+      const existingTab =
+        previewTabsRef.current.find((entry) => entry.id === brokerTabId)
+        ?? getPreviewTabByBrowserId(brokerTabId)
+      const rawUrl = typeof payload.url === 'string' ? payload.url : ''
+      const nextUrl =
+        normalizePersistedPreviewUrl(rawUrl, existingTab?.url || '')
+        || rawUrl.trim()
+        || existingTab?.url
+        || ''
+      const nextTitle = typeof payload.title === 'string' ? payload.title : existingTab?.title
+      const shouldActivate = payload.activate !== false
+
+      const existingIndex = previewTabsRef.current.findIndex(
+        (entry) => entry.id === brokerTabId || entry.browserTabId === brokerTabId
+      )
+      const adoptedTabId = existingIndex >= 0
+        ? previewTabsRef.current[existingIndex]?.id || brokerTabId
+        : brokerTabId
+      const nextTabs = existingIndex >= 0
+        ? previewTabsRef.current.map((entry, index) =>
+            index === existingIndex
+              ? {
+                  ...entry,
+                  id: entry.id || brokerTabId,
+                  mode: 'browser' as const,
+                  url: nextUrl,
+                  title: getPreviewTabTitle(nextUrl, nextTitle, index + 1),
+                  proxySessionId: null,
+                  browserTabId: brokerTabId,
+                  canGoBack:
+                    typeof payload.can_go_back === 'boolean'
+                      ? payload.can_go_back
+                      : entry.canGoBack,
+                  canGoForward:
+                    typeof payload.can_go_forward === 'boolean'
+                      ? payload.can_go_forward
+                      : entry.canGoForward,
+                  frameSrc: 'about:blank',
+                  snapshotDataUrl: payload.snapshot_data_url || entry.snapshotDataUrl,
+                  localTarget: null,
+                  workspacePreview: null,
+                }
+              : entry
+          )
+        : [
+            ...previewTabsRef.current,
+            {
+              ...createPreviewTab(
+                nextUrl,
+                nextTitle ?? null,
+                previewTabsRef.current.length + 1
+              ),
+              id: brokerTabId,
+              mode: 'browser' as const,
+              browserTabId: brokerTabId,
+              canGoBack: Boolean(payload.can_go_back),
+              canGoForward: Boolean(payload.can_go_forward),
+              snapshotDataUrl: payload.snapshot_data_url || null,
+            },
+          ]
+
+      previewTabsRef.current = nextTabs
+      setPreviewTabs(nextTabs)
+
+      if (shouldActivate) {
+        activeTabIdRef.current = adoptedTabId
+        setActivePreviewTabId(adoptedTabId)
+        setTargetUrl(nextUrl)
+        setAuthIssue(null)
+        setShowUrlHistory(false)
+        if (nextUrl) {
+          pushUrlHistory(nextUrl)
+          void syncStorePreviewUrl(nextUrl)
+        }
+      }
+
+      window.setTimeout(() => {
+        void updateEmbeddedPreviewBounds()
+        void syncTabSelections(adoptedTabId, { reveal: shouldActivate })
+        void syncActivePreviewSelectionMode(adoptedTabId)
+      }, 150)
+      return
+    }
+
     const sourceTab = getPreviewTabByBrowserId(payload.browser_tab_id)
     const activePreviewTab = getActivePreviewTab()
 
@@ -2735,20 +2873,26 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     }
   }, [
     addElement,
+    activeThreadKey,
     getActivePreviewTab,
     getPreviewTabByBrowserId,
     hasEmbeddedBrowserPreview,
     openUrlInPreviewTab,
+    projectPath,
     pushUrlHistory,
     removeElement,
     removeElements,
     replaceElement,
+    setActivePreviewTabId,
     setActivePreviewTool,
     setAuthIssue,
     setPreviewTabs,
+    setShowUrlHistory,
     setTargetUrl,
+    syncActivePreviewSelectionMode,
     syncStorePreviewUrl,
     syncTabSelections,
+    updateEmbeddedPreviewBounds,
   ])
 
   useEffect(() => {
@@ -2837,6 +2981,11 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     viewportMode === 'phone'
       ? 'h-full overflow-hidden rounded-[28px] border border-border bg-white shadow-2xl'
       : 'h-full overflow-hidden rounded-xl border border-border bg-white shadow-xl'
+
+  const previewApertureClassName =
+    viewportMode === 'phone'
+      ? 'absolute inset-[3px] overflow-hidden rounded-[25px] bg-white'
+      : 'absolute inset-px overflow-hidden rounded-[11px] bg-white'
 
   const viewportModes: {
     mode: ViewportMode
@@ -3041,7 +3190,10 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 </Button>
               </div>
               {showUrlHistory && scopedUrlHistory.length > 0 && (
-                <div className="mt-1 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md">
+                <div
+                  data-pixel-forge-overlay="true"
+                  className="mt-1 rounded-lg border border-border bg-popover/95 shadow-xl backdrop-blur-md"
+                >
                   <div className="max-h-48 overflow-y-auto py-1">
                     {scopedUrlHistory.map((url) => (
                       <button
@@ -3225,8 +3377,18 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
               {hasEmbeddedBrowserPreview && activePreviewTab?.mode !== 'proxy' && (
                 <div
                   ref={previewHostRef}
-                  className="absolute inset-0 bg-white"
-                />
+                  className={previewApertureClassName}
+                >
+                  {previewOcclusionSnapshot && (
+                    <img
+                      src={previewOcclusionSnapshot}
+                      alt=""
+                      aria-hidden="true"
+                      className="h-full w-full select-none object-cover"
+                      draggable={false}
+                    />
+                  )}
+                </div>
               )}
             </div>
           </div>
