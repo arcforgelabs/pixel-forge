@@ -628,6 +628,7 @@ class BrowserPreviewCommandRequest(BaseModel):
         "deselect",
         "apply",
         "refresh",
+        "click",
     ]
     enabled: bool | None = None
     selectionId: str | None = None
@@ -635,6 +636,8 @@ class BrowserPreviewCommandRequest(BaseModel):
     xpaths: list[str] | None = None
     selections: list[AppliedSelectionRequest] | None = None
     reveal: bool | None = None
+    x: float | None = None
+    y: float | None = None
 
 
 class LocalTargetStartRequest(BaseModel):
@@ -2341,6 +2344,14 @@ async def browser_preview_command(payload: BrowserPreviewCommandRequest):
             )
         elif payload.action == "refresh":
             tab = await MANAGED_BROWSER_PREVIEW.refresh_tab(payload.browser_tab_id)
+        elif payload.action == "click":
+            if payload.x is None or payload.y is None:
+                raise HTTPException(status_code=422, detail="x and y are required")
+            tab = await MANAGED_BROWSER_PREVIEW.click_tab(
+                payload.browser_tab_id,
+                payload.x,
+                payload.y,
+            )
         else:
             raise HTTPException(status_code=400, detail="Unsupported browser command")
     except RuntimeError as exc:

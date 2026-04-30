@@ -1203,15 +1203,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         ? "logo-forge"
         : "screenshot";
 
-  const [settingsPortalTarget, setSettingsPortalTarget] =
-    useState<HTMLElement | null>(null);
   const [projectSettingsPortalTarget, setProjectSettingsPortalTarget] =
     useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
-    setSettingsPortalTarget(document.getElementById("pf-settings-pane-root"));
     setProjectSettingsPortalTarget(
       document.getElementById("pf-project-settings-pane-root")
     );
@@ -1704,45 +1701,41 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         </DialogContent>
       </Dialog>
 
-      {/* Full-page Settings surface, portaled into the main content area */}
-      {viewingSettings && settingsPortalTarget
-        ? createPortal(
-            <div className="flex h-full flex-col bg-background">
-              <div className="flex items-start justify-between gap-4 border-b border-border/40 px-8 py-5">
-                <div>
-                  <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                    Settings
-                  </h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Control the Pixel Forge runtime, live editor lanes, and installed skills.
-                  </p>
-                </div>
+      <Dialog open={viewingSettings} onOpenChange={setViewingSettings}>
+        <DialogContent
+          showCloseButton={false}
+          className="flex h-[min(760px,calc(100vh-48px))] w-[min(960px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden p-0 sm:rounded-xl"
+        >
+          <Tabs
+            defaultValue="application"
+            orientation="vertical"
+            className="flex min-h-0 flex-1"
+          >
+            <div className="flex w-56 shrink-0 flex-col border-r border-border/40 bg-muted/15">
+              <div className="flex h-14 items-center justify-between px-3">
+                <DialogTitle className="text-sm font-semibold">Settings</DialogTitle>
                 <Button
                   variant="ghost"
                   size="icon"
                   onClick={() => setViewingSettings(false)}
                   aria-label="Close settings"
+                  className="h-9 w-9"
                 >
                   <X className="h-4 w-4" />
                 </Button>
               </div>
 
-              <Tabs
-                defaultValue="application"
-                className="flex min-h-0 flex-1 flex-col"
-              >
-                <div className="border-b border-border/30 px-8 pt-4">
-                  <TabsList className="bg-transparent p-0 h-auto gap-1">
+              <TabsList className="flex h-auto flex-col items-stretch justify-start gap-1 bg-transparent p-2">
                     <TabsTrigger
                       value="application"
-                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
                       Application
                     </TabsTrigger>
                     <TabsTrigger
                       value={modeTabValue}
-                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
                     >
                       {modeTabValue === "live-editor" ? (
                         <Radio className="h-3.5 w-3.5" />
@@ -1752,24 +1745,38 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       {modeTabValue === "live-editor" ? "Live Editor" : "Screenshot"}
                     </TabsTrigger>
                     <TabsTrigger
+                      value="agents"
+                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Agents
+                    </TabsTrigger>
+                    <TabsTrigger
                       value="skills"
-                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
                     >
                       <BookOpen className="h-3.5 w-3.5" />
                       Skills
                     </TabsTrigger>
                     <TabsTrigger
                       value="general"
-                      className="gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider"
+                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
                     >
                       <Palette className="h-3.5 w-3.5" />
                       General
                     </TabsTrigger>
-                  </TabsList>
-                </div>
+              </TabsList>
+            </div>
 
-                <ScrollArea className="min-h-0 flex-1">
-                  <div className="mx-auto w-full max-w-5xl px-8 py-6">
+            <div className="flex min-w-0 flex-1 flex-col bg-background">
+              <div className="border-b border-border/40 px-6 py-4">
+                <p className="text-sm text-muted-foreground">
+                  Control the Pixel Forge runtime, live editor lanes, and installed skills.
+                </p>
+              </div>
+
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="mx-auto w-full max-w-3xl px-6 py-5">
                     <TabsContent
                       value="application"
                       className="mt-0 space-y-4"
@@ -2321,57 +2328,59 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     </TabsContent>
 
                     <TabsContent
-                      value="general"
+                      value="agents"
                       className="mt-0 space-y-4"
                     >
-                      <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <Label className="text-sm font-medium">Default Agent</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              New chats start on this agent until the first send binds a real backend lane.
-                            </p>
+                      <div className="space-y-4">
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <Label className="text-sm font-medium">Default Agent</Label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                New chats start on this agent until the first send binds a real backend lane.
+                              </p>
+                            </div>
+                            <Select
+                              value={defaultAgentType}
+                              onValueChange={(value) => setDefaultAgentType(value)}
+                            >
+                              <SelectTrigger className="h-9 w-[160px] text-xs">
+                                {defaultAgentType === "claude"
+                                  ? "Claude Code"
+                                  : defaultAgentType === "codex"
+                                    ? "Codex"
+                                    : capitalize(defaultAgentType)}
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="claude">Claude Code</SelectItem>
+                                <SelectItem value="codex">Codex</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                          <Select
-                            value={defaultAgentType}
-                            onValueChange={(value) => setDefaultAgentType(value)}
-                          >
-                            <SelectTrigger className="h-9 w-[160px] text-xs">
-                              {defaultAgentType === "claude"
-                                ? "Claude Code"
-                                : defaultAgentType === "codex"
-                                  ? "Codex"
-                                  : capitalize(defaultAgentType)}
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="claude">Claude Code</SelectItem>
-                              <SelectItem value="codex">Codex</SelectItem>
-                            </SelectContent>
-                          </Select>
+
+                          <div className="flex items-center justify-between gap-4 border-t border-border/40 pt-4">
+                            <div>
+                              <Label className="text-sm font-medium">Default Chat Mode</Label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                New chats default to this workspace mode.
+                              </p>
+                            </div>
+                            <Select
+                              value={defaultWorkspaceMode}
+                              onValueChange={(value) => setDefaultWorkspaceMode(value as "root" | "clone")}
+                            >
+                              <SelectTrigger className="h-9 w-[160px] text-xs">
+                                {defaultWorkspaceMode === "root" ? "Root" : "Clone"}
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="root">Root</SelectItem>
+                                <SelectItem value="clone">Clone</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
 
-                        <div className="flex items-center justify-between border-t border-border/40 pt-4">
-                          <div>
-                            <Label className="text-sm font-medium">Default Chat Mode</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              New chats default to this workspace mode.
-                            </p>
-                          </div>
-                          <Select
-                            value={defaultWorkspaceMode}
-                            onValueChange={(value) => setDefaultWorkspaceMode(value as "root" | "clone")}
-                          >
-                            <SelectTrigger className="h-9 w-[160px] text-xs">
-                              {defaultWorkspaceMode === "root" ? "Root" : "Clone"}
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="root">Root</SelectItem>
-                              <SelectItem value="clone">Clone</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-4 border-t border-border/40 pt-4">
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
                             <Label className="text-sm font-medium">Claude Defaults</Label>
                             <p className="mt-1 text-xs text-muted-foreground">
@@ -2381,7 +2390,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/60">
+                              <span className="text-[10px] uppercase tracking-normal text-muted-foreground/60">
                                 pinned version
                               </span>
                               <Select
@@ -2465,7 +2474,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           </div>
                         </div>
 
-                        <div className="space-y-4 border-t border-border/40 pt-4">
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
                             <Label className="text-sm font-medium">Codex Defaults</Label>
                             <p className="mt-1 text-xs text-muted-foreground">
@@ -2515,8 +2524,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                             </Select>
                           </div>
                         </div>
+                      </div>
+                    </TabsContent>
 
-                        <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                    <TabsContent
+                      value="general"
+                      className="mt-0 space-y-4"
+                    >
+                      <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                        <div className="flex items-center justify-between">
                           <Label htmlFor="settings-page-image-gen" className="text-sm font-medium">
                             DALL-E Image Generation
                           </Label>
@@ -2551,13 +2567,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         </div>
                       </div>
                     </TabsContent>
-                  </div>
-                </ScrollArea>
-              </Tabs>
-            </div>,
-            settingsPortalTarget
-          )
-        : null}
+                </div>
+              </ScrollArea>
+            </div>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
 
       {/* Full-page Project Settings surface, portaled into the main content area */}
       {projectSettingsPath && projectSettingsProject && projectSettingsPortalTarget

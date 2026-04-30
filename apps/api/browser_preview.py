@@ -959,6 +959,14 @@ class ManagedBrowserPreviewManager:
         await self._schedule_snapshot(tab.id)
         return tab
 
+    async def click_tab(self, browser_tab_id: str, x: float, y: float) -> ManagedBrowserTab:
+        tab = self._get_tab(browser_tab_id)
+        await tab.page.mouse.click(x, y)
+        tab.url = tab.page.url or tab.url
+        tab.title = await self._safe_page_title(tab.page, fallback=tab.title)
+        await self._schedule_snapshot(tab.id)
+        return tab
+
     async def set_select_mode(self, browser_tab_id: str, enabled: bool) -> ManagedBrowserTab:
         tab = self._get_tab(browser_tab_id)
         tab.select_mode = enabled

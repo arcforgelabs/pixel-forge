@@ -5,7 +5,7 @@
  * Pixel Forge's embedded Chromium surface rather than through a proxy iframe.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   selectActiveProjectChats,
   selectActiveProjectSessions,
@@ -1108,7 +1108,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
 
   const sendBrowserCommand = useCallback(async (
     browserTabId: string,
-    action: 'show' | 'focus' | 'set_tool' | 'clear' | 'deselect' | 'apply' | 'refresh',
+    action: 'show' | 'focus' | 'set_tool' | 'clear' | 'deselect' | 'apply' | 'refresh' | 'click',
     payload?: Record<string, unknown>
   ) => {
     const desktopPreview = desktopPreviewRef.current
@@ -1400,19 +1400,22 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       }
 
       const desktopPreview = desktopPreviewRef.current
-      if (!desktopPreview) {
-        throw new Error(
-          'Live Editor preview requires the Pixel Forge desktop shell. Open the app from the dock or run `pixel-forge open`.'
-        )
-      }
-
-      const data = await desktopPreview.load({
-        tabId: resolvedTabId,
-        url: urlToLoad,
-        projectPath,
-        chatId: activeThreadKey,
-        ownerKind: 'operator',
-      })
+      const data = desktopPreview
+        ? await desktopPreview.load({
+            tabId: resolvedTabId,
+            url: urlToLoad,
+            projectPath,
+            chatId: activeThreadKey,
+            ownerKind: 'operator',
+          })
+        : await requestPreviewJson<BrowserPreviewLoadResponse>('/api/live-preview/load', {
+            method: 'POST',
+            body: JSON.stringify({
+              target_url: urlToLoad,
+              browser_tab_id: tab?.browserTabId || resolvedTabId,
+              preferred_mode: 'browser',
+            }),
+          })
       const resolvedTargetUrl = normalizePersistedPreviewUrl(data.target_url, urlToLoad) || urlToLoad
 
       setAuthIssue(null)
@@ -1446,7 +1449,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
 
       pushUrlHistory(resolvedTargetUrl)
 
-      if (data.browser_tab_id) {
+      if (data.browser_tab_id && desktopPreview) {
         await sendBrowserCommand(data.browser_tab_id, 'focus')
       }
 
@@ -1457,7 +1460,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       }, 150)
 
       if (options?.announceSuccess !== false) {
-        toast.success('Loaded in embedded Chromium')
+        toast.success(desktopPreview ? 'Loaded in embedded Chromium' : 'Loaded in managed browser')
       }
     } catch (error) {
       console.error('[live-editor] Failed to load preview target:', error)
@@ -3019,8 +3022,58 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     relevantPendingPreviewUpdate?.snapshotPath
     && activeMirrorTarget?.sourceRoot !== relevantPendingPreviewUpdate.snapshotPath
   )
-  const previewUnavailableMessage =
-    'Live Editor preview runs inside the Pixel Forge desktop shell. Use the dock icon or run `pixel-forge open`.'
+  const activePreviewCanRefresh = Boolean(activePreviewTab?.url)
+  const activePreviewCanSelect = Boolean(
+    activePreviewTab?.mode === 'proxy'
+    || (activePreviewTab?.mode === 'browser' && activePreviewTab.browserTabId)
+  )
+
+  const handleManagedPreviewClick = useCallback(async (
+    event: ReactMouseEvent<HTMLImageElement>
+  ) => {
+    if (hasEmbeddedBrowserPreview) {
+      return
+    }
+
+    const tab = getActivePreviewTab()
+    if (tab?.mode !== 'browser' || !tab.browserTabId) {
+      return
+    }
+
+    const image = event.currentTarget
+    if (image.naturalWidth < 1 || image.naturalHeight < 1) {
+      return
+    }
+
+    const rect = image.getBoundingClientRect()
+    const scale = Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight)
+    const renderedWidth = image.naturalWidth * scale
+    const renderedHeight = image.naturalHeight * scale
+    const offsetX = (rect.width - renderedWidth) / 2
+    const offsetY = (rect.height - renderedHeight) / 2
+    const x = (event.clientX - rect.left - offsetX) / scale
+    const y = (event.clientY - rect.top - offsetY) / scale
+
+    if (x < 0 || y < 0 || x > image.naturalWidth || y > image.naturalHeight) {
+      return
+    }
+
+    const response = await sendBrowserCommand(tab.browserTabId, 'click', { x, y }) as BrowserPreviewLoadResponse | null
+    if (response?.snapshot_data_url) {
+      setPreviewTabs((currentTabs) =>
+        currentTabs.map((entry) =>
+          entry.id === tab.id
+            ? { ...entry, snapshotDataUrl: response.snapshot_data_url }
+            : entry
+        )
+      )
+    }
+  }, [
+    getActivePreviewTab,
+    hasEmbeddedBrowserPreview,
+    sendBrowserCommand,
+    setPreviewTabs,
+  ])
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -3218,7 +3271,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
               variant="outline"
               size="sm"
               onClick={() => void loadApp()}
-              disabled={!hasEmbeddedBrowserPreview}
+              disabled={!targetUrl.trim()}
               className="h-7 gap-1 border-border/60 px-2.5 text-xs"
             >
               <Play className="h-3 w-3" />
@@ -3229,7 +3282,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => void openWorkspacePreviewLauncher()}
-                disabled={!hasEmbeddedBrowserPreview || workspacePreviewCandidatesLoading}
+                disabled={workspacePreviewCandidatesLoading}
                 className="h-7 gap-1 border-border/60 px-2.5 text-xs"
                 title="Discover and launch a workspace-bound preview from the active lane workspace"
               >
@@ -3246,7 +3299,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => void launchPixelForgeTarget()}
-                disabled={!hasEmbeddedBrowserPreview || isLaunchingPixelForgeTarget}
+                disabled={isLaunchingPixelForgeTarget}
                 className="h-7 gap-1 border-border/60 px-2.5 text-xs"
                 title="Launch or rebuild the isolated Pixel Forge mirror for this session"
               >
@@ -3259,7 +3312,6 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 variant="outline"
                 size="sm"
                 onClick={() => void loadUpdatedPixelForgePreview()}
-                disabled={!hasEmbeddedBrowserPreview}
                 className="h-7 gap-1 border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs text-emerald-100 hover:bg-emerald-500/20"
                 title="Load the updated clone preview into this chat's primary mirror"
               >
@@ -3273,7 +3325,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
               size="sm"
               onClick={() => void refreshApp()}
               title="Refresh preview"
-              disabled={!hasEmbeddedBrowserPreview}
+              disabled={!activePreviewCanRefresh}
               className="h-7 w-7 border-border/60 p-0"
             >
               <RefreshCw className="h-3 w-3" />
@@ -3282,7 +3334,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
               variant={isSelectionToolActive ? 'default' : 'outline'}
               size="sm"
               onClick={toggleSelectionTool}
-              disabled={!hasEmbeddedBrowserPreview}
+              disabled={!activePreviewCanSelect}
               className={`h-7 gap-1 px-2.5 text-xs transition-all ${
                 isSelectionToolActive
                   ? 'bg-primary text-primary-foreground shadow-[0_0_12px_-3px_hsl(var(--primary)/0.4)]'
@@ -3346,14 +3398,26 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
             style={viewportShellStyle}
           >
             <div className={`${viewportFrameClassName} relative`}>
-              {!hasEmbeddedBrowserPreview && (
-                <div className="absolute inset-0 flex items-center justify-center bg-card/50 p-6">
+              {!hasEmbeddedBrowserPreview && activePreviewTab?.mode === 'browser' && activePreviewTab.snapshotDataUrl && (
+                <img
+                  src={activePreviewTab.snapshotDataUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className={`absolute inset-0 h-full w-full select-none bg-white object-contain ${
+                    activePreviewCanSelect ? 'cursor-crosshair' : 'cursor-pointer'
+                  }`}
+                  draggable={false}
+                  onClick={handleManagedPreviewClick}
+                />
+              )}
+              {!hasEmbeddedBrowserPreview && (!activePreviewTab || activePreviewTab.mode === null) && (
+                <div className="absolute inset-0 flex items-center justify-center bg-card/50 p-6 pointer-events-none">
                   <div className="max-w-lg rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
                     <div className="text-sm font-medium text-foreground">
-                      Pixel Forge Desktop is required for Live Editor preview
+                      Load a preview URL to start the managed browser
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      {previewUnavailableMessage}
+                      Browser mirrors stay interactive through the toolbar while preserving the nested Pixel Forge safeguards.
                     </p>
                   </div>
                 </div>

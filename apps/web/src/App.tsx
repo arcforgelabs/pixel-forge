@@ -123,7 +123,6 @@ function App() {
     sessionId,
     projectPath,
     activeMode,
-    viewingSettings,
     projectSettingsPath,
     projectsLoaded,
     profileState,
@@ -756,7 +755,7 @@ function App() {
     setAppState(AppState.CODE_READY);
   }
 
-  const showMainContent = !viewingSettings && !projectSettingsPath;
+  const showMainContent = !projectSettingsPath;
 
   return (
     <div className="dark:bg-background dark:text-foreground flex h-screen flex-col overflow-hidden">
@@ -822,12 +821,6 @@ function App() {
             <LogoForgePane />
           </div>
         )}
-
-        {/* Settings page — full-width surface; SettingsSidebar portals its content here. */}
-        <div
-          id="pf-settings-pane-root"
-          className={`flex-1 min-h-0 overflow-hidden ${viewingSettings && !projectSettingsPath ? "" : "hidden"}`}
-        />
 
         {/* Project settings page — full-width surface; SettingsSidebar portals its content here. */}
         <div
