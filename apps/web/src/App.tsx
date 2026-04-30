@@ -174,6 +174,12 @@ function App() {
 
       setRuntimeInfo({
         controllerVersion: runtimeInfo?.controllerVersion?.trim() || null,
+        runtimeKind:
+          runtimeInfo?.runtimeKind === "controller"
+            || runtimeInfo?.runtimeKind === "mirror"
+            || runtimeInfo?.runtimeKind === "dev"
+            ? runtimeInfo.runtimeKind
+            : RUNTIME_KIND,
         runtimeRoot:
           typeof runtimeInfo?.runtimeRoot === "string"
             ? runtimeInfo.runtimeRoot.trim() || null

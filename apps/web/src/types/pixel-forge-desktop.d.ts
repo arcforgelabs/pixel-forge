@@ -314,6 +314,7 @@ export interface PixelForgeDesktopControllerUpdateApplyState {
 
 export interface PixelForgeDesktopRuntimeInfo {
   controllerVersion: string
+  runtimeKind?: 'controller' | 'mirror' | 'dev' | null
   runtimeRoot: string | null
   runtimeLayout: string | null
   acpxBridgeAvailable: boolean

@@ -163,6 +163,7 @@ export interface LastSavedFile {
 
 export interface ControllerRuntimeInfo {
   controllerVersion: string | null;
+  runtimeKind: "controller" | "mirror" | "dev" | null;
   runtimeRoot: string | null;
   runtimeLayout: string | null;
   acpxBridgeAvailable: boolean;
@@ -201,6 +202,7 @@ interface SessionStore {
   customOutputPath: string | null;
   lastSavedFile: LastSavedFile | null;
   controllerVersion: string | null;
+  controllerRuntimeKind: "controller" | "mirror" | "dev" | null;
   controllerRuntimeRoot: string | null;
   controllerRuntimeLayout: string | null;
   controllerAcpxBridgeAvailable: boolean;
@@ -1231,6 +1233,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   customOutputPath: null,
   lastSavedFile: null,
   controllerVersion: null,
+  controllerRuntimeKind: null,
   controllerRuntimeRoot: null,
   controllerRuntimeLayout: null,
   controllerAcpxBridgeAvailable: false,
@@ -2142,6 +2145,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   setRuntimeInfo: (runtimeInfo) => {
     set({
       controllerVersion: runtimeInfo.controllerVersion,
+      controllerRuntimeKind: runtimeInfo.runtimeKind,
       controllerRuntimeRoot: runtimeInfo.runtimeRoot,
       controllerRuntimeLayout: runtimeInfo.runtimeLayout,
       controllerAcpxBridgeAvailable: runtimeInfo.acpxBridgeAvailable,

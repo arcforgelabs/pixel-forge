@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from runtime_config import source_root as runtime_source_root
+from runtime_config import runtime_kind, source_root as runtime_source_root
 
 
 DEFAULT_CONTROLLER_VERSION = "0.0.0-dev"
@@ -121,4 +121,5 @@ def read_runtime_info() -> dict[str, str | bool | None]:
     root = runtime_source_root().expanduser().resolve()
     runtime_info = read_runtime_info_for_root(root)
     runtime_info["controllerVersion"] = read_runtime_version()
+    runtime_info["runtimeKind"] = runtime_kind()
     return runtime_info

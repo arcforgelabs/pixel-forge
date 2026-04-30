@@ -91,6 +91,15 @@ interface BrowserPreviewLoadResponse {
   did_navigate?: boolean
 }
 
+interface ProxyPreviewLoadResponse {
+  mode: 'proxy'
+  target_url: string
+  proxy_session_id: string
+  frame_src: string
+}
+
+type LivePreviewLoadResponse = BrowserPreviewLoadResponse | ProxyPreviewLoadResponse
+
 interface LoadAppOptions {
   persist?: boolean
   tabId?: string
@@ -526,6 +535,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   } = useSessionStore()
   const projectSessions = useSessionStore(selectActiveProjectSessions)
   const projectChats = useSessionStore(selectActiveProjectChats)
+  const controllerRuntimeKind = useSessionStore((state) => state.controllerRuntimeKind)
 
   const targetUrlRef = useRef(previewUrl || '')
   const previewTabsRef = useRef<PreviewTab[]>([])
@@ -724,7 +734,8 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       : null
   const selectedElementsRef = useRef(selectedElements)
   const hasEmbeddedBrowserPreview = desktopPreviewRef.current !== null
-  const canLaunchSelfMirror = RUNTIME_KIND === 'controller'
+  const effectiveRuntimeKind = controllerRuntimeKind || RUNTIME_KIND
+  const canLaunchSelfMirror = effectiveRuntimeKind === 'controller'
   const canLaunchPixelForgeMirror = canLaunchSelfMirror && isPixelForgeWorkspace
   const isSelectionToolActive = activePreviewTool === 'select'
   const activePreviewTabForNav = previewTabs.find((tab) => tab.id === activePreviewTabId) ?? previewTabs[0] ?? null
@@ -1393,7 +1404,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     }
 
     try {
-      if (RUNTIME_KIND !== 'controller' && isPixelForgeTargetUrl(urlToLoad)) {
+      if (effectiveRuntimeKind !== 'controller' && isPixelForgeTargetUrl(urlToLoad)) {
         throw new Error(
           'Nested Pixel Forge previews are disabled inside target runtimes. Open an ordinary app URL or return to the controller.'
         )
@@ -1408,18 +1419,61 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
             chatId: activeThreadKey,
             ownerKind: 'operator',
           })
-        : await requestPreviewJson<BrowserPreviewLoadResponse>('/api/live-preview/load', {
+        : await requestPreviewJson<LivePreviewLoadResponse>('/api/live-preview/load', {
             method: 'POST',
             body: JSON.stringify({
               target_url: urlToLoad,
+              proxy_session_id: tab?.proxySessionId || undefined,
               browser_tab_id: tab?.browserTabId || resolvedTabId,
-              preferred_mode: 'browser',
+              preferred_mode: 'auto',
             }),
           })
       const resolvedTargetUrl = normalizePersistedPreviewUrl(data.target_url, urlToLoad) || urlToLoad
 
       setAuthIssue(null)
       setTargetUrl(resolvedTargetUrl)
+
+      if (data.mode === 'proxy') {
+        setPreviewTabs((currentTabs) =>
+          currentTabs.map((entry, index) => {
+            if (entry.id !== resolvedTabId) {
+              return entry
+            }
+
+            return {
+              ...entry,
+              mode: 'proxy',
+              url: resolvedTargetUrl,
+              title: getPreviewTabTitle(resolvedTargetUrl, null, index + 1),
+              proxySessionId: data.proxy_session_id,
+              browserTabId: null,
+              canGoBack: false,
+              canGoForward: false,
+              frameSrc: data.frame_src,
+              snapshotDataUrl: null,
+              localTarget: null,
+              workspacePreview: null,
+            }
+          })
+        )
+
+        if (options?.persist !== false) {
+          await syncStorePreviewUrl(resolvedTargetUrl)
+        }
+
+        pushUrlHistory(resolvedTargetUrl)
+
+        window.setTimeout(() => {
+          void syncTabSelections(resolvedTabId, { reveal: true })
+          void syncActivePreviewSelectionMode(resolvedTabId)
+        }, 150)
+
+        if (options?.announceSuccess !== false) {
+          toast.success('Loaded in preview frame')
+        }
+        return
+      }
+
       setPreviewTabs((currentTabs) =>
         currentTabs.map((entry, index) => {
           if (entry.id !== resolvedTabId) {
@@ -1473,6 +1527,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
   }, [
     pushUrlHistory,
     activeThreadKey,
+    effectiveRuntimeKind,
     projectPath,
     sendBrowserCommand,
     setActivePreviewTabId,
@@ -1555,7 +1610,9 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       return
     }
 
-    if (activePreviewTab.browserTabId || activePreviewTab.proxySessionId) {
+    const hasReusablePreviewSession = activePreviewTab.proxySessionId
+      || (effectiveRuntimeKind === 'controller' && activePreviewTab.browserTabId)
+    if (hasReusablePreviewSession) {
       return
     }
 
@@ -1571,7 +1628,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     }
 
     if (
-      RUNTIME_KIND !== 'controller'
+      effectiveRuntimeKind !== 'controller'
       && activePreviewTab.localTarget?.kind === 'pixel-forge'
     ) {
       return
@@ -1595,6 +1652,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
     })
   }, [
     activeMode,
+    effectiveRuntimeKind,
     getActivePreviewTab,
     loadApp,
     projectPath,
@@ -1829,7 +1887,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       audienceWorkspacePath?: string | null
     }
   ) => {
-    if (RUNTIME_KIND !== 'controller') {
+    if (effectiveRuntimeKind !== 'controller') {
       throw new Error(
         'Nested Pixel Forge mirror launch is disabled inside target runtimes.'
       )
@@ -1857,7 +1915,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       audienceWorkspacePath: options?.audienceWorkspacePath,
     })
     return record
-  }, [openLocalTargetInPreviewTab, projectPath])
+  }, [effectiveRuntimeKind, openLocalTargetInPreviewTab, projectPath])
 
   const openWorkspacePreviewLauncher = useCallback(async () => {
     if (!workspacePreviewWorkspacePath) {
@@ -3414,10 +3472,10 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
                 <div className="absolute inset-0 flex items-center justify-center bg-card/50 p-6 pointer-events-none">
                   <div className="max-w-lg rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
                     <div className="text-sm font-medium text-foreground">
-                      Load a preview URL to start the managed browser
+                      Load a preview URL to start the preview
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      Browser mirrors stay interactive through the toolbar while preserving the nested Pixel Forge safeguards.
+                      Local mirrors stay in this frame; remote targets may use the managed browser.
                     </p>
                   </div>
                 </div>

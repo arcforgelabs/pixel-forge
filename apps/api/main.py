@@ -114,6 +114,7 @@ from live_preview_context import (
 from skill_registry import load_skill_registry_snapshot
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
 from local_target_proxy import LocalTargetAliasMiddleware
+from runtime_config import runtime_kind as current_runtime_kind
 from controller_update_state import (
     clear_pending_controller_update,
     read_pending_controller_update,
@@ -1882,6 +1883,11 @@ async def get_registered_skills():
 
 @app.post("/api/local-targets/pixel-forge/start")
 async def start_local_pixel_forge_target(payload: LocalTargetStartRequest):
+    if current_runtime_kind() != "controller":
+        raise HTTPException(
+            status_code=400,
+            detail="Nested Pixel Forge target launches are disabled inside target runtimes.",
+        )
     try:
         record = await asyncio.to_thread(
             start_pixel_forge_target,
@@ -2261,6 +2267,8 @@ async def load_live_preview(
         raise HTTPException(status_code=422, detail="target_url is required")
 
     preview_mode = resolve_preview_mode(target_url, payload.preferred_mode)
+    if current_runtime_kind() != "controller" and preview_mode == "browser":
+        preview_mode = "proxy"
 
     if preview_mode == "proxy":
         session = await configure_proxy_target(
