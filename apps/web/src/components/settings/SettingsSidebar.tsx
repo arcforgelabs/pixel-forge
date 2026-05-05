@@ -108,7 +108,11 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
     ? "Claude Code"
     : tool === "codex"
       ? "Codex"
-      : capitalize(tool);
+      : tool === "gemini"
+        ? "Gemini"
+        : tool === "pi"
+          ? "Pi"
+        : capitalize(tool);
 }
 
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
@@ -125,6 +129,28 @@ const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: "gpt-5.4", label: "GPT 5.4" },
     { value: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
     { value: "gpt-5.4-nano", label: "GPT 5.4 Nano" },
+  ],
+  gemini: [
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+    { value: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+    { value: "gemini-3.1-flash-lite-preview", label: "Gemini 3.1 Flash Lite Preview" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+  ],
+  pi: [
+    { value: "xai/grok-code-fast-1", label: "Grok Code Fast 1" },
+    { value: "xai/grok-4.20-0309-reasoning", label: "Grok 4.20 Reasoning" },
+    { value: "xai/grok-4-1-fast", label: "Grok 4.1 Fast" },
+    { value: "xai/grok-4-fast", label: "Grok 4 Fast" },
+    { value: "xai/grok-4", label: "Grok 4" },
+    { value: "ollama/qwen2.5:32b", label: "Ollama Qwen 2.5 32B" },
+    { value: "ollama/deepseek-coder:33b", label: "Ollama DeepSeek Coder 33B" },
+    { value: "ollama/qwq:32b", label: "Ollama QwQ 32B" },
+    { value: "ollama/deepseek-r1:32b", label: "Ollama DeepSeek R1 32B" },
+    { value: "ollama/qwen2.5:14b", label: "Ollama Qwen 2.5 14B" },
+    { value: "ollama/qwen2.5:7b", label: "Ollama Qwen 2.5 7B" },
+    { value: "ollama/llama3.1:8b", label: "Ollama Llama 3.1 8B" },
   ],
 };
 
@@ -146,6 +172,14 @@ const CLAUDE_LEGACY_THINKING_OPTIONS = [
 const AGENT_THINKING_OPTIONS: Record<string, { value: string; label: string }[]> = {
   claude: [...CLAUDE_LEGACY_THINKING_OPTIONS],
   codex: [
+    { value: "minimal", label: "Minimal" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High" },
+  ],
+  pi: [
+    { value: "off", label: "Off" },
     { value: "minimal", label: "Minimal" },
     { value: "low", label: "Low" },
     { value: "medium", label: "Medium" },
@@ -2349,11 +2383,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   ? "Claude Code"
                                   : defaultAgentType === "codex"
                                     ? "Codex"
-                                    : capitalize(defaultAgentType)}
+                                    : defaultAgentType === "gemini"
+                                      ? "Gemini"
+                                      : defaultAgentType === "pi"
+                                        ? "Pi"
+                                      : capitalize(defaultAgentType)}
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="claude">Claude Code</SelectItem>
                                 <SelectItem value="codex">Codex</SelectItem>
+                                <SelectItem value="gemini">Gemini</SelectItem>
+                                <SelectItem value="pi">Pi</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -2516,6 +2556,87 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               <SelectContent>
                                 <SelectItem value="__none__">Tool default</SelectItem>
                                 {AGENT_THINKING_OPTIONS.codex.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                          <div>
+                            <Label className="text-sm font-medium">Gemini Defaults</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Profile-wide model default for new Gemini chats and launches.
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Model</Label>
+                            <Select
+                              value={defaultAgentModels.gemini ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentModel("gemini", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_MODEL_OPTIONS.gemini.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                          <div>
+                            <Label className="text-sm font-medium">Pi Defaults</Label>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Profile-wide provider/model and thinking defaults for new Pi chats and launches.
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Model</Label>
+                            <Select
+                              value={defaultAgentModels.pi ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentModel("pi", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[220px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_MODEL_OPTIONS.pi.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <Label className="text-xs text-muted-foreground">Thinking</Label>
+                            <Select
+                              value={defaultAgentThinking.pi ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentThinking("pi", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[220px] text-xs">
+                                <SelectValue placeholder="Tool default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Tool default</SelectItem>
+                                {AGENT_THINKING_OPTIONS.pi.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
                                   </SelectItem>

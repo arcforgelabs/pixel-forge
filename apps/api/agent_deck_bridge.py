@@ -5,6 +5,9 @@ import json
 import os
 import re
 import shutil
+import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -52,6 +55,39 @@ CODEX_MODEL_ALLOWLIST = frozenset(
     {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 )
 CODEX_EFFORT_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+GEMINI_MODEL_ALLOWLIST = frozenset({
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+})
+PI_MODEL_ALLOWLIST = frozenset({
+    "xai/grok-code-fast-1",
+    "xai/grok-4.20-0309-reasoning",
+    "xai/grok-4.20-0309-non-reasoning",
+    "xai/grok-4-1-fast",
+    "xai/grok-4-1-fast-non-reasoning",
+    "xai/grok-4-fast",
+    "xai/grok-4-fast-non-reasoning",
+    "xai/grok-4",
+    "xai/grok-3-mini-fast",
+    "xai/grok-3-mini",
+    "ollama/qwen2.5:32b",
+    "ollama/deepseek-coder:33b",
+    "ollama/qwq:32b",
+    "ollama/deepseek-r1:32b",
+    "ollama/qwen2.5:14b",
+    "ollama/deepseek-r1:14b",
+    "ollama/qwen2.5:7b",
+    "ollama/llama3.1:8b",
+    "ollama/mistral:7b",
+})
+PI_THINKING_ALLOWLIST = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+PI_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+PI_OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
+PI_LOCAL_MODEL_RE = re.compile(r"^ollama/[A-Za-z0-9._:/+-]+$")
 
 
 def _normalize_claude_model(model: str | None) -> str:
@@ -93,15 +129,145 @@ def _resolve_agent_model_effort_args(
     elif tool == "codex":
         model_allowed = CODEX_MODEL_ALLOWLIST
         effort_allowed = CODEX_EFFORT_ALLOWLIST
+    elif tool == "gemini":
+        model_allowed = GEMINI_MODEL_ALLOWLIST
+        effort_allowed = frozenset()
+    elif tool == "pi":
+        model_allowed = PI_MODEL_ALLOWLIST
+        effort_allowed = PI_THINKING_ALLOWLIST
     else:
         return []
 
     args: list[str] = []
-    if model and model in model_allowed:
+    if model and (model in model_allowed or (tool == "pi" and PI_LOCAL_MODEL_RE.fullmatch(model))):
         args.extend(["--model", model])
     if thinking and thinking in effort_allowed:
         args.extend(["--effort", thinking])
     return args
+
+
+def _pi_agent_dir() -> Path:
+    configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".pi" / "agent"
+
+
+def _read_ollama_model_ids() -> list[str]:
+    request = urllib.request.Request(
+        PI_OLLAMA_TAGS_URL,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=0.8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return []
+
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return []
+
+    ids: list[str] = []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("model") or item.get("name")
+        if isinstance(model_id, str) and model_id.strip():
+            ids.append(model_id.strip())
+    return sorted(set(ids))
+
+
+def _load_pi_models_config(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise AgentDeckBridgeError(
+            f"Pi models config is invalid JSON: {path}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AgentDeckBridgeError(f"Pi models config must be a JSON object: {path}")
+    return payload
+
+
+def _write_pi_models_config(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".models.",
+        suffix=".json.tmp",
+        dir=str(path.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
+def _sync_pi_ollama_models_for_launch(agent_model: str | None) -> None:
+    model = (agent_model or "").strip()
+    if not model.startswith("ollama/"):
+        return
+
+    selected_model_id = model.split("/", 1)[1].strip()
+    if not selected_model_id:
+        return
+
+    path = _pi_agent_dir() / "models.json"
+    payload = _load_pi_models_config(path)
+    providers = payload.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        payload["providers"] = providers
+
+    existing_provider = providers.get("ollama")
+    ollama_provider: dict[str, object] = (
+        dict(existing_provider) if isinstance(existing_provider, dict) else {}
+    )
+    existing_models = ollama_provider.get("models")
+    models_by_id: dict[str, dict[str, object]] = {}
+    if isinstance(existing_models, list):
+        for item in existing_models:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            if isinstance(model_id, str) and model_id.strip():
+                models_by_id[model_id.strip()] = dict(item)
+
+    for model_id in [*_read_ollama_model_ids(), selected_model_id]:
+        models_by_id.setdefault(model_id, {"id": model_id})
+
+    existing_compat = ollama_provider.get("compat")
+    compat = {
+        "supportsDeveloperRole": False,
+        "supportsReasoningEffort": False,
+    }
+    if isinstance(existing_compat, dict):
+        compat.update(existing_compat)
+
+    ollama_provider.update(
+        {
+            "baseUrl": str(ollama_provider.get("baseUrl") or PI_OLLAMA_BASE_URL),
+            "api": str(ollama_provider.get("api") or "openai-completions"),
+            "apiKey": str(ollama_provider.get("apiKey") or "ollama"),
+            "compat": compat,
+            "models": [models_by_id[model_id] for model_id in sorted(models_by_id)],
+        }
+    )
+    providers["ollama"] = ollama_provider
+    _write_pi_models_config(path, payload)
 
 
 @dataclass(slots=True)
@@ -118,7 +284,8 @@ class AgentDeckSessionInfo:
     acp_session_id: str | None
     claude_session_id: str | None
     codex_session_id: str | None
-    jsonl_path: Path | None
+    gemini_session_id: str | None = None
+    jsonl_path: Path | None = None
 
 
 @dataclass(slots=True)
@@ -613,6 +780,8 @@ async def _launch_new_session(
 ) -> dict[str, object]:
     await _enforce_agent_deck_launch_admission()
     normalized_agent_type = agent_type.strip().lower() or "claude"
+    if normalized_agent_type == "pi":
+        await asyncio.to_thread(_sync_pi_ollama_models_for_launch, agent_model)
     launch_path = (
         _normalize_path(workspace_path)
         if isinstance(workspace_path, str) and workspace_path.strip()
@@ -636,7 +805,7 @@ async def _launch_new_session(
             normalized_agent_type, agent_model, agent_thinking
         )
     )
-    if normalized_agent_type == "codex":
+    if normalized_agent_type in {"codex", "gemini"}:
         args.append("--yolo")
     if workspace_mode == "clone":
         args.append(f"-clone={_clone_name(session_title)}")
@@ -1311,6 +1480,7 @@ async def _build_session_info(
     acp_session_id: str | None = None
     claude_session_id: str | None = None
     codex_session_id: str | None = None
+    gemini_session_id: str | None = None
     jsonl_path: Path | None = None
 
     parsed_acpx_command = _parsed_acpx_payload(payload)
@@ -1366,6 +1536,23 @@ async def _build_session_info(
                 if isinstance(fallback_codex_id, str) and fallback_codex_id:
                     codex_session_id = fallback_codex_id
                     jsonl_path = codex_jsonl_path(codex_session_id)
+    elif session_tool == "gemini":
+        fallback_gemini_id = payload.get("gemini_session_id")
+        if isinstance(fallback_gemini_id, str) and fallback_gemini_id:
+            gemini_session_id = fallback_gemini_id
+        else:
+            gemini_session_id, payload = await _wait_for_gemini_session_id(
+                agent_deck_session_id,
+            )
+            agent_deck_title, workspace_path, tmux_session, status = _payload_session_metadata(
+                payload,
+                fallback_title=agent_deck_title,
+                default_path=workspace_path,
+            )
+            if not gemini_session_id:
+                fallback_gemini_id = payload.get("gemini_session_id")
+                if isinstance(fallback_gemini_id, str) and fallback_gemini_id:
+                    gemini_session_id = fallback_gemini_id
 
     return AgentDeckSessionInfo(
         agent_deck_session_id=agent_deck_session_id,
@@ -1380,6 +1567,7 @@ async def _build_session_info(
         acp_session_id=acp_session_id,
         claude_session_id=claude_session_id,
         codex_session_id=codex_session_id,
+        gemini_session_id=gemini_session_id,
         jsonl_path=jsonl_path,
     )
 
@@ -1423,6 +1611,25 @@ async def _wait_for_codex_session_id(
         await asyncio.sleep(0.5)
 
     return None, None, last_payload
+
+
+async def _wait_for_gemini_session_id(
+    agent_deck_session_id: str,
+    *,
+    timeout_seconds: float = 20.0,
+) -> tuple[str | None, dict[str, object]]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_payload: dict[str, object] = {}
+
+    while asyncio.get_running_loop().time() < deadline:
+        payload = await session_show(agent_deck_session_id)
+        last_payload = payload
+        gemini_session_id = payload.get("gemini_session_id")
+        if isinstance(gemini_session_id, str) and gemini_session_id:
+            return gemini_session_id, payload
+        await asyncio.sleep(0.5)
+
+    return None, last_payload
 
 
 async def ensure_agent_deck_session(
@@ -2128,6 +2335,8 @@ def _native_agent_env(session_info: AgentDeckSessionInfo) -> dict[str, str]:
         env["CLAUDE_SESSION_ID"] = session_info.claude_session_id
     if session_info.codex_session_id:
         env["CODEX_SESSION_ID"] = session_info.codex_session_id
+    if session_info.gemini_session_id:
+        env["GEMINI_SESSION_ID"] = session_info.gemini_session_id
     return env
 
 

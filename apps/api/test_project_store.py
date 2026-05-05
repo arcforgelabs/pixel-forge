@@ -255,6 +255,8 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(initial.claude_default_thinking, "xhigh")
         self.assertIsNone(initial.codex_default_model)
         self.assertIsNone(initial.codex_default_thinking)
+        self.assertIsNone(initial.pi_default_model)
+        self.assertIsNone(initial.pi_default_thinking)
 
         project_path = Path(self.tempdir.name) / "project"
         project_store.upsert_project(str(project_path))
@@ -268,6 +270,8 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             claude_default_thinking="high",
             codex_default_model="gpt-5.4",
             codex_default_thinking="xhigh",
+            pi_default_model="xai/grok-code-fast-1",
+            pi_default_thinking="high",
         )
 
         self.assertEqual(saved.active_project_path, str(project_path))
@@ -279,6 +283,8 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.claude_default_thinking, "high")
         self.assertEqual(saved.codex_default_model, "gpt-5.4")
         self.assertEqual(saved.codex_default_thinking, "xhigh")
+        self.assertEqual(saved.pi_default_model, "xai/grok-code-fast-1")
+        self.assertEqual(saved.pi_default_thinking, "high")
 
     def test_codex_profile_defaults_accept_current_gpt_55_model(self) -> None:
         saved = project_store.upsert_profile_state(
@@ -297,6 +303,17 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
 
         self.assertIsNone(saved.codex_default_model)
         self.assertEqual(saved.codex_default_thinking, "high")
+
+    def test_pi_profile_defaults_accept_xai_and_ollama_models(self) -> None:
+        saved = project_store.upsert_profile_state(
+            default_agent_type="pi",
+            pi_default_model="ollama/qwen2.5-coder:14b",
+            pi_default_thinking="xhigh",
+        )
+
+        self.assertEqual(saved.default_agent_type, "pi")
+        self.assertEqual(saved.pi_default_model, "ollama/qwen2.5-coder:14b")
+        self.assertEqual(saved.pi_default_thinking, "xhigh")
 
     def test_claude_profile_defaults_reject_effort_levels_unsupported_by_selected_model(self) -> None:
         saved = project_store.upsert_profile_state(

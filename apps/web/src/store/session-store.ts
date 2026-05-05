@@ -353,6 +353,9 @@ interface ApiProfileState {
   claude_default_thinking: string | null;
   codex_default_model: string | null;
   codex_default_thinking: string | null;
+  gemini_default_model: string | null;
+  pi_default_model: string | null;
+  pi_default_thinking: string | null;
   updated_at: string;
 }
 
@@ -456,10 +459,14 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
     defaultAgentModels: {
       claude: profileState.claude_default_model ?? null,
       codex: profileState.codex_default_model ?? null,
+      gemini: profileState.gemini_default_model ?? null,
+      pi: profileState.pi_default_model ?? null,
     },
     defaultAgentThinking: {
       claude: profileState.claude_default_thinking ?? null,
       codex: profileState.codex_default_thinking ?? null,
+      gemini: null,
+      pi: profileState.pi_default_thinking ?? null,
     },
     updatedAt: profileState.updated_at,
   };
@@ -902,7 +909,9 @@ function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | nul
 }
 
 function normalizeAgentType(agentType: string | null | undefined): string {
-  return agentType === "codex" ? "codex" : "claude";
+  return agentType === "codex" || agentType === "gemini" || agentType === "pi"
+    ? agentType
+    : "claude";
 }
 
 function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspaceMode {
@@ -915,6 +924,8 @@ function normalizeAgentProfileDefaults(
   return {
     claude: value?.claude?.trim() || null,
     codex: value?.codex?.trim() || null,
+    gemini: value?.gemini?.trim() || null,
+    pi: value?.pi?.trim() || null,
   };
 }
 
@@ -1046,6 +1057,9 @@ async function upsertProfileStateToApi(options: {
       claude_default_thinking: options.defaultAgentThinking.claude,
       codex_default_model: options.defaultAgentModels.codex,
       codex_default_thinking: options.defaultAgentThinking.codex,
+      gemini_default_model: options.defaultAgentModels.gemini,
+      pi_default_model: options.defaultAgentModels.pi,
+      pi_default_thinking: options.defaultAgentThinking.pi,
     }),
   });
   return normalizeProfileState(payload);
@@ -1252,8 +1266,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Agent selection
   defaultAgentType: "claude",
-  defaultAgentModels: { claude: "claude-opus-4-7", codex: null },
-  defaultAgentThinking: { claude: "xhigh", codex: null },
+  defaultAgentModels: { claude: "claude-opus-4-7", codex: null, gemini: null, pi: null },
+  defaultAgentThinking: { claude: "xhigh", codex: null, gemini: null, pi: null },
   setDefaultAgentType: (agentType: string) => {
     const normalizedAgentType = normalizeAgentType(agentType);
     set({ defaultAgentType: normalizedAgentType });

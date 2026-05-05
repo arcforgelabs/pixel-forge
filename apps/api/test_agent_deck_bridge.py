@@ -72,6 +72,36 @@ class AgentDeckBridgeModelEffortArgsTest(unittest.TestCase):
 
         self.assertEqual(args, ["--model", "claude-opus-4-6"])
 
+    def test_gemini_allows_model_and_drops_effort(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "gemini",
+            "gemini-3.1-pro-preview",
+            "high",
+        )
+
+        self.assertEqual(args, ["--model", "gemini-3.1-pro-preview"])
+
+    def test_pi_allows_provider_qualified_model_and_thinking(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "pi",
+            "ollama/qwen2.5:32b",
+            "high",
+        )
+
+        self.assertEqual(args, ["--model", "ollama/qwen2.5:32b", "--effort", "high"])
+
+    def test_pi_allows_custom_ollama_model_ids(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "pi",
+            "ollama/qwen2.5-coder:14b",
+            "medium",
+        )
+
+        self.assertEqual(
+            args,
+            ["--model", "ollama/qwen2.5-coder:14b", "--effort", "medium"],
+        )
+
 
 class AgentDeckBridgeLaunchArgsTest(unittest.IsolatedAsyncioTestCase):
     async def test_codex_launch_uses_yolo_bypass_with_model_overrides(self) -> None:
@@ -112,6 +142,105 @@ class AgentDeckBridgeLaunchArgsTest(unittest.IsolatedAsyncioTestCase):
                 "--yolo",
                 "/tmp/project",
             ]
+        )
+
+    async def test_gemini_launch_uses_yolo_bypass_with_model_override(self) -> None:
+        run_mock = AsyncMock(
+            return_value={
+                "id": "deck-a",
+                "title": "Chat chat-a",
+                "path": "/tmp/project",
+                "tool": "gemini",
+            }
+        )
+
+        with (
+            patch.object(agent_deck_bridge, "_enforce_agent_deck_launch_admission", AsyncMock()),
+            patch.object(agent_deck_bridge, "_run_agent_deck_json_object_command", run_mock),
+        ):
+            await agent_deck_bridge._launch_new_session(
+                "/tmp/project",
+                session_title="Chat chat-a",
+                agent_type="gemini",
+                workspace_mode="root",
+                agent_model="gemini-3.1-pro-preview",
+                agent_thinking="high",
+            )
+
+        run_mock.assert_awaited_once_with(
+            [
+                "launch",
+                "-json",
+                "-no-wait",
+                "-t=Chat chat-a",
+                "-g=pixel-forge/project",
+                "-c=gemini",
+                "--model",
+                "gemini-3.1-pro-preview",
+                "--yolo",
+                "/tmp/project",
+            ]
+        )
+
+    async def test_pi_launch_syncs_ollama_models_and_uses_model_override(self) -> None:
+        run_mock = AsyncMock(
+            return_value={
+                "id": "deck-a",
+                "title": "Chat chat-a",
+                "path": "/tmp/project",
+                "tool": "pi",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with (
+                patch.dict(
+                    agent_deck_bridge.os.environ,
+                    {"PI_CODING_AGENT_DIR": tempdir},
+                    clear=False,
+                ),
+                patch.object(
+                    agent_deck_bridge,
+                    "_read_ollama_model_ids",
+                    return_value=["llama3.1:8b", "qwen2.5:32b"],
+                ),
+                patch.object(agent_deck_bridge, "_enforce_agent_deck_launch_admission", AsyncMock()),
+                patch.object(agent_deck_bridge, "_run_agent_deck_json_object_command", run_mock),
+            ):
+                await agent_deck_bridge._launch_new_session(
+                    "/tmp/project",
+                    session_title="Chat chat-a",
+                    agent_type="pi",
+                    workspace_mode="root",
+                    agent_model="ollama/qwen2.5:32b",
+                    agent_thinking="high",
+                )
+
+            models_path = Path(tempdir) / "models.json"
+            config = json.loads(models_path.read_text(encoding="utf-8"))
+
+        run_mock.assert_awaited_once_with(
+            [
+                "launch",
+                "-json",
+                "-no-wait",
+                "-t=Chat chat-a",
+                "-g=pixel-forge/project",
+                "-c=pi",
+                "--model",
+                "ollama/qwen2.5:32b",
+                "--effort",
+                "high",
+                "/tmp/project",
+            ]
+        )
+        self.assertEqual(
+            config["providers"]["ollama"]["baseUrl"],
+            agent_deck_bridge.PI_OLLAMA_BASE_URL,
+        )
+        self.assertEqual(
+            [model["id"] for model in config["providers"]["ollama"]["models"]],
+            ["llama3.1:8b", "qwen2.5:32b"],
         )
 
 

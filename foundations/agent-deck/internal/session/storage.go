@@ -214,9 +214,15 @@ func (s *Storage) Close() error {
 }
 
 func migrateStateDBWithRetry(db *statedb.StateDB) error {
+	return retrySQLiteBusy(func() error {
+		return db.Migrate()
+	})
+}
+
+func retrySQLiteBusy(operation func() error) error {
 	var lastErr error
 	for attempt := 0; attempt < 6; attempt++ {
-		if err := db.Migrate(); err == nil {
+		if err := operation(); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -308,7 +314,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 		}
 	}
 
-	if err := s.db.SaveInstances(rows); err != nil {
+	if err := retrySQLiteBusy(func() error { return s.db.SaveInstances(rows) }); err != nil {
 		return fmt.Errorf("failed to save instances: %w", err)
 	}
 
@@ -324,7 +330,7 @@ func (s *Storage) SaveWithGroups(instances []*Instance, groupTree *GroupTree) er
 				DefaultPath: g.DefaultPath,
 			})
 		}
-		if err := s.db.SaveGroups(groupRows); err != nil {
+		if err := retrySQLiteBusy(func() error { return s.db.SaveGroups(groupRows) }); err != nil {
 			return fmt.Errorf("failed to save groups: %w", err)
 		}
 	}

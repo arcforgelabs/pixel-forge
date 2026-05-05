@@ -552,12 +552,15 @@ class ProfileStateRequest(BaseModel):
     active_project_path: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
-    default_agent_type: Literal["claude", "codex"] = "claude"
+    default_agent_type: Literal["claude", "codex", "gemini", "pi"] = "claude"
     default_workspace_mode: Literal["clone", "root"] = "root"
     claude_default_model: str | None = None
     claude_default_thinking: str | None = None
     codex_default_model: str | None = None
     codex_default_thinking: str | None = None
+    gemini_default_model: str | None = None
+    pi_default_model: str | None = None
+    pi_default_thinking: str | None = None
 
 
 class ClaudeGlobalSettingsRequest(BaseModel):
@@ -872,6 +875,9 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "claude_default_thinking": profile_state.claude_default_thinking,
         "codex_default_model": profile_state.codex_default_model,
         "codex_default_thinking": profile_state.codex_default_thinking,
+        "gemini_default_model": profile_state.gemini_default_model,
+        "pi_default_model": profile_state.pi_default_model,
+        "pi_default_thinking": profile_state.pi_default_thinking,
         "updated_at": profile_state.updated_at,
     }
 
@@ -1063,6 +1069,9 @@ async def save_default_profile_state(request: ProfileStateRequest):
             claude_default_thinking=request.claude_default_thinking,
             codex_default_model=request.codex_default_model,
             codex_default_thinking=request.codex_default_thinking,
+            gemini_default_model=request.gemini_default_model,
+            pi_default_model=request.pi_default_model,
+            pi_default_thinking=request.pi_default_thinking,
         )
     )
 

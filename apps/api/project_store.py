@@ -199,6 +199,9 @@ class ProfileStateRecord:
     claude_default_thinking: str | None
     codex_default_model: str | None
     codex_default_thinking: str | None
+    gemini_default_model: str | None
+    pi_default_model: str | None
+    pi_default_thinking: str | None
     updated_at: str
 
 
@@ -808,6 +811,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 claude_default_thinking TEXT,
                 codex_default_model TEXT,
                 codex_default_thinking TEXT,
+                gemini_default_model TEXT,
+                pi_default_model TEXT,
+                pi_default_thinking TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -923,6 +929,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             if "codex_default_thinking" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN codex_default_thinking TEXT"
+                )
+            if "gemini_default_model" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN gemini_default_model TEXT"
+                )
+            if "pi_default_model" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN pi_default_model TEXT"
+                )
+            if "pi_default_thinking" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN pi_default_thinking TEXT"
                 )
         existing_projects_columns = {
             str(row[1])
@@ -1062,6 +1080,8 @@ def list_profiles() -> list[ProfileStateRecord]:
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
+                   gemini_default_model,
+                   pi_default_model, pi_default_thinking,
                    updated_at
             FROM profile_state
             ORDER BY CASE WHEN profile_id = ? THEN 0 ELSE 1 END, updated_at DESC, profile_id ASC
@@ -1129,7 +1149,7 @@ def _normalize_active_mode(value: object | None) -> str:
 
 
 def _normalize_agent_type(value: object | None) -> str:
-    return "codex" if value == "codex" else "claude"
+    return str(value) if value in {"claude", "codex", "gemini", "pi"} else "claude"
 
 
 def _normalize_workspace_mode(value: object | None) -> str:
@@ -1170,6 +1190,58 @@ def _normalize_codex_model(value: object | None) -> str | None:
 def _normalize_codex_thinking(value: object | None) -> str | None:
     normalized = str(value or "").strip()
     return normalized if normalized in CODEX_THINKING_ALLOWLIST else None
+
+
+GEMINI_MODEL_ALLOWLIST = frozenset({
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+})
+PI_MODEL_ALLOWLIST = frozenset({
+    "xai/grok-code-fast-1",
+    "xai/grok-4.20-0309-reasoning",
+    "xai/grok-4.20-0309-non-reasoning",
+    "xai/grok-4-1-fast",
+    "xai/grok-4-1-fast-non-reasoning",
+    "xai/grok-4-fast",
+    "xai/grok-4-fast-non-reasoning",
+    "xai/grok-4",
+    "xai/grok-3-mini-fast",
+    "xai/grok-3-mini",
+    "ollama/qwen2.5:32b",
+    "ollama/deepseek-coder:33b",
+    "ollama/qwq:32b",
+    "ollama/deepseek-r1:32b",
+    "ollama/qwen2.5:14b",
+    "ollama/deepseek-r1:14b",
+    "ollama/qwen2.5:7b",
+    "ollama/llama3.1:8b",
+    "ollama/mistral:7b",
+})
+PI_THINKING_ALLOWLIST = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+PI_LOCAL_MODEL_RE = re.compile(r"^ollama/[A-Za-z0-9._:/+-]+$")
+
+
+def _normalize_gemini_model(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in GEMINI_MODEL_ALLOWLIST else None
+
+
+def _normalize_pi_model(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return (
+        normalized
+        if normalized in PI_MODEL_ALLOWLIST or PI_LOCAL_MODEL_RE.fullmatch(normalized)
+        else None
+    )
+
+
+def _normalize_pi_thinking(value: object | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if normalized in PI_THINKING_ALLOWLIST else None
 
 
 def _normalize_profile_id(profile_id: str | None = None) -> str:
@@ -1496,6 +1568,9 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
         ),
         codex_default_model=_normalize_codex_model(row["codex_default_model"]),
         codex_default_thinking=_normalize_codex_thinking(row["codex_default_thinking"]),
+        gemini_default_model=_normalize_gemini_model(row["gemini_default_model"]),
+        pi_default_model=_normalize_pi_model(row["pi_default_model"]),
+        pi_default_thinking=_normalize_pi_thinking(row["pi_default_thinking"]),
         updated_at=row["updated_at"],
     )
 
@@ -2051,6 +2126,8 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
+                   gemini_default_model,
+                   pi_default_model, pi_default_thinking,
                    updated_at
             FROM profile_state
             WHERE profile_id = ?
@@ -2089,6 +2166,9 @@ def create_profile(
         claude_default_thinking=source_profile.claude_default_thinking,
         codex_default_model=source_profile.codex_default_model,
         codex_default_thinking=source_profile.codex_default_thinking,
+        gemini_default_model=source_profile.gemini_default_model,
+        pi_default_model=source_profile.pi_default_model,
+        pi_default_thinking=source_profile.pi_default_thinking,
     )
 
 
@@ -2104,6 +2184,9 @@ def upsert_profile_state(
     claude_default_thinking: str | None = None,
     codex_default_model: str | None = None,
     codex_default_thinking: str | None = None,
+    gemini_default_model: str | None = None,
+    pi_default_model: str | None = None,
+    pi_default_thinking: str | None = None,
 ) -> ProfileStateRecord:
     normalized_profile_id = _normalize_profile_id(profile_id)
     normalized_project_path = (
@@ -2125,6 +2208,9 @@ def upsert_profile_state(
     )
     normalized_codex_default_model = _normalize_codex_model(codex_default_model)
     normalized_codex_default_thinking = _normalize_codex_thinking(codex_default_thinking)
+    normalized_gemini_default_model = _normalize_gemini_model(gemini_default_model)
+    normalized_pi_default_model = _normalize_pi_model(pi_default_model)
+    normalized_pi_default_thinking = _normalize_pi_thinking(pi_default_thinking)
 
     with _connect() as conn:
         conn.execute(
@@ -2139,8 +2225,11 @@ def upsert_profile_state(
                 claude_default_model,
                 claude_default_thinking,
                 codex_default_model,
-                codex_default_thinking
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                codex_default_thinking,
+                gemini_default_model,
+                pi_default_model,
+                pi_default_thinking
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 active_mode = excluded.active_mode,
@@ -2154,6 +2243,9 @@ def upsert_profile_state(
                 claude_default_thinking = excluded.claude_default_thinking,
                 codex_default_model = excluded.codex_default_model,
                 codex_default_thinking = excluded.codex_default_thinking,
+                gemini_default_model = excluded.gemini_default_model,
+                pi_default_model = excluded.pi_default_model,
+                pi_default_thinking = excluded.pi_default_thinking,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -2167,6 +2259,9 @@ def upsert_profile_state(
                 normalized_claude_default_thinking,
                 normalized_codex_default_model,
                 normalized_codex_default_thinking,
+                normalized_gemini_default_model,
+                normalized_pi_default_model,
+                normalized_pi_default_thinking,
             ),
         )
         conn.commit()
@@ -2176,6 +2271,8 @@ def upsert_profile_state(
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
+                   gemini_default_model,
+                   pi_default_model, pi_default_thinking,
                    updated_at
             FROM profile_state
             WHERE profile_id = ?

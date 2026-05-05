@@ -59,8 +59,8 @@ func handleLaunch(profile string, args []string) {
 	// Model / thinking-effort overrides. These route into the detected
 	// tool's ToolOptions so the flags end up on the raw tool command
 	// BEFORE any wrapping (e.g. Claude's dev-channel bash -lc envelope).
-	modelOverride := fs.String("model", "", "Override the tool model (Claude: alias like 'sonnet' or full name; Codex: e.g. 'gpt-5.4')")
-	effortOverride := fs.String("effort", "", "Override the thinking effort (Claude: low|medium|high|max, plus xhigh on Opus 4.7; Codex reasoning_effort: minimal|low|medium|high|xhigh)")
+	modelOverride := fs.String("model", "", "Override the tool model (Claude: alias like 'sonnet' or full name; Codex: e.g. 'gpt-5.4'; Pi: e.g. 'xai/grok-code-fast-1' or 'ollama/qwen2.5:32b')")
+	effortOverride := fs.String("effort", "", "Override the thinking effort (Claude: low|medium|high|max, plus xhigh on Opus 4.7; Codex/Pi: minimal|low|medium|high|xhigh)")
 
 	fs.Usage = func() {
 		fmt.Println("Usage: agent-deck launch [path] [options]")
@@ -396,6 +396,26 @@ func handleLaunch(profile string, args []string) {
 				opts.ReasoningEffort = trimmedEffort
 			}
 			_ = newInstance.SetCodexOptions(opts)
+		case "gemini":
+			if trimmedModel != "" {
+				newInstance.GeminiModel = trimmedModel
+			}
+		case "pi":
+			opts := newInstance.GetPiOptions()
+			if opts == nil {
+				userConfig, _ := session.LoadUserConfig()
+				opts = session.NewPiOptions(userConfig)
+			}
+			if trimmedModel != "" {
+				opts.Model = trimmedModel
+				if strings.Contains(trimmedModel, "/") {
+					opts.Provider = ""
+				}
+			}
+			if trimmedEffort != "" {
+				opts.Thinking = trimmedEffort
+			}
+			_ = newInstance.SetPiOptions(opts)
 		}
 	}
 

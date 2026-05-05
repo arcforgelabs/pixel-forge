@@ -78,6 +78,22 @@ def _default_install_destinations() -> list[SkillRegistryLocation]:
             managed=False,
         ),
         SkillRegistryLocation(
+            id="gemini-skills",
+            label="Gemini",
+            path=str(Path.home() / ".gemini" / "skills"),
+            role="destination",
+            target="gemini",
+            managed=False,
+        ),
+        SkillRegistryLocation(
+            id="pi-skills",
+            label="Pi",
+            path=str(Path.home() / ".pi" / "agent" / "skills"),
+            role="destination",
+            target="pi",
+            managed=False,
+        ),
+        SkillRegistryLocation(
             id="openclaw-skills",
             label="OpenClaw",
             path=str(Path.home() / ".openclaw" / "skills"),

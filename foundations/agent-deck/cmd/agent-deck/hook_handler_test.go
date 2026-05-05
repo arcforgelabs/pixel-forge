@@ -126,6 +126,15 @@ func TestHookHandler_MissingInstanceID(t *testing.T) {
 	handleHookHandler()
 }
 
+func setHookTestHome(t *testing.T) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("AGENTDECK_DIR", "")
+	t.Setenv("AGENT_DECK_DIR", "")
+	t.Setenv("PIXEL_FORGE_AGENT_DECK_HOME", "")
+}
+
 func TestHookPayload_Unmarshal(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -170,8 +179,7 @@ func TestHookPayload_Unmarshal(t *testing.T) {
 }
 
 func TestWriteHookStatus_EmptyEventDoesNotBackfillJSON(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setHookTestHome(t)
 
 	instanceID := "inst-sticky"
 	writeHookStatus(instanceID, "waiting", "sess-1", "SessionStart")
@@ -194,8 +202,7 @@ func TestWriteHookStatus_EmptyEventDoesNotBackfillJSON(t *testing.T) {
 }
 
 func TestWriteHookStatus_ClearsStickySessionOnSessionEnd(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setHookTestHome(t)
 
 	instanceID := "inst-end"
 	writeHookStatus(instanceID, "waiting", "sess-2", "SessionStart")
@@ -219,8 +226,7 @@ func TestWriteHookStatus_ClearsStickySessionOnSessionEnd(t *testing.T) {
 }
 
 func TestWriteHookStatus_StopDoesNotClearStickySession(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setHookTestHome(t)
 
 	instanceID := "inst-stop"
 	writeHookStatus(instanceID, "waiting", "sess-3", "SessionStart")
@@ -232,8 +238,7 @@ func TestWriteHookStatus_StopDoesNotClearStickySession(t *testing.T) {
 }
 
 func TestWriteHookStatus_QueuesImmutableHookEvent(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setHookTestHome(t)
 
 	instanceID := "inst-queue"
 	writeHookStatus(instanceID, "running", "sess-4", "UserPromptSubmit")

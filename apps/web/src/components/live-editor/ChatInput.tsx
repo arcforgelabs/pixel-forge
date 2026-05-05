@@ -38,6 +38,12 @@ function formatAgentLabel(agentType: string | null | undefined): string {
   if (agentType === 'codex') {
     return 'Codex'
   }
+  if (agentType === 'gemini') {
+    return 'Gemini'
+  }
+  if (agentType === 'pi') {
+    return 'Pi'
+  }
   return agentType || 'Agent'
 }
 
@@ -81,6 +87,28 @@ const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
     { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
     { value: 'gpt-5.4-nano', label: 'GPT 5.4 Nano' },
   ],
+  gemini: [
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+    { value: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite Preview' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+  ],
+  pi: [
+    { value: 'xai/grok-code-fast-1', label: 'Grok Code Fast 1' },
+    { value: 'xai/grok-4.20-0309-reasoning', label: 'Grok 4.20 Reasoning' },
+    { value: 'xai/grok-4-1-fast', label: 'Grok 4.1 Fast' },
+    { value: 'xai/grok-4-fast', label: 'Grok 4 Fast' },
+    { value: 'xai/grok-4', label: 'Grok 4' },
+    { value: 'ollama/qwen2.5:32b', label: 'Ollama Qwen 2.5 32B' },
+    { value: 'ollama/deepseek-coder:33b', label: 'Ollama DeepSeek Coder 33B' },
+    { value: 'ollama/qwq:32b', label: 'Ollama QwQ 32B' },
+    { value: 'ollama/deepseek-r1:32b', label: 'Ollama DeepSeek R1 32B' },
+    { value: 'ollama/qwen2.5:14b', label: 'Ollama Qwen 2.5 14B' },
+    { value: 'ollama/qwen2.5:7b', label: 'Ollama Qwen 2.5 7B' },
+    { value: 'ollama/llama3.1:8b', label: 'Ollama Llama 3.1 8B' },
+  ],
 }
 
 // Claude Opus 4.7 uses adaptive thinking with `--effort low|medium|high|xhigh|max`.
@@ -89,6 +117,14 @@ const AGENT_MODEL_OPTIONS: Record<string, AgentModelOption[]> = {
 const AGENT_THINKING_OPTIONS: Record<string, AgentModelOption[]> = {
   claude: CLAUDE_LEGACY_THINKING_OPTIONS,
   codex: [
+    { value: 'minimal', label: 'Minimal' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' },
+    { value: 'xhigh', label: 'Extra High' },
+  ],
+  pi: [
+    { value: 'off', label: 'Off' },
     { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
@@ -1194,6 +1230,8 @@ export function ChatInput() {
                   {[
                     { value: 'claude', label: 'Claude Code' },
                     { value: 'codex', label: 'Codex' },
+                    { value: 'gemini', label: 'Gemini' },
+                    { value: 'pi', label: 'Pi' },
                   ].map((agent) => {
                     const isSelected = effectiveAgentType === agent.value
                     return (
