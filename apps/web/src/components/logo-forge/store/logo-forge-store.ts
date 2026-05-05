@@ -11,12 +11,26 @@ import {
   type LogoForgeParams,
   type ParsedPattern,
 } from "../core";
+import {
+  SVG_LOGO_FONTS,
+  clampNumber,
+  defaultSvgLogoObjects,
+  isHexColor,
+  type LogoForgeMode,
+  type SvgLogoObject,
+} from "../svg-logo";
 
 export type PreviewSurface = "configured" | "black" | "white";
 
 export interface LogoForgeProjectState {
+  logoMode: LogoForgeMode;
   patternText: string;
   patternGrid: boolean[][];
+  svgObjects: SvgLogoObject[];
+  selectedSvgObjectId: string | null;
+  svgShowGrid: boolean;
+  svgSnapToGrid: boolean;
+  svgGridSize: number;
   params: LogoForgeParams;
   previewSurface: PreviewSurface;
   previewShowBackground: boolean;
@@ -27,9 +41,16 @@ export interface LogoForgeProjectState {
 
 function defaultProjectState(): LogoForgeProjectState {
   const patternGrid = gridFromPattern(parsePattern(DEFAULT_PATTERN_TEXT));
+  const svgObjects = defaultSvgLogoObjects();
   return {
+    logoMode: "pixel",
     patternText: DEFAULT_PATTERN_TEXT,
     patternGrid,
+    svgObjects,
+    selectedSvgObjectId: svgObjects[0]?.id ?? null,
+    svgShowGrid: true,
+    svgSnapToGrid: false,
+    svgGridSize: 64,
     params: { ...DEFAULT_PARAMS },
     previewSurface: "configured",
     previewShowBackground: true,
@@ -37,6 +58,85 @@ function defaultProjectState(): LogoForgeProjectState {
     exportAppIconRadiusPct: 0,
     lastPreset: "L-TR",
   };
+}
+
+function coerceSvgObjects(raw: unknown): SvgLogoObject[] {
+  if (!Array.isArray(raw)) return defaultSvgLogoObjects();
+  const objects: SvgLogoObject[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Partial<SvgLogoObject> & {
+      id?: unknown;
+      type?: unknown;
+      fill?: unknown;
+      opacity?: unknown;
+      rotation?: unknown;
+      text?: unknown;
+      x?: unknown;
+      y?: unknown;
+      fontSize?: unknown;
+      fontFamily?: unknown;
+      fontWeight?: unknown;
+      width?: unknown;
+      height?: unknown;
+      radius?: unknown;
+      cx?: unknown;
+      cy?: unknown;
+    };
+    const id = typeof obj.id === "string" && obj.id ? obj.id : null;
+    if (!id) continue;
+    const fill = isHexColor(obj.fill) ? obj.fill : "#81c784";
+    const opacity = clampNumber(obj.opacity, 1, 0, 1);
+    const rotation = clampNumber(obj.rotation, 0, -360, 360);
+    if (obj.type === "text") {
+      const fontFamily =
+        typeof obj.fontFamily === "string" &&
+        SVG_LOGO_FONTS.includes(obj.fontFamily as (typeof SVG_LOGO_FONTS)[number])
+          ? obj.fontFamily
+          : "Inter";
+      objects.push({
+        id,
+        type: "text",
+        text:
+          typeof obj.text === "string" && obj.text.length > 0
+            ? obj.text.slice(0, 12)
+            : "A",
+        x: clampNumber(obj.x, 512, -512, 1536),
+        y: clampNumber(obj.y, 512, -512, 1536),
+        fontSize: clampNumber(obj.fontSize, 420, 24, 960),
+        fontFamily,
+        fontWeight: clampNumber(obj.fontWeight, 800, 100, 900),
+        fill,
+        opacity,
+        rotation,
+      });
+    } else if (obj.type === "rect") {
+      objects.push({
+        id,
+        type: "rect",
+        x: clampNumber(obj.x, 262, -512, 1536),
+        y: clampNumber(obj.y, 262, -512, 1536),
+        width: clampNumber(obj.width, 500, 12, 1536),
+        height: clampNumber(obj.height, 500, 12, 1536),
+        radius: clampNumber(obj.radius, 72, 0, 512),
+        fill,
+        opacity,
+        rotation,
+      });
+    } else if (obj.type === "circle") {
+      objects.push({
+        id,
+        type: "circle",
+        cx: clampNumber(obj.cx, 512, -512, 1536),
+        cy: clampNumber(obj.cy, 512, -512, 1536),
+        radius: clampNumber(obj.radius, 260, 8, 768),
+        fill,
+        opacity,
+        rotation,
+      });
+    }
+  }
+  return objects.length > 0 ? objects.slice(0, 24) : defaultSvgLogoObjects();
 }
 
 function coercePatternGrid(raw: unknown, fallbackText: string): boolean[][] {
@@ -75,9 +175,27 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
     ...base.params,
     ...(obj.params ?? {}),
   };
+  const svgObjects = coerceSvgObjects(obj.svgObjects);
+  const selectedSvgObjectId =
+    typeof obj.selectedSvgObjectId === "string" &&
+    svgObjects.some((object) => object.id === obj.selectedSvgObjectId)
+      ? obj.selectedSvgObjectId
+      : svgObjects[0]?.id ?? null;
   return {
+    logoMode: obj.logoMode === "svg" ? "svg" : "pixel",
     patternText,
     patternGrid,
+    svgObjects,
+    selectedSvgObjectId,
+    svgShowGrid:
+      typeof obj.svgShowGrid === "boolean"
+        ? obj.svgShowGrid
+        : base.svgShowGrid,
+    svgSnapToGrid:
+      typeof obj.svgSnapToGrid === "boolean"
+        ? obj.svgSnapToGrid
+        : base.svgSnapToGrid,
+    svgGridSize: clampNumber(obj.svgGridSize, base.svgGridSize, 8, 256),
     params,
     previewSurface:
       obj.previewSurface === "black" || obj.previewSurface === "white"

@@ -10,9 +10,13 @@ import {
 } from "./core";
 import LogoForgeCanvas from "./LogoForgeCanvas";
 import LogoForgeSidebar from "./LogoForgeSidebar";
+import LogoForgeSvgCanvas from "./LogoForgeSvgCanvas";
 import { canvasToPngBlob, composeExportCanvas } from "./export/compose";
 import { buildSvgString } from "./export/svg";
+import { buildSvgLogoString, svgLogoToCanvas } from "./export/svg-logo";
 import { saveBlob } from "./export/download";
+import { makeZipBlob, type ZipEntryInput } from "./export/zip";
+import type { LogoForgeMode, SvgLogoObject } from "./svg-logo";
 
 const PREVIEW_SIZES = [24, 48, 128, 256] as const;
 
@@ -82,21 +86,64 @@ export function LogoForgePane() {
     [stateKey, updateProjectState]
   );
 
+  const handleLogoModeChange = useCallback(
+    (logoMode: LogoForgeMode) => {
+      updateProjectState(stateKey, (prev) => ({
+        ...prev,
+        logoMode,
+      }));
+    },
+    [stateKey, updateProjectState]
+  );
+
+  const handleSvgObjectsChange = useCallback(
+    (svgObjects: SvgLogoObject[], selectedSvgObjectId?: string | null) => {
+      updateProjectState(stateKey, (prev) => ({
+        ...prev,
+        svgObjects,
+        selectedSvgObjectId:
+          selectedSvgObjectId === undefined
+            ? prev.selectedSvgObjectId
+            : selectedSvgObjectId,
+      }));
+    },
+    [stateKey, updateProjectState]
+  );
+
+  const handleSelectedSvgObjectChange = useCallback(
+    (selectedSvgObjectId: string | null) => {
+      updateProjectState(stateKey, (prev) => ({
+        ...prev,
+        selectedSvgObjectId,
+      }));
+    },
+    [stateKey, updateProjectState]
+  );
+
   const savePng = useCallback(
     async (size: number) => {
       if (!state) return;
       setIsExporting(true);
       try {
-        const canvas = composeExportCanvas({
-          pattern,
-          params: state.params,
-          size,
-          includeBackground: state.exportIncludeBackground,
-          appIconRadiusPct: state.exportAppIconRadiusPct,
-        });
-        const blob = await canvasToPngBlob(canvas);
+        const canvas =
+          state.logoMode === "svg"
+            ? await svgLogoToCanvas({
+                objects: state.svgObjects,
+                size,
+                background: state.params.background,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              })
+            : composeExportCanvas({
+                pattern,
+                params: state.params,
+                size,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              });
+        const exportBlob = await canvasToPngBlob(canvas);
         await saveBlob(
-          blob,
+          exportBlob,
           `${slugifyProject(projectPath)}-${size}.png`
         );
       } catch (error) {
@@ -121,7 +168,17 @@ export function LogoForgePane() {
           includeBackground: state.exportIncludeBackground,
           appIconRadiusPct: state.exportAppIconRadiusPct,
         });
-        const blob = new Blob([svg], { type: "image/svg+xml" });
+        const exportSvg =
+          state.logoMode === "svg"
+            ? buildSvgLogoString({
+                objects: state.svgObjects,
+                size,
+                background: state.params.background,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              })
+            : svg;
+        const blob = new Blob([exportSvg], { type: "image/svg+xml" });
         await saveBlob(blob, `${slugifyProject(projectPath)}-${size}.svg`);
       } catch (error) {
         console.error("[logo-forge] SVG export failed:", error);
@@ -138,18 +195,60 @@ export function LogoForgePane() {
     setIsExporting(true);
     try {
       const slug = slugifyProject(projectPath);
+      const entries: ZipEntryInput[] = [];
       for (const size of PREVIEW_SIZES) {
-        const canvas = composeExportCanvas({
-          pattern,
-          params: state.params,
-          size,
-          includeBackground: state.exportIncludeBackground,
-          appIconRadiusPct: state.exportAppIconRadiusPct,
-        });
+        const canvas =
+          state.logoMode === "svg"
+            ? await svgLogoToCanvas({
+                objects: state.svgObjects,
+                size,
+                background: state.params.background,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              })
+            : composeExportCanvas({
+                pattern,
+                params: state.params,
+                size,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              });
         const blob = await canvasToPngBlob(canvas);
-        await saveBlob(blob, `${slug}-${size}.png`);
+        entries.push({ name: `png/${slug}-${size}.png`, data: blob });
       }
-      toast.success("Saved 24/48/128/256 PNG pack");
+      const svg =
+        state.logoMode === "svg"
+          ? buildSvgLogoString({
+              objects: state.svgObjects,
+              size: 1024,
+              background: state.params.background,
+              includeBackground: state.exportIncludeBackground,
+              appIconRadiusPct: state.exportAppIconRadiusPct,
+            })
+          : buildSvgString({
+              pattern,
+              params: state.params,
+              size: 1024,
+              includeBackground: state.exportIncludeBackground,
+              appIconRadiusPct: state.exportAppIconRadiusPct,
+            });
+      entries.push({ name: `svg/${slug}-1024.svg`, data: svg });
+      entries.push({
+        name: "manifest.json",
+        data: JSON.stringify(
+          {
+            mode: state.logoMode,
+            sizes: PREVIEW_SIZES,
+            includeBackground: state.exportIncludeBackground,
+            appIconRadiusPct: state.exportAppIconRadiusPct,
+          },
+          null,
+          2
+        ),
+      });
+      const zip = await makeZipBlob(entries);
+      await saveBlob(zip, `${slug}-logo-pack.zip`);
+      toast.success("Saved logo pack");
     } catch (error) {
       console.error("[logo-forge] Pack export failed:", error);
       toast.error("Failed to export pack");
@@ -170,6 +269,7 @@ export function LogoForgePane() {
     <div className="flex h-full min-h-0 w-full">
       <LogoForgeSidebar
         state={state}
+        onLogoModeChange={handleLogoModeChange}
         onParamsChange={handleParamsChange}
         onPatternTextChange={handlePatternTextChange}
         onPreviewSurfaceChange={(surface) =>
@@ -196,6 +296,14 @@ export function LogoForgePane() {
             exportAppIconRadiusPct: pct,
           }))
         }
+        onSvgObjectsChange={handleSvgObjectsChange}
+        onSelectedSvgObjectChange={handleSelectedSvgObjectChange}
+        onSvgGridSettingsChange={(settings) =>
+          updateProjectState(stateKey, (prev) => ({
+            ...prev,
+            ...settings,
+          }))
+        }
         onSavePng={savePng}
         onSaveSvg={saveSvg}
         onSavePack={savePack}
@@ -205,29 +313,60 @@ export function LogoForgePane() {
       />
       <section className="flex flex-1 min-w-0 flex-col items-center justify-center gap-6 overflow-auto bg-background/60 p-6">
         <div className="flex flex-col items-center gap-3">
-          <LogoForgeCanvas
-            pattern={pattern}
-            params={state.params}
-            renderSize={512}
-            previewSurface={state.previewSurface}
-            previewShowBackground={state.previewShowBackground}
-            appIconRadiusPct={state.exportAppIconRadiusPct}
-          />
+          {state.logoMode === "svg" ? (
+            <LogoForgeSvgCanvas
+              objects={state.svgObjects}
+              renderSize={560}
+              background={state.params.background}
+              previewSurface={state.previewSurface}
+              previewShowBackground={state.previewShowBackground}
+              appIconRadiusPct={state.exportAppIconRadiusPct}
+              selectedObjectId={state.selectedSvgObjectId}
+              showGrid={state.svgShowGrid}
+              snapToGrid={state.svgSnapToGrid}
+              gridSize={state.svgGridSize}
+              interactive
+              onSelectObject={handleSelectedSvgObjectChange}
+              onObjectsChange={(objects) =>
+                handleSvgObjectsChange(objects, state.selectedSvgObjectId)
+              }
+            />
+          ) : (
+            <LogoForgeCanvas
+              pattern={pattern}
+              params={state.params}
+              renderSize={512}
+              previewSurface={state.previewSurface}
+              previewShowBackground={state.previewShowBackground}
+              appIconRadiusPct={state.exportAppIconRadiusPct}
+            />
+          )}
           <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-            Hero · 512px
+            {state.logoMode === "svg" ? "Editor · SVG" : "Hero · 512px"}
           </span>
         </div>
         <div className="flex items-end gap-4">
           {PREVIEW_SIZES.map((size) => (
             <div key={size} className="flex flex-col items-center gap-1.5">
-              <LogoForgeCanvas
-                pattern={pattern}
-                params={state.params}
-                renderSize={size}
-                previewSurface={state.previewSurface}
-                previewShowBackground={state.previewShowBackground}
-                appIconRadiusPct={state.exportAppIconRadiusPct}
-              />
+              {state.logoMode === "svg" ? (
+                <LogoForgeSvgCanvas
+                  objects={state.svgObjects}
+                  renderSize={size}
+                  background={state.params.background}
+                  previewSurface={state.previewSurface}
+                  previewShowBackground={state.previewShowBackground}
+                  appIconRadiusPct={state.exportAppIconRadiusPct}
+                />
+              ) : (
+                <LogoForgeCanvas
+                  pattern={pattern}
+                  params={state.params}
+                  renderSize={size}
+                  previewSurface={state.previewSurface}
+                  previewShowBackground={state.previewShowBackground}
+                  appIconRadiusPct={state.exportAppIconRadiusPct}
+                />
+              )}
               <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 {size}
               </span>

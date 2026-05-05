@@ -17,7 +17,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, ArrowRight, Minus, Plus, Shuffle } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Circle,
+  Copy,
+  Minus,
+  Plus,
+  Shuffle,
+  Square,
+  Trash2,
+  Type,
+} from "lucide-react";
 import {
   MAX_DIM,
   MIN_DIM,
@@ -31,9 +44,19 @@ import type {
   LogoForgeProjectState,
   PreviewSurface,
 } from "./store/logo-forge-store";
+import {
+  SVG_LOGO_FONTS,
+  SVG_LOGO_VIEWBOX_SIZE,
+  alignSvgObject,
+  createSvgLogoObjectId,
+  snapSvgObjectToGrid,
+  type LogoForgeMode,
+  type SvgLogoObject,
+} from "./svg-logo";
 
 interface Props {
   state: LogoForgeProjectState;
+  onLogoModeChange: (mode: LogoForgeMode) => void;
   onParamsChange: (updater: (prev: LogoForgeParams) => LogoForgeParams) => void;
   onPatternTextChange: (
     patternText: string,
@@ -44,6 +67,16 @@ interface Props {
   onPreviewShowBackgroundChange: (show: boolean) => void;
   onExportIncludeBackgroundChange: (include: boolean) => void;
   onExportAppIconRadiusChange: (pct: number) => void;
+  onSvgObjectsChange: (
+    objects: SvgLogoObject[],
+    selectedObjectId?: string | null
+  ) => void;
+  onSelectedSvgObjectChange: (id: string | null) => void;
+  onSvgGridSettingsChange: (
+    settings: Partial<
+      Pick<LogoForgeProjectState, "svgShowGrid" | "svgSnapToGrid" | "svgGridSize">
+    >
+  ) => void;
   onSavePng: (size: number) => void;
   onSaveSvg: (size: number) => void;
   onSavePack: () => void;
@@ -152,14 +185,66 @@ function resizeGrid(grid: boolean[][], rows: number, cols: number): boolean[][] 
   );
 }
 
+function defaultObjectForType(type: SvgLogoObject["type"]): SvgLogoObject {
+  const id = createSvgLogoObjectId();
+  if (type === "text") {
+    return {
+      id,
+      type: "text",
+      text: "A",
+      x: SVG_LOGO_VIEWBOX_SIZE / 2,
+      y: SVG_LOGO_VIEWBOX_SIZE / 2,
+      fontSize: 420,
+      fontFamily: "Inter",
+      fontWeight: 800,
+      fill: "#81c784",
+      opacity: 1,
+      rotation: 0,
+    };
+  }
+  if (type === "circle") {
+    return {
+      id,
+      type: "circle",
+      cx: SVG_LOGO_VIEWBOX_SIZE / 2,
+      cy: SVG_LOGO_VIEWBOX_SIZE / 2,
+      radius: 260,
+      fill: "#81c784",
+      opacity: 0.92,
+      rotation: 0,
+    };
+  }
+  return {
+    id,
+    type: "rect",
+    x: 262,
+    y: 262,
+    width: 500,
+    height: 500,
+    radius: 72,
+    fill: "#1f6f42",
+    opacity: 0.9,
+    rotation: 0,
+  };
+}
+
+function objectLabel(object: SvgLogoObject): string {
+  if (object.type === "text") return `Text ${object.text}`;
+  return object.type === "rect" ? "Rectangle" : "Circle";
+}
+
 export function LogoForgeSidebar({
   state,
+  onLogoModeChange,
   onParamsChange,
   onPatternTextChange,
   onPreviewSurfaceChange,
   onPreviewShowBackgroundChange,
   onExportIncludeBackgroundChange,
   onExportAppIconRadiusChange,
+  onSvgObjectsChange,
+  onSelectedSvgObjectChange,
+  onSvgGridSettingsChange,
   onSavePng,
   onSaveSvg,
   onSavePack,
@@ -296,6 +381,73 @@ export function LogoForgeSidebar({
     onParamsChange((prev) => ({ ...prev, seed: next }));
   };
 
+  const selectedSvgObject =
+    state.svgObjects.find((object) => object.id === state.selectedSvgObjectId) ??
+    state.svgObjects[0] ??
+    null;
+
+  const addSvgObject = (type: SvgLogoObject["type"]) => {
+    const object = defaultObjectForType(type);
+    onSvgObjectsChange([...state.svgObjects, object], object.id);
+  };
+
+  const updateSvgObject = (
+    id: string,
+    updater: (object: SvgLogoObject) => SvgLogoObject
+  ) => {
+    onSvgObjectsChange(
+      state.svgObjects.map((object) =>
+        object.id === id ? updater(object) : object
+      ),
+      id
+    );
+  };
+
+  const duplicateSvgObject = (object: SvgLogoObject) => {
+    const id = createSvgLogoObjectId();
+    const copy =
+      object.type === "circle"
+        ? { ...object, id, cx: object.cx + 48, cy: object.cy + 48 }
+        : { ...object, id, x: object.x + 48, y: object.y + 48 };
+    onSvgObjectsChange([...state.svgObjects, copy], id);
+  };
+
+  const deleteSvgObject = (id: string) => {
+    const next = state.svgObjects.filter((object) => object.id !== id);
+    onSvgObjectsChange(next, next[0]?.id ?? null);
+  };
+
+  const moveSvgLayer = (id: string, delta: number) => {
+    const index = state.svgObjects.findIndex((object) => object.id === id);
+    if (index < 0) return;
+    const nextIndex = Math.max(
+      0,
+      Math.min(state.svgObjects.length - 1, index + delta)
+    );
+    if (nextIndex === index) return;
+    const next = state.svgObjects.slice();
+    const [object] = next.splice(index, 1);
+    if (!object) return;
+    next.splice(nextIndex, 0, object);
+    onSvgObjectsChange(next, id);
+  };
+
+  const alignSelectedSvgObject = (
+    axis: "horizontal" | "vertical" | "both"
+  ) => {
+    if (!selectedSvgObject) return;
+    updateSvgObject(selectedSvgObject.id, (object) =>
+      alignSvgObject(object, axis)
+    );
+  };
+
+  const snapSelectedSvgObject = () => {
+    if (!selectedSvgObject) return;
+    updateSvgObject(selectedSvgObject.id, (object) =>
+      snapSvgObjectToGrid(object, state.svgGridSize)
+    );
+  };
+
   return (
     <aside className="flex w-[288px] shrink-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-card/40 p-4">
       {!activeProjectPath && (
@@ -305,6 +457,35 @@ export function LogoForgeSidebar({
         </div>
       )}
 
+      <section className="flex flex-col gap-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          Mode
+        </h3>
+        <div className="grid grid-cols-2 gap-1.5">
+          {(
+            [
+              ["pixel", "Pixel"],
+              ["svg", "SVG"],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => onLogoModeChange(mode)}
+              className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
+                state.logoMode === mode
+                  ? "border-primary/60 bg-primary/15 text-primary"
+                  : "border-border/60 bg-card text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {state.logoMode === "pixel" && (
+        <>
       <section className="flex flex-col gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Seed
@@ -498,23 +679,384 @@ export function LogoForgeSidebar({
           onChange={(v) => updateParam("iconCornerRadius", v)}
         />
       </section>
+        </>
+      )}
+
+      {state.logoMode === "svg" && (
+        <section className="flex flex-col gap-3">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            SVG Objects
+          </h3>
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              aria-label="Add text"
+              onClick={() => addSvgObject("text")}
+            >
+              <Type className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              aria-label="Add rectangle"
+              onClick={() => addSvgObject("rect")}
+            >
+              <Square className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              aria-label="Add circle"
+              onClick={() => addSvgObject("circle")}
+            >
+              <Circle className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div className="flex max-h-36 flex-col gap-1 overflow-y-auto rounded-md border border-border/60 bg-background/70 p-1">
+            {state.svgObjects.map((object) => (
+              <button
+                key={object.id}
+                type="button"
+                onClick={() => onSelectedSvgObjectChange(object.id)}
+                className={`rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                  state.selectedSvgObjectId === object.id
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                }`}
+              >
+                {objectLabel(object)}
+              </button>
+            ))}
+          </div>
+          {selectedSvgObject && (
+            <div className="flex flex-col gap-3 rounded-md border border-border/60 bg-background/60 p-3">
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="Move layer back"
+                  onClick={() => moveSvgLayer(selectedSvgObject.id, -1)}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="Move layer forward"
+                  onClick={() => moveSvgLayer(selectedSvgObject.id, 1)}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label="Duplicate object"
+                  onClick={() => duplicateSvgObject(selectedSvgObject)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                  aria-label="Delete object"
+                  onClick={() => deleteSvgObject(selectedSvgObject.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              {selectedSvgObject.type === "text" && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      Text
+                    </Label>
+                    <Input
+                      value={selectedSvgObject.text}
+                      maxLength={12}
+                      onChange={(event) =>
+                        updateSvgObject(selectedSvgObject.id, (object) =>
+                          object.type === "text"
+                            ? { ...object, text: event.target.value || " " }
+                            : object
+                        )
+                      }
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      Font
+                    </Label>
+                    <Select
+                      value={selectedSvgObject.fontFamily}
+                      onValueChange={(fontFamily) =>
+                        updateSvgObject(selectedSvgObject.id, (object) =>
+                          object.type === "text"
+                            ? { ...object, fontFamily }
+                            : object
+                        )
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SVG_LOGO_FONTS.map((font) => (
+                          <SelectItem key={font} value={font} className="text-xs">
+                            {font}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <SliderRow
+                    label="Font Size"
+                    value={selectedSvgObject.fontSize}
+                    min={24}
+                    max={960}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedSvgObject.id, (object) =>
+                        object.type === "text"
+                          ? { ...object, fontSize: value }
+                          : object
+                      )
+                    }
+                  />
+                  <SliderRow
+                    label="Weight"
+                    value={selectedSvgObject.fontWeight}
+                    min={100}
+                    max={900}
+                    step={100}
+                    onChange={(value) =>
+                      updateSvgObject(selectedSvgObject.id, (object) =>
+                        object.type === "text"
+                          ? { ...object, fontWeight: value }
+                          : object
+                      )
+                    }
+                  />
+                </>
+              )}
+              {selectedSvgObject.type === "rect" && (
+                <>
+                  <SliderRow
+                    label="Width"
+                    value={selectedSvgObject.width}
+                    min={12}
+                    max={1536}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedSvgObject.id, (object) =>
+                        object.type === "rect"
+                          ? { ...object, width: value }
+                          : object
+                      )
+                    }
+                  />
+                  <SliderRow
+                    label="Height"
+                    value={selectedSvgObject.height}
+                    min={12}
+                    max={1536}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedSvgObject.id, (object) =>
+                        object.type === "rect"
+                          ? { ...object, height: value }
+                          : object
+                      )
+                    }
+                  />
+                  <SliderRow
+                    label="Corner Radius"
+                    value={selectedSvgObject.radius}
+                    min={0}
+                    max={512}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedSvgObject.id, (object) =>
+                        object.type === "rect"
+                          ? { ...object, radius: value }
+                          : object
+                      )
+                    }
+                  />
+                </>
+              )}
+              {selectedSvgObject.type === "circle" && (
+                <SliderRow
+                  label="Radius"
+                  value={selectedSvgObject.radius}
+                  min={8}
+                  max={768}
+                  step={1}
+                  onChange={(value) =>
+                    updateSvgObject(selectedSvgObject.id, (object) =>
+                      object.type === "circle"
+                        ? { ...object, radius: value }
+                        : object
+                    )
+                  }
+                />
+              )}
+              <div className="flex items-center gap-2">
+                <Label className="w-20 text-xs text-muted-foreground">Fill</Label>
+                <input
+                  type="color"
+                  value={selectedSvgObject.fill}
+                  onChange={(event) =>
+                    updateSvgObject(selectedSvgObject.id, (object) => ({
+                      ...object,
+                      fill: event.target.value,
+                    }))
+                  }
+                  className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
+                />
+                <span className="text-xs font-mono text-foreground/80">
+                  {selectedSvgObject.fill}
+                </span>
+              </div>
+              <SliderRow
+                label="Opacity"
+                value={selectedSvgObject.opacity}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(value) =>
+                  updateSvgObject(selectedSvgObject.id, (object) => ({
+                    ...object,
+                    opacity: value,
+                  }))
+                }
+              />
+              <SliderRow
+                label="Rotation"
+                value={selectedSvgObject.rotation}
+                min={-180}
+                max={180}
+                step={1}
+                onChange={(value) =>
+                  updateSvgObject(selectedSvgObject.id, (object) => ({
+                    ...object,
+                    rotation: value,
+                  }))
+                }
+              />
+            </div>
+          )}
+          <div className="flex flex-col gap-3 rounded-md border border-border/60 bg-background/60 p-3">
+            <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Alignment
+            </h4>
+            <div className="grid grid-cols-3 gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-[11px]"
+                disabled={!selectedSvgObject}
+                onClick={() => alignSelectedSvgObject("horizontal")}
+              >
+                H Center
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-[11px]"
+                disabled={!selectedSvgObject}
+                onClick={() => alignSelectedSvgObject("vertical")}
+              >
+                V Center
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-[11px]"
+                disabled={!selectedSvgObject}
+                onClick={() => alignSelectedSvgObject("both")}
+              >
+                Center
+              </Button>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="justify-start"
+              disabled={!selectedSvgObject}
+              onClick={snapSelectedSvgObject}
+            >
+              Snap selection to grid
+            </Button>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.svgShowGrid}
+                onCheckedChange={(checked) =>
+                  onSvgGridSettingsChange({ svgShowGrid: checked === true })
+                }
+              />
+              Show grid lines
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.svgSnapToGrid}
+                onCheckedChange={(checked) =>
+                  onSvgGridSettingsChange({ svgSnapToGrid: checked === true })
+                }
+              />
+              Snap drag to grid
+            </label>
+            <SliderRow
+              label="Grid Size"
+              value={state.svgGridSize}
+              min={8}
+              max={256}
+              step={8}
+              onChange={(value) =>
+                onSvgGridSettingsChange({ svgGridSize: value })
+              }
+            />
+          </div>
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Colors
         </h3>
-        <div className="flex items-center gap-2">
-          <Label className="w-20 text-xs text-muted-foreground">Base</Label>
-          <input
-            type="color"
-            value={params.baseGreen}
-            onChange={(e) => updateParam("baseGreen", e.target.value)}
-            className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
-          />
-          <span className="text-xs font-mono text-foreground/80">
-            {params.baseGreen}
-          </span>
-        </div>
+        {state.logoMode === "pixel" && (
+          <div className="flex items-center gap-2">
+            <Label className="w-20 text-xs text-muted-foreground">Base</Label>
+            <input
+              type="color"
+              value={params.baseGreen}
+              onChange={(e) => updateParam("baseGreen", e.target.value)}
+              className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
+            />
+            <span className="text-xs font-mono text-foreground/80">
+              {params.baseGreen}
+            </span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <Label className="w-20 text-xs text-muted-foreground">Backdrop</Label>
           <input
@@ -613,7 +1155,7 @@ export function LogoForgeSidebar({
             disabled={isExporting}
             onClick={onSavePack}
           >
-            Download pack (24/48/128/256)
+            Download logo pack
           </Button>
         </div>
         <Button
