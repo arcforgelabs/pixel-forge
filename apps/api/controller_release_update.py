@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -127,9 +128,43 @@ def _tags_api_url(repo: str) -> str:
     return f"https://api.github.com/repos/{repo}/tags?per_page=100"
 
 
+def _gh_command() -> str | None:
+    resolved = shutil.which("gh")
+    if resolved:
+        return resolved
+    for candidate in (
+        Path.home() / ".local" / "bin" / "gh",
+        Path.home() / "bin" / "gh",
+    ):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def _gh_auth_token() -> str | None:
+    gh = _gh_command()
+    if not gh:
+        return None
+    try:
+        result = subprocess.run(
+            [gh, "auth", "token"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return _normalize_text(result.stdout)
+
+
 def _auth_token() -> str | None:
-    return _normalize_text(os.environ.get("GITHUB_TOKEN")) or _normalize_text(
-        os.environ.get("GH_TOKEN")
+    return (
+        _normalize_text(os.environ.get("GITHUB_TOKEN"))
+        or _normalize_text(os.environ.get("GH_TOKEN"))
+        or _gh_auth_token()
     )
 
 
