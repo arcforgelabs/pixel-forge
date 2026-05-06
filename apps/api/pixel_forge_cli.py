@@ -143,6 +143,10 @@ def shell_url() -> str:
     return f"http://{url_host()}:{port()}"
 
 
+def runtime_info_url() -> str:
+    return f"{shell_url().rstrip('/')}/api/runtime-info"
+
+
 def runtime_dir() -> Path:
     override = os.environ.get("PIXEL_FORGE_RUNTIME_DIR")
     resolved = Path(override).expanduser().resolve() if override else shared_state_dir() / "runtime"
@@ -439,12 +443,48 @@ def _service_status_background() -> int:
     return 1
 
 
+def _is_http_ready(timeout: float = 2.0) -> bool:
+    try:
+        with urllib.request.urlopen(runtime_info_url(), timeout=timeout) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return False
+
+
+def _wait_for_http_ready(deadline_seconds: float = 20.0) -> bool:
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        if _is_http_ready(timeout=2.0):
+            return True
+        time.sleep(0.5)
+    return _is_http_ready(timeout=2.0)
+
+
 def _command_start(_args: argparse.Namespace) -> int:
     env = _base_env()
     if _have_systemd_service():
         subprocess.run(["systemctl", "--user", "start", service_name()], check=True, env=env)
+        if not _wait_for_http_ready(deadline_seconds=10):
+            subprocess.run(["systemctl", "--user", "restart", service_name()], check=True, env=env)
+            if not _wait_for_http_ready(deadline_seconds=20):
+                raise SystemExit(
+                    f"Pixel Forge service is running but not answering {runtime_info_url()}"
+                )
         print(f"Pixel Forge started (systemd). Open: {shell_url()}")
         return 0
+
+    _clear_stale_pid_file()
+    pid = _read_pid()
+    if pid and _is_pid_running(pid):
+        if not _wait_for_http_ready(deadline_seconds=5):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+            time.sleep(1)
+        else:
+            print(f"Pixel Forge already running (PID: {pid}). Open: {shell_url()}")
+            return 0
 
     _clear_stale_pid_file()
     pid = _read_pid()
@@ -466,6 +506,12 @@ def _command_start(_args: argparse.Namespace) -> int:
     time.sleep(1)
     if not _is_pid_running(proc.pid):
         raise SystemExit(f"Failed to start Pixel Forge. See {log_file()}")
+    if not _wait_for_http_ready(deadline_seconds=20):
+        try:
+            os.kill(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        raise SystemExit(f"Pixel Forge started but did not answer {runtime_info_url()}")
     print(f"Pixel Forge started. Open: {shell_url()}")
     return 0
 

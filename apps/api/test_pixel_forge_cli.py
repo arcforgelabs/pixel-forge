@@ -88,6 +88,30 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
 
         self.assertEqual(parser.prog, "pixel-forge")
 
+    def test_systemd_start_restarts_when_service_is_not_http_ready(self) -> None:
+        with patch.object(pixel_forge_cli, "_have_systemd_service", return_value=True), patch.object(
+            pixel_forge_cli,
+            "_wait_for_http_ready",
+            side_effect=[False, True],
+        ), patch("pixel_forge_cli.subprocess.run") as run:
+            exit_code = pixel_forge_cli._command_start(argparse.Namespace())
+
+        self.assertEqual(exit_code, 0)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][:3], ["systemctl", "--user", "start"])
+        self.assertEqual(commands[1][:3], ["systemctl", "--user", "restart"])
+
+    def test_systemd_start_fails_when_restart_still_is_not_http_ready(self) -> None:
+        with patch.object(pixel_forge_cli, "_have_systemd_service", return_value=True), patch.object(
+            pixel_forge_cli,
+            "_wait_for_http_ready",
+            side_effect=[False, False],
+        ), patch("pixel_forge_cli.subprocess.run"):
+            with self.assertRaises(SystemExit) as ctx:
+                pixel_forge_cli._command_start(argparse.Namespace())
+
+        self.assertIn("not answering", str(ctx.exception))
+
     def test_prefers_ghostty_when_available(self) -> None:
         with patch("pixel_forge_cli.shutil.which") as mock_which:
             mock_which.side_effect = lambda binary: "/usr/bin/ghostty" if binary == "ghostty" else None

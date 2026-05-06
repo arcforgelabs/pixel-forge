@@ -786,14 +786,19 @@ if [ -f "\$PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER" ]; then
     "\$PYTHON_BIN" "\$PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER" >/dev/null
 fi
 
-"\$LAUNCHER_DIR/\$CLI_NAME" start >/dev/null 2>&1 || true
+"\$LAUNCHER_DIR/\$CLI_NAME" start >/dev/null
 
+RUNTIME_INFO_URL="\${URL%/}/api/runtime-info"
 for _ in \$(seq 1 30); do
-    if curl -fsS "\$URL" >/dev/null 2>&1; then
+    if curl -fsS "\$RUNTIME_INFO_URL" >/dev/null 2>&1; then
         break
     fi
     sleep 1
 done
+if ! curl -fsS "\$RUNTIME_INFO_URL" >/dev/null 2>&1; then
+    echo "Pixel Forge API did not become ready at \$RUNTIME_INFO_URL" >&2
+    exit 1
+fi
 
 if [ ! -x "\$ELECTRON_BIN" ]; then
     echo "Pixel Forge desktop shell is not installed. Re-run ./install.sh"
