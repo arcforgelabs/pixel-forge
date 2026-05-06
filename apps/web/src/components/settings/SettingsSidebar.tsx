@@ -38,6 +38,7 @@ import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
 import { HTTP_BACKEND_URL, IS_TARGET_MODE, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
+import type { PixelForgeControllerReleaseUpdateResponse } from "@/types/pixel-forge-desktop";
 import {
   Dialog,
   DialogContent,
@@ -294,6 +295,8 @@ interface Props {
 
 export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, isOpeningWorkspace }: Props) {
   const [purgingHiddenHistory, setPurgingHiddenHistory] = useState(false);
+  const [isCheckingReleaseUpdate, setIsCheckingReleaseUpdate] = useState(false);
+  const [isStagingReleaseUpdate, setIsStagingReleaseUpdate] = useState(false);
   const {
     settingsSidebarOpen,
     toggleSettingsSidebar,
@@ -338,7 +341,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     skillsLoaded,
     skillsLoading,
     pendingControllerUpdate,
+    controllerReleaseUpdate,
     dismissedControllerUpdateId,
+    setControllerReleaseUpdate,
+    setPendingControllerUpdate,
     setDismissedControllerUpdateId,
     viewingSettings,
     setViewingSettings,
@@ -507,6 +513,18 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
+  const latestReleaseVersion = controllerReleaseUpdate?.latest?.version ?? null;
+  const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
+  const releaseLastCheckedLabel = controllerReleaseUpdate?.lastCheckedAt
+    ? formatInstalledAt(controllerReleaseUpdate.lastCheckedAt)
+    : "not checked";
+  const releaseUpdateDetail = controllerReleaseUpdate?.error
+    ? `GitHub check failed: ${controllerReleaseUpdate.error}`
+    : controllerReleaseUpdate?.updateAvailable
+      ? `${latestReleaseVersionLabel} is available from GitHub.`
+      : controllerReleaseUpdate?.latest
+        ? `Latest GitHub release is ${latestReleaseVersionLabel}.`
+        : "Pixel Forge can check GitHub releases without polling continuously.";
   const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
   const desktopApp = getDesktopApp();
   const canLoadControllerUpdate = Boolean(
@@ -636,6 +654,87 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       toast.error(message);
     } finally {
       setIsApplyingControllerUpdate(false);
+    }
+  }
+
+  async function handleCheckReleaseUpdate(force = true) {
+    try {
+      setIsCheckingReleaseUpdate(true);
+      const response = await fetch(`${HTTP_BACKEND_URL}/api/controller-release-update/check`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
+      const payload = await readResponsePayload(response) as PixelForgeControllerReleaseUpdateResponse;
+      if (!response.ok) {
+        throw new Error(getResponseErrorMessage(response, payload));
+      }
+      setControllerReleaseUpdate(payload.state);
+      if (Object.prototype.hasOwnProperty.call(payload, "update")) {
+        setPendingControllerUpdate(payload.update ?? null);
+      }
+      toast.success(
+        payload.state.updateAvailable
+          ? `Update available: ${formatVersionLabel(payload.state.latest?.version)}`
+          : "No newer Pixel Forge release found"
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to check for updates");
+    } finally {
+      setIsCheckingReleaseUpdate(false);
+    }
+  }
+
+  async function handleStageReleaseUpdate() {
+    try {
+      setIsStagingReleaseUpdate(true);
+      const response = await fetch(`${HTTP_BACKEND_URL}/api/controller-release-update/stage`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: false }),
+      });
+      const payload = await readResponsePayload(response) as PixelForgeControllerReleaseUpdateResponse;
+      if (!response.ok) {
+        throw new Error(getResponseErrorMessage(response, payload));
+      }
+      setControllerReleaseUpdate(payload.state);
+      if (payload.update !== undefined) {
+        setPendingControllerUpdate(payload.update ?? null);
+      }
+      if (payload.update) {
+        toast.success(`${formatVersionLabel(payload.update.version)} is staged for install`);
+      } else {
+        toast("No newer release is available to stage");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to stage release update");
+    } finally {
+      setIsStagingReleaseUpdate(false);
+    }
+  }
+
+  async function handleSkipReleaseUpdate() {
+    const version = controllerReleaseUpdate?.latest?.version ?? null;
+    if (!version) {
+      return;
+    }
+    try {
+      const response = await fetch(`${HTTP_BACKEND_URL}/api/controller-release-update/skip`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version }),
+      });
+      const payload = await readResponsePayload(response) as PixelForgeControllerReleaseUpdateResponse;
+      if (!response.ok) {
+        throw new Error(getResponseErrorMessage(response, payload));
+      }
+      setControllerReleaseUpdate(payload.state);
+      toast.success(`Skipped ${formatVersionLabel(version)}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to skip release");
     }
   }
 
@@ -1874,6 +1973,90 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <p className="mt-1 break-all font-mono text-xs text-foreground">
                       {controllerRuntimeRoot}
                     </p>
+                  </div>
+                )}
+
+                {RUNTIME_KIND === "controller" && (
+                  <div className="rounded-lg border border-border/70 bg-card/70 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">GitHub Releases</p>
+                        <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {releaseUpdateDetail}
+                        </p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={
+                          controllerReleaseUpdate?.updateAvailable
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                            : controllerReleaseUpdate?.error
+                              ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                              : "border-transparent bg-muted text-foreground"
+                        }
+                      >
+                        {controllerReleaseUpdate?.updateAvailable
+                          ? "New release"
+                          : controllerReleaseUpdate?.error
+                            ? "Check failed"
+                            : "Stable"}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Repository</span>
+                        <span className="text-xs text-foreground">
+                          {controllerReleaseUpdate?.repo ?? "IAMSamuelRodda/pixel-forge"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Latest Release</span>
+                        <span className="font-mono text-xs text-foreground">
+                          {controllerReleaseUpdate?.latest ? latestReleaseVersionLabel : "unknown"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-muted-foreground">Last Checked</span>
+                        <span className="text-xs text-foreground">{releaseLastCheckedLabel}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleCheckReleaseUpdate(true)}
+                        disabled={isCheckingReleaseUpdate || isStagingReleaseUpdate}
+                        className="gap-1.5"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${isCheckingReleaseUpdate ? "animate-spin" : ""}`} />
+                        Check for Updates
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleStageReleaseUpdate()}
+                        disabled={
+                          !controllerReleaseUpdate?.updateAvailable
+                          || isCheckingReleaseUpdate
+                          || isStagingReleaseUpdate
+                        }
+                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                      >
+                        <Loader2 className={`h-3.5 w-3.5 ${isStagingReleaseUpdate ? "animate-spin" : "hidden"}`} />
+                        Stage Release
+                      </Button>
+                      {controllerReleaseUpdate?.updateAvailable && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleSkipReleaseUpdate()}
+                          disabled={isCheckingReleaseUpdate || isStagingReleaseUpdate}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          Skip {latestReleaseVersionLabel}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
 

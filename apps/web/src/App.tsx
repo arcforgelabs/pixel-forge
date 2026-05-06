@@ -31,6 +31,7 @@ import { browseForDirectory } from "./lib/browse-directory";
 import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
 import { FolderOpen, Maximize2, Minus, X } from "lucide-react";
 import type {
+  PixelForgeControllerReleaseUpdateResponse,
   PixelForgeDesktopControllerUpdateApplyState,
   PixelForgeDesktopBootstrapState,
   PixelForgeDesktopPendingControllerUpdate,
@@ -132,6 +133,7 @@ function App() {
     setDismissedControllerUpdateId,
     setProject,
     setControllerUpdateApplyState,
+    setControllerReleaseUpdate,
     setPendingControllerUpdate,
     setSessionId,
     switchMode,
@@ -349,6 +351,58 @@ function App() {
     setDismissedControllerUpdateId,
     setPendingControllerUpdate,
   ]);
+
+  useEffect(() => {
+    if (RUNTIME_KIND !== "controller") {
+      return;
+    }
+
+    let cancelled = false;
+    const applyReleasePayload = (payload: PixelForgeControllerReleaseUpdateResponse) => {
+      if (cancelled) {
+        return;
+      }
+      setControllerReleaseUpdate(payload.state);
+      if (Object.prototype.hasOwnProperty.call(payload, "update")) {
+        setPendingControllerUpdate(payload.update ?? null);
+      }
+    };
+
+    void fetch(`${HTTP_BACKEND_URL}/api/controller-release-update`, {
+      credentials: "include",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json() as Promise<PixelForgeControllerReleaseUpdateResponse>;
+      })
+      .then(applyReleasePayload)
+      .catch((error) => {
+        console.error("[app] Failed to load controller release update state:", error);
+      });
+
+    void fetch(`${HTTP_BACKEND_URL}/api/controller-release-update/check`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: false }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json() as Promise<PixelForgeControllerReleaseUpdateResponse>;
+      })
+      .then(applyReleasePayload)
+      .catch((error) => {
+        console.error("[app] Failed to check controller release update:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setControllerReleaseUpdate, setPendingControllerUpdate]);
 
   useEffect(() => {
     void hydrateProjects().catch((error) => {

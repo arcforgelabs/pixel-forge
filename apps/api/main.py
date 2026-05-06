@@ -120,6 +120,12 @@ from controller_update_state import (
     read_pending_controller_update,
     write_pending_controller_update,
 )
+from controller_release_update import (
+    check_controller_release_update,
+    read_controller_release_update,
+    skip_controller_release_update,
+    stage_controller_release_update,
+)
 from published_update_state import (
     clear_pending_preview_update,
     read_latest_pending_preview_update,
@@ -669,6 +675,14 @@ class PendingControllerUpdateRequest(BaseModel):
     commit_hash: str | None = None
     git_ref: str | None = None
     allow_noncanonical_project: bool = False
+
+
+class ControllerReleaseCheckRequest(BaseModel):
+    force: bool = False
+
+
+class ControllerReleaseSkipRequest(BaseModel):
+    version: str | None = None
 
 
 class PendingPreviewUpdateRequest(BaseModel):
@@ -2027,6 +2041,60 @@ async def start_workspace_preview_route(payload: WorkspacePreviewStartRequest):
 async def get_pending_controller_update():
     update = await asyncio.to_thread(read_pending_controller_update)
     return {"update": update}
+
+
+@app.get("/api/controller-release-update")
+async def get_controller_release_update():
+    return {"state": await asyncio.to_thread(read_controller_release_update)}
+
+
+@app.post("/api/controller-release-update/check")
+async def check_controller_release_update_route(payload: ControllerReleaseCheckRequest):
+    if current_runtime_kind() != "controller":
+        raise HTTPException(
+            status_code=400,
+            detail="Release update checks are only available in the controller runtime.",
+        )
+    return {
+        "state": await asyncio.to_thread(
+            check_controller_release_update,
+            force=payload.force,
+        ),
+        "update": await asyncio.to_thread(read_pending_controller_update),
+    }
+
+
+@app.post("/api/controller-release-update/stage")
+async def stage_controller_release_update_route(payload: ControllerReleaseCheckRequest):
+    if current_runtime_kind() != "controller":
+        raise HTTPException(
+            status_code=400,
+            detail="Release update staging is only available in the controller runtime.",
+        )
+    try:
+        return await asyncio.to_thread(
+            stage_controller_release_update,
+            force_check=payload.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/controller-release-update/skip")
+async def skip_controller_release_update_route(payload: ControllerReleaseSkipRequest):
+    if current_runtime_kind() != "controller":
+        raise HTTPException(
+            status_code=400,
+            detail="Release update skipping is only available in the controller runtime.",
+        )
+    return {
+        "state": await asyncio.to_thread(
+            skip_controller_release_update,
+            payload.version,
+        )
+    }
 
 
 @app.get("/api/runtime-info")

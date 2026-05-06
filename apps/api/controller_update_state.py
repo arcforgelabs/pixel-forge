@@ -403,6 +403,29 @@ def write_pending_controller_update(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def write_pending_controller_update_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_pending_controller_update(payload)
+    snapshot_path = _normalize_text(normalized.get("snapshotPath"))
+    if not controller_update_snapshot_has_runtime_layout(snapshot_path):
+        raise ValueError(
+            f"Controller update snapshot must be an installable Pixel Forge root: {snapshot_path}"
+        )
+
+    normalized["snapshotPath"] = str(Path(snapshot_path).expanduser().resolve())
+    normalized["projectPath"] = _normalize_text(normalized.get("projectPath")) or normalized[
+        "snapshotPath"
+    ]
+    normalized["version"] = (
+        _normalize_text(normalized.get("version"))
+        or read_version_for_project(normalized["snapshotPath"])
+    )
+    _write_controller_snapshot_version(normalized["snapshotPath"], normalized["version"])
+    pending_controller_update_path().write_text(
+        json.dumps(normalized, indent=2), encoding="utf-8"
+    )
+    return normalized
+
+
 def repair_pending_controller_update_snapshot(
     payload: dict[str, Any] | None,
 ) -> dict[str, Any] | None:

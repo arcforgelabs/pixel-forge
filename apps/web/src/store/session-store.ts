@@ -1,6 +1,7 @@
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
 import { create } from "zustand";
 import type {
+  PixelForgeControllerReleaseUpdateState,
   PixelForgeDesktopControllerUpdateApplyState,
   PixelForgePendingPreviewUpdate,
   PixelForgeDesktopPendingControllerUpdate,
@@ -208,6 +209,7 @@ interface SessionStore {
   controllerAcpxBridgeAvailable: boolean;
   controllerInstalledAt: string | null;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
+  controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
   pendingPreviewUpdate: PixelForgePendingPreviewUpdate | null;
   dismissedControllerUpdateId: string | null;
   controllerUpdateApplyState: PixelForgeDesktopControllerUpdateApplyState;
@@ -302,6 +304,9 @@ interface SessionStore {
   setRuntimeInfo: (runtimeInfo: ControllerRuntimeInfo) => void;
   setPendingControllerUpdate: (
     update: PixelForgeDesktopPendingControllerUpdate | null
+  ) => void;
+  setControllerReleaseUpdate: (
+    update: PixelForgeControllerReleaseUpdateState | null
   ) => void;
   setPendingPreviewUpdate: (
     update: PixelForgePendingPreviewUpdate | null
@@ -1253,6 +1258,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   controllerAcpxBridgeAvailable: false,
   controllerInstalledAt: null,
   pendingControllerUpdate: null,
+  controllerReleaseUpdate: null,
   pendingPreviewUpdate: null,
   dismissedControllerUpdateId: null,
   controllerUpdateApplyState: {
@@ -2175,6 +2181,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           ? null
           : state.dismissedControllerUpdateId,
     }));
+  },
+
+  setControllerReleaseUpdate: (update) => {
+    set({ controllerReleaseUpdate: update });
   },
 
   setPendingPreviewUpdate: (update) => {

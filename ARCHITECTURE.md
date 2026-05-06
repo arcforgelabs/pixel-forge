@@ -93,6 +93,8 @@ Pixel Forge uses date-based CalVer per `SPECS.md` REQ-S-014 / REQ-S-015. Accepte
 
 Version surfaces kept in lock-step: `VERSION`, root `package.json`, `apps/web/package.json`, `apps/desktop/package.json`, `packages/sdk-node/package.json`. `scripts/check-version-sync.mjs` (invoked by `pnpm check:version` and `pnpm verify`) enforces both drift and CalVer format; UI-side comparisons use `apps/web/src/lib/calver.ts`.
 
+The installed controller checks GitHub releases through the controller API, not from the renderer as an open poll loop. The release-check cache lives in shared state as `controller-release-update.json`, stores GitHub conditional request validators (`ETag` / `Last-Modified`), and defaults automatic startup checks to a 24-hour TTL. Settings exposes a manual Check for Updates action that bypasses the TTL. A newer release is downloaded as a source archive and staged into the existing frozen controller-update lane; applying it still uses the detached updater and remains an explicit operator action.
+
 ### Verification
 
 ```bash
@@ -114,6 +116,7 @@ pixel-forge clone promote <session> --into master --commit --push --stage
 
 The installed `pixel-forge` launcher and the Pixel Forge repo-local `./pixel-forge` wrapper both dispatch to the same canonical command definition. Use `--git-ref` when the source should be an exact local commit instead of the mutable filesystem working tree. By default controller updates stage only from the canonical project root; clone workspaces under `.agents/` remain preview/edit sandboxes unless the operator explicitly overrides that policy. If the install/update lane changed after a controller update was staged, clear and restage it from current repo truth instead of applying the stale snapshot. Legacy aliases `stage-update`, `show-update`, `clear-update`, `apply-update`, and `promote-clone` still exist as compatibility shims, but the nested commands above are the canonical surface.
 When developing Pixel Forge itself from the repo checkout, the repo-local `./pixel-forge` wrapper is the source-of-truth dev lane for stage/apply until the installed launcher has itself been refreshed to the latest CLI surface.
+GitHub release staging is a producer for that same pending controller-update record. It may replace an older pending record only after the release archive has downloaded and validated as an installable Pixel Forge root.
 
 ## Current System Shape
 

@@ -278,6 +278,41 @@ export interface PixelForgeDesktopPendingControllerUpdate {
   canRollback: boolean
 }
 
+export interface PixelForgeControllerReleaseLatest {
+  id: number | null
+  tagName: string | null
+  version: string | null
+  name: string | null
+  htmlUrl: string | null
+  tarballUrl: string | null
+  zipballUrl: string | null
+  publishedAt: string | null
+  prerelease: boolean
+  draft: boolean
+}
+
+export interface PixelForgeControllerReleaseUpdateState {
+  repo: string
+  channel: string
+  lastCheckedAt: string | null
+  nextCheckAfter: string | null
+  etag: string | null
+  lastModified: string | null
+  latest: PixelForgeControllerReleaseLatest | null
+  currentVersion: string | null
+  updateAvailable: boolean
+  skippedVersion: string | null
+  status: 'idle' | 'cached' | 'checked' | 'not_modified' | 'error' | string
+  error: string | null
+  errorAt: string | null
+}
+
+export interface PixelForgeControllerReleaseUpdateResponse {
+  state: PixelForgeControllerReleaseUpdateState
+  update?: PixelForgeDesktopPendingControllerUpdate | null
+  staged?: boolean
+}
+
 export interface PixelForgePendingPreviewUpdate {
   id: string
   projectPath: string
