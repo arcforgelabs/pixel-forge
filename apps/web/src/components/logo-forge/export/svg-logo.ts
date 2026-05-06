@@ -35,6 +35,16 @@ function objectToSvg(object: SvgLogoObject): string {
       ` transform="rotate(${object.rotation} ${object.cx} ${object.cy})"${opacity}/>`,
     ].join("");
   }
+  if (object.type === "image") {
+    const cx = object.x + object.width / 2;
+    const cy = object.y + object.height / 2;
+    return [
+      `<image x="${object.x}" y="${object.y}" width="${object.width}" height="${object.height}"`,
+      ` href="${escapeSvgAttr(object.href)}"`,
+      ` preserveAspectRatio="xMidYMid meet"`,
+      ` transform="rotate(${object.rotation} ${cx} ${cy})"${opacity}/>`,
+    ].join("");
+  }
   const cx = object.x + object.width / 2;
   const cy = object.y + object.height / 2;
   return [

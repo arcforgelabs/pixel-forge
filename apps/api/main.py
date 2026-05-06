@@ -1133,6 +1133,56 @@ async def get_project_logo_forge_state_endpoint(project_path: str):
     return {"state": state}
 
 
+class LogoForgeDesignBriefRequest(BaseModel):
+    content: str
+
+
+@app.get("/api/projects/{project_path:path}/logo-forge-design-brief")
+async def get_project_logo_forge_design_brief_endpoint(project_path: str):
+    root = Path(os.path.abspath(os.path.expanduser(project_path))).resolve(strict=False)
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    candidates = [root / "DESIGN.md", root / "design.md"]
+    design_path = next((path for path in candidates if path.is_file()), None)
+    if design_path is None:
+        return {"found": False, "path": None, "content": None, "signature": None}
+    try:
+        content = design_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = design_path.read_text(encoding="utf-8", errors="replace")
+    if len(content) > 200_000:
+        content = content[:200_000]
+    return {
+        "found": True,
+        "path": design_path.name,
+        "content": content,
+        "signature": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+
+@app.post("/api/projects/{project_path:path}/logo-forge-design-brief")
+async def upsert_project_logo_forge_design_brief_endpoint(
+    project_path: str, request: LogoForgeDesignBriefRequest
+):
+    root = Path(os.path.abspath(os.path.expanduser(project_path))).resolve(strict=False)
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    content = request.content
+    if len(content.encode("utf-8")) > 200_000:
+        raise HTTPException(status_code=413, detail="DESIGN.md is larger than 200 KB")
+    design_path = root / "DESIGN.md"
+    try:
+        design_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "found": True,
+        "path": design_path.name,
+        "content": content,
+        "signature": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+
 class LogoForgeStateRequest(BaseModel):
     state: dict[str, object] | None = None
 

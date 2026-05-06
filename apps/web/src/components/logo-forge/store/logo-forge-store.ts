@@ -16,6 +16,7 @@ import {
   clampNumber,
   defaultSvgLogoObjects,
   isHexColor,
+  isSupportedSvgImageHref,
   type LogoForgeMode,
   type SvgLogoObject,
 } from "../svg-logo";
@@ -36,6 +37,16 @@ export interface LogoForgeProjectState {
   previewShowBackground: boolean;
   exportIncludeBackground: boolean;
   exportAppIconRadiusPct: number;
+  brandName: string;
+  brandFontFamily: string;
+  brandTextColor: string;
+  bannerBackground: string;
+  bannerIncludeBackground: boolean;
+  bannerIncludeLogo: boolean;
+  bannerTextScalePct: number;
+  bannerLogoScalePct: number;
+  bannerDesignSource: string | null;
+  brandFontOptions: string[];
   lastPreset: string | null;
 }
 
@@ -56,8 +67,32 @@ function defaultProjectState(): LogoForgeProjectState {
     previewShowBackground: true,
     exportIncludeBackground: true,
     exportAppIconRadiusPct: 0,
+    brandName: "Brand Name",
+    brandFontFamily: "Inter",
+    brandTextColor: "#ffffff",
+    bannerBackground: DEFAULT_PARAMS.background,
+    bannerIncludeBackground: true,
+    bannerIncludeLogo: true,
+    bannerTextScalePct: 100,
+    bannerLogoScalePct: 100,
+    bannerDesignSource: null,
+    brandFontOptions: [],
     lastPreset: "L-TR",
   };
+}
+
+function coerceFontOptions(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const fonts: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const font = item.trim().slice(0, 120);
+    if (!font) continue;
+    if (!fonts.some((existing) => existing.toLowerCase() === font.toLowerCase())) {
+      fonts.push(font);
+    }
+  }
+  return fonts.slice(0, 24);
 }
 
 function coerceSvgObjects(raw: unknown): SvgLogoObject[] {
@@ -82,6 +117,13 @@ function coerceSvgObjects(raw: unknown): SvgLogoObject[] {
       radius?: unknown;
       cx?: unknown;
       cy?: unknown;
+      href?: unknown;
+      originalHref?: unknown;
+      name?: unknown;
+      mimeType?: unknown;
+      transparentColor?: unknown;
+      transparentTolerance?: unknown;
+      backgroundRemoved?: unknown;
     };
     const id = typeof obj.id === "string" && obj.id ? obj.id : null;
     if (!id) continue;
@@ -134,6 +176,37 @@ function coerceSvgObjects(raw: unknown): SvgLogoObject[] {
         opacity,
         rotation,
       });
+    } else if (obj.type === "image") {
+      if (!isSupportedSvgImageHref(obj.href)) continue;
+      const originalHref = isSupportedSvgImageHref(obj.originalHref)
+        ? obj.originalHref
+        : obj.href;
+      objects.push({
+        id,
+        type: "image",
+        href: obj.href,
+        originalHref,
+        name:
+          typeof obj.name === "string" && obj.name.trim()
+            ? obj.name.trim().slice(0, 80)
+            : "Image",
+        mimeType:
+          typeof obj.mimeType === "string" && obj.mimeType.startsWith("image/")
+            ? obj.mimeType.slice(0, 40)
+            : "image/png",
+        x: clampNumber(obj.x, 232, -512, 1536),
+        y: clampNumber(obj.y, 232, -512, 1536),
+        width: clampNumber(obj.width, 560, 12, 1536),
+        height: clampNumber(obj.height, 560, 12, 1536),
+        fill,
+        opacity,
+        rotation,
+        transparentColor: isHexColor(obj.transparentColor)
+          ? obj.transparentColor
+          : undefined,
+        transparentTolerance: clampNumber(obj.transparentTolerance, 28, 0, 255),
+        backgroundRemoved: obj.backgroundRemoved === true,
+      });
     }
   }
   return objects.length > 0 ? objects.slice(0, 24) : defaultSvgLogoObjects();
@@ -182,7 +255,10 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
       ? obj.selectedSvgObjectId
       : svgObjects[0]?.id ?? null;
   return {
-    logoMode: obj.logoMode === "svg" ? "svg" : "pixel",
+    logoMode:
+      obj.logoMode === "svg" || obj.logoMode === "image"
+        ? obj.logoMode
+        : "pixel",
     patternText,
     patternGrid,
     svgObjects,
@@ -214,6 +290,35 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
       Number.isFinite(obj.exportAppIconRadiusPct)
         ? Math.max(0, Math.min(50, obj.exportAppIconRadiusPct))
         : base.exportAppIconRadiusPct,
+    brandName:
+      typeof obj.brandName === "string" && obj.brandName.trim()
+        ? obj.brandName.trim().slice(0, 80)
+        : base.brandName,
+    brandFontFamily:
+      typeof obj.brandFontFamily === "string" && obj.brandFontFamily.trim()
+        ? obj.brandFontFamily.trim().slice(0, 80)
+        : base.brandFontFamily,
+    brandTextColor: isHexColor(obj.brandTextColor)
+      ? obj.brandTextColor
+      : base.brandTextColor,
+    bannerBackground: isHexColor(obj.bannerBackground)
+      ? obj.bannerBackground
+      : base.bannerBackground,
+    bannerIncludeBackground:
+      typeof obj.bannerIncludeBackground === "boolean"
+        ? obj.bannerIncludeBackground
+        : base.bannerIncludeBackground,
+    bannerIncludeLogo:
+      typeof obj.bannerIncludeLogo === "boolean"
+        ? obj.bannerIncludeLogo
+        : base.bannerIncludeLogo,
+    bannerTextScalePct: clampNumber(obj.bannerTextScalePct, 100, 50, 160),
+    bannerLogoScalePct: clampNumber(obj.bannerLogoScalePct, 100, 40, 180),
+    bannerDesignSource:
+      typeof obj.bannerDesignSource === "string" || obj.bannerDesignSource === null
+        ? obj.bannerDesignSource
+        : base.bannerDesignSource,
+    brandFontOptions: coerceFontOptions(obj.brandFontOptions),
     lastPreset:
       typeof obj.lastPreset === "string" || obj.lastPreset === null
         ? obj.lastPreset

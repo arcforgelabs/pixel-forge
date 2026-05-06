@@ -11,6 +11,7 @@ import {
   moveSvgObject,
   snapSvgObjectToGrid,
   svgObjectBounds,
+  type SvgLogoImageObject,
   type SvgLogoObject,
 } from "./svg-logo";
 
@@ -26,7 +27,12 @@ interface Props {
   snapToGrid?: boolean;
   gridSize?: number;
   interactive?: boolean;
+  imageColorPickObjectId?: string | null;
   onSelectObject?: (id: string | null) => void;
+  onImageColorPick?: (
+    object: SvgLogoImageObject,
+    point: { x: number; y: number }
+  ) => void;
   onObjectsChange?: (objects: SvgLogoObject[]) => void;
 }
 
@@ -39,8 +45,17 @@ function surfaceColor(
   return configured;
 }
 
-function renderObject(object: SvgLogoObject, isInteractive: boolean) {
-  const pointerClass = isInteractive ? "cursor-move" : "";
+function renderObject(
+  object: SvgLogoObject,
+  isInteractive: boolean,
+  imageColorPickObjectId: string | null
+) {
+  const pointerClass =
+    object.type === "image" && object.id === imageColorPickObjectId
+      ? "cursor-crosshair"
+      : isInteractive
+        ? "cursor-move"
+        : "";
   if (object.type === "text") {
     return (
       <text
@@ -71,6 +86,24 @@ function renderObject(object: SvgLogoObject, isInteractive: boolean) {
         fill={object.fill}
         opacity={object.opacity}
         transform={`rotate(${object.rotation} ${object.cx} ${object.cy})`}
+        className={pointerClass}
+      />
+    );
+  }
+  if (object.type === "image") {
+    const cx = object.x + object.width / 2;
+    const cy = object.y + object.height / 2;
+    return (
+      <image
+        key={object.id}
+        href={object.href}
+        x={object.x}
+        y={object.y}
+        width={object.width}
+        height={object.height}
+        opacity={object.opacity}
+        preserveAspectRatio="xMidYMid meet"
+        transform={`rotate(${object.rotation} ${cx} ${cy})`}
         className={pointerClass}
       />
     );
@@ -106,7 +139,9 @@ export function LogoForgeSvgCanvas({
   snapToGrid = false,
   gridSize = 64,
   interactive = false,
+  imageColorPickObjectId = null,
   onSelectObject,
+  onImageColorPick,
   onObjectsChange,
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -141,6 +176,15 @@ export function LogoForgeSvgCanvas({
     event.preventDefault();
     event.stopPropagation();
     const point = eventToPoint(event);
+    if (
+      object.type === "image" &&
+      imageColorPickObjectId === object.id &&
+      onImageColorPick
+    ) {
+      onSelectObject?.(object.id);
+      onImageColorPick(object, point);
+      return;
+    }
     setDragState({
       id: object.id,
       x: point.x,
@@ -264,7 +308,7 @@ export function LogoForgeSvgCanvas({
             key={object.id}
             onPointerDown={(event) => handleObjectPointerDown(object, event)}
           >
-            {renderObject(object, interactive)}
+            {renderObject(object, interactive, imageColorPickObjectId)}
           </g>
         ))}
         {selectedBounds && (

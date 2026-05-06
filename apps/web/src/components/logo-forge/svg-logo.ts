@@ -1,9 +1,9 @@
 export const SVG_LOGO_VIEWBOX_SIZE = 1024;
 export const SVG_LOGO_CENTER = SVG_LOGO_VIEWBOX_SIZE / 2;
 
-export type LogoForgeMode = "pixel" | "svg";
+export type LogoForgeMode = "pixel" | "svg" | "image";
 
-export type SvgLogoObjectType = "text" | "rect" | "circle";
+export type SvgLogoObjectType = "text" | "rect" | "circle" | "image";
 
 export interface SvgLogoBaseObject {
   id: string;
@@ -39,10 +39,26 @@ export interface SvgLogoCircleObject extends SvgLogoBaseObject {
   radius: number;
 }
 
+export interface SvgLogoImageObject extends SvgLogoBaseObject {
+  type: "image";
+  href: string;
+  originalHref?: string;
+  name: string;
+  mimeType: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  transparentColor?: string;
+  transparentTolerance?: number;
+  backgroundRemoved?: boolean;
+}
+
 export type SvgLogoObject =
   | SvgLogoTextObject
   | SvgLogoRectObject
-  | SvgLogoCircleObject;
+  | SvgLogoCircleObject
+  | SvgLogoImageObject;
 
 export const SVG_LOGO_FONTS = [
   "Inter",
@@ -108,6 +124,15 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
 }
 
+export function isSupportedSvgImageHref(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);base64,[a-z0-9+/]+=*$/i.test(
+      value
+    )
+  );
+}
+
 export function escapeSvgText(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -139,6 +164,14 @@ export function svgObjectBounds(object: SvgLogoObject): {
       y: object.cy - object.radius,
       width: object.radius * 2,
       height: object.radius * 2,
+    };
+  }
+  if (object.type === "image") {
+    return {
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
     };
   }
   const width = Math.max(28, object.fontSize * object.text.length * 0.58);

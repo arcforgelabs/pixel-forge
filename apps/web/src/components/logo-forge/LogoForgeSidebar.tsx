@@ -22,14 +22,22 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  AlertTriangle,
+  CheckCircle2,
   Circle,
   Copy,
+  Crosshair,
+  FileText,
+  Image as ImageIcon,
   Minus,
   Plus,
+  RefreshCw,
+  RotateCcw,
   Shuffle,
   Square,
   Trash2,
   Type,
+  Upload,
 } from "lucide-react";
 import {
   MAX_DIM,
@@ -48,11 +56,28 @@ import {
   SVG_LOGO_FONTS,
   SVG_LOGO_VIEWBOX_SIZE,
   alignSvgObject,
+  clampNumber,
   createSvgLogoObjectId,
   snapSvgObjectToGrid,
   type LogoForgeMode,
+  type SvgLogoImageObject,
   type SvgLogoObject,
 } from "./svg-logo";
+
+const IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_UPLOAD_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+]);
+
+export interface DesignBriefStatus {
+  state: "checking" | "found" | "missing" | "error" | "uploaded";
+  path?: string | null;
+  message?: string | null;
+}
 
 interface Props {
   state: LogoForgeProjectState;
@@ -67,6 +92,21 @@ interface Props {
   onPreviewShowBackgroundChange: (show: boolean) => void;
   onExportIncludeBackgroundChange: (include: boolean) => void;
   onExportAppIconRadiusChange: (pct: number) => void;
+  onBrandSettingsChange: (
+    settings: Partial<
+      Pick<
+        LogoForgeProjectState,
+        | "brandName"
+        | "brandFontFamily"
+        | "brandTextColor"
+        | "bannerBackground"
+        | "bannerIncludeBackground"
+        | "bannerIncludeLogo"
+        | "bannerTextScalePct"
+        | "bannerLogoScalePct"
+      >
+    >
+  ) => void;
   onSvgObjectsChange: (
     objects: SvgLogoObject[],
     selectedObjectId?: string | null
@@ -81,8 +121,18 @@ interface Props {
   onSaveSvg: (size: number) => void;
   onSavePack: () => void;
   onReset: () => void;
+  imageColorPickObjectId: string | null;
+  imageEditMessage: string | null;
+  isImageEditing: boolean;
+  onStartImageColorPick: (objectId: string) => void;
+  onCancelImageColorPick: () => void;
+  onApplyImageTransparency: (objectId: string) => void;
+  onResetImageTransparency: (objectId: string) => void;
   isExporting: boolean;
   activeProjectPath: string | null;
+  designBriefStatus: DesignBriefStatus;
+  onRefreshDesignBrief: () => void;
+  onUploadDesignBrief: (file: File) => void;
 }
 
 interface SliderRowProps {
@@ -104,18 +154,66 @@ function SliderRow({
   onChange,
   formatValue,
 }: SliderRowProps) {
+  const numericDisplay = Number.isInteger(step)
+    ? String(Math.round(value))
+    : value.toFixed(Math.max(0, Math.min(4, String(step).split(".")[1]?.length ?? 2)));
   const display = formatValue
     ? formatValue(value)
-    : Number.isInteger(step)
-      ? String(Math.round(value))
-      : value.toFixed(2);
+    : numericDisplay;
+  const [draftValue, setDraftValue] = useState(numericDisplay);
+
+  useEffect(() => {
+    setDraftValue(numericDisplay);
+  }, [numericDisplay]);
+
+  const commitValue = (raw: string) => {
+    if (raw.trim() === "") {
+      setDraftValue(numericDisplay);
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      setDraftValue(numericDisplay);
+      return;
+    }
+    const next = Math.max(min, Math.min(max, parsed));
+    onChange(next);
+    setDraftValue(
+      Number.isInteger(step)
+        ? String(Math.round(next))
+        : next.toFixed(Math.max(0, Math.min(4, String(step).split(".")[1]?.length ?? 2)))
+    );
+  };
+
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-center justify-between gap-2">
         <Label className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
           {label}
         </Label>
-        <span className="text-xs font-mono text-foreground/80">{display}</span>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={draftValue}
+          aria-label={`${label} value`}
+          title={display}
+          onChange={(event) => {
+            setDraftValue(event.target.value);
+            const parsed = Number(event.target.value);
+            if (Number.isFinite(parsed)) {
+              onChange(Math.max(min, Math.min(max, parsed)));
+            }
+          }}
+          onBlur={(event) => commitValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+          className="h-7 w-20 rounded border border-border/60 bg-background px-2 text-right text-xs font-mono text-foreground/80 focus:outline-none focus:ring-1 focus:ring-ring"
+        />
       </div>
       <input
         type="range"
@@ -185,8 +283,89 @@ function resizeGrid(grid: boolean[][], rows: number, cols: number): boolean[][] 
   );
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Image could not be read"));
+      }
+    };
+    reader.onerror = () => reject(new Error("Image could not be read"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readImageDimensions(href: string): Promise<{
+  width: number;
+  height: number;
+}> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () =>
+      resolve({
+        width: Math.max(1, img.naturalWidth || img.width || 1),
+        height: Math.max(1, img.naturalHeight || img.height || 1),
+      });
+    img.onerror = () => reject(new Error("Image dimensions could not be read"));
+    img.src = href;
+  });
+}
+
+async function imageObjectFromFile(file: File): Promise<SvgLogoImageObject> {
+  if (!IMAGE_UPLOAD_TYPES.has(file.type)) {
+    throw new Error("Unsupported image type");
+  }
+  if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
+    throw new Error("Image is larger than 5 MB");
+  }
+  const href = await fileToDataUrl(file);
+  const dimensions = await readImageDimensions(href);
+  const longest = Math.max(dimensions.width, dimensions.height, 1);
+  const scale = 560 / longest;
+  const width = Math.max(24, Math.round(dimensions.width * scale));
+  const height = Math.max(24, Math.round(dimensions.height * scale));
+  const id = createSvgLogoObjectId();
+  return {
+    id,
+    type: "image",
+    href,
+    originalHref: href,
+    name: file.name || "Image",
+    mimeType: file.type,
+    x: Math.round((SVG_LOGO_VIEWBOX_SIZE - width) / 2),
+    y: Math.round((SVG_LOGO_VIEWBOX_SIZE - height) / 2),
+    width,
+    height,
+    fill: "#000000",
+    opacity: 1,
+    rotation: 0,
+  };
+}
+
 function defaultObjectForType(type: SvgLogoObject["type"]): SvgLogoObject {
   const id = createSvgLogoObjectId();
+  if (type === "image") {
+    return {
+      id,
+      type: "image",
+      href:
+        "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM4MWM3ODQiLz48L3N2Zz4=",
+      originalHref:
+        "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiM4MWM3ODQiLz48L3N2Zz4=",
+      name: "Image",
+      mimeType: "image/svg+xml",
+      x: 232,
+      y: 232,
+      width: 560,
+      height: 560,
+      fill: "#000000",
+      opacity: 1,
+      rotation: 0,
+    };
+  }
   if (type === "text") {
     return {
       id,
@@ -230,6 +409,7 @@ function defaultObjectForType(type: SvgLogoObject["type"]): SvgLogoObject {
 
 function objectLabel(object: SvgLogoObject): string {
   if (object.type === "text") return `Text ${object.text}`;
+  if (object.type === "image") return object.name || "Image";
   return object.type === "rect" ? "Rectangle" : "Circle";
 }
 
@@ -242,6 +422,7 @@ export function LogoForgeSidebar({
   onPreviewShowBackgroundChange,
   onExportIncludeBackgroundChange,
   onExportAppIconRadiusChange,
+  onBrandSettingsChange,
   onSvgObjectsChange,
   onSelectedSvgObjectChange,
   onSvgGridSettingsChange,
@@ -249,8 +430,18 @@ export function LogoForgeSidebar({
   onSaveSvg,
   onSavePack,
   onReset,
+  imageColorPickObjectId,
+  imageEditMessage,
+  isImageEditing,
+  onStartImageColorPick,
+  onCancelImageColorPick,
+  onApplyImageTransparency,
+  onResetImageTransparency,
   isExporting,
   activeProjectPath,
+  designBriefStatus,
+  onRefreshDesignBrief,
+  onUploadDesignBrief,
 }: Props) {
   const params = state.params;
   const stateGrid = useMemo(
@@ -259,8 +450,11 @@ export function LogoForgeSidebar({
   );
   const [draftGrid, setDraftGrid] = useState<boolean[][]>(stateGrid);
   const gridRef = useRef<boolean[][]>(stateGrid);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const designBriefInputRef = useRef<HTMLInputElement | null>(null);
   const [dragPaintMode, setDragPaintMode] = useState<boolean | null>(null);
   const dragPaintModeRef = useRef<boolean | null>(null);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     gridRef.current = stateGrid;
@@ -382,21 +576,112 @@ export function LogoForgeSidebar({
   };
 
   const selectedSvgObject =
-    state.svgObjects.find((object) => object.id === state.selectedSvgObjectId) ??
-    state.svgObjects[0] ??
+    (state.logoMode === "image"
+      ? state.svgObjects.filter((object) => object.type === "image")
+      : state.svgObjects
+    ).find((object) => object.id === state.selectedSvgObjectId) ??
+    (state.logoMode === "image"
+      ? state.svgObjects.find((object) => object.type === "image")
+      : state.svgObjects[0]) ??
     null;
+  const selectedImageObject =
+    selectedSvgObject?.type === "image" ? selectedSvgObject : null;
+  const brandFontOptions = useMemo(
+    () => {
+      const fonts: string[] = [];
+      const addFont = (font: string | null | undefined) => {
+        const normalized = font?.trim();
+        if (!normalized) return;
+        if (
+          !fonts.some(
+            (existing) => existing.toLowerCase() === normalized.toLowerCase()
+          )
+        ) {
+          fonts.push(normalized);
+        }
+      };
+      addFont(state.brandFontFamily);
+      for (const font of state.brandFontOptions) addFont(font);
+      for (const font of SVG_LOGO_FONTS) addFont(font);
+      return fonts;
+    },
+    [state.brandFontFamily, state.brandFontOptions]
+  );
+
+  const editableSvgObjects =
+    state.logoMode === "image"
+      ? state.svgObjects.filter((object) => object.type === "image")
+      : state.svgObjects;
+
+  const emitSvgObjectsChange = (
+    objects: SvgLogoObject[],
+    selectedObjectId?: string | null
+  ) => {
+    if (state.logoMode !== "image") {
+      onSvgObjectsChange(objects, selectedObjectId);
+      return;
+    }
+    const imageIds = new Set(objects.map((object) => object.id));
+    const nonImageObjects = state.svgObjects.filter(
+      (object) => object.type !== "image" && !imageIds.has(object.id)
+    );
+    onSvgObjectsChange([...nonImageObjects, ...objects], selectedObjectId);
+  };
 
   const addSvgObject = (type: SvgLogoObject["type"]) => {
     const object = defaultObjectForType(type);
-    onSvgObjectsChange([...state.svgObjects, object], object.id);
+    emitSvgObjectsChange([...editableSvgObjects, object], object.id);
   };
+
+  const handleImageUpload = async (file: File | null | undefined) => {
+    if (!file) return;
+    try {
+      setImageUploadError(null);
+      const object = await imageObjectFromFile(file);
+      emitSvgObjectsChange([...editableSvgObjects, object], object.id);
+    } catch (error) {
+      setImageUploadError(
+        error instanceof Error ? error.message : "Image could not be uploaded"
+      );
+    } finally {
+      if (imageInputRef.current) {
+        imageInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleDesignBriefUpload = (file: File | null | undefined) => {
+    if (!file) return;
+    onUploadDesignBrief(file);
+    if (designBriefInputRef.current) {
+      designBriefInputRef.current.value = "";
+    }
+  };
+
+  const designBriefIsFound =
+    designBriefStatus.state === "found" || designBriefStatus.state === "uploaded";
+  const designBriefStatusLabel =
+    designBriefStatus.state === "checking"
+      ? "Checking DESIGN.md"
+      : designBriefIsFound
+        ? "DESIGN.md found"
+        : designBriefStatus.state === "error"
+          ? "DESIGN.md check failed"
+          : "DESIGN.md not found";
+  const designBriefStatusDetail =
+    designBriefStatus.message ??
+    (designBriefIsFound
+      ? designBriefStatus.path ?? "Project root"
+      : activeProjectPath
+        ? "Upload one to use project brand defaults"
+        : "Open a project first");
 
   const updateSvgObject = (
     id: string,
     updater: (object: SvgLogoObject) => SvgLogoObject
   ) => {
-    onSvgObjectsChange(
-      state.svgObjects.map((object) =>
+    emitSvgObjectsChange(
+      editableSvgObjects.map((object) =>
         object.id === id ? updater(object) : object
       ),
       id
@@ -409,27 +694,27 @@ export function LogoForgeSidebar({
       object.type === "circle"
         ? { ...object, id, cx: object.cx + 48, cy: object.cy + 48 }
         : { ...object, id, x: object.x + 48, y: object.y + 48 };
-    onSvgObjectsChange([...state.svgObjects, copy], id);
+    emitSvgObjectsChange([...editableSvgObjects, copy], id);
   };
 
   const deleteSvgObject = (id: string) => {
-    const next = state.svgObjects.filter((object) => object.id !== id);
-    onSvgObjectsChange(next, next[0]?.id ?? null);
+    const next = editableSvgObjects.filter((object) => object.id !== id);
+    emitSvgObjectsChange(next, next[0]?.id ?? null);
   };
 
   const moveSvgLayer = (id: string, delta: number) => {
-    const index = state.svgObjects.findIndex((object) => object.id === id);
+    const index = editableSvgObjects.findIndex((object) => object.id === id);
     if (index < 0) return;
     const nextIndex = Math.max(
       0,
-      Math.min(state.svgObjects.length - 1, index + delta)
+      Math.min(editableSvgObjects.length - 1, index + delta)
     );
     if (nextIndex === index) return;
-    const next = state.svgObjects.slice();
+    const next = editableSvgObjects.slice();
     const [object] = next.splice(index, 1);
     if (!object) return;
     next.splice(nextIndex, 0, object);
-    onSvgObjectsChange(next, id);
+    emitSvgObjectsChange(next, id);
   };
 
   const alignSelectedSvgObject = (
@@ -448,6 +733,11 @@ export function LogoForgeSidebar({
     );
   };
 
+  const setBackdropTransparent = () => {
+    onPreviewShowBackgroundChange(false);
+    onExportIncludeBackgroundChange(false);
+  };
+
   return (
     <aside className="flex w-[288px] shrink-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-card/40 p-4">
       {!activeProjectPath && (
@@ -461,11 +751,12 @@ export function LogoForgeSidebar({
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Mode
         </h3>
-        <div className="grid grid-cols-2 gap-1.5">
+        <div className="grid grid-cols-3 gap-1.5">
           {(
             [
               ["pixel", "Pixel"],
               ["svg", "SVG"],
+              ["image", "Image"],
             ] as const
           ).map(([mode, label]) => (
             <button
@@ -682,45 +973,82 @@ export function LogoForgeSidebar({
         </>
       )}
 
-      {state.logoMode === "svg" && (
+      {(state.logoMode === "svg" || state.logoMode === "image") && (
         <section className="flex flex-col gap-3">
           <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            SVG Objects
+            {state.logoMode === "image" ? "Layers" : "SVG Objects"}
           </h3>
-          <div className="grid grid-cols-3 gap-1.5">
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            className="sr-only"
+            onChange={(event) => void handleImageUpload(event.target.files?.[0])}
+          />
+          {state.logoMode === "svg" ? (
+            <div className="grid grid-cols-4 gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                aria-label="Add text"
+                title="Add text"
+                onClick={() => addSvgObject("text")}
+              >
+                <Type className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                aria-label="Add rectangle"
+                title="Add rectangle"
+                onClick={() => addSvgObject("rect")}
+              >
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                aria-label="Add circle"
+                title="Add circle"
+                onClick={() => addSvgObject("circle")}
+              >
+                <Circle className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2"
+                aria-label="Upload image"
+                title="Upload image"
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ) : (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 px-2"
-              aria-label="Add text"
-              onClick={() => addSvgObject("text")}
+              className="justify-start"
+              onClick={() => imageInputRef.current?.click()}
             >
-              <Type className="h-3.5 w-3.5" />
+              <ImageIcon className="mr-2 h-3.5 w-3.5" />
+              Upload image
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2"
-              aria-label="Add rectangle"
-              onClick={() => addSvgObject("rect")}
-            >
-              <Square className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2"
-              aria-label="Add circle"
-              onClick={() => addSvgObject("circle")}
-            >
-              <Circle className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          )}
+          {imageUploadError && (
+            <span className="text-xs text-destructive">{imageUploadError}</span>
+          )}
           <div className="flex max-h-36 flex-col gap-1 overflow-y-auto rounded-md border border-border/60 bg-background/70 p-1">
-            {state.svgObjects.map((object) => (
+            {editableSvgObjects.map((object, index) => (
               <button
                 key={object.id}
                 type="button"
@@ -731,7 +1059,11 @@ export function LogoForgeSidebar({
                     : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 }`}
               >
-                {objectLabel(object)}
+                <span className="block truncate">
+                  {state.logoMode === "image"
+                    ? `Layer ${index + 1} · ${objectLabel(object)}`
+                    : objectLabel(object)}
+                </span>
               </button>
             ))}
           </div>
@@ -916,23 +1248,168 @@ export function LogoForgeSidebar({
                   }
                 />
               )}
-              <div className="flex items-center gap-2">
-                <Label className="w-20 text-xs text-muted-foreground">Fill</Label>
-                <input
-                  type="color"
-                  value={selectedSvgObject.fill}
-                  onChange={(event) =>
-                    updateSvgObject(selectedSvgObject.id, (object) => ({
-                      ...object,
-                      fill: event.target.value,
-                    }))
-                  }
-                  className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
-                />
-                <span className="text-xs font-mono text-foreground/80">
-                  {selectedSvgObject.fill}
-                </span>
-              </div>
+              {selectedImageObject && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Label className="w-20 text-xs text-muted-foreground">
+                      Source
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 flex-1 justify-start truncate"
+                      onClick={() => imageInputRef.current?.click()}
+                    >
+                      <ImageIcon className="mr-2 h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{selectedImageObject.name}</span>
+                    </Button>
+                  </div>
+                  <SliderRow
+                    label="Width"
+                    value={selectedImageObject.width}
+                    min={12}
+                    max={1536}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedImageObject.id, (object) =>
+                        object.type === "image"
+                          ? { ...object, width: clampNumber(value, object.width, 12, 1536) }
+                          : object
+                      )
+                    }
+                  />
+                  <SliderRow
+                    label="Height"
+                    value={selectedImageObject.height}
+                    min={12}
+                    max={1536}
+                    step={1}
+                    onChange={(value) =>
+                      updateSvgObject(selectedImageObject.id, (object) =>
+                        object.type === "image"
+                          ? { ...object, height: clampNumber(value, object.height, 12, 1536) }
+                          : object
+                      )
+                    }
+                  />
+                  <div className="flex flex-col gap-2 rounded-md border border-border/60 bg-card/50 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Background Tool
+                      </h4>
+                      {selectedImageObject.transparentColor && (
+                        <span
+                          className="h-4 w-4 rounded border border-border"
+                          style={{
+                            backgroundColor: selectedImageObject.transparentColor,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant={
+                        imageColorPickObjectId === selectedImageObject.id
+                          ? "default"
+                          : "outline"
+                      }
+                      size="sm"
+                      className="justify-start"
+                      disabled={isImageEditing}
+                      onClick={() =>
+                        imageColorPickObjectId === selectedImageObject.id
+                          ? onCancelImageColorPick()
+                          : onStartImageColorPick(selectedImageObject.id)
+                      }
+                    >
+                      <Crosshair className="mr-2 h-3.5 w-3.5" />
+                      {imageColorPickObjectId === selectedImageObject.id
+                        ? "Click image color"
+                        : "Select background"}
+                    </Button>
+                    <SliderRow
+                      label="Tolerance"
+                      value={selectedImageObject.transparentTolerance ?? 28}
+                      min={0}
+                      max={255}
+                      step={1}
+                      onChange={(value) =>
+                        updateSvgObject(selectedImageObject.id, (object) =>
+                          object.type === "image"
+                            ? {
+                                ...object,
+                                transparentTolerance: clampNumber(
+                                  value,
+                                  object.transparentTolerance ?? 28,
+                                  0,
+                                  255
+                                ),
+                              }
+                            : object
+                        )
+                      }
+                    />
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="justify-start px-2 text-[11px]"
+                        disabled={
+                          isImageEditing || !selectedImageObject.transparentColor
+                        }
+                        onClick={() =>
+                          onApplyImageTransparency(selectedImageObject.id)
+                        }
+                      >
+                        Remove background
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="justify-start px-2 text-[11px]"
+                        disabled={
+                          isImageEditing || !selectedImageObject.originalHref
+                        }
+                        onClick={() =>
+                          onResetImageTransparency(selectedImageObject.id)
+                        }
+                      >
+                        <RotateCcw className="mr-1.5 h-3 w-3" />
+                        Reset
+                      </Button>
+                    </div>
+                    {imageEditMessage && (
+                      <span className="text-xs text-muted-foreground">
+                        {imageEditMessage}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+              {selectedSvgObject.type !== "image" && (
+                <div className="flex items-center gap-2">
+                  <Label className="w-20 text-xs text-muted-foreground">
+                    Fill
+                  </Label>
+                  <input
+                    type="color"
+                    value={selectedSvgObject.fill}
+                    onChange={(event) =>
+                      updateSvgObject(selectedSvgObject.id, (object) => ({
+                        ...object,
+                        fill: event.target.value,
+                      }))
+                    }
+                    className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
+                  />
+                  <span className="text-xs font-mono text-foreground/80">
+                    {selectedSvgObject.fill}
+                  </span>
+                </div>
+              )}
               <SliderRow
                 label="Opacity"
                 value={selectedSvgObject.opacity}
@@ -1069,6 +1546,15 @@ export function LogoForgeSidebar({
             {params.background}
           </span>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          onClick={setBackdropTransparent}
+        >
+          Set As Transparent
+        </Button>
       </section>
 
       <section className="flex flex-col gap-3">
@@ -1108,6 +1594,178 @@ export function LogoForgeSidebar({
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Export
         </h3>
+        <div className="flex flex-col gap-3 rounded-md border border-border/60 bg-background/60 p-3">
+          <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Social Banners
+          </h4>
+          <input
+            ref={designBriefInputRef}
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            className="sr-only"
+            onChange={(event) =>
+              handleDesignBriefUpload(event.target.files?.[0])
+            }
+          />
+          <div
+            className={`rounded-md border px-2.5 py-2 ${
+              designBriefIsFound
+                ? "border-emerald-500/30 bg-emerald-500/10"
+                : designBriefStatus.state === "error"
+                  ? "border-destructive/30 bg-destructive/10"
+                  : "border-border/60 bg-muted/30"
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {designBriefIsFound ? (
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+              ) : designBriefStatus.state === "error" ? (
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+              ) : (
+                <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-foreground">
+                  {designBriefStatusLabel}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {designBriefStatusDetail}
+                </p>
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                disabled={!activeProjectPath || designBriefStatus.state === "checking"}
+                onClick={onRefreshDesignBrief}
+              >
+                <RefreshCw className="mr-1.5 h-3 w-3" />
+                Refresh
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                disabled={!activeProjectPath}
+                onClick={() => designBriefInputRef.current?.click()}
+              >
+                <Upload className="mr-1.5 h-3 w-3" />
+                Upload
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              Brand Name
+            </Label>
+            <Input
+              value={state.brandName}
+              maxLength={80}
+              onChange={(event) =>
+                onBrandSettingsChange({ brandName: event.target.value })
+              }
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+              Brand Font
+            </Label>
+            <Select
+              value={state.brandFontFamily}
+              onValueChange={(brandFontFamily) =>
+                onBrandSettingsChange({ brandFontFamily })
+              }
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {brandFontOptions.map((font) => (
+                  <SelectItem key={font} value={font} className="text-xs">
+                    {font}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <SliderRow
+            label="Banner Text Size"
+            value={state.bannerTextScalePct}
+            min={50}
+            max={160}
+            step={1}
+            onChange={(bannerTextScalePct) =>
+              onBrandSettingsChange({ bannerTextScalePct })
+            }
+            formatValue={(value) => `${Math.round(value)}%`}
+          />
+          <SliderRow
+            label="Banner Logo Size"
+            value={state.bannerLogoScalePct}
+            min={40}
+            max={180}
+            step={1}
+            onChange={(bannerLogoScalePct) =>
+              onBrandSettingsChange({ bannerLogoScalePct })
+            }
+            formatValue={(value) => `${Math.round(value)}%`}
+          />
+          <div className="flex items-center gap-2">
+            <Label className="w-20 text-xs text-muted-foreground">Text</Label>
+            <input
+              type="color"
+              value={state.brandTextColor}
+              onChange={(event) =>
+                onBrandSettingsChange({ brandTextColor: event.target.value })
+              }
+              className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
+            />
+            <span className="text-xs font-mono text-foreground/80">
+              {state.brandTextColor}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="w-20 text-xs text-muted-foreground">Banner</Label>
+            <input
+              type="color"
+              value={state.bannerBackground}
+              onChange={(event) =>
+                onBrandSettingsChange({ bannerBackground: event.target.value })
+              }
+              className="h-8 w-10 cursor-pointer rounded border border-border bg-background"
+            />
+            <span className="text-xs font-mono text-foreground/80">
+              {state.bannerBackground}
+            </span>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={state.bannerIncludeBackground}
+              onCheckedChange={(checked) =>
+                onBrandSettingsChange({
+                  bannerIncludeBackground: checked === true,
+                })
+              }
+            />
+            Include banner background
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={state.bannerIncludeLogo}
+              onCheckedChange={(checked) =>
+                onBrandSettingsChange({
+                  bannerIncludeLogo: checked === true,
+                })
+              }
+            />
+            Include logo in banners
+          </label>
+        </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <Checkbox
             checked={state.exportIncludeBackground}

@@ -1095,11 +1095,25 @@ class ManagedBrowserPreviewManager:
             "--remote-debugging-address=127.0.0.1",
             f"--remote-debugging-port={cdp_port}",
             f"--user-data-dir={PIXEL_FORGE_PROFILE_DIR}",
+            "--ignore-gpu-blocklist",
+            "--enable-webgl",
+            "--enable-unsafe-swiftshader",
+            "--enable-gpu-rasterization",
             "--start-maximized",
             "--no-first-run",
             "--no-default-browser-check",
             "about:blank",
         ]
+        webgl_backend = os.environ.get("PIXEL_FORGE_WEBGL_BACKEND")
+        if webgl_backend is None:
+            webgl_backend = (
+                "system"
+                if os.environ.get("PIXEL_FORGE_FORCE_SWIFTSHADER_WEBGL") == "0"
+                else "swiftshader-webgl"
+            )
+        webgl_backend = webgl_backend.strip()
+        if webgl_backend and webgl_backend != "system":
+            command.insert(-1, f"--use-angle={webgl_backend}")
         return subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,

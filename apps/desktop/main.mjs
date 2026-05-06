@@ -85,6 +85,17 @@ function desktopWindowOptions(options = {}) {
 
 app.setName(APP_DISPLAY_NAME)
 app.commandLine.appendSwitch('class', DESKTOP_WM_CLASS)
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
+app.commandLine.appendSwitch('enable-webgl')
+app.commandLine.appendSwitch('enable-unsafe-swiftshader')
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+const PREVIEW_WEBGL_BACKEND = (
+  process.env.PIXEL_FORGE_WEBGL_BACKEND
+  || (process.env.PIXEL_FORGE_FORCE_SWIFTSHADER_WEBGL === '0' ? 'system' : 'swiftshader-webgl')
+).trim()
+if (PREVIEW_WEBGL_BACKEND && PREVIEW_WEBGL_BACKEND !== 'system') {
+  app.commandLine.appendSwitch('use-angle', PREVIEW_WEBGL_BACKEND)
+}
 app.commandLine.appendSwitch('remote-debugging-address', CONTROLLER_CDP_HOST)
 app.commandLine.appendSwitch('remote-debugging-port', CONTROLLER_CDP_PORT)
 
@@ -2078,6 +2089,8 @@ function getOrCreatePreviewView(ownerContextId, tabId, metadata = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webgl: true,
+      backgroundThrottling: false,
     },
   })
   previewViews.set(previewKey, {
