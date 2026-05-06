@@ -75,6 +75,78 @@ describe("logo forge SVG image export", () => {
     expect(svg).toContain(`preserveAspectRatio="xMidYMid meet"`);
     expect(svg).toContain(`opacity="0.75"`);
   });
+
+  it("inlines uploaded SVG images instead of nesting them as data URL images", () => {
+    const sourceSvg = [
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`,
+      `<defs><clipPath id="clip"><rect width="64" height="64"/></clipPath></defs>`,
+      `<script>alert("bad")</script>`,
+      `<g clip-path="url(#clip)" onclick="bad()">`,
+      `<rect width="64" height="64" rx="12" fill="#81c784"/>`,
+      `</g>`,
+      `</svg>`,
+    ].join("");
+    const svgDataUrl = `data:image/svg+xml;base64,${btoa(sourceSvg)}`;
+
+    const svg = buildSvgLogoString({
+      objects: [
+        {
+          id: "image-1",
+          type: "image",
+          href: svgDataUrl,
+          name: "logo.svg",
+          mimeType: "image/svg+xml",
+          x: 128,
+          y: 192,
+          width: 640,
+          height: 320,
+          fill: "#000000",
+          opacity: 1,
+          rotation: 0,
+        },
+      ],
+      size: 1024,
+      background: "#ffffff",
+      includeBackground: false,
+    });
+
+    expect(svg).not.toContain("<image");
+    expect(svg).not.toContain("data:image/svg+xml");
+    expect(svg).not.toContain("<script");
+    expect(svg).not.toContain("onclick");
+    expect(svg).toContain(`<svg x="128" y="192" width="640" height="320"`);
+    expect(svg).toContain(`viewBox="0 0 64 64"`);
+    expect(svg).toContain(`id="img-image-1-clip"`);
+    expect(svg).toContain(`clip-path="url(#img-image-1-clip)"`);
+    expect(svg).toContain(`<rect width="64" height="64" rx="12" fill="#81c784"/>`);
+  });
+
+  it("does not fall back to nested SVG image data when SVG decoding fails", () => {
+    const svg = buildSvgLogoString({
+      objects: [
+        {
+          id: "image-1",
+          type: "image",
+          href: "data:image/svg+xml;base64,not-valid-base64",
+          name: "broken.svg",
+          mimeType: "image/svg+xml",
+          x: 128,
+          y: 192,
+          width: 640,
+          height: 320,
+          fill: "#000000",
+          opacity: 1,
+          rotation: 0,
+        },
+      ],
+      size: 1024,
+      background: "#ffffff",
+      includeBackground: false,
+    });
+
+    expect(svg).not.toContain("<image");
+    expect(svg).not.toContain("data:image/svg+xml");
+  });
 });
 
 describe("logo forge image background editing", () => {
