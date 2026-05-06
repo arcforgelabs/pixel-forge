@@ -45,6 +45,12 @@ export interface LogoForgeProjectState {
   bannerIncludeLogo: boolean;
   bannerTextScalePct: number;
   bannerLogoScalePct: number;
+  packIncludeLightOnDark: boolean;
+  packIncludeDarkOnLight: boolean;
+  packIncludeCustomColorway: boolean;
+  packIncludeSharpSquare: boolean;
+  packIncludeRoundedSquare: boolean;
+  packIncludeCircle: boolean;
   bannerDesignSource: string | null;
   brandFontOptions: string[];
   lastPreset: string | null;
@@ -75,6 +81,12 @@ function defaultProjectState(): LogoForgeProjectState {
     bannerIncludeLogo: true,
     bannerTextScalePct: 100,
     bannerLogoScalePct: 100,
+    packIncludeLightOnDark: true,
+    packIncludeDarkOnLight: true,
+    packIncludeCustomColorway: true,
+    packIncludeSharpSquare: true,
+    packIncludeRoundedSquare: true,
+    packIncludeCircle: true,
     bannerDesignSource: null,
     brandFontOptions: [],
     lastPreset: "L-TR",
@@ -314,6 +326,30 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
         : base.bannerIncludeLogo,
     bannerTextScalePct: clampNumber(obj.bannerTextScalePct, 100, 50, 300),
     bannerLogoScalePct: clampNumber(obj.bannerLogoScalePct, 100, 40, 180),
+    packIncludeLightOnDark:
+      typeof obj.packIncludeLightOnDark === "boolean"
+        ? obj.packIncludeLightOnDark
+        : base.packIncludeLightOnDark,
+    packIncludeDarkOnLight:
+      typeof obj.packIncludeDarkOnLight === "boolean"
+        ? obj.packIncludeDarkOnLight
+        : base.packIncludeDarkOnLight,
+    packIncludeCustomColorway:
+      typeof obj.packIncludeCustomColorway === "boolean"
+        ? obj.packIncludeCustomColorway
+        : base.packIncludeCustomColorway,
+    packIncludeSharpSquare:
+      typeof obj.packIncludeSharpSquare === "boolean"
+        ? obj.packIncludeSharpSquare
+        : base.packIncludeSharpSquare,
+    packIncludeRoundedSquare:
+      typeof obj.packIncludeRoundedSquare === "boolean"
+        ? obj.packIncludeRoundedSquare
+        : base.packIncludeRoundedSquare,
+    packIncludeCircle:
+      typeof obj.packIncludeCircle === "boolean"
+        ? obj.packIncludeCircle
+        : base.packIncludeCircle,
     bannerDesignSource:
       typeof obj.bannerDesignSource === "string" || obj.bannerDesignSource === null
         ? obj.bannerDesignSource

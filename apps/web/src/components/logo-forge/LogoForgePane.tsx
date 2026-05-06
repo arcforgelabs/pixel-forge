@@ -16,6 +16,13 @@ import { canvasToPngBlob, composeExportCanvas } from "./export/compose";
 import { buildSvgString } from "./export/svg";
 import { buildSvgLogoString, svgLogoToCanvas } from "./export/svg-logo";
 import { composeSocialBannerCanvas } from "./export/social-banners";
+import {
+  LOGO_PACK_ICON_SHAPES,
+  buildLogoPackColorways,
+  colorizeSvgLogoObjects,
+  type LogoPackColorway,
+  type LogoPackIconShape,
+} from "./export/pack";
 import { saveBlob } from "./export/download";
 import { makeZipBlob, type ZipEntryInput } from "./export/zip";
 import {
@@ -34,6 +41,13 @@ import type { LogoForgeMode, SvgLogoImageObject, SvgLogoObject } from "./svg-log
 const PREVIEW_SIZES = [24, 48, 128, 256] as const;
 const DESIGN_BRIEF_UPLOAD_MAX_BYTES = 200 * 1024;
 const DESIGN_BRIEF_PARSER_VERSION = "font-roles-v2";
+
+interface RenderLogoCanvasOptions {
+  logoColor?: string;
+  background?: string;
+  includeBackground?: boolean;
+  appIconRadiusPct?: number;
+}
 
 interface LogoForgeDesignBriefPayload {
   found?: boolean;
@@ -402,26 +416,41 @@ export function LogoForgePane() {
   );
 
   const renderLogoCanvas = useCallback(
-    async (size: number): Promise<HTMLCanvasElement | null> => {
+    async (
+      size: number,
+      options: RenderLogoCanvasOptions = {}
+    ): Promise<HTMLCanvasElement | null> => {
       if (!state) return null;
       const activeSvgObjects =
         state.logoMode === "image"
           ? state.svgObjects.filter((object) => object.type === "image")
           : state.svgObjects;
+      const params = {
+        ...state.params,
+        baseGreen: options.logoColor ?? state.params.baseGreen,
+        background: options.background ?? state.params.background,
+      };
+      const includeBackground =
+        options.includeBackground ?? state.exportIncludeBackground;
+      const appIconRadiusPct =
+        options.appIconRadiusPct ?? state.exportAppIconRadiusPct;
       return state.logoMode === "svg" || state.logoMode === "image"
         ? await svgLogoToCanvas({
-            objects: activeSvgObjects,
+            objects: colorizeSvgLogoObjects(
+              activeSvgObjects,
+              options.logoColor ?? null
+            ),
             size,
-            background: state.params.background,
-            includeBackground: state.exportIncludeBackground,
-            appIconRadiusPct: state.exportAppIconRadiusPct,
+            background: params.background,
+            includeBackground,
+            appIconRadiusPct,
           })
         : composeExportCanvas({
             pattern,
-            params: state.params,
+            params,
             size,
-            includeBackground: state.exportIncludeBackground,
-            appIconRadiusPct: state.exportAppIconRadiusPct,
+            includeBackground,
+            appIconRadiusPct,
           });
     },
     [pattern, state]
@@ -497,11 +526,84 @@ export function LogoForgePane() {
     try {
       const slug = slugifyProject(projectPath);
       const entries: ZipEntryInput[] = [];
+      const selectedShapes: LogoPackIconShape[] = LOGO_PACK_ICON_SHAPES.filter(
+        (shape) =>
+          (shape.key === "sharp-square" && state.packIncludeSharpSquare) ||
+          (shape.key === "rounded-square" && state.packIncludeRoundedSquare) ||
+          (shape.key === "circle" && state.packIncludeCircle)
+      );
+      const originalColorway: LogoPackColorway = {
+        key: "original",
+        label: "Original",
+        logoColor: state.params.baseGreen,
+        background: state.params.background,
+        textColor: state.brandTextColor,
+        includeBackground: state.exportIncludeBackground,
+      };
+      const packColorways = [
+        originalColorway,
+        ...buildLogoPackColorways({
+          baseLogoColor: state.params.baseGreen,
+          customBackground: state.bannerBackground,
+          includeCustomBackground: state.exportIncludeBackground,
+          includeLightOnDark: state.packIncludeLightOnDark,
+          includeDarkOnLight: state.packIncludeDarkOnLight,
+          includeCustomColorway: state.packIncludeCustomColorway,
+        }),
+      ];
+      const svgForColorway = (
+        colorway: LogoPackColorway,
+        shape: LogoPackIconShape
+      ) =>
+        state.logoMode === "svg" || state.logoMode === "image"
+          ? buildSvgLogoString({
+              objects: colorizeSvgLogoObjects(
+                activeSvgObjects,
+                colorway.key === "original" ? null : colorway.logoColor
+              ),
+              size: 1024,
+              background: colorway.background,
+              includeBackground: colorway.includeBackground,
+              appIconRadiusPct: shape.radiusPct,
+            })
+          : buildSvgString({
+              pattern,
+              params: {
+                ...state.params,
+                baseGreen: colorway.logoColor,
+                background: colorway.background,
+              },
+              size: 1024,
+              includeBackground: colorway.includeBackground,
+              appIconRadiusPct: shape.radiusPct,
+            });
       for (const size of PREVIEW_SIZES) {
         const canvas = await renderLogoCanvas(size);
         if (!canvas) continue;
         const blob = await canvasToPngBlob(canvas);
         entries.push({ name: `png/${slug}-${size}.png`, data: blob });
+      }
+      for (const colorway of packColorways) {
+        for (const shape of selectedShapes) {
+          for (const size of PREVIEW_SIZES) {
+            const canvas = await renderLogoCanvas(size, {
+              logoColor:
+                colorway.key === "original" ? undefined : colorway.logoColor,
+              background: colorway.background,
+              includeBackground: colorway.includeBackground,
+              appIconRadiusPct: shape.radiusPct,
+            });
+            if (!canvas) continue;
+            entries.push({
+              name: `png/${colorway.key}/${shape.key}/${slug}-${size}-${shape.key}.png`,
+              data: await canvasToPngBlob(canvas),
+            });
+          }
+          entries.push({
+            name: `svg/${colorway.key}/${shape.key}/${slug}-1024-${shape.key}.svg`,
+            data: svgForColorway(colorway, shape),
+          });
+        }
       }
       const bannerLogoCanvas = await renderLogoCanvas(1024);
       if (bannerLogoCanvas) {
@@ -542,6 +644,52 @@ export function LogoForgePane() {
           }
         }
       }
+      for (const colorway of packColorways) {
+        const colorwayLogoCanvas = await renderLogoCanvas(1024, {
+          logoColor:
+            colorway.key === "original" ? undefined : colorway.logoColor,
+          background: colorway.background,
+          includeBackground: false,
+          appIconRadiusPct: 0,
+        });
+        if (!colorwayLogoCanvas) continue;
+        for (const preset of SOCIAL_BANNER_PRESETS) {
+          if (state.bannerIncludeLogo) {
+            const bannerCanvas = composeSocialBannerCanvas({
+              logoCanvas: colorwayLogoCanvas,
+              preset,
+              brandName: state.brandName,
+              fontFamily: state.brandFontFamily,
+              textColor: colorway.textColor,
+              background: colorway.background,
+              includeBackground: colorway.includeBackground,
+              includeLogo: true,
+              textScalePct: state.bannerTextScalePct,
+              logoScalePct: state.bannerLogoScalePct,
+            });
+            entries.push({
+              name: `social/${colorway.key}/${slug}-${preset.key}.png`,
+              data: await canvasToPngBlob(bannerCanvas),
+            });
+          }
+          const noLogoBannerCanvas = composeSocialBannerCanvas({
+            logoCanvas: colorwayLogoCanvas,
+            preset,
+            brandName: state.brandName,
+            fontFamily: state.brandFontFamily,
+            textColor: colorway.textColor,
+            background: colorway.background,
+            includeBackground: colorway.includeBackground,
+            includeLogo: false,
+            textScalePct: state.bannerTextScalePct,
+            logoScalePct: state.bannerLogoScalePct,
+          });
+          entries.push({
+            name: `social/${colorway.key}/no-logo/${slug}-${preset.key}-no-logo.png`,
+            data: await canvasToPngBlob(noLogoBannerCanvas),
+          });
+        }
+      }
       const svg =
         state.logoMode === "svg" || state.logoMode === "image"
           ? buildSvgLogoString({
@@ -571,6 +719,16 @@ export function LogoForgePane() {
             bannerIncludeLogo: state.bannerIncludeLogo,
             bannerTextScalePct: state.bannerTextScalePct,
             bannerLogoScalePct: state.bannerLogoScalePct,
+            packColorways,
+            packIconShapes: selectedShapes,
+            packSettings: {
+              includeLightOnDark: state.packIncludeLightOnDark,
+              includeDarkOnLight: state.packIncludeDarkOnLight,
+              includeCustomColorway: state.packIncludeCustomColorway,
+              includeSharpSquare: state.packIncludeSharpSquare,
+              includeRoundedSquare: state.packIncludeRoundedSquare,
+              includeCircle: state.packIncludeCircle,
+            },
             includeBackground: state.exportIncludeBackground,
             appIconRadiusPct: state.exportAppIconRadiusPct,
           },
@@ -641,6 +799,12 @@ export function LogoForgePane() {
           }))
         }
         onBrandSettingsChange={(settings) =>
+          updateProjectState(stateKey, (prev) => ({
+            ...prev,
+            ...settings,
+          }))
+        }
+        onPackSettingsChange={(settings) =>
           updateProjectState(stateKey, (prev) => ({
             ...prev,
             ...settings,

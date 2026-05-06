@@ -14,6 +14,11 @@ import {
   SOCIAL_BANNER_PRESETS,
   parseLogoForgeDesignBrief,
 } from "./brand-design";
+import {
+  LOGO_PACK_ICON_SHAPES,
+  buildLogoPackColorways,
+  colorizeSvgLogoObjects,
+} from "./export/pack";
 import { buildSvgLogoString } from "./export/svg-logo";
 
 describe("logo forge pattern grid helpers", () => {
@@ -156,5 +161,92 @@ describe("logo forge social banner design defaults", () => {
       "youtube-safe-strip",
       "google-strip",
     ]);
+  });
+});
+
+describe("logo forge logo pack variants", () => {
+  it("enables sharp, rounded, and circle icon shapes by default", () => {
+    expect(LOGO_PACK_ICON_SHAPES).toEqual([
+      { key: "sharp-square", label: "Sharp square", radiusPct: 0 },
+      { key: "rounded-square", label: "Rounded square", radiusPct: 16 },
+      { key: "circle", label: "Circle", radiusPct: 50 },
+    ]);
+  });
+
+  it("builds light, dark, and custom swapped pack colourways", () => {
+    expect(
+      buildLogoPackColorways({
+        baseLogoColor: "#34d399",
+        customBackground: "#111827",
+        includeCustomBackground: true,
+        includeLightOnDark: true,
+        includeDarkOnLight: true,
+        includeCustomColorway: true,
+      })
+    ).toEqual([
+      {
+        key: "light-on-dark",
+        label: "Light on dark",
+        logoColor: "#ffffff",
+        background: "#000000",
+        textColor: "#ffffff",
+        includeBackground: true,
+      },
+      {
+        key: "dark-on-light",
+        label: "Dark on light",
+        logoColor: "#000000",
+        background: "#ffffff",
+        textColor: "#000000",
+        includeBackground: true,
+      },
+      {
+        key: "custom-swap",
+        label: "Custom swap",
+        logoColor: "#111827",
+        background: "#34d399",
+        textColor: "#111827",
+        includeBackground: true,
+      },
+    ]);
+  });
+
+  it("recolors vector objects without touching uploaded image data", () => {
+    const png =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lrW2xQAAAABJRU5ErkJggg==";
+    const objects = colorizeSvgLogoObjects(
+      [
+        {
+          id: "shape-1",
+          type: "rect",
+          x: 128,
+          y: 128,
+          width: 256,
+          height: 256,
+          radius: 12,
+          fill: "#00ff00",
+          opacity: 1,
+          rotation: 0,
+        },
+        {
+          id: "image-1",
+          type: "image",
+          href: png,
+          name: "logo.png",
+          mimeType: "image/png",
+          x: 128,
+          y: 192,
+          width: 640,
+          height: 320,
+          fill: "#000000",
+          opacity: 1,
+          rotation: 0,
+        },
+      ],
+      "#ffffff"
+    );
+
+    expect(objects[0]).toMatchObject({ fill: "#ffffff" });
+    expect(objects[1]).toMatchObject({ type: "image", href: png, fill: "#000000" });
   });
 });

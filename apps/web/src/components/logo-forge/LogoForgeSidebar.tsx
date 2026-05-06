@@ -113,6 +113,19 @@ interface Props {
       >
     >
   ) => void;
+  onPackSettingsChange: (
+    settings: Partial<
+      Pick<
+        LogoForgeProjectState,
+        | "packIncludeLightOnDark"
+        | "packIncludeDarkOnLight"
+        | "packIncludeCustomColorway"
+        | "packIncludeSharpSquare"
+        | "packIncludeRoundedSquare"
+        | "packIncludeCircle"
+      >
+    >
+  ) => void;
   onSvgObjectsChange: (
     objects: SvgLogoObject[],
     selectedObjectId?: string | null
@@ -480,6 +493,7 @@ export function LogoForgeSidebar({
   onExportIncludeBackgroundChange,
   onExportAppIconRadiusChange,
   onBrandSettingsChange,
+  onPackSettingsChange,
   onSvgObjectsChange,
   onSelectedSvgObjectChange,
   onSvgGridSettingsChange,
@@ -1871,6 +1885,81 @@ export function LogoForgeSidebar({
           onChange={onExportAppIconRadiusChange}
           formatValue={(v) => `${Math.round(v)}%`}
         />
+        <div className="rounded-md border border-border/60 p-3">
+          <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+            Pack Settings
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeLightOnDark}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeLightOnDark: checked === true,
+                  })
+                }
+              />
+              Light on dark
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeDarkOnLight}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeDarkOnLight: checked === true,
+                  })
+                }
+              />
+              Dark on light
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeCustomColorway}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeCustomColorway: checked === true,
+                  })
+                }
+              />
+              Custom colourway
+            </label>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeSharpSquare}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeSharpSquare: checked === true,
+                  })
+                }
+              />
+              Sharp square
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeRoundedSquare}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeRoundedSquare: checked === true,
+                  })
+                }
+              />
+              Rounded square
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeCircle}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeCircle: checked === true,
+                  })
+                }
+              />
+              Circle
+            </label>
+          </div>
+        </div>
         <div className="flex flex-col gap-1.5">
           <Button
             type="button"
