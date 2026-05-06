@@ -381,6 +381,7 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
                         project=str(project_dir),
                         chat="chat-1",
                         background=False,
+                        owner_kind="agent",
                     )
                 )
 
@@ -397,6 +398,52 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertEqual(body["owner_kind"], "agent")
         self.assertTrue(body["activate"])
         self.assertIn('"tab_id": "tab-1"', stdout.getvalue())
+
+    def test_browser_open_can_request_operator_visible_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "browser-broker.json").write_text(
+                json.dumps(
+                    {
+                        "baseUrl": "http://127.0.0.1:7777",
+                        "token": "secret-token",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            project_dir = Path(tmpdir) / "project"
+            project_dir.mkdir()
+            with (
+                patch.object(pixel_forge_cli, "shared_state_dir", return_value=state_dir),
+                patch("pixel_forge_cli.urllib.request.urlopen") as urlopen,
+                patch("sys.stdout", io.StringIO()),
+            ):
+                urlopen.return_value = FakeHttpResponse(
+                    {
+                        "ok": True,
+                        "tab": {
+                            "tab_id": "tab-1",
+                            "url": "http://127.0.0.1:8017/",
+                        },
+                    }
+                )
+                exit_code = pixel_forge_cli._command_browser_open(
+                    argparse.Namespace(
+                        url="http://127.0.0.1:8017/",
+                        tab_id=None,
+                        project=str(project_dir),
+                        chat="chat-1",
+                        background=False,
+                        owner_kind="operator",
+                    )
+                )
+
+        self.assertEqual(exit_code, 0)
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["owner_kind"], "operator")
+        self.assertTrue(body["activate"])
 
     def test_browser_screenshot_writes_png_without_printing_data_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

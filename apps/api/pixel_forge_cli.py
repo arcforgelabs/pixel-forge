@@ -746,11 +746,12 @@ def _command_browser_tabs(args: argparse.Namespace) -> int:
 
 
 def _command_browser_open(args: argparse.Namespace) -> int:
+    owner_kind = _normalize_text(getattr(args, "owner_kind", None)) or "agent"
     payload = {
         **_browser_scope_payload(args),
         "url": args.url,
         "tab_id": _normalize_text(args.tab_id),
-        "owner_kind": "agent",
+        "owner_kind": owner_kind,
         "activate": not bool(args.background),
     }
     return _print_json(_browser_broker_request("POST", "/tabs", payload=payload))
@@ -1477,6 +1478,13 @@ def build_parser() -> argparse.ArgumentParser:
     browser_open.add_argument("url", help="URL to open")
     browser_open.add_argument("--tab-id", help="Optional explicit broker tab id")
     browser_open.add_argument("--background", action="store_true", help="Open without activating the tab")
+    browser_open.add_argument(
+        "--owner-kind",
+        "--owner",
+        choices=("agent", "operator"),
+        default="agent",
+        help="Tab visibility owner; use operator when the tab should appear in the Pixel Forge UI",
+    )
     add_browser_scope_args(browser_open)
     browser_open.set_defaults(handler=_command_browser_open)
 
