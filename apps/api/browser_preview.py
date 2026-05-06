@@ -1089,31 +1089,41 @@ class ManagedBrowserPreviewManager:
             sock.listen(1)
             return int(sock.getsockname()[1])
 
+    def _resolve_webgl_backend(self) -> str:
+        configured_backend = os.environ.get("PIXEL_FORGE_WEBGL_BACKEND")
+        if configured_backend is None:
+            configured_backend = (
+                "swiftshader-webgl"
+                if os.environ.get("PIXEL_FORGE_FORCE_SWIFTSHADER_WEBGL") == "1"
+                else "system"
+            )
+        return configured_backend.strip()
+
+    def _chrome_webgl_flags(self) -> list[str]:
+        flags = [
+            "--ignore-gpu-blocklist",
+            "--enable-webgl",
+            "--enable-gpu-rasterization",
+        ]
+        webgl_backend = self._resolve_webgl_backend()
+        if webgl_backend and webgl_backend != "system":
+            flags.append(f"--use-angle={webgl_backend}")
+            if "swiftshader" in webgl_backend.lower():
+                flags.append("--enable-unsafe-swiftshader")
+        return flags
+
     def _launch_chrome(self, chrome_path: str, cdp_port: int) -> subprocess.Popen[bytes]:
         command = [
             chrome_path,
             "--remote-debugging-address=127.0.0.1",
             f"--remote-debugging-port={cdp_port}",
             f"--user-data-dir={PIXEL_FORGE_PROFILE_DIR}",
-            "--ignore-gpu-blocklist",
-            "--enable-webgl",
-            "--enable-unsafe-swiftshader",
-            "--enable-gpu-rasterization",
+            *self._chrome_webgl_flags(),
             "--start-maximized",
             "--no-first-run",
             "--no-default-browser-check",
             "about:blank",
         ]
-        webgl_backend = os.environ.get("PIXEL_FORGE_WEBGL_BACKEND")
-        if webgl_backend is None:
-            webgl_backend = (
-                "system"
-                if os.environ.get("PIXEL_FORGE_FORCE_SWIFTSHADER_WEBGL") == "0"
-                else "swiftshader-webgl"
-            )
-        webgl_backend = webgl_backend.strip()
-        if webgl_backend and webgl_backend != "system":
-            command.insert(-1, f"--use-angle={webgl_backend}")
         return subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
