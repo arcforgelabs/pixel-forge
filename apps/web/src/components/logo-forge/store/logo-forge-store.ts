@@ -196,8 +196,8 @@ function coerceSvgObjects(raw: unknown): SvgLogoObject[] {
             : "image/png",
         x: clampNumber(obj.x, 232, -512, 1536),
         y: clampNumber(obj.y, 232, -512, 1536),
-        width: clampNumber(obj.width, 560, 12, 1536),
-        height: clampNumber(obj.height, 560, 12, 1536),
+        width: clampNumber(obj.width, 560, 12, 2048),
+        height: clampNumber(obj.height, 560, 12, 2048),
         fill,
         opacity,
         rotation,
@@ -312,7 +312,7 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
       typeof obj.bannerIncludeLogo === "boolean"
         ? obj.bannerIncludeLogo
         : base.bannerIncludeLogo,
-    bannerTextScalePct: clampNumber(obj.bannerTextScalePct, 100, 50, 160),
+    bannerTextScalePct: clampNumber(obj.bannerTextScalePct, 100, 50, 300),
     bannerLogoScalePct: clampNumber(obj.bannerLogoScalePct, 100, 40, 180),
     bannerDesignSource:
       typeof obj.bannerDesignSource === "string" || obj.bannerDesignSource === null

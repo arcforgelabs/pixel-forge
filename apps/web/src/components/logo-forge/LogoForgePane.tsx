@@ -770,7 +770,7 @@ export function LogoForgePane() {
               const bannerPreviewTextSize = Math.max(
                 10,
                 Math.min(
-                  28,
+                  44,
                   14 * (state.bannerTextScalePct / 100)
                 )
               );
@@ -807,11 +807,13 @@ export function LogoForgePane() {
                           />
                         ))}
                       <span
-                        className="truncate text-sm font-bold"
+                        className="truncate font-bold"
                         style={{
                           color: state.brandTextColor,
                           fontFamily: state.brandFontFamily,
                           fontSize: `${bannerPreviewTextSize}px`,
+                          lineHeight: 1.35,
+                          paddingBlock: "0.12em",
                         }}
                       >
                         {state.brandName}

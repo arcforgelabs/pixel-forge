@@ -72,6 +72,12 @@ const IMAGE_UPLOAD_TYPES = new Set([
   "image/gif",
   "image/svg+xml",
 ]);
+const IMAGE_LAYER_BASE_SIZE = 560;
+const IMAGE_LAYER_MIN_SIZE = 24;
+const IMAGE_LAYER_MAX_SIZE = 2048;
+const IMAGE_LAYER_MAX_SIZE_PCT = Math.round(
+  (IMAGE_LAYER_MAX_SIZE / IMAGE_LAYER_BASE_SIZE) * 100
+);
 
 export interface DesignBriefStatus {
   state: "checking" | "found" | "missing" | "error" | "uploaded";
@@ -407,6 +413,57 @@ function defaultObjectForType(type: SvgLogoObject["type"]): SvgLogoObject {
   };
 }
 
+function resizeImageObjectCentered(
+  object: SvgLogoImageObject,
+  width: number,
+  height: number
+): SvgLogoImageObject {
+  const nextWidth = clampNumber(
+    width,
+    object.width,
+    IMAGE_LAYER_MIN_SIZE,
+    IMAGE_LAYER_MAX_SIZE
+  );
+  const nextHeight = clampNumber(
+    height,
+    object.height,
+    IMAGE_LAYER_MIN_SIZE,
+    IMAGE_LAYER_MAX_SIZE
+  );
+  const centerX = object.x + object.width / 2;
+  const centerY = object.y + object.height / 2;
+  return {
+    ...object,
+    x: Math.round(centerX - nextWidth / 2),
+    y: Math.round(centerY - nextHeight / 2),
+    width: Math.round(nextWidth),
+    height: Math.round(nextHeight),
+  };
+}
+
+function imageLayerSizePct(object: SvgLogoImageObject): number {
+  return Math.round(
+    (Math.max(object.width, object.height, IMAGE_LAYER_MIN_SIZE) /
+      IMAGE_LAYER_BASE_SIZE) *
+      100
+  );
+}
+
+function resizeImageObjectByPct(
+  object: SvgLogoImageObject,
+  sizePct: number
+): SvgLogoImageObject {
+  const pct = clampNumber(
+    sizePct,
+    imageLayerSizePct(object),
+    5,
+    IMAGE_LAYER_MAX_SIZE_PCT
+  );
+  const longest = Math.max(object.width, object.height, IMAGE_LAYER_MIN_SIZE);
+  const scale = (IMAGE_LAYER_BASE_SIZE * (pct / 100)) / longest;
+  return resizeImageObjectCentered(object, object.width * scale, object.height * scale);
+}
+
 function objectLabel(object: SvgLogoObject): string {
   if (object.type === "text") return `Text ${object.text}`;
   if (object.type === "image") return object.name || "Image";
@@ -455,6 +512,7 @@ export function LogoForgeSidebar({
   const [dragPaintMode, setDragPaintMode] = useState<boolean | null>(null);
   const dragPaintModeRef = useRef<boolean | null>(null);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [imageDimensionsLinked, setImageDimensionsLinked] = useState(true);
 
   useEffect(() => {
     gridRef.current = stateGrid;
@@ -1265,34 +1323,63 @@ export function LogoForgeSidebar({
                       <span className="truncate">{selectedImageObject.name}</span>
                     </Button>
                   </div>
-                  <SliderRow
-                    label="Width"
-                    value={selectedImageObject.width}
-                    min={12}
-                    max={1536}
-                    step={1}
-                    onChange={(value) =>
-                      updateSvgObject(selectedImageObject.id, (object) =>
-                        object.type === "image"
-                          ? { ...object, width: clampNumber(value, object.width, 12, 1536) }
-                          : object
-                      )
-                    }
-                  />
-                  <SliderRow
-                    label="Height"
-                    value={selectedImageObject.height}
-                    min={12}
-                    max={1536}
-                    step={1}
-                    onChange={(value) =>
-                      updateSvgObject(selectedImageObject.id, (object) =>
-                        object.type === "image"
-                          ? { ...object, height: clampNumber(value, object.height, 12, 1536) }
-                          : object
-                      )
-                    }
-                  />
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={imageDimensionsLinked}
+                      onCheckedChange={(checked) =>
+                        setImageDimensionsLinked(checked === true)
+                      }
+                    />
+                    Lock ratio
+                  </label>
+                  {imageDimensionsLinked ? (
+                    <SliderRow
+                      label="Size"
+                      value={imageLayerSizePct(selectedImageObject)}
+                      min={5}
+                      max={IMAGE_LAYER_MAX_SIZE_PCT}
+                      step={1}
+                      onChange={(value) =>
+                        updateSvgObject(selectedImageObject.id, (object) =>
+                          object.type === "image"
+                            ? resizeImageObjectByPct(object, value)
+                            : object
+                        )
+                      }
+                      formatValue={(value) => `${Math.round(value)}%`}
+                    />
+                  ) : (
+                    <>
+                      <SliderRow
+                        label="Width"
+                        value={selectedImageObject.width}
+                        min={IMAGE_LAYER_MIN_SIZE}
+                        max={IMAGE_LAYER_MAX_SIZE}
+                        step={1}
+                        onChange={(value) =>
+                          updateSvgObject(selectedImageObject.id, (object) =>
+                            object.type === "image"
+                              ? resizeImageObjectCentered(object, value, object.height)
+                              : object
+                          )
+                        }
+                      />
+                      <SliderRow
+                        label="Height"
+                        value={selectedImageObject.height}
+                        min={IMAGE_LAYER_MIN_SIZE}
+                        max={IMAGE_LAYER_MAX_SIZE}
+                        step={1}
+                        onChange={(value) =>
+                          updateSvgObject(selectedImageObject.id, (object) =>
+                            object.type === "image"
+                              ? resizeImageObjectCentered(object, object.width, value)
+                              : object
+                          )
+                        }
+                      />
+                    </>
+                  )}
                   <div className="flex flex-col gap-2 rounded-md border border-border/60 bg-card/50 p-2">
                     <div className="flex items-center justify-between gap-2">
                       <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1697,7 +1784,7 @@ export function LogoForgeSidebar({
             label="Banner Text Size"
             value={state.bannerTextScalePct}
             min={50}
-            max={160}
+            max={300}
             step={1}
             onChange={(bannerTextScalePct) =>
               onBrandSettingsChange({ bannerTextScalePct })
