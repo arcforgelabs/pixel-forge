@@ -5,9 +5,11 @@ import os
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import controller_release_update
@@ -94,6 +96,45 @@ class ControllerReleaseUpdateTest(unittest.TestCase):
         urlopen_mock.assert_not_called()
         self.assertEqual(state["status"], "cached")
         self.assertTrue(state["updateAvailable"])
+
+    def test_check_falls_back_to_tags_when_no_github_releases_exist(self) -> None:
+        release_404 = HTTPError(
+            "https://example.test/latest",
+            404,
+            "Not Found",
+            {},
+            BytesIO(b""),
+        )
+        tag_response = FakeGitHubResponse(
+            [
+                {
+                    "name": "v2026.4.21-1",
+                    "tarball_url": "https://example.test/v2026.4.21-1.tar.gz",
+                    "zipball_url": "https://example.test/v2026.4.21-1.zip",
+                },
+                {
+                    "name": "v2026.5.7",
+                    "tarball_url": "https://example.test/v2026.5.7.tar.gz",
+                    "zipball_url": "https://example.test/v2026.5.7.zip",
+                },
+            ],
+            headers={"ETag": '"tags-etag"'},
+        )
+
+        with patch(
+            "controller_release_update.urlopen",
+            side_effect=[release_404, tag_response],
+        ), patch(
+            "controller_release_update.read_runtime_version",
+            return_value="2026.4.21-1",
+        ):
+            state = controller_release_update.check_controller_release_update(force=True)
+
+        self.assertEqual(state["status"], "checked_tags")
+        self.assertEqual(state["source"], "tags")
+        self.assertTrue(state["updateAvailable"])
+        self.assertEqual(state["latest"]["version"], "2026.5.7")
+        self.assertEqual(state["latest"]["tarballUrl"], "https://example.test/v2026.5.7.tar.gz")
 
     def test_stage_downloaded_release_into_pending_controller_update(self) -> None:
         controller_release_update.controller_release_update_path().write_text(

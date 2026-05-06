@@ -120,6 +120,13 @@ def _api_url(repo: str) -> str:
     return f"https://api.github.com/repos/{repo}/releases/latest"
 
 
+def _tags_api_url(repo: str) -> str:
+    explicit = _normalize_text(os.environ.get("PIXEL_FORGE_RELEASE_TAGS_API_URL"))
+    if explicit:
+        return explicit
+    return f"https://api.github.com/repos/{repo}/tags?per_page=100"
+
+
 def _auth_token() -> str | None:
     return _normalize_text(os.environ.get("GITHUB_TOKEN")) or _normalize_text(
         os.environ.get("GH_TOKEN")
@@ -153,6 +160,7 @@ def read_controller_release_update() -> dict[str, Any]:
     return {
         "repo": repo,
         "channel": _normalize_text(payload.get("channel")) or "stable",
+        "source": _normalize_text(payload.get("source")),
         "lastCheckedAt": _normalize_text(payload.get("lastCheckedAt")),
         "nextCheckAfter": _normalize_text(payload.get("nextCheckAfter")),
         "etag": _normalize_text(payload.get("etag")),
@@ -167,14 +175,15 @@ def read_controller_release_update() -> dict[str, Any]:
     }
 
 
-def _headers_for_request(state: dict[str, Any]) -> dict[str, str]:
+def _headers_for_request(state: dict[str, Any], source: str) -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "Pixel-Forge-Updater",
     }
-    etag = _normalize_text(state.get("etag"))
-    last_modified = _normalize_text(state.get("lastModified"))
+    use_validators = (_normalize_text(state.get("source")) or "release") == source
+    etag = _normalize_text(state.get("etag")) if use_validators else None
+    last_modified = _normalize_text(state.get("lastModified")) if use_validators else None
     token = _auth_token()
     if etag:
         headers["If-None-Match"] = etag
@@ -202,6 +211,63 @@ def _latest_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _latest_from_tag_payload(repo: str, payload: dict[str, Any]) -> dict[str, Any]:
+    tag_name = _normalize_text(payload.get("name"))
+    version = _normalize_version(tag_name)
+    return {
+        "id": None,
+        "tagName": tag_name,
+        "version": version,
+        "name": tag_name,
+        "htmlUrl": f"https://github.com/{repo}/releases/tag/{tag_name}" if tag_name else None,
+        "tarballUrl": _normalize_text(payload.get("tarball_url")),
+        "zipballUrl": _normalize_text(payload.get("zipball_url")),
+        "publishedAt": None,
+        "prerelease": bool(version and "-beta." in version),
+        "draft": False,
+    }
+
+
+def _latest_from_tags_payload(repo: str, payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, list):
+        raise ValueError("GitHub tags response was not a list")
+
+    candidates = [
+        _latest_from_tag_payload(repo, item)
+        for item in payload
+        if isinstance(item, dict)
+    ]
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.get("version") and _version_parts(candidate.get("version"))
+    ]
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda candidate: _version_parts(candidate.get("version")) or (0, 0, 0, -2, 0),
+        reverse=True,
+    )
+    return candidates[0]
+
+
+def _request_github_json(
+    url: str,
+    state: dict[str, Any],
+    *,
+    source: str,
+    timeout: int = 8,
+) -> tuple[Any, dict[str, str]]:
+    request = Request(url, headers=_headers_for_request(state, source), method="GET")
+    with urlopen(request, timeout=timeout) as response:
+        raw_payload = response.read().decode("utf-8")
+        return json.loads(raw_payload), {
+            "etag": _normalize_text(response.headers.get("ETag")),
+            "lastModified": _normalize_text(response.headers.get("Last-Modified")),
+        }
+
+
 def check_controller_release_update(*, force: bool = False) -> dict[str, Any]:
     state = read_controller_release_update()
     next_check_after = _parse_time(state.get("nextCheckAfter"))
@@ -212,39 +278,16 @@ def check_controller_release_update(*, force: bool = False) -> dict[str, Any]:
     repo = _release_repo()
     checked_at = _now()
     next_check = checked_at + timedelta(seconds=_check_interval_seconds())
-    request = Request(_api_url(repo), headers=_headers_for_request(state), method="GET")
 
     try:
-        with urlopen(request, timeout=8) as response:
-            raw_payload = response.read().decode("utf-8")
-            payload = json.loads(raw_payload)
-            if not isinstance(payload, dict):
-                raise ValueError("GitHub release response was not an object")
-            next_state = {
-                **state,
-                "repo": repo,
-                "channel": "stable",
-                "lastCheckedAt": _iso(checked_at),
-                "nextCheckAfter": _iso(next_check),
-                "etag": _normalize_text(response.headers.get("ETag")),
-                "lastModified": _normalize_text(response.headers.get("Last-Modified")),
-                "latest": _latest_from_payload(payload),
-                "status": "checked",
-                "error": None,
-                "errorAt": None,
-            }
+        payload, validators = _request_github_json(_api_url(repo), state, source="release")
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub release response was not an object")
+        latest = _latest_from_payload(payload)
+        source = "release"
+        status = "checked"
     except HTTPError as error:
-        if error.code != 304:
-            next_state = {
-                **state,
-                "repo": repo,
-                "lastCheckedAt": _iso(checked_at),
-                "nextCheckAfter": _iso(checked_at + timedelta(seconds=ERROR_BACKOFF_SECONDS)),
-                "status": "error",
-                "error": str(error),
-                "errorAt": _iso(checked_at),
-            }
-        else:
+        if error.code == 304:
             next_state = {
                 **state,
                 "repo": repo,
@@ -254,6 +297,48 @@ def check_controller_release_update(*, force: bool = False) -> dict[str, Any]:
                 "error": None,
                 "errorAt": None,
             }
+            _write_json(controller_release_update_path(), next_state)
+            return read_controller_release_update()
+        if error.code != 404:
+            next_state = {
+                **state,
+                "repo": repo,
+                "lastCheckedAt": _iso(checked_at),
+                "nextCheckAfter": _iso(checked_at + timedelta(seconds=ERROR_BACKOFF_SECONDS)),
+                "status": "error",
+                "error": str(error),
+                "errorAt": _iso(checked_at),
+            }
+            _write_json(controller_release_update_path(), next_state)
+            return read_controller_release_update()
+        try:
+            payload, validators = _request_github_json(_tags_api_url(repo), state, source="tags")
+            latest = _latest_from_tags_payload(repo, payload)
+            source = "tags"
+            status = "checked_tags"
+        except HTTPError as tag_error:
+            if tag_error.code == 304:
+                next_state = {
+                    **state,
+                    "repo": repo,
+                    "lastCheckedAt": _iso(checked_at),
+                    "nextCheckAfter": _iso(next_check),
+                    "status": "not_modified",
+                    "error": None,
+                    "errorAt": None,
+                }
+            else:
+                next_state = {
+                    **state,
+                    "repo": repo,
+                    "lastCheckedAt": _iso(checked_at),
+                    "nextCheckAfter": _iso(checked_at + timedelta(seconds=ERROR_BACKOFF_SECONDS)),
+                    "status": "error",
+                    "error": str(tag_error),
+                    "errorAt": _iso(checked_at),
+                }
+            _write_json(controller_release_update_path(), next_state)
+            return read_controller_release_update()
     except (OSError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
         next_state = {
             **state,
@@ -264,6 +349,23 @@ def check_controller_release_update(*, force: bool = False) -> dict[str, Any]:
             "error": str(error),
             "errorAt": _iso(checked_at),
         }
+        _write_json(controller_release_update_path(), next_state)
+        return read_controller_release_update()
+
+    next_state = {
+        **state,
+        "repo": repo,
+        "channel": "stable",
+        "source": source,
+        "lastCheckedAt": _iso(checked_at),
+        "nextCheckAfter": _iso(next_check),
+        "etag": validators["etag"],
+        "lastModified": validators["lastModified"],
+        "latest": latest,
+        "status": status,
+        "error": None,
+        "errorAt": None,
+    }
 
     _write_json(controller_release_update_path(), next_state)
     return read_controller_release_update()

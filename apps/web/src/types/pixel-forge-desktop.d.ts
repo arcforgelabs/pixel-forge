@@ -294,6 +294,7 @@ export interface PixelForgeControllerReleaseLatest {
 export interface PixelForgeControllerReleaseUpdateState {
   repo: string
   channel: string
+  source?: 'release' | 'tags' | string | null
   lastCheckedAt: string | null
   nextCheckAfter: string | null
   etag: string | null
