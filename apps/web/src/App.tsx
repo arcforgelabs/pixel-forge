@@ -816,6 +816,28 @@ function App() {
   }
 
   const showMainContent = !projectSettingsPath;
+  const liveEditorWorkbenchVisible = activeMode === "live-editor";
+  const modeWorkbenchContent =
+    activeMode === "screenshot" ? (
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className="py-2">
+          {appState === AppState.INITIAL && (
+            <StartPane
+              doCreate={doCreate}
+              importFromCode={importFromCode}
+            />
+          )}
+
+          {(appState === AppState.CODING || appState === AppState.CODE_READY) && (
+            <PreviewPane doUpdate={doUpdate} reset={reset} settings={settings} />
+          )}
+        </div>
+      </div>
+    ) : activeMode === "logo-forge" ? (
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <LogoForgePane />
+      </div>
+    ) : null;
 
   return (
     <div className="dark:bg-background dark:text-foreground flex h-screen flex-col overflow-hidden">
@@ -853,32 +875,13 @@ function App() {
           </div>
         )}
 
-        {showMainContent && activeMode === "screenshot" && (
-          <div className="flex-1 min-h-0 overflow-auto">
-            <div className="py-2">
-              {appState === AppState.INITIAL && (
-                <StartPane
-                  doCreate={doCreate}
-                  importFromCode={importFromCode}
-                />
-              )}
-
-              {(appState === AppState.CODING || appState === AppState.CODE_READY) && (
-                <PreviewPane doUpdate={doUpdate} reset={reset} settings={settings} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {showMainContent && activeMode === "live-editor" && (
+        {showMainContent && (
           <div className="flex-1 min-h-0 overflow-hidden">
-            <LiveEditorPane advancedMode={settings.advancedMode} />
-          </div>
-        )}
-
-        {showMainContent && activeMode === "logo-forge" && (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <LogoForgePane />
+            <LiveEditorPane
+              advancedMode={settings.advancedMode}
+              previewWorkbenchVisible={liveEditorWorkbenchVisible}
+              workbenchContent={modeWorkbenchContent}
+            />
           </div>
         )}
 

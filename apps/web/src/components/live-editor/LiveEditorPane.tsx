@@ -5,7 +5,7 @@
  * Pixel Forge's embedded Chromium surface rather than through a proxy iframe.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   selectActiveProjectChats,
   selectActiveProjectSessions,
@@ -517,9 +517,15 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 interface LiveEditorPaneProps {
   advancedMode?: boolean
+  previewWorkbenchVisible?: boolean
+  workbenchContent?: ReactNode
 }
 
-export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
+export function LiveEditorPane({
+  advancedMode = false,
+  previewWorkbenchVisible = true,
+  workbenchContent,
+}: LiveEditorPaneProps) {
   const {
     projectPath,
     previewUrl,
@@ -1310,6 +1316,11 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       return
     }
 
+    if (!previewWorkbenchVisible) {
+      await desktopPreview.hide()
+      return
+    }
+
     const activePreviewTab = getActivePreviewTab()
     const host = previewHostRef.current
 
@@ -1345,7 +1356,7 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
       height: rect.height,
       borderRadius,
     })
-  }, [getActivePreviewTab])
+  }, [getActivePreviewTab, previewWorkbenchVisible])
 
   const getActiveBrowserTabIdForOverlay = useCallback(() => {
     const activePreviewTab = getActivePreviewTab()
@@ -3193,8 +3204,9 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
         </div>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="border-b border-transparent bg-card/50">
+      {previewWorkbenchVisible ? (
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="border-b border-transparent bg-card/50">
           <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
             {previewTabs.map((tab, index) => (
               <div
@@ -3514,8 +3526,13 @@ export function LiveEditorPane({ advancedMode = false }: LiveEditorPaneProps) {
               )}
             </div>
           </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {workbenchContent}
+        </div>
+      )}
 
       <Dialog
         open={workspacePreviewDialogOpen}

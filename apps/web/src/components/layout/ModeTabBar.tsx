@@ -28,6 +28,12 @@ export function ModeTabBar() {
     )
     || liveEditorSession?.agentDeckSessionTitle
     || null;
+  const modeLabel =
+    activeMode === "live-editor"
+      ? "Editor"
+      : activeMode === "logo-forge"
+        ? "Logo Forge"
+        : "Screenshot";
 
   return (
     <div className="flex items-center border-b border-transparent bg-card/50 px-2 py-3">
@@ -41,14 +47,14 @@ export function ModeTabBar() {
         <PanelLeft className="h-5 w-5" />
       </button>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground capitalize">{activeMode === "live-editor" ? "Live Editor" : "Screenshot"}</span>
+        <span className="font-medium text-foreground">{modeLabel}</span>
         {projectName && (
           <>
             <span className="text-border">·</span>
             <span className="truncate max-w-[200px]">{projectName}</span>
           </>
         )}
-        {activeMode === "live-editor" && activeChatTitle && (
+        {activeChatTitle && (
           <>
             <span className="text-border">·</span>
             <span className="truncate max-w-[200px]">{activeChatTitle}</span>
