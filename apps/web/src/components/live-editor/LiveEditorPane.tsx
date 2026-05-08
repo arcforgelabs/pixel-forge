@@ -5,7 +5,7 @@
  * Pixel Forge's embedded Chromium surface rather than through a proxy iframe.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import {
   selectActiveProjectChats,
   selectActiveProjectSessions,
@@ -104,6 +104,33 @@ interface LoadAppOptions {
   persist?: boolean
   tabId?: string
   announceSuccess?: boolean
+}
+
+const CHAT_PANEL_MIN_WIDTH = 360
+const CHAT_PANEL_DEFAULT_WIDTH_RATIO = 1 / 3
+const CHAT_PANEL_STORAGE_KEY = 'pixel-forge.live-editor.chat-panel-width'
+
+function readStoredChatPanelWidth(): number | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const parsed = Number(window.localStorage.getItem(CHAT_PANEL_STORAGE_KEY))
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function clampChatPanelWidth(width: number, containerWidth: number): number {
+  if (!Number.isFinite(containerWidth) || containerWidth <= 0) {
+    return Math.max(CHAT_PANEL_MIN_WIDTH, Math.round(width))
+  }
+
+  const maxWidth = Math.floor(containerWidth * CHAT_PANEL_DEFAULT_WIDTH_RATIO)
+  const minWidth = Math.min(CHAT_PANEL_MIN_WIDTH, maxWidth)
+  return Math.max(minWidth, Math.min(Math.round(width), maxWidth))
 }
 
 interface LocalPixelForgeTargetResponse {
@@ -552,11 +579,13 @@ export function LiveEditorPane({
   const externalPreviewUrlRef = useRef<string | null>(previewUrl?.trim() || null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
   const authToastIdsRef = useRef<Record<string, string>>({})
+  const layoutRef = useRef<HTMLDivElement | null>(null)
   const previewHostRef = useRef<HTMLDivElement | null>(null)
   const urlHistoryAnchorRef = useRef<HTMLDivElement | null>(null)
   const desktopPreviewRef = useRef(getDesktopPreview())
   const desktopAppRef = useRef(getDesktopApp())
   const refreshInFlightRef = useRef(false)
+  const chatPanelWidthRef = useRef<number | null>(null)
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
   const [workspacePreviewDialogOpen, setWorkspacePreviewDialogOpen] = useState(false)
@@ -565,8 +594,14 @@ export function LiveEditorPane({
   const [startingWorkspacePreviewCandidateId, setStartingWorkspacePreviewCandidateId] = useState<string | null>(null)
   const [isPixelForgeWorkspace, setIsPixelForgeWorkspace] = useState(false)
   const [previewOcclusionSnapshot, setPreviewOcclusionSnapshot] = useState<string | null>(null)
+  const [chatPanelWidth, setChatPanelWidth] = useState<number | null>(readStoredChatPanelWidth)
+  const [isResizingChatPanel, setIsResizingChatPanel] = useState(false)
   const [, setMirrorBuilds] = useState<LocalPixelForgeTargetResponse[]>([])
   const urlNavRef = useRef(false) // flag to skip pushing during back/forward
+
+  useEffect(() => {
+    chatPanelWidthRef.current = chatPanelWidth
+  }, [chatPanelWidth])
 
   useEffect(() => {
     const desktopApp = desktopAppRef.current
@@ -1362,6 +1397,10 @@ export function LiveEditorPane({
     const activePreviewTab = getActivePreviewTab()
     return activePreviewTab?.mode === 'browser' ? activePreviewTab.browserTabId : null
   }, [getActivePreviewTab])
+
+  useEffect(() => {
+    void updateEmbeddedPreviewBounds()
+  }, [chatPanelWidth, previewWorkbenchVisible, updateEmbeddedPreviewBounds])
 
   useDesktopPreviewOverlayGuard(
     desktopPreviewRef,
@@ -3144,13 +3183,112 @@ export function LiveEditorPane({
     setPreviewTabs,
   ])
 
+  const setClampedChatPanelWidth = useCallback((nextWidth: number, persist: boolean) => {
+    const containerWidth = layoutRef.current?.getBoundingClientRect().width || 0
+    const clampedWidth = clampChatPanelWidth(nextWidth, containerWidth)
+    chatPanelWidthRef.current = clampedWidth
+    setChatPanelWidth(clampedWidth)
+
+    if (persist && typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(CHAT_PANEL_STORAGE_KEY, String(clampedWidth))
+      } catch {
+        // Resizing should keep working even when browser storage is unavailable.
+      }
+    }
+  }, [])
+
+  const handleChatPanelResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const container = layoutRef.current
+    if (!container) {
+      return
+    }
+
+    event.preventDefault()
+    setIsResizingChatPanel(true)
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const updateWidthFromPointer = (clientX: number, persist: boolean) => {
+      const rect = container.getBoundingClientRect()
+      setClampedChatPanelWidth(clientX - rect.left, persist)
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      updateWidthFromPointer(moveEvent.clientX, false)
+    }
+
+    const stopResize = (upEvent: PointerEvent) => {
+      updateWidthFromPointer(upEvent.clientX, true)
+      setIsResizingChatPanel(false)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResize)
+      window.removeEventListener('pointercancel', stopResize)
+    }
+
+    updateWidthFromPointer(event.clientX, false)
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResize)
+    window.addEventListener('pointercancel', stopResize)
+  }, [setClampedChatPanelWidth])
+
+  const handleChatPanelResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      return
+    }
+
+    const containerWidth = layoutRef.current?.getBoundingClientRect().width || 0
+    if (containerWidth <= 0) {
+      return
+    }
+
+    event.preventDefault()
+
+    const currentWidth =
+      chatPanelWidthRef.current
+      ?? containerWidth * CHAT_PANEL_DEFAULT_WIDTH_RATIO
+    const maxWidth = containerWidth * CHAT_PANEL_DEFAULT_WIDTH_RATIO
+    const minWidth = Math.min(CHAT_PANEL_MIN_WIDTH, maxWidth)
+    const step = event.shiftKey ? 48 : 16
+
+    const nextWidth =
+      event.key === 'Home'
+        ? minWidth
+        : event.key === 'End'
+          ? maxWidth
+          : event.key === 'ArrowLeft'
+            ? currentWidth - step
+            : currentWidth + step
+
+    setClampedChatPanelWidth(nextWidth, true)
+  }, [setClampedChatPanelWidth])
+
+  const chatPanelFlexBasis =
+    chatPanelWidth === null
+      ? `${CHAT_PANEL_DEFAULT_WIDTH_RATIO * 100}%`
+      : `${chatPanelWidth}px`
+  const chatPanelStyle: CSSProperties = {
+    flexBasis: chatPanelFlexBasis,
+    width: chatPanelFlexBasis,
+    minWidth: `${CHAT_PANEL_MIN_WIDTH}px`,
+    maxWidth: `${CHAT_PANEL_DEFAULT_WIDTH_RATIO * 100}%`,
+  }
+
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className="flex basis-1/3 min-w-[300px] flex-shrink-0 flex-col overflow-hidden border-r border-transparent bg-card/50">
+    <div ref={layoutRef} className="flex h-full overflow-hidden">
+      <div
+        className="pf-live-editor-surface flex flex-shrink-0 flex-col overflow-hidden border-r border-transparent"
+        style={chatPanelStyle}
+      >
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value === 'elements' ? 'elements' : 'chat')}
-          className="flex h-full flex-col overflow-hidden"
+          className="pf-live-editor-surface flex h-full flex-col overflow-hidden"
         >
           <TabsList className="mx-2 mt-2 grid w-auto grid-cols-2 gap-1 flex-shrink-0 bg-background/50">
             <TabsTrigger value="chat" className="gap-1.5 text-xs hover:bg-muted/40 hover:text-foreground data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
@@ -3204,65 +3342,89 @@ export function LiveEditorPane({
         </div>
       </div>
 
+      <div
+        role="separator"
+        aria-label="Resize chat panel"
+        aria-orientation="vertical"
+        aria-valuenow={
+          chatPanelWidth === null ? undefined : Math.round(chatPanelWidth)
+        }
+        tabIndex={0}
+        title="Resize chat panel"
+        onPointerDown={handleChatPanelResizeStart}
+        onKeyDown={handleChatPanelResizeKeyDown}
+        className={`pf-live-editor-surface group relative z-10 -mx-1 flex w-2 flex-shrink-0 cursor-col-resize touch-none items-stretch justify-center outline-none transition-colors hover:bg-primary/10 focus-visible:bg-primary/10 ${
+          isResizingChatPanel ? 'bg-primary/10' : ''
+        }`}
+      >
+        <span
+          className={`my-2 w-px rounded-full transition-colors ${
+            isResizingChatPanel
+              ? 'bg-primary'
+              : 'pf-live-editor-surface group-hover:bg-primary group-focus-visible:bg-primary'
+          }`}
+        />
+      </div>
+
       {previewWorkbenchVisible ? (
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="border-b border-transparent bg-card/50">
-          <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
-            {previewTabs.map((tab, index) => (
-              <div
-                key={tab.id}
-                className={`group flex min-w-[10rem] max-w-[16rem] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors ${
-                  tab.id === activePreviewTabId
-                    ? 'border-primary/50 bg-primary/10 text-primary'
-                    : 'border-border/50 bg-background/40 text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => void activatePreviewTab(tab.id)}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  title={tab.url || tab.title}
+        <div className="pf-live-editor-surface flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="pf-live-editor-surface border-b border-transparent">
+            <div className="flex items-center gap-1 overflow-x-auto px-3 py-1.5">
+              {previewTabs.map((tab, index) => (
+                <div
+                  key={tab.id}
+                  className={`group flex min-w-[10rem] max-w-[16rem] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors ${
+                    tab.id === activePreviewTabId
+                      ? 'border-primary/50 bg-primary/10 text-primary'
+                      : 'border-border/50 bg-background/40 text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                  }`}
                 >
-                  <Globe2 className="h-3.5 w-3.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium">
-                      {tab.title || `Tab ${index + 1}`}
-                    </div>
-                    <div className="truncate text-[11px] opacity-80">
-                      {tab.url || 'Blank tab'}
-                    </div>
-                    {tab.mode && (
-                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] opacity-70">
-                        {tab.mode === 'browser'
-                          ? hasEmbeddedBrowserPreview
-                            ? 'Chromium'
-                            : 'Chrome'
-                          : 'Proxy'}
+                  <button
+                    type="button"
+                    onClick={() => void activatePreviewTab(tab.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    title={tab.url || tab.title}
+                  >
+                    <Globe2 className="h-3.5 w-3.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium">
+                        {tab.title || `Tab ${index + 1}`}
                       </div>
-                    )}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void closePreviewTab(tab.id)}
-                  className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10"
-                  aria-label={`Close ${tab.title || `Tab ${index + 1}`}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={addPreviewTab}
-              className="h-8 shrink-0 border-dashed border-border/60 px-2 text-xs"
-              title="Open another preview tab"
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" />
-              New Tab
-            </Button>
-          </div>
+                      <div className="truncate text-[11px] opacity-80">
+                        {tab.url || 'Blank tab'}
+                      </div>
+                      {tab.mode && (
+                        <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] opacity-70">
+                          {tab.mode === 'browser'
+                            ? hasEmbeddedBrowserPreview
+                              ? 'Chromium'
+                              : 'Chrome'
+                            : 'Proxy'}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void closePreviewTab(tab.id)}
+                    className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10"
+                    aria-label={`Close ${tab.title || `Tab ${index + 1}`}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addPreviewTab}
+                className="h-8 shrink-0 border-dashed border-border/60 px-2 text-xs"
+                title="Open another preview tab"
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                New Tab
+              </Button>
+            </div>
 
           <div className="flex flex-wrap items-start gap-1.5 border-t border-transparent px-3 py-1.5">
             {/* Back / Forward navigation */}
@@ -3415,10 +3577,10 @@ export function LiveEditorPane({
               {isSelectionToolActive ? 'Selecting' : 'Select'}
             </Button>
 
-              <div className="ml-auto flex items-center gap-1.5">
-                <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
-                  {viewportModes.map(({ mode, label, title, icon: Icon }) => (
-                    <Button
+            <div className="ml-auto flex items-center gap-1.5">
+              <div className="flex items-center gap-0.5 rounded-md border border-border/40 bg-background/40 p-0.5">
+                {viewportModes.map(({ mode, label, title, icon: Icon }) => (
+                  <Button
                     key={mode}
                     variant={viewportMode === mode ? 'default' : 'ghost'}
                     size="sm"
@@ -3430,14 +3592,14 @@ export function LiveEditorPane({
                   >
                     <Icon className="h-3 w-3" />
                     <span className="hidden sm:inline">{label}</span>
-                    </Button>
-                  ))}
-                </div>
+                  </Button>
+                ))}
               </div>
             </div>
+          </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto bg-card/50 p-3">
+        <div className="pf-live-editor-surface flex-1 min-h-0 overflow-auto p-3">
           {authIssue && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
               <AlertTriangle className="h-4 w-4 text-amber-300" />
@@ -3481,7 +3643,7 @@ export function LiveEditorPane({
                 />
               )}
               {!hasEmbeddedBrowserPreview && (!activePreviewTab || activePreviewTab.mode === null) && (
-                <div className="absolute inset-0 flex items-center justify-center bg-card/50 p-6 pointer-events-none">
+                <div className="pf-live-editor-surface pointer-events-none absolute inset-0 flex items-center justify-center p-6">
                   <div className="max-w-lg rounded-2xl border border-border/60 bg-card/80 p-6 text-center shadow-xl backdrop-blur-sm">
                     <div className="text-sm font-medium text-foreground">
                       Load a preview URL to start the preview
@@ -3529,7 +3691,7 @@ export function LiveEditorPane({
           </div>
         </div>
       ) : (
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="pf-live-editor-surface flex min-w-0 flex-1 flex-col overflow-hidden">
           {workbenchContent}
         </div>
       )}

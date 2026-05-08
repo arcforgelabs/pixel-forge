@@ -665,14 +665,14 @@ export function ChatMessages({
     <div className="relative h-full min-h-0 min-w-0">
     <div
       ref={scrollContainerRef}
-      className="h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain"
+      className="pf-live-editor-surface pf-live-editor-scrollbar h-full min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain"
       style={{ maskImage: 'linear-gradient(transparent, black 36px, black calc(100% - 36px), transparent)' }}
       onScroll={handleScroll}
       onWheelCapture={(event) => {
         event.stopPropagation()
       }}
     >
-      <div className="min-w-0 w-full space-y-4 p-4">
+      <div className="pf-live-editor-surface min-w-0 w-full space-y-4 p-4">
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center py-12 text-center">

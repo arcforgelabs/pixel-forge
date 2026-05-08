@@ -68,6 +68,11 @@
 
     --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --pf-live-editor-surface: color-mix(
+      in srgb,
+      hsl(var(--card)) 50%,
+      hsl(var(--background))
+    );
   }
 
   body.dark {
@@ -154,6 +159,13 @@
   }
 }
 
+@layer components {
+  .pf-live-editor-surface {
+    background-color: hsl(var(--background));
+    background-color: var(--pf-live-editor-surface);
+  }
+}
+
 /* =========================================================================
    Component refinements
    ========================================================================= */
@@ -173,6 +185,18 @@
   }
   .dark ::-webkit-scrollbar-thumb:hover {
     background: hsl(215 12% 30%);
+  }
+
+  .pf-live-editor-scrollbar {
+    scrollbar-color: var(--pf-live-editor-surface) var(--pf-live-editor-surface);
+    scrollbar-width: thin;
+  }
+
+  .pf-live-editor-scrollbar::-webkit-scrollbar-track,
+  .pf-live-editor-scrollbar::-webkit-scrollbar-thumb,
+  .pf-live-editor-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--background));
+    background: var(--pf-live-editor-surface);
   }
 
   /* Animated status dot */
