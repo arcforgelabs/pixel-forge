@@ -18,6 +18,9 @@ import { buildSvgLogoString, svgLogoToCanvas } from "./export/svg-logo";
 import { composeSocialBannerCanvas } from "./export/social-banners";
 import {
   LOGO_PACK_ICON_SHAPES,
+  LOGO_PACK_EXPORT_SIZES,
+  LOGO_PACK_PNG_SIZES,
+  LOGO_PACK_PREVIEW_SIZES,
   buildLogoPackColorways,
   colorizeSvgLogoObjects,
   type LogoPackColorway,
@@ -38,7 +41,7 @@ import {
 } from "./image-edit";
 import type { LogoForgeMode, SvgLogoImageObject, SvgLogoObject } from "./svg-logo";
 
-const PREVIEW_SIZES = [24, 48, 128, 256] as const;
+const PREVIEW_SIZES = LOGO_PACK_PREVIEW_SIZES;
 const DESIGN_BRIEF_UPLOAD_MAX_BYTES = 200 * 1024;
 const DESIGN_BRIEF_PARSER_VERSION = "font-roles-v2";
 
@@ -115,17 +118,28 @@ export function LogoForgePane() {
           message: options?.uploaded ? "Imported into project root" : undefined,
         });
         updateProjectState(stateKey, (prev) => {
-          if (prev.bannerDesignSource === designSource) return prev;
           const design = parseLogoForgeDesignBrief(payload.content ?? "", projectPath);
-          return {
+          const next = {
             ...prev,
             brandName: design.brandName ?? prev.brandName,
             brandFontFamily: design.fontFamily ?? prev.brandFontFamily,
             brandFontOptions: design.fontFamilies,
             brandTextColor: design.textColor ?? prev.brandTextColor,
             bannerBackground: design.background ?? prev.bannerBackground,
+            packCustomLogoColor: design.textColor ?? prev.packCustomLogoColor,
+            packCustomBackgroundColor:
+              design.background ?? prev.packCustomBackgroundColor,
             bannerDesignSource: designSource,
           };
+          return prev.bannerDesignSource === designSource &&
+            prev.brandName === next.brandName &&
+            prev.brandFontFamily === next.brandFontFamily &&
+            prev.brandTextColor === next.brandTextColor &&
+            prev.bannerBackground === next.bannerBackground &&
+            prev.packCustomLogoColor === next.packCustomLogoColor &&
+            prev.packCustomBackgroundColor === next.packCustomBackgroundColor
+            ? prev
+            : next;
         });
         return;
       }
@@ -543,17 +557,19 @@ export function LogoForgePane() {
       const packColorways = [
         originalColorway,
         ...buildLogoPackColorways({
-          baseLogoColor: state.params.baseGreen,
-          customBackground: state.bannerBackground,
-          includeCustomBackground: state.exportIncludeBackground,
           includeLightOnDark: state.packIncludeLightOnDark,
           includeDarkOnLight: state.packIncludeDarkOnLight,
+          includeLightOnTransparent: state.packIncludeLightOnTransparent,
+          includeDarkOnTransparent: state.packIncludeDarkOnTransparent,
           includeCustomColorway: state.packIncludeCustomColorway,
+          customLogoColor: state.packCustomLogoColor,
+          customBackground: state.packCustomBackgroundColor,
         }),
       ];
       const svgForColorway = (
         colorway: LogoPackColorway,
-        shape: LogoPackIconShape
+        shape: LogoPackIconShape,
+        size: number
       ) =>
         state.logoMode === "svg" || state.logoMode === "image"
           ? buildSvgLogoString({
@@ -561,7 +577,7 @@ export function LogoForgePane() {
                 activeSvgObjects,
                 colorway.key === "original" ? null : colorway.logoColor
               ),
-              size: 1024,
+              size,
               background: colorway.background,
               includeBackground: colorway.includeBackground,
               appIconRadiusPct: shape.radiusPct,
@@ -573,11 +589,11 @@ export function LogoForgePane() {
                 baseGreen: colorway.logoColor,
                 background: colorway.background,
               },
-              size: 1024,
+              size,
               includeBackground: colorway.includeBackground,
               appIconRadiusPct: shape.radiusPct,
             });
-      for (const size of PREVIEW_SIZES) {
+      for (const size of LOGO_PACK_PNG_SIZES) {
         const canvas = await renderLogoCanvas(size);
         if (!canvas) continue;
         const blob = await canvasToPngBlob(canvas);
@@ -585,7 +601,7 @@ export function LogoForgePane() {
       }
       for (const colorway of packColorways) {
         for (const shape of selectedShapes) {
-          for (const size of PREVIEW_SIZES) {
+          for (const size of LOGO_PACK_PNG_SIZES) {
             const canvas = await renderLogoCanvas(size, {
               logoColor:
                 colorway.key === "original" ? undefined : colorway.logoColor,
@@ -599,10 +615,12 @@ export function LogoForgePane() {
               data: await canvasToPngBlob(canvas),
             });
           }
-          entries.push({
-            name: `svg/${colorway.key}/${shape.key}/${slug}-1024-${shape.key}.svg`,
-            data: svgForColorway(colorway, shape),
-          });
+          for (const size of LOGO_PACK_EXPORT_SIZES) {
+            entries.push({
+              name: `svg/${colorway.key}/${shape.key}/${slug}-${size}-${shape.key}.svg`,
+              data: svgForColorway(colorway, shape, size),
+            });
+          }
         }
       }
       const bannerLogoCanvas = await renderLogoCanvas(1024);
@@ -690,29 +708,33 @@ export function LogoForgePane() {
           });
         }
       }
-      const svg =
-        state.logoMode === "svg" || state.logoMode === "image"
-          ? buildSvgLogoString({
-              objects: activeSvgObjects,
-              size: 1024,
-              background: state.params.background,
-              includeBackground: state.exportIncludeBackground,
-              appIconRadiusPct: state.exportAppIconRadiusPct,
-            })
-          : buildSvgString({
-              pattern,
-              params: state.params,
-              size: 1024,
-              includeBackground: state.exportIncludeBackground,
-              appIconRadiusPct: state.exportAppIconRadiusPct,
-            });
-      entries.push({ name: `svg/${slug}-1024.svg`, data: svg });
+      for (const size of LOGO_PACK_EXPORT_SIZES) {
+        const svg =
+          state.logoMode === "svg" || state.logoMode === "image"
+            ? buildSvgLogoString({
+                objects: activeSvgObjects,
+                size,
+                background: state.params.background,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              })
+            : buildSvgString({
+                pattern,
+                params: state.params,
+                size,
+                includeBackground: state.exportIncludeBackground,
+                appIconRadiusPct: state.exportAppIconRadiusPct,
+              });
+        entries.push({ name: `svg/${slug}-${size}.svg`, data: svg });
+      }
       entries.push({
         name: "manifest.json",
         data: JSON.stringify(
           {
             mode: state.logoMode,
-            sizes: PREVIEW_SIZES,
+            previewSizes: PREVIEW_SIZES,
+            pngSizes: LOGO_PACK_PNG_SIZES,
+            svgSizes: LOGO_PACK_EXPORT_SIZES,
             socialBanners: SOCIAL_BANNER_PRESETS,
             brandName: state.brandName,
             brandFontFamily: state.brandFontFamily,
@@ -724,7 +746,11 @@ export function LogoForgePane() {
             packSettings: {
               includeLightOnDark: state.packIncludeLightOnDark,
               includeDarkOnLight: state.packIncludeDarkOnLight,
+              includeLightOnTransparent: state.packIncludeLightOnTransparent,
+              includeDarkOnTransparent: state.packIncludeDarkOnTransparent,
               includeCustomColorway: state.packIncludeCustomColorway,
+              customLogoColor: state.packCustomLogoColor,
+              customBackground: state.packCustomBackgroundColor,
               includeSharpSquare: state.packIncludeSharpSquare,
               includeRoundedSquare: state.packIncludeRoundedSquare,
               includeCircle: state.packIncludeCircle,
@@ -841,84 +867,85 @@ export function LogoForgePane() {
         onRefreshDesignBrief={() => void loadLogoForgeDesignBrief()}
         onUploadDesignBrief={(file) => void handleDesignBriefUpload(file)}
       />
-      <section className="flex flex-1 min-w-0 flex-col items-center justify-center gap-6 overflow-auto bg-background/60 p-6">
-        <div className="flex flex-col items-center gap-3">
-          {isObjectLogoMode ? (
-            <LogoForgeSvgCanvas
-              objects={activeSvgObjects}
-              renderSize={560}
-              background={state.params.background}
-              previewSurface={state.previewSurface}
-              previewShowBackground={state.previewShowBackground}
-              appIconRadiusPct={state.exportAppIconRadiusPct}
-              selectedObjectId={activeSelectedSvgObjectId}
-              showGrid={state.svgShowGrid}
-              snapToGrid={state.svgSnapToGrid}
-              gridSize={state.svgGridSize}
-              interactive
-              imageColorPickObjectId={imageColorPickObjectId}
-              onSelectObject={handleSelectedSvgObjectChange}
-              onImageColorPick={handleImageColorPick}
-              onObjectsChange={(objects) => {
-                const nextObjects =
-                  state.logoMode === "image"
-                    ? [
-                        ...state.svgObjects.filter(
-                          (object) => object.type !== "image"
-                        ),
-                        ...objects,
-                      ]
-                    : objects;
-                handleSvgObjectsChange(nextObjects, state.selectedSvgObjectId);
-              }}
-            />
-          ) : (
-            <LogoForgeCanvas
-              pattern={pattern}
-              params={state.params}
-              renderSize={512}
-              previewSurface={state.previewSurface}
-              previewShowBackground={state.previewShowBackground}
-              appIconRadiusPct={state.exportAppIconRadiusPct}
-            />
-          )}
-          <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-            {isObjectLogoMode
-              ? state.logoMode === "image"
-                ? "Editor · Image"
-                : "Editor · SVG"
-              : "Hero · 512px"}
-          </span>
-        </div>
-        <div className="flex items-end gap-4">
-          {PREVIEW_SIZES.map((size) => (
-            <div key={size} className="flex flex-col items-center gap-1.5">
-              {isObjectLogoMode ? (
-                <LogoForgeSvgCanvas
-                  objects={activeSvgObjects}
-                  renderSize={size}
-                  background={state.params.background}
-                  previewSurface={state.previewSurface}
-                  previewShowBackground={state.previewShowBackground}
-                  appIconRadiusPct={state.exportAppIconRadiusPct}
-                />
-              ) : (
-                <LogoForgeCanvas
-                  pattern={pattern}
-                  params={state.params}
-                  renderSize={size}
-                  previewSurface={state.previewSurface}
-                  previewShowBackground={state.previewShowBackground}
-                  appIconRadiusPct={state.exportAppIconRadiusPct}
-                />
-              )}
-              <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {size}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div className="flex w-full max-w-5xl flex-col gap-2">
+      <section className="flex flex-1 min-w-0 overflow-auto bg-background/60 p-6">
+        <div className="flex h-max min-h-full w-full shrink-0 flex-col items-center justify-center gap-6">
+          <div className="flex flex-col items-center gap-3">
+            {isObjectLogoMode ? (
+              <LogoForgeSvgCanvas
+                objects={activeSvgObjects}
+                renderSize={560}
+                background={state.params.background}
+                previewSurface={state.previewSurface}
+                previewShowBackground={state.previewShowBackground}
+                appIconRadiusPct={state.exportAppIconRadiusPct}
+                selectedObjectId={activeSelectedSvgObjectId}
+                showGrid={state.svgShowGrid}
+                snapToGrid={state.svgSnapToGrid}
+                gridSize={state.svgGridSize}
+                interactive
+                imageColorPickObjectId={imageColorPickObjectId}
+                onSelectObject={handleSelectedSvgObjectChange}
+                onImageColorPick={handleImageColorPick}
+                onObjectsChange={(objects) => {
+                  const nextObjects =
+                    state.logoMode === "image"
+                      ? [
+                          ...state.svgObjects.filter(
+                            (object) => object.type !== "image"
+                          ),
+                          ...objects,
+                        ]
+                      : objects;
+                  handleSvgObjectsChange(nextObjects, state.selectedSvgObjectId);
+                }}
+              />
+            ) : (
+              <LogoForgeCanvas
+                pattern={pattern}
+                params={state.params}
+                renderSize={512}
+                previewSurface={state.previewSurface}
+                previewShowBackground={state.previewShowBackground}
+                appIconRadiusPct={state.exportAppIconRadiusPct}
+              />
+            )}
+            <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              {isObjectLogoMode
+                ? state.logoMode === "image"
+                  ? "Editor · Image"
+                  : "Editor · SVG"
+                : "Hero · 512px"}
+            </span>
+          </div>
+          <div className="flex items-end gap-4">
+            {PREVIEW_SIZES.map((size) => (
+              <div key={size} className="flex flex-col items-center gap-1.5">
+                {isObjectLogoMode ? (
+                  <LogoForgeSvgCanvas
+                    objects={activeSvgObjects}
+                    renderSize={size}
+                    background={state.params.background}
+                    previewSurface={state.previewSurface}
+                    previewShowBackground={state.previewShowBackground}
+                    appIconRadiusPct={state.exportAppIconRadiusPct}
+                  />
+                ) : (
+                  <LogoForgeCanvas
+                    pattern={pattern}
+                    params={state.params}
+                    renderSize={size}
+                    previewSurface={state.previewSurface}
+                    previewShowBackground={state.previewShowBackground}
+                    appIconRadiusPct={state.exportAppIconRadiusPct}
+                  />
+                )}
+                <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {size}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex w-full max-w-5xl flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
             Social Banners
           </span>
@@ -990,6 +1017,7 @@ export function LogoForgePane() {
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       </section>

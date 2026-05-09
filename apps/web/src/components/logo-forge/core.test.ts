@@ -16,6 +16,9 @@ import {
 } from "./brand-design";
 import {
   LOGO_PACK_ICON_SHAPES,
+  LOGO_PACK_EXPORT_SIZES,
+  LOGO_PACK_PNG_SIZES,
+  LOGO_PACK_PREVIEW_SIZES,
   buildLogoPackColorways,
   colorizeSvgLogoObjects,
 } from "./export/pack";
@@ -237,6 +240,12 @@ describe("logo forge social banner design defaults", () => {
 });
 
 describe("logo forge logo pack variants", () => {
+  it("keeps high resolution PNG and SVG logo sizes in the pack contract", () => {
+    expect(LOGO_PACK_PREVIEW_SIZES).toEqual([24, 48, 128, 256]);
+    expect(LOGO_PACK_EXPORT_SIZES).toEqual([1024, 2048]);
+    expect(LOGO_PACK_PNG_SIZES).toEqual([24, 48, 128, 256, 1024, 2048]);
+  });
+
   it("enables sharp, rounded, and circle icon shapes by default", () => {
     expect(LOGO_PACK_ICON_SHAPES).toEqual([
       { key: "sharp-square", label: "Sharp square", radiusPct: 0 },
@@ -245,15 +254,16 @@ describe("logo forge logo pack variants", () => {
     ]);
   });
 
-  it("builds light, dark, and custom swapped pack colourways", () => {
+  it("builds opaque, transparent, and editable custom pack colourways", () => {
     expect(
       buildLogoPackColorways({
-        baseLogoColor: "#34d399",
-        customBackground: "#111827",
-        includeCustomBackground: true,
         includeLightOnDark: true,
         includeDarkOnLight: true,
+        includeLightOnTransparent: true,
+        includeDarkOnTransparent: true,
         includeCustomColorway: true,
+        customLogoColor: "#111827",
+        customBackground: "#34d399",
       })
     ).toEqual([
       {
@@ -273,8 +283,24 @@ describe("logo forge logo pack variants", () => {
         includeBackground: true,
       },
       {
-        key: "custom-swap",
-        label: "Custom swap",
+        key: "light-on-transparent",
+        label: "Light on transparent",
+        logoColor: "#ffffff",
+        background: "#000000",
+        textColor: "#ffffff",
+        includeBackground: false,
+      },
+      {
+        key: "dark-on-transparent",
+        label: "Dark on transparent",
+        logoColor: "#000000",
+        background: "#ffffff",
+        textColor: "#000000",
+        includeBackground: false,
+      },
+      {
+        key: "custom",
+        label: "Custom",
         logoColor: "#111827",
         background: "#34d399",
         textColor: "#111827",

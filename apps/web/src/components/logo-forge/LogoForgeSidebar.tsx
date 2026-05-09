@@ -119,7 +119,11 @@ interface Props {
         LogoForgeProjectState,
         | "packIncludeLightOnDark"
         | "packIncludeDarkOnLight"
+        | "packIncludeLightOnTransparent"
+        | "packIncludeDarkOnTransparent"
         | "packIncludeCustomColorway"
+        | "packCustomLogoColor"
+        | "packCustomBackgroundColor"
         | "packIncludeSharpSquare"
         | "packIncludeRoundedSquare"
         | "packIncludeCircle"
@@ -747,6 +751,7 @@ export function LogoForgeSidebar({
       : activeProjectPath
         ? "Upload one to use project brand defaults"
         : "Open a project first");
+  const designBriefDrivesPackColors = designBriefIsFound;
 
   const updateSvgObject = (
     id: string,
@@ -1914,6 +1919,28 @@ export function LogoForgeSidebar({
             </label>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <Checkbox
+                checked={state.packIncludeLightOnTransparent}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeLightOnTransparent: checked === true,
+                  })
+                }
+              />
+              Light on transparent
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={state.packIncludeDarkOnTransparent}
+                onCheckedChange={(checked) =>
+                  onPackSettingsChange({
+                    packIncludeDarkOnTransparent: checked === true,
+                  })
+                }
+              />
+              Dark on transparent
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
                 checked={state.packIncludeCustomColorway}
                 onCheckedChange={(checked) =>
                   onPackSettingsChange({
@@ -1923,6 +1950,47 @@ export function LogoForgeSidebar({
               />
               Custom colourway
             </label>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2">
+            <div className="flex items-center gap-2">
+              <Label className="w-20 text-xs text-muted-foreground">Custom mark</Label>
+              <input
+                type="color"
+                value={state.packCustomLogoColor}
+                disabled={designBriefDrivesPackColors}
+                onChange={(event) =>
+                  onPackSettingsChange({
+                    packCustomLogoColor: event.target.value,
+                  })
+                }
+                className="h-8 w-10 cursor-pointer rounded border border-border bg-background disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <span className="text-xs font-mono text-foreground/80">
+                {state.packCustomLogoColor}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="w-20 text-xs text-muted-foreground">Custom bg</Label>
+              <input
+                type="color"
+                value={state.packCustomBackgroundColor}
+                disabled={designBriefDrivesPackColors}
+                onChange={(event) =>
+                  onPackSettingsChange({
+                    packCustomBackgroundColor: event.target.value,
+                  })
+                }
+                className="h-8 w-10 cursor-pointer rounded border border-border bg-background disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <span className="text-xs font-mono text-foreground/80">
+                {state.packCustomBackgroundColor}
+              </span>
+            </div>
+            {designBriefDrivesPackColors && (
+              <p className="text-[11px] text-muted-foreground">
+                Driven by {designBriefStatus.path ?? "DESIGN.md"}
+              </p>
+            )}
           </div>
           <div className="mt-3 grid grid-cols-1 gap-2">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -47,7 +47,11 @@ export interface LogoForgeProjectState {
   bannerLogoScalePct: number;
   packIncludeLightOnDark: boolean;
   packIncludeDarkOnLight: boolean;
+  packIncludeLightOnTransparent: boolean;
+  packIncludeDarkOnTransparent: boolean;
   packIncludeCustomColorway: boolean;
+  packCustomLogoColor: string;
+  packCustomBackgroundColor: string;
   packIncludeSharpSquare: boolean;
   packIncludeRoundedSquare: boolean;
   packIncludeCircle: boolean;
@@ -83,7 +87,11 @@ function defaultProjectState(): LogoForgeProjectState {
     bannerLogoScalePct: 100,
     packIncludeLightOnDark: true,
     packIncludeDarkOnLight: true,
+    packIncludeLightOnTransparent: true,
+    packIncludeDarkOnTransparent: true,
     packIncludeCustomColorway: true,
+    packCustomLogoColor: "#111827",
+    packCustomBackgroundColor: DEFAULT_PARAMS.baseGreen,
     packIncludeSharpSquare: true,
     packIncludeRoundedSquare: true,
     packIncludeCircle: true,
@@ -334,10 +342,24 @@ function coerceProjectState(raw: unknown): LogoForgeProjectState {
       typeof obj.packIncludeDarkOnLight === "boolean"
         ? obj.packIncludeDarkOnLight
         : base.packIncludeDarkOnLight,
+    packIncludeLightOnTransparent:
+      typeof obj.packIncludeLightOnTransparent === "boolean"
+        ? obj.packIncludeLightOnTransparent
+        : base.packIncludeLightOnTransparent,
+    packIncludeDarkOnTransparent:
+      typeof obj.packIncludeDarkOnTransparent === "boolean"
+        ? obj.packIncludeDarkOnTransparent
+        : base.packIncludeDarkOnTransparent,
     packIncludeCustomColorway:
       typeof obj.packIncludeCustomColorway === "boolean"
         ? obj.packIncludeCustomColorway
         : base.packIncludeCustomColorway,
+    packCustomLogoColor: isHexColor(obj.packCustomLogoColor)
+      ? obj.packCustomLogoColor
+      : base.packCustomLogoColor,
+    packCustomBackgroundColor: isHexColor(obj.packCustomBackgroundColor)
+      ? obj.packCustomBackgroundColor
+      : base.packCustomBackgroundColor,
     packIncludeSharpSquare:
       typeof obj.packIncludeSharpSquare === "boolean"
         ? obj.packIncludeSharpSquare

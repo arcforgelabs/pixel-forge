@@ -21,13 +21,21 @@ export interface LogoPackColorway {
 }
 
 export interface LogoPackColorwayOptions {
-  baseLogoColor: string;
-  customBackground: string;
-  includeCustomBackground: boolean;
   includeLightOnDark: boolean;
   includeDarkOnLight: boolean;
+  includeLightOnTransparent: boolean;
+  includeDarkOnTransparent: boolean;
   includeCustomColorway: boolean;
+  customLogoColor: string;
+  customBackground: string;
 }
+
+export const LOGO_PACK_PREVIEW_SIZES = [24, 48, 128, 256] as const;
+export const LOGO_PACK_EXPORT_SIZES = [1024, 2048] as const;
+export const LOGO_PACK_PNG_SIZES = [
+  ...LOGO_PACK_PREVIEW_SIZES,
+  ...LOGO_PACK_EXPORT_SIZES,
+] as const;
 
 export const LOGO_PACK_ICON_SHAPES: LogoPackIconShape[] = [
   { key: "sharp-square", label: "Sharp square", radiusPct: 0 },
@@ -59,13 +67,33 @@ export function buildLogoPackColorways(
       includeBackground: true,
     });
   }
-  if (opts.includeCustomColorway && opts.includeCustomBackground) {
+  if (opts.includeLightOnTransparent) {
     colorways.push({
-      key: "custom-swap",
-      label: "Custom swap",
-      logoColor: opts.customBackground,
-      background: opts.baseLogoColor,
-      textColor: opts.customBackground,
+      key: "light-on-transparent",
+      label: "Light on transparent",
+      logoColor: "#ffffff",
+      background: "#000000",
+      textColor: "#ffffff",
+      includeBackground: false,
+    });
+  }
+  if (opts.includeDarkOnTransparent) {
+    colorways.push({
+      key: "dark-on-transparent",
+      label: "Dark on transparent",
+      logoColor: "#000000",
+      background: "#ffffff",
+      textColor: "#000000",
+      includeBackground: false,
+    });
+  }
+  if (opts.includeCustomColorway) {
+    colorways.push({
+      key: "custom",
+      label: "Custom",
+      logoColor: opts.customLogoColor,
+      background: opts.customBackground,
+      textColor: opts.customLogoColor,
       includeBackground: true,
     });
   }

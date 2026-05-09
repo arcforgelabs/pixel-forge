@@ -13,16 +13,6 @@ export interface SvgLogoExportOptions {
   appIconRadiusPct?: number;
 }
 
-type CanvasCtx = CanvasRenderingContext2D & {
-  roundRect?: (
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    r: number
-  ) => void;
-};
-
 function objectToSvg(object: SvgLogoObject): string {
   const opacity = object.opacity < 1 ? ` opacity="${object.opacity}"` : "";
   if (object.type === "text") {
@@ -223,29 +213,6 @@ export function buildSvgLogoString(opts: SvgLogoExportOptions): string {
   return parts.join("");
 }
 
-function clipRoundedRect(
-  ctx: CanvasCtx,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number
-): void {
-  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
-  ctx.beginPath();
-  if (typeof ctx.roundRect === "function") {
-    ctx.roundRect(x, y, width, height, r);
-  } else {
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + width, y, x + width, y + height, r);
-    ctx.arcTo(x + width, y + height, x, y + height, r);
-    ctx.arcTo(x, y + height, x, y, r);
-    ctx.arcTo(x, y, x + width, y, r);
-    ctx.closePath();
-  }
-  ctx.clip();
-}
-
 function loadImage(href: string): Promise<HTMLImageElement> {
   const img = new Image();
   return new Promise((resolve, reject) => {
@@ -255,126 +222,28 @@ function loadImage(href: string): Promise<HTMLImageElement> {
   });
 }
 
-function drawSvgLogoObject(
-  ctx: CanvasCtx,
-  object: Exclude<SvgLogoObject, { type: "image" }>
-): void {
-  ctx.save();
-  ctx.globalAlpha *= object.opacity;
-  if (object.type === "text") {
-    ctx.translate(object.x, object.y);
-    ctx.rotate((object.rotation * Math.PI) / 180);
-    ctx.font = `${object.fontWeight} ${object.fontSize}px ${object.fontFamily}`;
-    ctx.fillStyle = object.fill;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(object.text, 0, 0);
-  } else if (object.type === "circle") {
-    ctx.translate(object.cx, object.cy);
-    ctx.rotate((object.rotation * Math.PI) / 180);
-    ctx.fillStyle = object.fill;
-    ctx.beginPath();
-    ctx.arc(0, 0, object.radius, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    const cx = object.x + object.width / 2;
-    const cy = object.y + object.height / 2;
-    ctx.translate(cx, cy);
-    ctx.rotate((object.rotation * Math.PI) / 180);
-    ctx.fillStyle = object.fill;
-    if (object.radius > 0) {
-      ctx.beginPath();
-      if (typeof ctx.roundRect === "function") {
-        ctx.roundRect(
-          -object.width / 2,
-          -object.height / 2,
-          object.width,
-          object.height,
-          object.radius
-        );
-      } else {
-        const r = Math.min(object.radius, object.width / 2, object.height / 2);
-        const x = -object.width / 2;
-        const y = -object.height / 2;
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + object.width, y, x + object.width, y + object.height, r);
-        ctx.arcTo(x + object.width, y + object.height, x, y + object.height, r);
-        ctx.arcTo(x, y + object.height, x, y, r);
-        ctx.arcTo(x, y, x + object.width, y, r);
-        ctx.closePath();
-      }
-      ctx.fill();
-    } else {
-      ctx.fillRect(-object.width / 2, -object.height / 2, object.width, object.height);
-    }
-  }
-  ctx.restore();
-}
-
-async function drawSvgLogoImageObject(
-  ctx: CanvasCtx,
-  object: Extract<SvgLogoObject, { type: "image" }>
-): Promise<void> {
-  try {
-    const img = await loadImage(object.href);
-    const naturalWidth = img.naturalWidth || object.width;
-    const naturalHeight = img.naturalHeight || object.height;
-    const scale = Math.min(object.width / naturalWidth, object.height / naturalHeight);
-    const width = naturalWidth * scale;
-    const height = naturalHeight * scale;
-    const cx = object.x + object.width / 2;
-    const cy = object.y + object.height / 2;
-    ctx.save();
-    ctx.globalAlpha *= object.opacity;
-    ctx.translate(cx, cy);
-    ctx.rotate((object.rotation * Math.PI) / 180);
-    ctx.drawImage(img, -width / 2, -height / 2, width, height);
-    ctx.restore();
-  } catch (error) {
-    console.warn(
-      "[logo-forge] Skipping image layer during canvas export:",
-      object.name,
-      error
-    );
-  }
-}
-
 export async function svgLogoToCanvas(
   opts: SvgLogoExportOptions
 ): Promise<HTMLCanvasElement> {
   const canvas = document.createElement("canvas");
   canvas.width = opts.size;
   canvas.height = opts.size;
-  const ctx = canvas.getContext("2d") as CanvasCtx | null;
+  const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
   ctx.clearRect(0, 0, opts.size, opts.size);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.scale(opts.size / SVG_LOGO_VIEWBOX_SIZE, opts.size / SVG_LOGO_VIEWBOX_SIZE);
 
-  const radiusPct = Math.max(0, Math.min(50, opts.appIconRadiusPct ?? 0));
-  const frameCorner = (radiusPct / 100) * SVG_LOGO_VIEWBOX_SIZE;
-  if (frameCorner > 0) {
-    clipRoundedRect(
-      ctx,
-      0,
-      0,
-      SVG_LOGO_VIEWBOX_SIZE,
-      SVG_LOGO_VIEWBOX_SIZE,
-      frameCorner
-    );
-  }
-  if (opts.includeBackground) {
-    ctx.fillStyle = opts.background;
-    ctx.fillRect(0, 0, SVG_LOGO_VIEWBOX_SIZE, SVG_LOGO_VIEWBOX_SIZE);
-  }
-  for (const object of opts.objects) {
-    if (object.type === "image") {
-      await drawSvgLogoImageObject(ctx, object);
-    } else {
-      drawSvgLogoObject(ctx, object);
-    }
+  const svg = buildSvgLogoString(opts);
+  const url = URL.createObjectURL(
+    new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+  );
+  try {
+    const image = await loadImage(url);
+    ctx.drawImage(image, 0, 0, opts.size, opts.size);
+  } finally {
+    URL.revokeObjectURL(url);
   }
   return canvas;
 }
