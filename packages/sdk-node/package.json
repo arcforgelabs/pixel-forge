@@ -1,6 +1,6 @@
 {
   "name": "@pixel-forge/sdk",
-  "version": "2026.4.21-1",
+  "version": "2026.5.9-1",
   "description": "SDK for Pixel Forge screenshot bootstrap workflows",
   "type": "module",
   "main": "index.js",

@@ -165,9 +165,9 @@ export function resolveControllerUpdateStatus({
 
     if (latestVsRunning !== null && latestVsRunning < 0) {
       return {
-        label: "Ahead of stable",
+        label: "Local build",
         className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
-        detail: `Running ${runningVersionLabel}, which is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}. No staged controller update is available.`,
+        detail: `Running installed build ${runningVersionLabel}, which is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}. No staged controller update is available.`,
         buttonLabel: "Load Controller Update",
       };
     }
@@ -261,8 +261,8 @@ export function resolveReleaseDisplayText({
     return {
       title,
       latestLabel,
-      badgeLabel: "Stable channel",
-      detail: `Running ${runningVersionLabel} is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.`,
+      badgeLabel: "Local build",
+      detail: `Installed build ${runningVersionLabel} is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}; this can happen when master is installed before a new stable tag is pushed.`,
     };
   }
 
