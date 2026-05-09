@@ -914,7 +914,12 @@ function detachUnavailableAgentDeckSession<T extends LiveEditorSessionMeta | nul
 }
 
 function normalizeAgentType(agentType: string | null | undefined): string {
-  return agentType === "codex" || agentType === "gemini" || agentType === "pi"
+  return (
+    agentType === "codex"
+    || agentType === "gemini"
+    || agentType === "pi"
+    || agentType === "openclaw"
+  )
     ? agentType
     : "claude";
 }
@@ -931,6 +936,7 @@ function normalizeAgentProfileDefaults(
     codex: value?.codex?.trim() || null,
     gemini: value?.gemini?.trim() || null,
     pi: value?.pi?.trim() || null,
+    openclaw: value?.openclaw?.trim() || null,
   };
 }
 

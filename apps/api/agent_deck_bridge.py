@@ -449,6 +449,10 @@ def _clone_name(session_title: str) -> str:
     return normalized or uuid4().hex[:8]
 
 
+def _openclaw_session_key(session_title: str) -> str:
+    return f"agent:main:{_clone_name(session_title)}"
+
+
 def _thread_rebind_workspace_path(
     project_path: str,
     thread: LiveEditorThreadRecord,
@@ -793,7 +797,11 @@ async def _launch_new_session(
         "-no-wait",
         f"-t={session_title}",
         f"-g={_group_path(project_path)}",
-        f"-c={normalized_agent_type}",
+        (
+            f"-c=openclaw tui --session {_openclaw_session_key(session_title)}"
+            if normalized_agent_type == "openclaw"
+            else f"-c={normalized_agent_type}"
+        ),
     ]
     # Route model/effort through agent-deck's ToolOptions rather than a
     # `-cmd` wrapper string. The wrapper approach is broken for Claude

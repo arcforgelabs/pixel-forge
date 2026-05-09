@@ -102,6 +102,15 @@ class AgentDeckBridgeModelEffortArgsTest(unittest.TestCase):
             ["--model", "ollama/qwen2.5-coder:14b", "--effort", "medium"],
         )
 
+    def test_openclaw_ignores_model_and_effort_overrides(self) -> None:
+        args = agent_deck_bridge._resolve_agent_model_effort_args(
+            "openclaw",
+            "gpt-5.5",
+            "xhigh",
+        )
+
+        self.assertEqual(args, [])
+
 
 class AgentDeckBridgeLaunchArgsTest(unittest.IsolatedAsyncioTestCase):
     async def test_codex_launch_uses_yolo_bypass_with_model_overrides(self) -> None:
@@ -241,6 +250,42 @@ class AgentDeckBridgeLaunchArgsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [model["id"] for model in config["providers"]["ollama"]["models"]],
             ["llama3.1:8b", "qwen2.5:32b"],
+        )
+
+    async def test_openclaw_launch_uses_native_tui_session_command(self) -> None:
+        run_mock = AsyncMock(
+            return_value={
+                "id": "deck-a",
+                "title": "Chat chat-a",
+                "path": "/tmp/project",
+                "tool": "openclaw",
+                "command": "openclaw tui --session agent:main:chat-chat-a",
+            }
+        )
+
+        with (
+            patch.object(agent_deck_bridge, "_enforce_agent_deck_launch_admission", AsyncMock()),
+            patch.object(agent_deck_bridge, "_run_agent_deck_json_object_command", run_mock),
+        ):
+            await agent_deck_bridge._launch_new_session(
+                "/tmp/project",
+                session_title="Chat chat-a",
+                agent_type="openclaw",
+                workspace_mode="root",
+                agent_model="gpt-5.5",
+                agent_thinking="xhigh",
+            )
+
+        run_mock.assert_awaited_once_with(
+            [
+                "launch",
+                "-json",
+                "-no-wait",
+                "-t=Chat chat-a",
+                "-g=pixel-forge/project",
+                "-c=openclaw tui --session agent:main:chat-chat-a",
+                "/tmp/project",
+            ]
         )
 
 

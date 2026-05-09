@@ -18,7 +18,9 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.original_shared_state_dir = os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        self.original_db_path = os.environ.get("PIXEL_FORGE_DB_PATH")
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
         project_store._DB_INITIALIZED = False
         live_editor_threads._DB_INITIALIZED = False
 
@@ -27,6 +29,11 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
         else:
             os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        if self.original_db_path is None:
+            os.environ.pop("PIXEL_FORGE_DB_PATH", None)
+        else:
+            os.environ["PIXEL_FORGE_DB_PATH"] = self.original_db_path
+        project_store._DB_INITIALIZED = False
         live_editor_threads._DB_INITIALIZED = False
 
     def test_upsert_session_persists_sanitized_editor_state(self) -> None:
@@ -314,6 +321,11 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.default_agent_type, "pi")
         self.assertEqual(saved.pi_default_model, "ollama/qwen2.5-coder:14b")
         self.assertEqual(saved.pi_default_thinking, "xhigh")
+
+    def test_profile_defaults_accept_openclaw_agent_type(self) -> None:
+        saved = project_store.upsert_profile_state(default_agent_type="openclaw")
+
+        self.assertEqual(saved.default_agent_type, "openclaw")
 
     def test_claude_profile_defaults_reject_effort_levels_unsupported_by_selected_model(self) -> None:
         saved = project_store.upsert_profile_state(

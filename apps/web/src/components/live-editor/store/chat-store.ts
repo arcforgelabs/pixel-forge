@@ -409,7 +409,12 @@ function generateId(): string {
 }
 
 function normalizeDraftAgentType(agentType: string | null | undefined): string {
-  return agentType === 'codex' || agentType === 'gemini' || agentType === 'pi'
+  return (
+    agentType === 'codex'
+    || agentType === 'gemini'
+    || agentType === 'pi'
+    || agentType === 'openclaw'
+  )
     ? agentType
     : 'claude'
 }

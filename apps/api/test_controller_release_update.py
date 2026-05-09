@@ -97,6 +97,27 @@ class ControllerReleaseUpdateTest(unittest.TestCase):
         self.assertEqual(state["status"], "cached")
         self.assertTrue(state["updateAvailable"])
 
+    def test_read_marks_local_controller_ahead_of_stable_as_no_update(self) -> None:
+        controller_release_update.controller_release_update_path().write_text(
+            json.dumps(
+                {
+                    "source": "tags",
+                    "latest": {"version": "2026.4.14", "tagName": "v2026.4.14"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "controller_release_update.read_runtime_version",
+            return_value="2026.4.21-1",
+        ):
+            state = controller_release_update.read_controller_release_update()
+
+        self.assertEqual(state["source"], "tags")
+        self.assertEqual(state["currentVersion"], "2026.4.21-1")
+        self.assertFalse(state["updateAvailable"])
+
     def test_check_falls_back_to_tags_when_no_github_releases_exist(self) -> None:
         release_404 = HTTPError(
             "https://example.test/latest",

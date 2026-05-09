@@ -44,6 +44,9 @@ function formatAgentLabel(agentType: string | null | undefined): string {
   if (agentType === 'pi') {
     return 'Pi'
   }
+  if (agentType === 'openclaw') {
+    return 'OpenClaw'
+  }
   return agentType || 'Agent'
 }
 
@@ -1232,6 +1235,7 @@ export function ChatInput() {
                     { value: 'codex', label: 'Codex' },
                     { value: 'gemini', label: 'Gemini' },
                     { value: 'pi', label: 'Pi' },
+                    { value: 'openclaw', label: 'OpenClaw' },
                   ].map((agent) => {
                     const isSelected = effectiveAgentType === agent.value
                     return (

@@ -38,7 +38,11 @@ import { Stack } from "@/lib/stacks";
 import { useAppStore } from "@/store/app-store";
 import { AppState } from "@/types";
 import { HTTP_BACKEND_URL, IS_TARGET_MODE, RUNTIME_KIND, TARGET_PROJECT_PATH } from "@/config";
-import type { PixelForgeControllerReleaseUpdateResponse } from "@/types/pixel-forge-desktop";
+import type {
+  PixelForgeControllerReleaseUpdateResponse,
+  PixelForgeControllerReleaseUpdateState,
+  PixelForgeDesktopPendingControllerUpdate,
+} from "@/types/pixel-forge-desktop";
 import {
   Dialog,
   DialogContent,
@@ -100,6 +104,185 @@ function formatInstalledAt(value: string | null | undefined): string {
   return parsed.toLocaleString();
 }
 
+type ControllerUpdateStatus = {
+  label: string;
+  className: string;
+  detail: string;
+  buttonLabel: string;
+};
+
+type ReleaseDisplayText = {
+  title: string;
+  latestLabel: string;
+  badgeLabel: string;
+  detail: string;
+};
+
+function releaseSourceLabel(source: string | null | undefined): string {
+  return source === "tags" ? "GitHub tag" : "GitHub release";
+}
+
+export function resolveControllerUpdateStatus({
+  pendingControllerUpdate,
+  controllerVersion,
+  controllerReleaseUpdate,
+}: {
+  pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
+  controllerVersion: string | null;
+  controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
+}): ControllerUpdateStatus {
+  const stagedVersion = pendingControllerUpdate?.version ?? null;
+  const versionComparison = compareCalver(stagedVersion, controllerVersion);
+  const runningVersionLabel = formatVersionLabel(controllerVersion);
+  const stagedVersionLabel = formatVersionLabel(stagedVersion);
+  const latestReleaseVersion = controllerReleaseUpdate?.latest?.version ?? null;
+  const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
+  const latestVsRunning = compareCalver(latestReleaseVersion, controllerVersion);
+  const sourceLabel = releaseSourceLabel(controllerReleaseUpdate?.source);
+
+  if (!pendingControllerUpdate) {
+    if (controllerReleaseUpdate?.updateAvailable) {
+      return {
+        label: "Release available",
+        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+        detail: `${latestReleaseVersionLabel} is available from ${sourceLabel}; stage it below to install.`,
+        buttonLabel: "Load Controller Update",
+      };
+    }
+
+    if (
+      latestVsRunning !== null
+      && latestVsRunning > 0
+      && controllerReleaseUpdate?.skippedVersion === latestReleaseVersion
+    ) {
+      return {
+        label: "Release skipped",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        detail: `${latestReleaseVersionLabel} is newer than ${runningVersionLabel}, but that release is skipped.`,
+        buttonLabel: "Load Controller Update",
+      };
+    }
+
+    if (latestVsRunning !== null && latestVsRunning < 0) {
+      return {
+        label: "Ahead of stable",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        detail: `Running ${runningVersionLabel}, which is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}. No staged controller update is available.`,
+        buttonLabel: "Load Controller Update",
+      };
+    }
+
+    if (latestVsRunning === 0) {
+      return {
+        label: "Current stable",
+        className: "border-transparent bg-muted text-foreground",
+        detail: `Running ${runningVersionLabel}, matching the latest stable ${sourceLabel}. No staged controller update is available.`,
+        buttonLabel: "Load Controller Update",
+      };
+    }
+
+    return {
+      label: "No staged update",
+      className: "border-transparent bg-muted text-foreground",
+      detail: `Running ${runningVersionLabel}. No staged controller update is available.`,
+      buttonLabel: "Load Controller Update",
+    };
+  }
+
+  if (versionComparison === null) {
+    return {
+      label: "Staged build",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+      detail: `${stagedVersionLabel} is staged for this controller and can be loaded from Settings.`,
+      buttonLabel: "Load Controller Update",
+    };
+  }
+
+  if (versionComparison > 0) {
+    return {
+      label: "Update available",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+      detail: `${stagedVersionLabel} is staged and ready to apply over ${runningVersionLabel}.`,
+      buttonLabel: `Update to ${stagedVersionLabel}`,
+    };
+  }
+
+  if (versionComparison === 0) {
+    return {
+      label: "Reload ready",
+      className: "border-transparent bg-muted text-foreground",
+      detail: `${stagedVersionLabel} is already staged for this running controller version.`,
+      buttonLabel: `Reload ${stagedVersionLabel}`,
+    };
+  }
+
+  return {
+    label: "Older staged build",
+    className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+    detail: `${stagedVersionLabel} is staged, but it is older than the running ${runningVersionLabel}.`,
+    buttonLabel: `Load ${stagedVersionLabel}`,
+  };
+}
+
+export function resolveReleaseDisplayText({
+  controllerVersion,
+  controllerReleaseUpdate,
+}: {
+  controllerVersion: string | null;
+  controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
+}): ReleaseDisplayText {
+  const latestReleaseVersion = controllerReleaseUpdate?.latest?.version ?? null;
+  const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
+  const runningVersionLabel = formatVersionLabel(controllerVersion);
+  const latestVsRunning = compareCalver(latestReleaseVersion, controllerVersion);
+  const sourceLabel = releaseSourceLabel(controllerReleaseUpdate?.source);
+  const title = controllerReleaseUpdate?.source === "tags" ? "GitHub Tags" : "GitHub Releases";
+  const latestLabel = controllerReleaseUpdate?.source === "tags" ? "Latest Tag" : "Latest Release";
+
+  if (controllerReleaseUpdate?.error) {
+    return {
+      title,
+      latestLabel,
+      badgeLabel: "Check failed",
+      detail: `GitHub check failed: ${controllerReleaseUpdate.error}`,
+    };
+  }
+
+  if (controllerReleaseUpdate?.updateAvailable) {
+    return {
+      title,
+      latestLabel,
+      badgeLabel: "New release",
+      detail: `${latestReleaseVersionLabel} is available from ${sourceLabel}.`,
+    };
+  }
+
+  if (latestVsRunning !== null && latestVsRunning < 0) {
+    return {
+      title,
+      latestLabel,
+      badgeLabel: "Stable channel",
+      detail: `Running ${runningVersionLabel} is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.`,
+    };
+  }
+
+  if (controllerReleaseUpdate?.latest) {
+    return {
+      title,
+      latestLabel,
+      badgeLabel: "Stable channel",
+      detail: `Latest stable ${sourceLabel} is ${latestReleaseVersionLabel}.`,
+    };
+  }
+
+  return {
+    title,
+    latestLabel,
+    badgeLabel: "Stable channel",
+    detail: "Pixel Forge can check GitHub releases without polling continuously.",
+  };
+}
+
 function formatAgentDeckTool(tool: string | null | undefined): string {
   if (!tool || !tool.trim()) {
     return "Agent";
@@ -113,7 +296,9 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
         ? "Gemini"
         : tool === "pi"
           ? "Pi"
-        : capitalize(tool);
+          : tool === "openclaw"
+            ? "OpenClaw"
+            : capitalize(tool);
 }
 
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
@@ -509,7 +694,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     : null;
   const isUpdatingChatTargets = isRefreshingChatTargets || agentDeckTargetsLoading;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
-  const versionComparison = compareCalver(stagedVersion, controllerVersion);
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
@@ -518,13 +702,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const releaseLastCheckedLabel = controllerReleaseUpdate?.lastCheckedAt
     ? formatInstalledAt(controllerReleaseUpdate.lastCheckedAt)
     : "not checked";
-  const releaseUpdateDetail = controllerReleaseUpdate?.error
-    ? `GitHub check failed: ${controllerReleaseUpdate.error}`
-    : controllerReleaseUpdate?.updateAvailable
-      ? `${latestReleaseVersionLabel} is available from GitHub.`
-      : controllerReleaseUpdate?.latest
-        ? `Latest GitHub release is ${latestReleaseVersionLabel}.`
-        : "Pixel Forge can check GitHub releases without polling continuously.";
+  const releaseDisplay = resolveReleaseDisplayText({
+    controllerVersion,
+    controllerReleaseUpdate,
+  });
   const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
   const desktopApp = getDesktopApp();
   const canLoadControllerUpdate = Boolean(
@@ -534,43 +715,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         || hasDesktopAppMethod(desktopApp, "applyPendingControllerUpdate")
       )
   );
-  const updateStatus = !pendingControllerUpdate
-    ? {
-        label: "Up to date",
-        className: "border-transparent bg-muted text-foreground",
-        detail: `Running ${runningVersionLabel}. No staged controller update is available.`,
-        buttonLabel: "Load Controller Update",
-      }
-    : versionComparison === null
-      ? {
-          label: "Staged build",
-          className:
-            "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
-          detail: `${stagedVersionLabel} is staged for this controller and can be loaded from Settings.`,
-          buttonLabel: "Load Controller Update",
-        }
-      : versionComparison > 0
-        ? {
-            label: "Update available",
-            className:
-              "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
-            detail: `${stagedVersionLabel} is staged and ready to apply over ${runningVersionLabel}.`,
-            buttonLabel: `Update to ${stagedVersionLabel}`,
-          }
-        : versionComparison === 0
-          ? {
-              label: "Reload ready",
-              className: "border-transparent bg-muted text-foreground",
-              detail: `${stagedVersionLabel} is already staged for this running controller version.`,
-              buttonLabel: `Reload ${stagedVersionLabel}`,
-            }
-          : {
-              label: "Older staged build",
-              className:
-                "border-amber-500/30 bg-amber-500/10 text-amber-100",
-              detail: `${stagedVersionLabel} is staged, but it is older than the running ${runningVersionLabel}.`,
-          buttonLabel: `Load ${stagedVersionLabel}`,
-            };
+  const updateStatus = resolveControllerUpdateStatus({
+    pendingControllerUpdate,
+    controllerVersion,
+    controllerReleaseUpdate,
+  });
 
   useEffect(() => {
     if (!viewingSettings || skillsLoaded || skillsLoading) {
@@ -1980,9 +2129,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                   <div className="rounded-lg border border-border/70 bg-card/70 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground">GitHub Releases</p>
+                        <p className="text-sm font-medium text-foreground">{releaseDisplay.title}</p>
                         <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                          {releaseUpdateDetail}
+                          {releaseDisplay.detail}
                         </p>
                       </div>
                       <Badge
@@ -1995,11 +2144,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               : "border-transparent bg-muted text-foreground"
                         }
                       >
-                        {controllerReleaseUpdate?.updateAvailable
-                          ? "New release"
-                          : controllerReleaseUpdate?.error
-                            ? "Check failed"
-                            : "Stable"}
+                        {releaseDisplay.badgeLabel}
                       </Badge>
                     </div>
                     <div className="mt-3 space-y-2 text-sm">
@@ -2010,7 +2155,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Latest Release</span>
+                        <span className="text-muted-foreground">{releaseDisplay.latestLabel}</span>
                         <span className="font-mono text-xs text-foreground">
                           {controllerReleaseUpdate?.latest ? latestReleaseVersionLabel : "unknown"}
                         </span>
@@ -2562,21 +2707,14 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               onValueChange={(value) => setDefaultAgentType(value)}
                             >
                               <SelectTrigger className="h-9 w-[160px] text-xs">
-                                {defaultAgentType === "claude"
-                                  ? "Claude Code"
-                                  : defaultAgentType === "codex"
-                                    ? "Codex"
-                                    : defaultAgentType === "gemini"
-                                      ? "Gemini"
-                                      : defaultAgentType === "pi"
-                                        ? "Pi"
-                                      : capitalize(defaultAgentType)}
+                                {formatAgentDeckTool(defaultAgentType)}
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="claude">Claude Code</SelectItem>
                                 <SelectItem value="codex">Codex</SelectItem>
                                 <SelectItem value="gemini">Gemini</SelectItem>
                                 <SelectItem value="pi">Pi</SelectItem>
+                                <SelectItem value="openclaw">OpenClaw</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
