@@ -80,7 +80,7 @@ R9. Layered local runtime install:
 - `~/.local/bin/agent-deck` executes the active published runtime via `~/.local/share/agent-deck/layers/active/bin/agent-deck`.
 - `~/.local/bin/agent-deck-stock` executes the published `upstream-stock` lane via an isolated sandbox home and tmux socket.
 - Runtime asset sync into `~/.agent-deck/` must source from the active release, not directly from the repo checkout.
-- Upstream stock baseline source lives in `~/repos/2-areas/agent-deck-base-source`, not in the custom overlay repo.
+- Upstream stock baseline source lives in `~/repos/agent-deck-base-source`, not in the custom overlay repo.
 
 R10. Sync and deploy are separate:
 - Branch sync/rebase alone must not silently change the live runtime.

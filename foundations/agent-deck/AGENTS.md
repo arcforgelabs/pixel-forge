@@ -19,6 +19,6 @@
 ## Stock Baseline Workflow
 
 - Keep upstream baseline testing side-by-side with the fork runtime. Do not repoint `~/.local/bin/agent-deck` at upstream.
-- Canonical stock source repo: `~/repos/2-areas/agent-deck-base-source`.
+- Canonical stock source repo: `~/repos/agent-deck-base-source`.
 - Canonical stock publish flow: `agent-deck-layers sync-upstream-stock-source`, then `agent-deck-layers publish-upstream-stock`, then launch with `agent-deck-stock`.
 - Full workflow and sandbox details: `docs/upstream-stock-runtime.md`.

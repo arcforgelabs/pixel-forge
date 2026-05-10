@@ -9,7 +9,7 @@ Scope: Agent Deck custom integration with OpenClaw and ACP/`acpx`
 We reviewed:
 
 - the upstream `acpx` project
-- the local OpenClaw fork in `~/repos/3-resources/openclaw`
+- the local OpenClaw fork in `~/repos/openclaw`
 - the current Agent Deck integration surfaces in this repo
 
 The question was not "what can we replace today?" The real question was:

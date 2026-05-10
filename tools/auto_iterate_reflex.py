@@ -333,7 +333,7 @@ def auto_iterate_reflex(
     variants_per_iteration: int = 4,
     target_score: float = 95.0,
     model: str = "claude-sonnet-4-5-20250929",
-    reflex_dir: str = "/home/samuelrodda/repos/reflex"
+    reflex_dir: str = str(Path.home() / "repos" / "reflex")
 ):
     """
     Automated iteration using REFLEX objective eval scripts.
@@ -504,7 +504,7 @@ Examples:
     parser.add_argument('--variants', type=int, default=4)
     parser.add_argument('--target-score', type=float, default=95.0)
     parser.add_argument('--model', default='claude-sonnet-4-5-20250929')
-    parser.add_argument('--reflex-dir', default='/home/samuelrodda/repos/reflex')
+    parser.add_argument('--reflex-dir', default=str(Path.home() / 'repos' / 'reflex'))
 
     args = parser.parse_args()
 

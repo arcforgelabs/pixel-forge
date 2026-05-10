@@ -1,3 +1,6 @@
+import path from 'node:path'
+import os from 'node:os'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -12,24 +15,33 @@ import {
   shouldOfferMirrorSwitch,
 } from './mirror-targets'
 
+const reposRoot = path.join(os.homedir(), 'repos')
+const projectRoot = path.join(reposRoot, 'pixel-forge')
+const labFlowRoot = path.join(reposRoot, 'lab-flow')
+const sessionRoot = path.join(projectRoot, '.agents', 'session-1')
+const cloneA = path.join(projectRoot, '.agents', 'clone-a')
+const cloneB = path.join(projectRoot, '.agents', 'clone-b')
+const missingClone = path.join(projectRoot, '.agents', 'missing-clone')
+const stagedSnapshotRoot = path.join(os.homedir(), '.pixel-forge', 'controller-updates', 'qgf735gm2bk')
+
 const workspaceMirror = {
   instance_slug: 'pixel-forge-mirror-target-14673d35',
-  source_root: '/home/samuelrodda/repos/3-resources/pixel-forge',
+  source_root: projectRoot,
   web_url: 'http://pixel-forge-mirror-target-14673d35.localhost:7103',
 }
 
 const stagedMirror = {
   instance_slug: 'pixel-forge-mirror-target-e8beb508',
-  source_root: '/home/samuelrodda/.pixel-forge/controller-updates/qgf735gm2bk',
+  source_root: stagedSnapshotRoot,
   web_url: 'http://pixel-forge-mirror-target-e8beb508.localhost:7108',
 }
 
 describe('mirror target resolution', () => {
   it('prefers the exact updated preview url over the staged snapshot root', () => {
     const resolved = resolveUpdatedMirrorTarget({
-      projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+      projectPath: projectRoot,
       pendingControllerUpdate: {
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         snapshotPath: stagedMirror.source_root,
         previewUrl: 'http://pixel-forge-mirror-target-14673d35.localhost:7103/',
       },
@@ -41,9 +53,9 @@ describe('mirror target resolution', () => {
 
   it('falls back to the staged snapshot when no exact preview target is known', () => {
     const resolved = resolveUpdatedMirrorTarget({
-      projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+      projectPath: projectRoot,
       pendingControllerUpdate: {
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         snapshotPath: stagedMirror.source_root,
         previewUrl: 'http://pixel-forge-mirror-target-missing.localhost:7109/',
       },
@@ -55,9 +67,9 @@ describe('mirror target resolution', () => {
 
   it('does not borrow the current project mirror list for another project update', () => {
     const resolved = resolveUpdatedMirrorTarget({
-      projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+      projectPath: projectRoot,
       pendingControllerUpdate: {
-        projectPath: '/home/samuelrodda/repos/1-projects/lab-flow',
+        projectPath: labFlowRoot,
         snapshotPath: stagedMirror.source_root,
         previewUrl: stagedMirror.web_url,
       },
@@ -69,9 +81,9 @@ describe('mirror target resolution', () => {
 
   it('does not offer a newer mirror button when the active tab is already the updated preview', () => {
     const nextMirrorTarget = resolveUpdatedMirrorTarget({
-      projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+      projectPath: projectRoot,
       pendingControllerUpdate: {
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         snapshotPath: stagedMirror.source_root,
         previewUrl: workspaceMirror.web_url,
       },
@@ -112,15 +124,15 @@ describe('mirror target resolution', () => {
   it('treats clone-backed sessions as distinct from the canonical project root', () => {
     expect(
       isCloneWorkspaceBound({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/session-1',
+        projectPath: projectRoot,
+        workspacePath: sessionRoot,
       })
     ).toBe(true)
 
     expect(
       isCloneWorkspaceBound({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
+        workspacePath: projectRoot,
       })
     ).toBe(false)
   })
@@ -128,28 +140,28 @@ describe('mirror target resolution', () => {
   it('prefers the bound clone workspace for the isolated mirror source root', () => {
     expect(
       resolveIsolatedMirrorSourceRoot({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
-        selectedTargetPath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+        projectPath: projectRoot,
+        liveWorkspacePath: cloneA,
+        selectedTargetPath: cloneB,
       })
-    ).toBe('/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a')
+    ).toBe(cloneA)
   })
 
   it('falls back to the selected isolated session path when no live session is bound', () => {
     expect(
       resolveIsolatedMirrorSourceRoot({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         liveWorkspacePath: null,
-        selectedTargetPath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+        selectedTargetPath: cloneB,
       })
-    ).toBe('/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b')
+    ).toBe(cloneB)
   })
 
   it('returns null when only the canonical project root is available', () => {
     expect(
       resolveIsolatedMirrorSourceRoot({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
+        liveWorkspacePath: projectRoot,
         selectedTargetPath: null,
       })
     ).toBeNull()
@@ -158,8 +170,8 @@ describe('mirror target resolution', () => {
   it('ignores a stale bound clone session when Agent Deck no longer lists it', () => {
     expect(
       resolveUsableIsolatedMirrorTarget({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/missing-clone',
+        projectPath: projectRoot,
+        liveWorkspacePath: missingClone,
         liveAgentDeckSessionId: 'missing-session',
         selectedTargetId: null,
         agentDeckTargets: [],
@@ -170,19 +182,19 @@ describe('mirror target resolution', () => {
   it('falls back to the selected live clone target when the bound session is stale', () => {
     expect(
       resolveUsableIsolatedMirrorTarget({
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-        liveWorkspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/missing-clone',
+        projectPath: projectRoot,
+        liveWorkspacePath: missingClone,
         liveAgentDeckSessionId: 'missing-session',
         selectedTargetId: 'clone-b',
         agentDeckTargets: [
           {
             id: 'clone-b',
-            path: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+            path: cloneB,
           },
         ],
       })
     ).toEqual({
-      workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+      workspacePath: cloneB,
       agentDeckSessionId: 'clone-b',
     })
   })
@@ -202,7 +214,7 @@ describe('mirror target resolution', () => {
               runtimeKind: 'mirror',
               sourceRoot: '/tmp/pixel-forge-preview-updates/update-a',
               audienceWorkspacePath:
-                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+                cloneB,
             },
           },
           {
@@ -212,12 +224,12 @@ describe('mirror target resolution', () => {
               runtimeKind: 'mirror',
               sourceRoot: '/tmp/pixel-forge-preview-updates/update-b',
               audienceWorkspacePath:
-                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+                cloneB,
             },
           },
         ],
         audienceWorkspacePath:
-          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+          cloneB,
         activeTabId: 'tab-google',
       })
     ).toBe('tab-mirror-primary')
@@ -234,7 +246,7 @@ describe('mirror target resolution', () => {
               runtimeKind: 'mirror',
               sourceRoot: '/tmp/pixel-forge-preview-updates/update-a',
               audienceWorkspacePath:
-                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+                cloneB,
             },
           },
           {
@@ -244,12 +256,12 @@ describe('mirror target resolution', () => {
               runtimeKind: 'mirror',
               sourceRoot: '/tmp/pixel-forge-preview-updates/update-b',
               audienceWorkspacePath:
-                '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+                cloneB,
             },
           },
         ],
         audienceWorkspacePath:
-          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+          cloneB,
         activeTabId: 'tab-mirror-active',
         preferActiveTab: true,
       })
@@ -265,12 +277,12 @@ describe('mirror target resolution', () => {
             localTarget: {
               kind: 'pixel-forge',
               runtimeKind: 'mirror',
-              sourceRoot: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+              sourceRoot: cloneA,
             },
           },
         ],
         audienceWorkspacePath:
-          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          cloneA,
         activeTabId: 'tab-mirror',
       })
     ).toBe('tab-mirror')
@@ -280,13 +292,13 @@ describe('mirror target resolution', () => {
     expect(
       isPendingPreviewUpdateForAudience({
         pendingPreviewUpdate: {
-          projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-          workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          projectPath: projectRoot,
+          workspacePath: cloneA,
           agentDeckSessionId: 'clone-a-session',
         },
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         audienceWorkspacePath:
-          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-b',
+          cloneB,
         audienceSessionId: 'clone-b-session',
       })
     ).toBe(false)
@@ -294,13 +306,13 @@ describe('mirror target resolution', () => {
     expect(
       isPendingPreviewUpdateForAudience({
         pendingPreviewUpdate: {
-          projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
-          workspacePath: '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          projectPath: projectRoot,
+          workspacePath: cloneA,
           agentDeckSessionId: 'clone-a-session',
         },
-        projectPath: '/home/samuelrodda/repos/3-resources/pixel-forge',
+        projectPath: projectRoot,
         audienceWorkspacePath:
-          '/home/samuelrodda/repos/3-resources/pixel-forge/.agents/clone-a',
+          cloneA,
         audienceSessionId: 'clone-a-session',
       })
     ).toBe(true)
