@@ -289,7 +289,7 @@ agent-deck-layers publish-upstream-stock
 agent-deck-stock
 ```
 
-This keeps a clean upstream build in `~/repos/2-areas/agent-deck-base-source`, publishes it into the `upstream-stock` lane, and launches it with an isolated sandbox home and tmux socket. The stock launcher stamps CLI `version`/`help` as `Agent Deck [UPSTREAM STOCK]`, and the stock TUI runs under profile `upstream-stock` so the header is visibly different from the overlay dashboard.
+This keeps a clean upstream build in `~/repos/agent-deck-base-source`, publishes it into the `upstream-stock` lane, and launches it with an isolated sandbox home and tmux socket. The stock launcher stamps CLI `version`/`help` as `Agent Deck [UPSTREAM STOCK]`, and the stock TUI runs under profile `upstream-stock` so the header is visibly different from the overlay dashboard.
 
 </details>
 

@@ -6,10 +6,10 @@ Keep a clean upstream Agent Deck runtime installable side-by-side with the custo
 
 ## Runtime Topology
 
-- Overlay source repo: `~/repos/2-areas/agent-deck` on `custom/samuel-agent-deck`
+- Overlay source repo: `~/repos/agent-deck` on `custom/samuel-agent-deck`
 - Overlay runtime lanes: `workstation`, `client-approved`, `active`
 - Overlay launcher: `~/.local/bin/agent-deck`
-- Stock source repo: `~/repos/2-areas/agent-deck-base-source`
+- Stock source repo: `~/repos/agent-deck-base-source`
 - Stock runtime lane: `upstream-stock`
 - Stock launcher: `~/.local/bin/agent-deck-stock`
 - Stock sandbox root: `~/.local/share/agent-deck/sandboxes/upstream-stock`

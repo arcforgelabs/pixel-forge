@@ -50,7 +50,7 @@ Optional local deployment merge:
 
 - `workstation`: default lane for the current custom branch build.
 - `client-approved`: optional promoted lane for a known-good local release.
-- `upstream-stock`: clean upstream build published from `~/repos/2-areas/agent-deck-base-source`.
+- `upstream-stock`: clean upstream build published from `~/repos/agent-deck-base-source`.
 - `active`: symlink used by the `agent-deck` wrapper.
 
 Inspection + promotion:
