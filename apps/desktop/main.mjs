@@ -1879,7 +1879,7 @@ function sanitizeBootstrapState(payload) {
 async function normalizeDirectoryDialogPath(initialPath) {
   const normalizedPath = normalizeText(initialPath)
   if (!normalizedPath) {
-    return undefined
+    return os.homedir()
   }
 
   const resolvedPath = path.resolve(normalizedPath)
@@ -1890,9 +1890,9 @@ async function normalizeDirectoryDialogPath(initialPath) {
     const parentPath = path.dirname(resolvedPath)
     try {
       const parentStats = await fsPromises.stat(parentPath)
-      return parentStats.isDirectory() ? parentPath : undefined
+      return parentStats.isDirectory() ? parentPath : os.homedir()
     } catch {
-      return undefined
+      return os.homedir()
     }
   }
 }

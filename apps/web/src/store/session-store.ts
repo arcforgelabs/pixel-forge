@@ -146,6 +146,7 @@ export interface ProjectChatRecord {
 export interface ProfileStateRecord {
   profileId: string;
   activeProjectPath: string | null;
+  lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
@@ -220,6 +221,7 @@ interface SessionStore {
     nextState?: Partial<Pick<
       ProfileStateRecord,
       | "activeProjectPath"
+      | "lastWorkspaceBrowseDirectory"
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
@@ -234,6 +236,7 @@ interface SessionStore {
     outputMode?: OutputMode;
     customOutputPath?: string | null;
     preferredThreadId?: string | null;
+    lastWorkspaceBrowseDirectory?: string | null;
     persistProfile?: boolean;
   }) => Promise<void>;
   setSessionId: (sessionId: string | null) => void;
@@ -350,6 +353,7 @@ interface ApiSession {
 interface ApiProfileState {
   profile_id: string;
   active_project_path: string | null;
+  last_workspace_browse_directory: string | null;
   active_mode: ActiveMode;
   active_live_editor_thread_id: string | null;
   default_agent_type: string;
@@ -452,6 +456,7 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
   return {
     profileId: profileState.profile_id,
     activeProjectPath: profileState.active_project_path,
+    lastWorkspaceBrowseDirectory: profileState.last_workspace_browse_directory ?? null,
     activeMode:
       profileState.active_mode === "live-editor"
         ? "live-editor"
@@ -1048,6 +1053,7 @@ async function fetchProfileState(): Promise<ProfileStateRecord> {
 async function upsertProfileStateToApi(options: {
   profileId?: string;
   activeProjectPath: string | null;
+  lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
@@ -1060,6 +1066,7 @@ async function upsertProfileStateToApi(options: {
     body: JSON.stringify({
       profile_id: options.profileId ?? "default",
       active_project_path: options.activeProjectPath,
+      last_workspace_browse_directory: options.lastWorkspaceBrowseDirectory,
       active_mode: options.activeMode,
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
       default_agent_type: normalizeAgentType(options.defaultAgentType),
@@ -1167,6 +1174,7 @@ function buildNextProfileState(
     Pick<
       ProfileStateRecord,
       | "activeProjectPath"
+      | "lastWorkspaceBrowseDirectory"
       | "activeMode"
       | "activeLiveEditorThreadId"
       | "defaultAgentType"
@@ -1178,6 +1186,7 @@ function buildNextProfileState(
 ): {
   profileId: string;
   activeProjectPath: string | null;
+  lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
   defaultAgentType: string;
@@ -1191,6 +1200,10 @@ function buildNextProfileState(
       overrides?.activeProjectPath !== undefined
         ? overrides.activeProjectPath
         : currentState.projectPath,
+    lastWorkspaceBrowseDirectory:
+      overrides?.lastWorkspaceBrowseDirectory !== undefined
+        ? overrides.lastWorkspaceBrowseDirectory
+        : currentState.profileState?.lastWorkspaceBrowseDirectory ?? null,
     activeMode:
       overrides?.activeMode !== undefined
         ? overrides.activeMode
@@ -1421,6 +1434,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     outputMode,
     customOutputPath,
     preferredThreadId,
+    lastWorkspaceBrowseDirectory,
     persistProfile = true,
   }) => {
     const trimmedPath = path.trim();
@@ -1568,6 +1582,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       void get()
         .persistProfileState({
           activeProjectPath: savedProject.path,
+          lastWorkspaceBrowseDirectory,
           activeMode: get().activeMode,
           activeLiveEditorThreadId: currentSession?.threadId ?? null,
         })

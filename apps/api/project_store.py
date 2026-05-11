@@ -191,6 +191,7 @@ def should_surface_session(
 class ProfileStateRecord:
     profile_id: str
     active_project_path: str | None
+    last_workspace_browse_directory: str | None
     active_mode: str
     active_live_editor_thread_id: str | None
     default_agent_type: str
@@ -803,6 +804,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             CREATE TABLE IF NOT EXISTS profile_state (
                 profile_id TEXT PRIMARY KEY,
                 active_project_path TEXT,
+                last_workspace_browse_directory TEXT,
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
                 default_agent_type TEXT NOT NULL DEFAULT 'claude',
@@ -893,6 +895,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             if "active_project_path" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN active_project_path TEXT"
+                )
+            if "last_workspace_browse_directory" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN last_workspace_browse_directory TEXT"
                 )
             if "active_mode" not in existing_profile_columns:
                 conn.execute(
@@ -1077,6 +1083,7 @@ def list_profiles() -> list[ProfileStateRecord]:
         rows = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   last_workspace_browse_directory,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
@@ -1549,10 +1556,18 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
         if isinstance(active_project_path, str) and active_project_path.strip()
         else None
     )
+    last_workspace_browse_directory = row["last_workspace_browse_directory"]
+    normalized_last_workspace_browse_directory = (
+        normalize_project_path(last_workspace_browse_directory)
+        if isinstance(last_workspace_browse_directory, str)
+        and last_workspace_browse_directory.strip()
+        else None
+    )
     active_thread_id = row["active_live_editor_thread_id"]
     return ProfileStateRecord(
         profile_id=row["profile_id"],
         active_project_path=normalized_project_path,
+        last_workspace_browse_directory=normalized_last_workspace_browse_directory,
         active_mode=_normalize_active_mode(row["active_mode"]),
         active_live_editor_thread_id=(
             active_thread_id.strip()
@@ -2123,6 +2138,7 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   last_workspace_browse_directory,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
@@ -2158,6 +2174,7 @@ def create_profile(
     return upsert_profile_state(
         profile_id=normalized_profile_id,
         active_project_path=None,
+        last_workspace_browse_directory=source_profile.last_workspace_browse_directory,
         active_mode="screenshot",
         active_live_editor_thread_id=None,
         default_agent_type=source_profile.default_agent_type,
@@ -2176,6 +2193,7 @@ def upsert_profile_state(
     *,
     profile_id: str = DEFAULT_PROFILE_ID,
     active_project_path: str | None = None,
+    last_workspace_browse_directory: str | None = None,
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
     default_agent_type: str = "claude",
@@ -2192,6 +2210,12 @@ def upsert_profile_state(
     normalized_project_path = (
         normalize_project_path(active_project_path)
         if isinstance(active_project_path, str) and active_project_path.strip()
+        else None
+    )
+    normalized_last_workspace_browse_directory = (
+        normalize_project_path(last_workspace_browse_directory)
+        if isinstance(last_workspace_browse_directory, str)
+        and last_workspace_browse_directory.strip()
         else None
     )
     normalized_thread_id = (
@@ -2218,6 +2242,7 @@ def upsert_profile_state(
             INSERT INTO profile_state (
                 profile_id,
                 active_project_path,
+                last_workspace_browse_directory,
                 active_mode,
                 active_live_editor_thread_id,
                 default_agent_type,
@@ -2229,9 +2254,10 @@ def upsert_profile_state(
                 gemini_default_model,
                 pi_default_model,
                 pi_default_thinking
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
+                last_workspace_browse_directory = excluded.last_workspace_browse_directory,
                 active_mode = excluded.active_mode,
                 active_live_editor_thread_id = CASE
                     WHEN excluded.active_project_path IS NULL THEN NULL
@@ -2251,6 +2277,7 @@ def upsert_profile_state(
             (
                 normalized_profile_id,
                 normalized_project_path,
+                normalized_last_workspace_browse_directory,
                 _normalize_active_mode(active_mode),
                 normalized_thread_id,
                 normalized_default_agent_type,
@@ -2268,6 +2295,7 @@ def upsert_profile_state(
         row = conn.execute(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
+                   last_workspace_browse_directory,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,

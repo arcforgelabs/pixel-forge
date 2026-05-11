@@ -512,11 +512,16 @@ function App() {
     }
     setIsBrowsingForWorkspace(true);
     try {
-      const selectedPath = await browseForDirectory(projectPath ?? undefined);
+      const selectedPath = await browseForDirectory(
+        profileState?.lastWorkspaceBrowseDirectory ?? projectPath ?? undefined
+      );
       if (!selectedPath) {
         return;
       }
-      await setProject({ path: selectedPath });
+      await setProject({
+        path: selectedPath,
+        lastWorkspaceBrowseDirectory: selectedPath,
+      });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to open folder picker"

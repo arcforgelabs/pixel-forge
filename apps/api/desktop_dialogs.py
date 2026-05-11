@@ -14,14 +14,14 @@ class DirectoryBrowseError(RuntimeError):
 
 def _normalize_initial_path(initial_path: str | None) -> str | None:
     if not initial_path:
-        return None
+        return os.path.expanduser("~")
 
     expanded = os.path.abspath(os.path.expanduser(initial_path))
     if os.path.isdir(expanded):
         return expanded
 
     parent = os.path.dirname(expanded)
-    return parent if os.path.isdir(parent) else None
+    return parent if os.path.isdir(parent) else os.path.expanduser("~")
 
 
 def _run_dialog(command: list[str], timeout: int = 120) -> str | None:

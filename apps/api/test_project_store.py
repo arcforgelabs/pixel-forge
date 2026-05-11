@@ -255,6 +255,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(initial.profile_id, "default")
         self.assertEqual(initial.active_mode, "screenshot")
         self.assertIsNone(initial.active_project_path)
+        self.assertIsNone(initial.last_workspace_browse_directory)
         self.assertIsNone(initial.active_live_editor_thread_id)
         self.assertEqual(initial.default_agent_type, "claude")
         self.assertEqual(initial.default_workspace_mode, "root")
@@ -269,6 +270,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         project_store.upsert_project(str(project_path))
         saved = project_store.upsert_profile_state(
             active_project_path=str(project_path),
+            last_workspace_browse_directory=str(project_path.parent),
             active_mode="live-editor",
             active_live_editor_thread_id="thread-a",
             default_agent_type="codex",
@@ -282,6 +284,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         )
 
         self.assertEqual(saved.active_project_path, str(project_path))
+        self.assertEqual(saved.last_workspace_browse_directory, str(project_path.parent))
         self.assertEqual(saved.active_mode, "live-editor")
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")

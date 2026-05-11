@@ -556,6 +556,7 @@ class ProjectSessionUpsertRequest(BaseModel):
 class ProfileStateRequest(BaseModel):
     profile_id: str | None = None
     active_project_path: str | None = None
+    last_workspace_browse_directory: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
     default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "claude"
@@ -881,6 +882,7 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
     return {
         "profile_id": profile_state.profile_id,
         "active_project_path": profile_state.active_project_path,
+        "last_workspace_browse_directory": profile_state.last_workspace_browse_directory,
         "active_mode": profile_state.active_mode,
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
         "default_agent_type": profile_state.default_agent_type,
@@ -1075,6 +1077,7 @@ async def save_default_profile_state(request: ProfileStateRequest):
         upsert_profile_state(
             profile_id=request.profile_id or "default",
             active_project_path=request.active_project_path,
+            last_workspace_browse_directory=request.last_workspace_browse_directory,
             active_mode=request.active_mode,
             active_live_editor_thread_id=request.active_live_editor_thread_id,
             default_agent_type=request.default_agent_type,

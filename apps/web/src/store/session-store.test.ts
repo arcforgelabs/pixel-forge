@@ -46,6 +46,8 @@ describe("session-store thread switching", () => {
             JSON.stringify({
               profile_id: body.profile_id ?? "default",
               active_project_path: body.active_project_path ?? null,
+              last_workspace_browse_directory:
+                body.last_workspace_browse_directory ?? null,
               active_mode: body.active_mode ?? "screenshot",
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
@@ -172,6 +174,7 @@ describe("session-store thread switching", () => {
             JSON.stringify({
               profile_id: "default",
               active_project_path: "/tmp/example-project",
+              last_workspace_browse_directory: "/tmp",
               active_mode: "live-editor",
               active_live_editor_thread_id: "thread-a",
               default_agent_type: "claude",
@@ -570,6 +573,8 @@ describe("session-store thread switching", () => {
             JSON.stringify({
               profile_id: body.profile_id ?? "default",
               active_project_path: body.active_project_path ?? null,
+              last_workspace_browse_directory:
+                body.last_workspace_browse_directory ?? null,
               active_mode: body.active_mode ?? "screenshot",
               active_live_editor_thread_id:
                 body.active_live_editor_thread_id ?? null,
