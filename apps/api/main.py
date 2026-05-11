@@ -525,6 +525,18 @@ class BrowseDirectoryRequest(BaseModel):
     initial_path: str | None = None
 
 
+class WorkspaceDirectoryEntry(BaseModel):
+    name: str
+    path: str
+
+
+class WorkspaceDirectoryListing(BaseModel):
+    path: str
+    parent_path: str | None = None
+    home_path: str
+    entries: list[WorkspaceDirectoryEntry]
+
+
 class SaveCodeRequest(BaseModel):
     code: str
     project_path: str
@@ -2253,6 +2265,46 @@ async def browse_directory(request: BrowseDirectoryRequest):
         "cancelled": False,
         "path": selected_path,
     }
+
+
+@app.get("/api/workspace-directories", response_model=WorkspaceDirectoryListing)
+async def list_workspace_directories(path: str | None = None):
+    """Return a shallow, fast directory listing for the app-native workspace picker."""
+    home_path = os.path.abspath(os.path.expanduser("~"))
+    requested_path = path.strip() if isinstance(path, str) and path.strip() else home_path
+    expanded_path = os.path.abspath(os.path.expanduser(requested_path))
+    if not os.path.isdir(expanded_path):
+        parent_path = os.path.dirname(expanded_path)
+        expanded_path = parent_path if os.path.isdir(parent_path) else home_path
+
+    entries: list[WorkspaceDirectoryEntry] = []
+    try:
+        with os.scandir(expanded_path) as iterator:
+            for entry in iterator:
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                    entries.append(
+                        WorkspaceDirectoryEntry(
+                            name=entry.name,
+                            path=os.path.abspath(entry.path),
+                        )
+                    )
+                except OSError:
+                    continue
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    entries.sort(key=lambda item: (item.name.startswith("."), item.name.casefold()))
+    parent_path = os.path.dirname(expanded_path)
+    if parent_path == expanded_path:
+        parent_path = None
+    return WorkspaceDirectoryListing(
+        path=expanded_path,
+        parent_path=parent_path,
+        home_path=home_path,
+        entries=entries,
+    )
 
 
 @app.post("/save-code")

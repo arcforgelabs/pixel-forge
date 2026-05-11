@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateCode } from "./generateCode";
 import SettingsSidebar from "./components/settings/SettingsSidebar";
 import { Button } from "./components/ui/button";
@@ -13,7 +13,7 @@ import useBrowserTabIndicator from "./hooks/useBrowserTabIndicator";
 // import TipLink from "./components/messages/TipLink";
 import { useAppStore } from "./store/app-store";
 import { useProjectStore } from "./store/project-store";
-import { useSessionStore, type ActiveMode } from "./store/session-store";
+import { useSessionStore, type ActiveMode, type SavedProject } from "./store/session-store";
 // Sidebar removed — screenshot workflow sidebar no longer rendered
 import PreviewPane from "./components/preview/PreviewPane";
 // GenerationSettings moved into SettingsSidebar
@@ -29,7 +29,7 @@ import { LogoForgePane } from "./components/logo-forge/LogoForgePane";
 import { HTTP_BACKEND_URL, RUNTIME_KIND, TARGET_PROJECT_PATH } from "./config";
 import { browseForDirectory } from "./lib/browse-directory";
 import { getDesktopApp, hasDesktopAppMethod } from "./lib/desktop-app";
-import { FolderOpen, Maximize2, Minus, X } from "lucide-react";
+import { ChevronLeft, Folder, FolderOpen, Home, Loader2, Maximize2, Minus, Search, X } from "lucide-react";
 import type {
   PixelForgeControllerReleaseUpdateResponse,
   PixelForgeDesktopControllerUpdateApplyState,
@@ -37,6 +37,258 @@ import type {
   PixelForgeDesktopPendingControllerUpdate,
   PixelForgeDesktopRuntimeInfo,
 } from "./types/pixel-forge-desktop";
+
+interface WorkspaceDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+interface WorkspaceDirectoryListing {
+  path: string;
+  parent_path: string | null;
+  home_path: string;
+  entries: WorkspaceDirectoryEntry[];
+}
+
+function parentDirectoryOf(directoryPath: string): string | null {
+  const normalized = directoryPath.trim().replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  const separator = normalized.includes("\\") ? "\\" : "/";
+  const index = normalized.lastIndexOf(separator);
+  if (index <= 0) {
+    return separator === "/" && normalized !== "/" ? "/" : null;
+  }
+  return normalized.slice(0, index);
+}
+
+async function fetchWorkspaceDirectory(path?: string | null): Promise<WorkspaceDirectoryListing> {
+  const params = path?.trim() ? `?path=${encodeURIComponent(path.trim())}` : "";
+  const response = await fetch(`${HTTP_BACKEND_URL}/api/workspace-directories${params}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `HTTP ${response.status}`);
+  }
+  return response.json() as Promise<WorkspaceDirectoryListing>;
+}
+
+function WorkspacePickerDialog({
+  open,
+  initialPath,
+  recentProjects,
+  isBrowsing,
+  onClose,
+  onSelect,
+  onBrowseNative,
+}: {
+  open: boolean;
+  initialPath?: string | null;
+  recentProjects: SavedProject[];
+  isBrowsing: boolean;
+  onClose: () => void;
+  onSelect: (path: string) => void;
+  onBrowseNative: (currentPath: string | null) => void;
+}) {
+  const [listing, setListing] = useState<WorkspaceDirectoryListing | null>(null);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadDirectory = (path?: string | null) => {
+    setLoading(true);
+    setError(null);
+    void fetchWorkspaceDirectory(path)
+      .then((nextListing) => {
+        setListing(nextListing);
+      })
+      .catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load directory");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    loadDirectory(initialPath);
+  }, [open, initialPath]);
+
+  const filteredEntries = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!listing) return [];
+    if (!normalizedQuery) return listing.entries;
+    return listing.entries.filter((entry) =>
+      entry.name.toLowerCase().includes(normalizedQuery)
+      || entry.path.toLowerCase().includes(normalizedQuery)
+    );
+  }, [listing, query]);
+
+  const visibleRecentProjects = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return recentProjects.slice(0, 5);
+    return recentProjects
+      .filter((project) =>
+        project.name.toLowerCase().includes(normalizedQuery)
+        || project.path.toLowerCase().includes(normalizedQuery)
+      )
+      .slice(0, 5);
+  }, [query, recentProjects]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4">
+      <div className="flex h-[min(720px,82vh)] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">Open Workspace</h2>
+            <p className="truncate text-xs text-muted-foreground">
+              {listing?.path ?? initialPath ?? "Home"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            onClick={onClose}
+            aria-label="Close workspace picker"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-4 py-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => listing?.parent_path && loadDirectory(listing.parent_path)}
+            disabled={!listing?.parent_path || loading}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Up
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => loadDirectory(listing?.home_path ?? null)}
+            disabled={loading}
+          >
+            <Home className="h-4 w-4" />
+            Home
+          </Button>
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter folders..."
+              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => listing?.path && onSelect(listing.path)}
+            disabled={!listing?.path}
+          >
+            Select This Folder
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onBrowseNative(listing?.path ?? null)}
+            disabled={isBrowsing}
+          >
+            {isBrowsing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Browse..."}
+          </Button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+          {error && (
+            <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          {visibleRecentProjects.length > 0 && (
+            <section className="mb-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Recent
+              </h3>
+              <div className="space-y-1">
+                {visibleRecentProjects.map((project) => (
+                  <button
+                    key={project.path}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-muted/50"
+                    onClick={() => onSelect(project.path)}
+                  >
+                    <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-foreground">{project.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{project.path}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Folders
+            </h3>
+            {loading ? (
+              <div className="flex items-center gap-2 px-3 py-8 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading folders...
+              </div>
+            ) : filteredEntries.length === 0 ? (
+              <div className="px-3 py-8 text-sm text-muted-foreground">No folders found.</div>
+            ) : (
+              <div className="space-y-1">
+                {filteredEntries.map((entry) => (
+                  <div
+                    key={entry.path}
+                    className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-muted/50"
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      onClick={() => loadDirectory(entry.path)}
+                    >
+                      <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-foreground">{entry.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{entry.path}</span>
+                      </span>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onSelect(entry.path)}
+                    >
+                      Select
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function DesktopWindowTitleBar() {
   const desktopApp = getDesktopApp();
@@ -125,6 +377,7 @@ function App() {
     projectPath,
     activeMode,
     projectSettingsPath,
+    recentProjects,
     projectsLoaded,
     profileState,
     profileLoaded,
@@ -140,6 +393,7 @@ function App() {
   } = useSessionStore();
 
   const [isBrowsingForWorkspace, setIsBrowsingForWorkspace] = useState(false);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [desktopBootstrapState, setDesktopBootstrapState] =
     useState<PixelForgeDesktopBootstrapState | null>(null);
   const [desktopBootstrapLoaded, setDesktopBootstrapLoaded] = useState(false);
@@ -506,22 +760,27 @@ function App() {
     });
   }, [projectPath, projectsLoaded, setProject]);
 
-  const browseAndOpenWorkspace = async () => {
+  const openWorkspacePath = async (selectedPath: string) => {
+    await setProject({
+      path: selectedPath,
+      lastWorkspaceBrowseDirectory: parentDirectoryOf(selectedPath),
+    });
+    setWorkspacePickerOpen(false);
+  };
+
+  const openNativeWorkspacePicker = async (initialPath?: string | null) => {
     if (isBrowsingForWorkspace) {
       return;
     }
     setIsBrowsingForWorkspace(true);
     try {
       const selectedPath = await browseForDirectory(
-        profileState?.lastWorkspaceBrowseDirectory ?? projectPath ?? undefined
+        initialPath ?? profileState?.lastWorkspaceBrowseDirectory ?? projectPath ?? undefined
       );
       if (!selectedPath) {
         return;
       }
-      await setProject({
-        path: selectedPath,
-        lastWorkspaceBrowseDirectory: selectedPath,
-      });
+      await openWorkspacePath(selectedPath);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to open folder picker"
@@ -529,6 +788,10 @@ function App() {
     } finally {
       setIsBrowsingForWorkspace(false);
     }
+  };
+
+  const browseAndOpenWorkspace = () => {
+    setWorkspacePickerOpen(true);
   };
 
   // Settings
@@ -847,6 +1110,21 @@ function App() {
   return (
     <div className="dark:bg-background dark:text-foreground flex h-screen flex-col overflow-hidden">
       <DesktopWindowTitleBar />
+      <WorkspacePickerDialog
+        open={workspacePickerOpen}
+        initialPath={profileState?.lastWorkspaceBrowseDirectory ?? parentDirectoryOf(projectPath ?? "")}
+        recentProjects={recentProjects}
+        isBrowsing={isBrowsingForWorkspace}
+        onClose={() => setWorkspacePickerOpen(false)}
+        onSelect={(selectedPath) => {
+          void openWorkspacePath(selectedPath).catch((error) => {
+            toast.error(error instanceof Error ? error.message : "Failed to open workspace");
+          });
+        }}
+        onBrowseNative={(currentPath) => {
+          void openNativeWorkspacePicker(currentPath);
+        }}
+      />
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         {/* Settings drawer - pushes main content */}
         <SettingsSidebar
