@@ -117,6 +117,7 @@ let pickerOverlayOwnerContextId = null
 let browserBrokerServer = null
 let browserBrokerToken = null
 let browserBrokerUrl = null
+let browserBrokerMode = 'shell'
 let pendingUpdateSnapshot = null
 let controllerUpdateApplyState = {
   status: 'idle',
@@ -499,10 +500,25 @@ async function handleBrowserBrokerRequest(request, response) {
     if (request.method === 'GET' && url.pathname === '/status') {
       sendBrokerJson(response, 200, {
         ok: true,
+        available: browserBrokerMode === 'shell',
+        mode: browserBrokerMode,
+        updater_mode: browserBrokerMode === 'updater',
+        message:
+          browserBrokerMode === 'updater'
+            ? 'Pixel Forge is currently showing the updater window; browser preview tabs are unavailable until the main shell relaunches.'
+            : null,
         pid: process.pid,
         base_url: browserBrokerUrl,
         controller_cdp_url: controllerDevtoolsBrowserUrl(),
         tab_count: previewViews.size,
+      })
+      return
+    }
+
+    if (browserBrokerMode === 'updater') {
+      sendBrokerJson(response, 503, {
+        error: 'updater-mode',
+        message: 'Pixel Forge is currently updating; browser preview tabs are unavailable until the main shell relaunches.',
       })
       return
     }
@@ -603,6 +619,8 @@ async function writeBrowserBrokerManifest() {
       pid: process.pid,
       baseUrl: browserBrokerUrl,
       token: browserBrokerToken,
+      mode: browserBrokerMode,
+      updaterMode: browserBrokerMode === 'updater',
       controllerCdpUrl: controllerDevtoolsBrowserUrl(),
       createdAt: new Date().toISOString(),
     }, null, 2)}\n`,
@@ -610,10 +628,11 @@ async function writeBrowserBrokerManifest() {
   )
 }
 
-function startBrowserBroker() {
+function startBrowserBroker(mode = 'shell') {
   if (browserBrokerServer) {
     return
   }
+  browserBrokerMode = mode
   browserBrokerToken = randomBytes(24).toString('hex')
   browserBrokerServer = createServer((request, response) => {
     void handleBrowserBrokerRequest(request, response)
@@ -635,6 +654,7 @@ function stopBrowserBroker() {
   }
   browserBrokerUrl = null
   browserBrokerToken = null
+  browserBrokerMode = 'shell'
   void fsPromises.rm(BROWSER_BROKER_MANIFEST_PATH, { force: true }).catch(() => {})
 }
 
@@ -2837,6 +2857,7 @@ app.whenReady().then(() => {
   registerWindowControlHandlers()
 
   if (IS_UPDATER_UI_MODE) {
+    startBrowserBroker('updater')
     ipcMain.handle('pixel-forge-updater:get-state', async () => {
       try {
         return (await recoverControllerUpdateApplyState())

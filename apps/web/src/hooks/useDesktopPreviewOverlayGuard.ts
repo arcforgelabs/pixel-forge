@@ -85,7 +85,6 @@ export function useDesktopPreviewOverlayGuard(
       generationRef.current = generation
       if (hasOverlay) {
         const tabId = getActiveTabIdRef.current?.() ?? null
-        void previewRef.current.hide()
         if (tabId && previewRef.current.captureSnapshot) {
           void previewRef.current.captureSnapshot(tabId)
             .then((payload) => {
@@ -93,14 +92,17 @@ export function useDesktopPreviewOverlayGuard(
                 return
               }
               setSnapshotRef.current?.(payload.snapshot_data_url || null)
+              void previewRef.current?.hide()
             })
             .catch(() => {
               if (generationRef.current === generation) {
                 setSnapshotRef.current?.(null)
+                void previewRef.current?.hide()
               }
             })
         } else {
           setSnapshotRef.current?.(null)
+          void previewRef.current.hide()
         }
       } else {
         setSnapshotRef.current?.(null)

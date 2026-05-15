@@ -288,7 +288,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.active_mode, "live-editor")
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
         self.assertEqual(saved.default_agent_type, "codex")
-        self.assertEqual(saved.default_workspace_mode, "clone")
+        self.assertEqual(saved.default_workspace_mode, "root")
         self.assertEqual(saved.claude_default_model, "claude-sonnet-4-6")
         self.assertEqual(saved.claude_default_thinking, "high")
         self.assertEqual(saved.codex_default_model, "gpt-5.4")

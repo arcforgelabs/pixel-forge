@@ -777,12 +777,13 @@ async def _launch_new_session(
     *,
     session_title: str,
     agent_type: str = "claude",
-    workspace_mode: str = "clone",
+    workspace_mode: str = "root",
     workspace_path: str | None = None,
     agent_model: str | None = None,
     agent_thinking: str | None = None,
 ) -> dict[str, object]:
     await _enforce_agent_deck_launch_admission()
+    del workspace_mode
     normalized_agent_type = agent_type.strip().lower() or "claude"
     if normalized_agent_type == "pi":
         await asyncio.to_thread(_sync_pi_ollama_models_for_launch, agent_model)
@@ -815,8 +816,6 @@ async def _launch_new_session(
     )
     if normalized_agent_type in {"codex", "gemini"}:
         args.append("--yolo")
-    if workspace_mode == "clone":
-        args.append(f"-clone={_clone_name(session_title)}")
     args.append(launch_path)
     return await _run_agent_deck_json_object_command(args)
 
@@ -987,16 +986,17 @@ async def create_agent_deck_session_target(
     *,
     agent_type: str = "claude",
     title: str | None = None,
-    workspace_mode: str = "clone",
+    workspace_mode: str = "root",
     agent_model: str | None = None,
     agent_thinking: str | None = None,
 ) -> AgentDeckSessionTarget:
+    del workspace_mode
     session_title = title.strip() if isinstance(title, str) and title.strip() else _session_title_for_target(project_path)
     payload = await _launch_new_session(
         project_path,
         session_title=session_title,
         agent_type=agent_type.strip() or "claude",
-        workspace_mode=workspace_mode.strip().lower() if isinstance(workspace_mode, str) else "clone",
+        workspace_mode="root",
         agent_model=agent_model,
         agent_thinking=agent_thinking,
     )
@@ -1644,24 +1644,16 @@ async def ensure_agent_deck_session(
     project_path: str,
     thread: LiveEditorThreadRecord,
     agent_type: str = "claude",
-    workspace_mode: str = "clone",
+    workspace_mode: str = "root",
     *,
     target_agent_deck_session_id: str | None = None,
     agent_model: str | None = None,
     agent_thinking: str | None = None,
 ) -> AgentDeckSessionInfo:
+    del workspace_mode
     payload: dict[str, object]
     rebind_workspace_path = _thread_rebind_workspace_path(project_path, thread)
-    requested_workspace_mode = (
-        workspace_mode.strip().lower()
-        if isinstance(workspace_mode, str) and workspace_mode.strip()
-        else "clone"
-    )
-    launch_workspace_mode = (
-        "existing"
-        if rebind_workspace_path
-        else ("root" if requested_workspace_mode == "root" else "clone")
-    )
+    launch_workspace_mode = "existing" if rebind_workspace_path else "root"
     preferred_session_title = _preferred_thread_session_title(project_path, thread)
     persisted_thread_title = _normalized_text(thread.agent_deck_session_title)
     bound_session_id = (

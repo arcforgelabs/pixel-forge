@@ -422,7 +422,8 @@ function normalizeDraftAgentType(agentType: string | null | undefined): string {
 function normalizeDraftWorkspaceMode(
   workspaceMode: string | null | undefined
 ): DraftWorkspaceMode {
-  return workspaceMode === 'root' ? 'root' : 'clone'
+  void workspaceMode
+  return 'root'
 }
 
 function getDefaultDraftAgentType(): string {
@@ -789,7 +790,7 @@ function shouldPersistThreadState(
     return true
   }
 
-  if (threadState.draftWorkspaceMode !== 'clone') {
+  if (threadState.draftWorkspaceMode !== 'root') {
     return true
   }
 
@@ -2855,7 +2856,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         workspaceMode:
           replayDraft.editorState.draftWorkspaceMode
           ?? sourceThreadState.draftWorkspaceMode
-          ?? 'clone',
+          ?? 'root',
         reuseEmptyDraft: false,
       })
 

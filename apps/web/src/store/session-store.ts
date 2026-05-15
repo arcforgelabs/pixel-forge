@@ -930,7 +930,8 @@ function normalizeAgentType(agentType: string | null | undefined): string {
 }
 
 function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspaceMode {
-  return mode === "clone" ? "clone" : "root";
+  void mode;
+  return "root";
 }
 
 function normalizeAgentProfileDefaults(
@@ -1037,7 +1038,7 @@ async function createProjectChat(
       body: JSON.stringify({
         agent_type: options.agentType,
         title: options.title ?? null,
-        workspace_mode: options.workspaceMode ?? "clone",
+        workspace_mode: "root",
         reuse_empty_draft: options.reuseEmptyDraft ?? true,
       }),
     }
@@ -1346,10 +1347,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Workspace mode selection
   defaultWorkspaceMode: "root",
   setDefaultWorkspaceMode: (mode: DraftWorkspaceMode) => {
-    const normalizedMode = normalizeWorkspaceMode(mode);
-    set({ defaultWorkspaceMode: normalizedMode });
+    void mode;
+    set({ defaultWorkspaceMode: "root" });
     void get()
-      .persistProfileState({ defaultWorkspaceMode: normalizedMode })
+      .persistProfileState({ defaultWorkspaceMode: "root" })
       .catch((error) => {
         console.error("[session-store] Failed to persist default workspace mode:", error);
       });
@@ -1975,7 +1976,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createProjectChatSession: async (options) => {
-    const { projectPath, defaultAgentType, defaultWorkspaceMode, liveEditorSession } = get();
+    const { projectPath, defaultAgentType, liveEditorSession } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
@@ -1985,7 +1986,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       const created = await createProjectChat(projectPath, {
         agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
-        workspaceMode: options?.workspaceMode ?? defaultWorkspaceMode,
+        workspaceMode: "root",
         reuseEmptyDraft: options?.reuseEmptyDraft ?? true,
       });
       const createdTarget = agentDeckTargetFromProjectChat(created);

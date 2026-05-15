@@ -140,11 +140,17 @@ function WorkspacePickerDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="workspace-picker-title"
+      data-pixel-forge-overlay="true"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4"
+    >
       <div className="flex h-[min(720px,82vh)] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-foreground">Open Workspace</h2>
+            <h2 id="workspace-picker-title" className="text-sm font-semibold text-foreground">Open Workspace</h2>
             <p className="truncate text-xs text-muted-foreground">
               {listing?.path ?? initialPath ?? "Home"}
             </p>
@@ -805,6 +811,7 @@ function App() {
       generatedCodeConfig: Stack.HTML_TAILWIND,
       codeGenerationModel: CodeGenerationModel.CLAUDE_4_5_SONNET_2025_09_29,
       advancedMode: false,
+      earlyAccessMode: false,
     },
     "setting"
   );
@@ -825,6 +832,25 @@ function App() {
       }));
     }
   }, [settings.generatedCodeConfig, setSettings]);
+
+  useEffect(() => {
+    if (typeof settings.earlyAccessMode !== "boolean") {
+      setSettings((prev) => ({
+        ...prev,
+        earlyAccessMode: false,
+      }));
+    }
+  }, [settings.earlyAccessMode, setSettings]);
+
+  useEffect(() => {
+    if (
+      settings.earlyAccessMode
+      || (activeMode !== "screenshot" && activeMode !== "logo-forge")
+    ) {
+      return;
+    }
+    switchMode("live-editor");
+  }, [activeMode, settings.earlyAccessMode, switchMode]);
 
   // Functions
   const reset = () => {

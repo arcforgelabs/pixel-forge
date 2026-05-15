@@ -50,7 +50,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Rocket,
   Smartphone,
   X,
 } from 'lucide-react'
@@ -589,8 +588,8 @@ export function LiveEditorPane({
 
   const [isLaunchingPixelForgeTarget, setIsLaunchingPixelForgeTarget] = useState(false)
   const [workspacePreviewDialogOpen, setWorkspacePreviewDialogOpen] = useState(false)
-  const [workspacePreviewCandidates, setWorkspacePreviewCandidates] = useState<WorkspacePreviewCandidateResponse[]>([])
-  const [workspacePreviewCandidatesLoading, setWorkspacePreviewCandidatesLoading] = useState(false)
+  const [workspacePreviewCandidates] = useState<WorkspacePreviewCandidateResponse[]>([])
+  const workspacePreviewCandidatesLoading = false
   const [startingWorkspacePreviewCandidateId, setStartingWorkspacePreviewCandidateId] = useState<string | null>(null)
   const [isPixelForgeWorkspace, setIsPixelForgeWorkspace] = useState(false)
   const [previewOcclusionSnapshot, setPreviewOcclusionSnapshot] = useState<string | null>(null)
@@ -1966,33 +1965,6 @@ export function LiveEditorPane({
     })
     return record
   }, [effectiveRuntimeKind, openLocalTargetInPreviewTab, projectPath])
-
-  const openWorkspacePreviewLauncher = useCallback(async () => {
-    if (!workspacePreviewWorkspacePath) {
-      toast.error('Select or bind a workspace before launching a workspace preview.')
-      return
-    }
-
-    setWorkspacePreviewCandidatesLoading(true)
-    try {
-      const payload = await requestPreviewJson<{
-        workspace_path: string
-        candidates: WorkspacePreviewCandidateResponse[]
-      }>(
-        `/api/workspace-previews/candidates?workspace_path=${encodeURIComponent(workspacePreviewWorkspacePath)}`
-      )
-      setWorkspacePreviewCandidates(payload.candidates)
-      setWorkspacePreviewDialogOpen(true)
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Failed to inspect workspace preview candidates'
-      )
-    } finally {
-      setWorkspacePreviewCandidatesLoading(false)
-    }
-  }, [workspacePreviewWorkspacePath])
 
   const launchWorkspacePreviewCandidate = useCallback(async (
     candidate: WorkspacePreviewCandidateResponse
@@ -3509,23 +3481,6 @@ export function LiveEditorPane({
               <Play className="h-3 w-3" />
               Load
             </Button>
-            {projectPath && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void openWorkspacePreviewLauncher()}
-                disabled={workspacePreviewCandidatesLoading}
-                className="h-7 gap-1 border-border/60 px-2.5 text-xs"
-                title="Discover and launch a workspace-bound preview from the active lane workspace"
-              >
-                {workspacePreviewCandidatesLoading ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Rocket className="h-3 w-3" />
-                )}
-                Preview
-              </Button>
-            )}
             {projectPath && canLaunchPixelForgeMirror && advancedMode && (
               <Button
                 variant="outline"
@@ -3558,9 +3513,10 @@ export function LiveEditorPane({
               onClick={() => void refreshApp()}
               title="Refresh preview"
               disabled={!activePreviewCanRefresh}
-              className="h-7 w-7 border-border/60 p-0"
+              className="h-7 gap-1 border-border/60 px-2.5 text-xs"
             >
               <RefreshCw className="h-3 w-3" />
+              Refresh
             </Button>
             <Button
               variant={isSelectionToolActive ? 'default' : 'outline'}

@@ -272,13 +272,36 @@ async function resolveUpdateStartedAt(fallback) {
   return updateStartedAt
 }
 
-function runShellCommand(command, cwd) {
+function runShellCommand(command, cwd, options = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn('bash', ['-lc', command], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
     })
+    const heartbeat = typeof options.heartbeat === 'function' ? options.heartbeat : null
+    let heartbeatRunning = false
+    const heartbeatTimer = heartbeat
+      ? setInterval(() => {
+          if (heartbeatRunning) {
+            return
+          }
+          heartbeatRunning = true
+          Promise.resolve()
+            .then(() => heartbeat())
+            .catch((error) => {
+              void logError('[pixel-forge runner] Command heartbeat failed', error)
+            })
+            .finally(() => {
+              heartbeatRunning = false
+            })
+        }, Number(options.heartbeatIntervalMs) || 15000)
+      : null
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+      }
+    }
 
     let stdout = ''
     let stderr = ''
@@ -289,8 +312,12 @@ function runShellCommand(command, cwd) {
       stderr += chunk.toString()
     })
 
-    proc.on('error', reject)
+    proc.on('error', (error) => {
+      stopHeartbeat()
+      reject(error)
+    })
     proc.on('close', (code) => {
+      stopHeartbeat()
       if (code === 0) {
         resolve({ stdout, stderr })
         return
@@ -532,7 +559,14 @@ async function main() {
     message: 'Installing updated Pixel Forge build…',
     error: null,
   })
-  await runShellCommand('bash ./install.sh', resolvedInstallRoot)
+  await runShellCommand('bash ./install.sh', resolvedInstallRoot, {
+    heartbeat: () => setState({
+      phase: 'installing',
+      progress: 40,
+      message: 'Installing updated Pixel Forge build…',
+      error: null,
+    }),
+  })
   await logInfo('Finished install.sh')
 
   const installedRoot = path.resolve(

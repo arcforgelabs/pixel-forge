@@ -77,6 +77,9 @@ export function getSkillAutocompleteSuggestions(
 
   return [...skills]
     .filter((skill) => {
+      if (preferredTarget && !skill.installedTargets.includes(preferredTarget)) {
+        return false;
+      }
       if (!normalizedQuery) {
         return true;
       }

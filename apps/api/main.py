@@ -572,7 +572,7 @@ class ProfileStateRequest(BaseModel):
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
     default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "claude"
-    default_workspace_mode: Literal["clone", "root"] = "root"
+    default_workspace_mode: Literal["root"] = "root"
     claude_default_model: str | None = None
     claude_default_thinking: str | None = None
     codex_default_model: str | None = None
@@ -590,7 +590,7 @@ class ClaudeGlobalSettingsRequest(BaseModel):
 class AgentDeckSessionRequest(BaseModel):
     agent_type: str = "claude"
     title: str | None = None
-    workspace_mode: Literal["clone", "root"] = "clone"
+    workspace_mode: Literal["root"] = "root"
     agent_model: str | None = None
     agent_thinking: str | None = None
     reuse_empty_draft: bool = True
@@ -3505,8 +3505,8 @@ Update the code according to the user's request. Return ONLY the complete update
     return result.get("result", ""), session_id or ""
 
 
-@app.get("/")
-async def root():
+@app.get("/api/status")
+async def api_status():
     return {
         "status": "ok",
         "message": "Pixel Forge API - screenshot bootstrap and live editing via Claude Code",
@@ -4046,7 +4046,7 @@ async def live_editor_chat(websocket: WebSocket):
             agent_type = data.get("agent_type", "claude")
             agent_model = data.get("agent_model")
             agent_thinking = data.get("agent_thinking")
-            workspace_mode = data.get("workspace_mode", "clone")
+            workspace_mode = "root"
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
 
             if not attachments and legacy_images:
@@ -4147,11 +4147,7 @@ async def live_editor_chat(websocket: WebSocket):
                             normalized_project_path,
                             thread,
                             agent_type=agent_type,
-                            workspace_mode=(
-                                workspace_mode
-                                if isinstance(workspace_mode, str)
-                                else "clone"
-                            ),
+                            workspace_mode="root",
                             target_agent_deck_session_id=(
                                 target_agent_deck_session_id
                                 if isinstance(target_agent_deck_session_id, str)
@@ -4523,11 +4519,7 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread,
                     agent_type=agent_type,
-                    workspace_mode=(
-                        workspace_mode
-                        if isinstance(workspace_mode, str)
-                        else "clone"
-                    ),
+                    workspace_mode="root",
                 )
                 _assert_agent_deck_lane_available(
                     normalized_project_path,

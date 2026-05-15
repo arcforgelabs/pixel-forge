@@ -477,7 +477,8 @@ build_python() {
 }
 
 write_desktop_identity_metadata() {
-    node - "$INSTALL_DIR/desktop/package.json" "$DESKTOP_ENTRY_NAME" "$DESKTOP_FILE_NAME" <<'NODE'
+    local package_path="${1:-$INSTALL_DIR/desktop/package.json}"
+    node - "$package_path" "$DESKTOP_ENTRY_NAME" "$DESKTOP_FILE_NAME" <<'NODE'
 const fs = require('fs')
 
 const [packagePath, productName, desktopName] = process.argv.slice(2)
@@ -512,15 +513,19 @@ build_desktop() {
         return 0
     fi
     echo "[desktop] installing electron + source..."
-    rm -rf "$INSTALL_DIR/desktop"
-    cp -r "$DESKTOP_SOURCE_DIR" "$INSTALL_DIR/desktop"
-    write_desktop_identity_metadata
+    local desktop_tmp
+    desktop_tmp="$INSTALL_DIR/.desktop-build.tmp"
+    rm -rf "$desktop_tmp"
+    cp -r "$DESKTOP_SOURCE_DIR" "$desktop_tmp"
+    write_desktop_identity_metadata "$desktop_tmp/package.json"
     local electron_spec
     electron_spec="$(node -p "require('$DESKTOP_SOURCE_DIR/package.json').dependencies.electron")"
     (
-        cd "$INSTALL_DIR/desktop"
+        cd "$desktop_tmp"
         npm install --no-fund --no-audit "electron@${electron_spec#^}"
     )
+    rm -rf "$INSTALL_DIR/desktop"
+    mv "$desktop_tmp" "$INSTALL_DIR/desktop"
     cache_write desktop_deps "$pkg_hash"
     echo "[desktop] done."
 }
@@ -572,8 +577,11 @@ if [ ! -f "$WEB_DIR/dist/index.html" ]; then
     exit 1
 fi
 echo "Bundling built frontend..."
+FRONTEND_TMP="$INSTALL_DIR/.frontend.tmp"
+rm -rf "$FRONTEND_TMP"
+cp -r "$WEB_DIR/dist" "$FRONTEND_TMP"
 rm -rf "$INSTALL_DIR/frontend"
-cp -r "$WEB_DIR/dist" "$INSTALL_DIR/frontend"
+mv "$FRONTEND_TMP" "$INSTALL_DIR/frontend"
 
 # --- Launcher script ---
 cat > "$BIN_DIR/${CLI_NAME}" <<LAUNCHER

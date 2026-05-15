@@ -8,7 +8,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Bot, Brain, Cpu, FileText, GitBranch, GitCommitVertical, Paperclip, Send, X } from 'lucide-react'
+import { Bot, Brain, Cpu, FileText, Paperclip, Send, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ChatAttachment, useLiveEditorStore } from './store/chat-store'
@@ -313,10 +313,6 @@ function formatAgentThinkingLabel(
   return match?.label ?? thinking
 }
 
-function formatWorkspaceModeLabel(workspaceMode: string | null | undefined): string {
-  return workspaceMode === 'root' ? 'Root' : 'Clone'
-}
-
 function formatSkillTargetLabel(target: string | null | undefined): string {
   if (!target) {
     return 'Installed'
@@ -375,9 +371,7 @@ export function ChatInput() {
   const selectedElements = useLiveEditorStore((state) => state.selectedElements)
   const targetAgentDeckSessionId = useLiveEditorStore((state) => state.targetAgentDeckSessionId)
   const draftAgentType = useLiveEditorStore((state) => state.draftAgentType)
-  const draftWorkspaceMode = useLiveEditorStore((state) => state.draftWorkspaceMode)
   const setDraftAgentType = useLiveEditorStore((state) => state.setDraftAgentType)
-  const setDraftWorkspaceMode = useLiveEditorStore((state) => state.setDraftWorkspaceMode)
   const {
     defaultAgentType,
     defaultAgentModels,
@@ -403,7 +397,6 @@ export function ChatInput() {
   const agentSelectionLocked = Boolean(
     liveEditorSession?.agentDeckSessionId || targetAgentDeckSessionId
   )
-  const showDraftWorkspaceModeControl = !agentSelectionLocked
   const agentModelOptions = getAgentModelOptions(effectiveAgentType)
   const activeAgentModel = effectiveAgentType
     ? draftAgentModels[effectiveAgentType] ?? defaultAgentModels[effectiveAgentType] ?? null
@@ -681,14 +674,14 @@ export function ChatInput() {
   }, [cancelPendingDraftPersist])
 
   useEffect(() => {
-    if (skillsLoaded || skillsLoading) {
+    if (!activeSkillMatch || skillsLoaded || skillsLoading) {
       return
     }
 
     void refreshSkills().catch((error) => {
       console.error('[chat-input] Failed to load skills:', error)
     })
-  }, [refreshSkills, skillsLoaded, skillsLoading])
+  }, [activeSkillMatch, refreshSkills, skillsLoaded, skillsLoading])
 
   useEffect(() => {
     if (!activeSkillTokenKey || dismissedSkillToken !== activeSkillTokenKey) {
@@ -1173,33 +1166,6 @@ export function ChatInput() {
             >
               <Send className="h-3.5 w-3.5" />
             </Button>
-            {showDraftWorkspaceModeControl && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setDraftWorkspaceMode(draftWorkspaceMode === 'root' ? 'clone' : 'root')
-                }}
-                className={`h-7 w-7 rounded-none border-l border-border/20 p-0 transition-colors ${
-                  draftWorkspaceMode === 'clone'
-                    ? 'bg-primary/12 text-primary hover:bg-primary/18 hover:text-primary'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                title={
-                  draftWorkspaceMode === 'root'
-                    ? 'First send will bind this chat in the canonical workspace root'
-                    : 'First send will create and bind an isolated clone workspace'
-                }
-                aria-label={`Workspace mode: ${formatWorkspaceModeLabel(draftWorkspaceMode)}`}
-              >
-                {draftWorkspaceMode === 'root' ? (
-                  <GitCommitVertical className="h-3.5 w-3.5" />
-                ) : (
-                  <GitBranch className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            )}
             {/* Agent selector */}
             <div className="relative" ref={agentPickerRef}>
               <Button

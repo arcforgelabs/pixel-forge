@@ -1160,7 +1160,7 @@ def _normalize_agent_type(value: object | None) -> str:
 
 
 def _normalize_workspace_mode(value: object | None) -> str:
-    return "root" if value == "root" else "clone"
+    return "root"
 
 
 def _normalize_origin_kind(value: object | None) -> str:

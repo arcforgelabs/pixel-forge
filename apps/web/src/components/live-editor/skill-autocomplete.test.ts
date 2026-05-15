@@ -52,11 +52,10 @@ describe("skill autocomplete", () => {
     ).toBeNull();
   });
 
-  it("ranks skills installed for the preferred target first", () => {
+  it("only suggests skills installed for the preferred target", () => {
     const suggestions = getSkillAutocompleteSuggestions(skills, "front", "codex");
     expect(suggestions.map((skill) => skill.name)).toEqual([
       "frontend-design",
-      "frontend-aesthetics",
     ]);
   });
 

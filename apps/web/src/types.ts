@@ -15,6 +15,7 @@ export interface Settings {
   codeGenerationModel: CodeGenerationModel;
   anthropicApiKey: string | null; // Added property for anthropic API key
   advancedMode: boolean;
+  earlyAccessMode: boolean;
 }
 
 export enum AppState {

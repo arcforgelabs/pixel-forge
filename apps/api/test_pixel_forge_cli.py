@@ -399,6 +399,35 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertTrue(body["activate"])
         self.assertIn('"tab_id": "tab-1"', stdout.getvalue())
 
+    def test_browser_status_reports_update_when_broker_manifest_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            state_dir.mkdir()
+            (state_dir / "controller-update-apply-state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "phase": "installing",
+                        "progress": 40,
+                        "message": "Installing updated Pixel Forge build...",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with (
+                patch.object(pixel_forge_cli, "shared_state_dir", return_value=state_dir),
+                patch("sys.stdout", stdout),
+            ):
+                exit_code = pixel_forge_cli._command_browser_status(argparse.Namespace())
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["controller_update"]["phase"], "installing")
+        self.assertIn("main desktop shell relaunches", payload["message"])
+
     def test_browser_open_can_request_operator_visible_tab(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir) / "state"

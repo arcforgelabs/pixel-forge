@@ -648,16 +648,82 @@ def _print_json(payload: Any) -> int:
     return 0
 
 
+def _controller_cdp_url() -> str | None:
+    return f"http://127.0.0.1:{int(port()) + 100}" if port().isdigit() else None
+
+
+def _read_controller_cdp_targets() -> list[dict[str, Any]]:
+    cdp_url = _controller_cdp_url()
+    if not cdp_url:
+        return []
+    try:
+        with urllib.request.urlopen(f"{cdp_url}/json/list", timeout=1) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload if isinstance(payload, list) else []
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return []
+
+
+def _browser_broker_unavailable_payload(reason: str) -> dict[str, Any]:
+    apply_state = _read_apply_state()
+    update_running = apply_state.get("status") == "running"
+    cdp_targets = _read_controller_cdp_targets()
+    updater_target_open = any(
+        "updater.html" in str(target.get("url") or "")
+        or "Updating Pixel Forge" in str(target.get("title") or "")
+        for target in cdp_targets
+        if isinstance(target, dict)
+    )
+    message = reason
+    if update_running or updater_target_open:
+        message = (
+            "Pixel Forge is currently applying a controller update; browser tabs are "
+            "unavailable until the main desktop shell relaunches."
+        )
+    return {
+        "ok": False,
+        "available": False,
+        "reason": reason,
+        "message": message,
+        "manifest_path": str(browser_broker_state_path()),
+        "controller_update": apply_state if apply_state.get("status") != "idle" else None,
+        "controller_cdp_url": _controller_cdp_url(),
+        "desktop_targets": [
+            {
+                "id": target.get("id"),
+                "title": target.get("title"),
+                "url": target.get("url"),
+                "type": target.get("type"),
+            }
+            for target in cdp_targets
+            if isinstance(target, dict)
+        ],
+    }
+
+
+def _browser_broker_unavailable_message(reason: str) -> str:
+    payload = _browser_broker_unavailable_payload(reason)
+    update_state = payload.get("controller_update")
+    if isinstance(update_state, dict) and update_state.get("status") == "running":
+        phase = update_state.get("phase") or "running"
+        progress = update_state.get("progress")
+        detail = update_state.get("message") or payload["message"]
+        return (
+            f"{payload['message']} Current update phase: {phase}"
+            f"{f' ({progress}%)' if isinstance(progress, int) else ''}. {detail} "
+            "Run `pixel-forge controller-update status` for progress."
+        )
+    return f"{reason} Open the Pixel Forge desktop shell first."
+
+
 def _read_browser_broker_manifest() -> dict[str, Any]:
     payload = _read_json(browser_broker_state_path())
     if not isinstance(payload, dict):
-        raise SystemExit(
-            "Pixel Forge browser broker is not running. Open the Pixel Forge desktop shell first."
-        )
+        raise SystemExit(_browser_broker_unavailable_message("Pixel Forge browser broker is not running."))
     base_url = _normalize_text(payload.get("baseUrl"))
     token = _normalize_text(payload.get("token"))
     if not base_url or not token:
-        raise SystemExit("Pixel Forge browser broker manifest is incomplete.")
+        raise SystemExit(_browser_broker_unavailable_message("Pixel Forge browser broker manifest is incomplete."))
     return {
         **payload,
         "baseUrl": base_url,
@@ -738,7 +804,10 @@ def _browser_scope_payload(args: argparse.Namespace) -> dict[str, str | None]:
 
 
 def _command_browser_status(_args: argparse.Namespace) -> int:
-    return _print_json(_browser_broker_request("GET", "/status"))
+    try:
+        return _print_json(_browser_broker_request("GET", "/status"))
+    except SystemExit as exc:
+        return _print_json(_browser_broker_unavailable_payload(str(exc)))
 
 
 def _command_browser_tabs(args: argparse.Namespace) -> int:

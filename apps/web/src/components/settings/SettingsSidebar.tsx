@@ -64,7 +64,6 @@ import {
   MessageSquare,
   RefreshCw,
   Settings as SettingsIcon,
-  BookOpen,
   Loader2,
   Plus,
   MoreVertical,
@@ -495,7 +494,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     refreshProjectSessions,
     refreshProjectChats,
     refreshAgentDeckTargets,
-    refreshSkills,
     createProjectChatSession,
     selectedAgentDeckTargetId,
     lastSavedFile,
@@ -506,8 +504,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     setDefaultAgentType,
     setDefaultAgentModel,
     setDefaultAgentThinking,
-    defaultWorkspaceMode,
-    setDefaultWorkspaceMode,
     previewUrl,
     controllerVersion,
     controllerRuntimeRoot,
@@ -520,11 +516,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     switchToThread,
     clearLiveEditorSession,
     clearProject,
-    installedSkills,
-    skillSourceRoots,
-    skillInstallDestinations,
-    skillsLoaded,
-    skillsLoading,
     pendingControllerUpdate,
     controllerReleaseUpdate,
     dismissedControllerUpdateId,
@@ -586,9 +577,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
   const [isOpeningAgentDeckTui, setIsOpeningAgentDeckTui] = useState(false);
   const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
-  const [claude1MOpus, setClaude1MOpus] = useState(true);
-  const [claude1MSonnet, setClaude1MSonnet] = useState(false);
-  const [claude1MLoaded, setClaude1MLoaded] = useState(false);
   const activeClaudeDefaultModel = defaultAgentModels.claude ?? DEFAULT_CLAUDE_MODEL;
   const activeClaudeThinkingOptions = getClaudeThinkingOptions(activeClaudeDefaultModel);
   const activeClaudeDefaultThinking = activeClaudeThinkingOptions.some(
@@ -596,46 +584,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   )
     ? defaultAgentThinking.claude
     : null;
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const payload = await requestSidebarJson<{
-          use_1m_context_opus: boolean;
-          use_1m_context_sonnet: boolean;
-        }>("/api/claude-global-settings");
-        if (cancelled) return;
-        setClaude1MOpus(payload.use_1m_context_opus);
-        setClaude1MSonnet(payload.use_1m_context_sonnet);
-        setClaude1MLoaded(true);
-      } catch {
-        if (!cancelled) setClaude1MLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const updateClaude1M = async (patch: {
-    use_1m_context_opus?: boolean;
-    use_1m_context_sonnet?: boolean;
-  }) => {
-    try {
-      const payload = await requestSidebarJson<{
-        use_1m_context_opus: boolean;
-        use_1m_context_sonnet: boolean;
-      }>("/api/claude-global-settings", {
-        method: "POST",
-        body: JSON.stringify(patch),
-      });
-      setClaude1MOpus(payload.use_1m_context_opus);
-      setClaude1MSonnet(payload.use_1m_context_sonnet);
-    } catch (error) {
-      console.error("Failed to update Claude 1M context setting", error);
-    }
-  };
   const visibleProjects = recentProjects.filter((project) => (
     !(
       RUNTIME_KIND !== "controller"
@@ -720,19 +668,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     controllerVersion,
     controllerReleaseUpdate,
   });
-
-  useEffect(() => {
-    if (!viewingSettings || skillsLoaded || skillsLoading) {
-      return;
-    }
-
-    void refreshSkills().catch((error) => {
-      console.error("[settings] Failed to load runtime skills:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to load runtime skills"
-      );
-    });
-  }, [refreshSkills, viewingSettings, skillsLoaded, skillsLoading]);
 
   useEffect(() => {
     if (!projectPath) {
@@ -1253,9 +1188,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         agentType: shouldCarryDraftIntent
           ? activeDraftState.draftAgentType
           : defaultAgentType,
-        workspaceMode: shouldCarryDraftIntent
-          ? activeDraftState.draftWorkspaceMode
-          : "clone",
+        workspaceMode: "root",
       });
       if (
         startFreshThread
@@ -1454,6 +1387,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       onClick: () => {
         switchMode("screenshot");
       },
+      earlyAccess: true,
     },
     {
       key: "live-editor",
@@ -1466,6 +1400,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           switchMode("live-editor");
         }
       },
+      earlyAccess: false,
     },
     {
       key: "logo-forge",
@@ -1476,14 +1411,36 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       onClick: () => {
         switchMode("logo-forge");
       },
+      earlyAccess: true,
     },
-  ];
+  ].filter((item) => !item.earlyAccess || settings.earlyAccessMode);
   const modeTabValue: "screenshot" | "live-editor" | "logo-forge" =
     activeMode === "live-editor"
       ? "live-editor"
       : activeMode === "logo-forge"
         ? "logo-forge"
         : "screenshot";
+  const modeTabLabel =
+    modeTabValue === "live-editor"
+      ? "Live Editor"
+      : modeTabValue === "logo-forge"
+        ? "Logo Forge"
+        : "Screenshot";
+  const [selectedSettingsTab, setSelectedSettingsTab] = useState("application");
+  const selectedSettingsTitle =
+    selectedSettingsTab === "application"
+      ? "Application"
+      : selectedSettingsTab === "agents"
+        ? "Agents"
+        : selectedSettingsTab === "general"
+          ? "General"
+          : selectedSettingsTab === "live-editor"
+            ? "Live Editor"
+            : selectedSettingsTab === "logo-forge"
+              ? "Logo Forge"
+              : selectedSettingsTab === "screenshot"
+                ? "Screenshot"
+                : modeTabLabel;
 
   const [projectSettingsPortalTarget, setProjectSettingsPortalTarget] =
     useState<HTMLElement | null>(null);
@@ -1989,7 +1946,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           className="flex h-[min(760px,calc(100vh-48px))] w-[min(960px,calc(100vw-32px))] max-w-none gap-0 overflow-hidden p-0 sm:rounded-xl"
         >
           <Tabs
-            defaultValue="application"
+            value={selectedSettingsTab}
+            onValueChange={setSelectedSettingsTab}
             orientation="vertical"
             className="flex min-h-0 flex-1"
           >
@@ -2021,10 +1979,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     >
                       {modeTabValue === "live-editor" ? (
                         <Radio className="h-3.5 w-3.5" />
+                      ) : modeTabValue === "logo-forge" ? (
+                        <Sparkles className="h-3.5 w-3.5" />
                       ) : (
                         <Layers className="h-3.5 w-3.5" />
                       )}
-                      {modeTabValue === "live-editor" ? "Live Editor" : "Screenshot"}
+                      {modeTabLabel}
                     </TabsTrigger>
                     <TabsTrigger
                       value="agents"
@@ -2032,13 +1992,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
                       Agents
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="skills"
-                      className="w-full justify-start gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-normal"
-                    >
-                      <BookOpen className="h-3.5 w-3.5" />
-                      Skills
                     </TabsTrigger>
                     <TabsTrigger
                       value="general"
@@ -2052,8 +2005,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
             <div className="flex min-w-0 flex-1 flex-col bg-background">
               <div className="border-b border-border/40 px-6 py-4">
-                <p className="text-sm text-muted-foreground">
-                  Control the Pixel Forge runtime, live editor lanes, and installed skills.
+                <p className="text-sm font-medium text-foreground">
+                  {selectedSettingsTitle}
                 </p>
               </div>
 
@@ -2207,9 +2160,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Advanced Mode</p>
+                    <p className="text-sm font-medium text-foreground">Developer Mode</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Enables developer features such as the Mirror preview launcher.
+                      Enables developer controls such as the Mirror preview launcher.
                     </p>
                   </div>
                   <Switch
@@ -2217,6 +2170,22 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     checked={settings.advancedMode}
                     onCheckedChange={(checked) =>
                       setSettings((prev) => ({ ...prev, advancedMode: checked }))
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Early Access Mode</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Enables beta features that are still being shaped, including Screenshot mode.
+                    </p>
+                  </div>
+                  <Switch
+                    id="early-access-mode-toggle"
+                    checked={settings.earlyAccessMode}
+                    onCheckedChange={(checked) =>
+                      setSettings((prev) => ({ ...prev, earlyAccessMode: checked }))
                     }
                   />
                 </div>
@@ -2562,134 +2531,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     </TabsContent>
 
                     <TabsContent
-                      value="skills"
-                      className="mt-0 space-y-4"
-                    >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Runtime skill homes</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Chat autocomplete is driven by the real skill folders Pixel Forge finds on disk. Pixel Forge keeps its own managed skill home in shared state while still showing the external Claude, Codex, and OpenClaw homes truthfully.
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      void refreshSkills().catch((error) => {
-                        toast.error(
-                          error instanceof Error
-                            ? error.message
-                            : "Failed to refresh runtime skills"
-                        );
-                      });
-                    }}
-                    disabled={skillsLoading}
-                    className="h-8 px-2 text-xs"
-                  >
-                    <RefreshCw className={`mr-1 h-3.5 w-3.5 ${skillsLoading ? "animate-spin" : ""}`} />
-                    Refresh
-                  </Button>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                      Skills
-                    </p>
-                    <p className="mt-1 text-base font-semibold text-foreground">
-                      {installedSkills.length}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                      Libraries
-                    </p>
-                    <p className="mt-1 text-base font-semibold text-foreground">
-                      {skillSourceRoots.filter((root) => root.exists).length}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-border/60 bg-background/70 p-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                      Destinations
-                    </p>
-                    <p className="mt-1 text-base font-semibold text-foreground">
-                      {skillInstallDestinations.filter((destination) => destination.exists).length}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Install Destinations
-                  </p>
-                  <div className="space-y-2">
-                    {skillInstallDestinations.map((destination) => (
-                      <div
-                        key={destination.id}
-                        className="rounded-lg border border-border/60 bg-background/70 p-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            {destination.label}
-                          </span>
-                          <Badge
-                            variant="outline"
-                            className={
-                              destination.exists
-                                ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-100"
-                                : "border-border/60 bg-background/70 text-muted-foreground"
-                            }
-                          >
-                            {destination.exists ? "Available" : "Missing"}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                          {destination.path}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Known Skills
-                  </p>
-                  <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                    {installedSkills.length === 0 && !skillsLoading && (
-                      <p className="rounded-lg border border-border/60 bg-background/70 p-3 text-xs text-muted-foreground">
-                        No installed skills were discovered yet. Pixel Forge still keeps its managed skill home in shared state, but the autocomplete surface only reflects skill folders that actually exist on disk.
-                      </p>
-                    )}
-                    {installedSkills.map((skill) => (
-                      <div
-                        key={skill.name}
-                        className="rounded-lg border border-border/60 bg-background/70 p-2"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-mono text-xs text-foreground">/{skill.name}</p>
-                            {skill.description && (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {skill.description}
-                              </p>
-                            )}
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className="border-emerald-500/35 bg-emerald-500/10 text-emerald-100"
-                          >
-                            Installed
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                    </TabsContent>
-
-                    <TabsContent
                       value="agents"
                       className="mt-0 space-y-4"
                     >
@@ -2697,10 +2538,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div className="flex items-center justify-between gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Default Agent</Label>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                New chats start on this agent until the first send binds a real backend lane.
-                              </p>
+                              <Label className="text-sm font-medium">Default</Label>
                             </div>
                             <Select
                               value={defaultAgentType}
@@ -2718,61 +2556,32 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               </SelectContent>
                             </Select>
                           </div>
-
-                          <div className="flex items-center justify-between gap-4 border-t border-border/40 pt-4">
-                            <div>
-                              <Label className="text-sm font-medium">Default Chat Mode</Label>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                New chats default to this workspace mode.
-                              </p>
-                            </div>
-                            <Select
-                              value={defaultWorkspaceMode}
-                              onValueChange={(value) => setDefaultWorkspaceMode(value as "root" | "clone")}
-                            >
-                              <SelectTrigger className="h-9 w-[160px] text-xs">
-                                {defaultWorkspaceMode === "root" ? "Root" : "Clone"}
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="root">Root</SelectItem>
-                                <SelectItem value="clone">Clone</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
                         </div>
 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
-                            <Label className="text-sm font-medium">Claude Defaults</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Profile-wide model and thinking defaults for new Claude chats and launches.
-                            </p>
+                            <Label className="text-sm font-medium">Claude Code</Label>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] uppercase tracking-normal text-muted-foreground/60">
-                                pinned version
-                              </span>
-                              <Select
-                                value={defaultAgentModels.claude ?? "__none__"}
-                                onValueChange={(value) =>
-                                  setDefaultAgentModel("claude", value === "__none__" ? null : value)
-                                }
-                              >
-                                <SelectTrigger className="h-9 w-[200px] text-xs">
-                                  <SelectValue placeholder="Tool default" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">Tool default</SelectItem>
-                                  {AGENT_MODEL_OPTIONS.claude.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
+                            <Select
+                              value={defaultAgentModels.claude ?? "__none__"}
+                              onValueChange={(value) =>
+                                setDefaultAgentModel("claude", value === "__none__" ? null : value)
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[200px] text-xs">
+                                <SelectValue placeholder="Default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Default</SelectItem>
+                                {AGENT_MODEL_OPTIONS.claude.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Thinking</Label>
@@ -2783,10 +2592,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[200px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {activeClaudeThinkingOptions.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
@@ -2795,52 +2604,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="min-w-0">
-                              <Label htmlFor="settings-claude-1m-opus" className="text-xs text-muted-foreground">
-                                Opus 1M context
-                              </Label>
-                              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                                Legacy 4.6-only alias pin. Opus 4.7 is the default profile model.
-                              </p>
-                            </div>
-                            <Switch
-                              id="settings-claude-1m-opus"
-                              checked={claude1MOpus}
-                              disabled={!claude1MLoaded}
-                              onCheckedChange={(next) => {
-                                setClaude1MOpus(next);
-                                void updateClaude1M({ use_1m_context_opus: next });
-                              }}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="min-w-0">
-                              <Label htmlFor="settings-claude-1m-sonnet" className="text-xs text-muted-foreground">
-                                Sonnet 1M context
-                              </Label>
-                              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                                Legacy Sonnet 4.6 alias pin for the 1M-token window. Requires extra usage on Max plans.
-                              </p>
-                            </div>
-                            <Switch
-                              id="settings-claude-1m-sonnet"
-                              checked={claude1MSonnet}
-                              disabled={!claude1MLoaded}
-                              onCheckedChange={(next) => {
-                                setClaude1MSonnet(next);
-                                void updateClaude1M({ use_1m_context_sonnet: next });
-                              }}
-                            />
-                          </div>
                         </div>
 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
-                            <Label className="text-sm font-medium">Codex Defaults</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Profile-wide model and reasoning defaults for new Codex chats and launches.
-                            </p>
+                            <Label className="text-sm font-medium">Codex</Label>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
@@ -2851,10 +2619,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[200px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {AGENT_MODEL_OPTIONS.codex.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
@@ -2872,10 +2640,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[200px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {AGENT_THINKING_OPTIONS.codex.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
@@ -2888,10 +2656,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
-                            <Label className="text-sm font-medium">Gemini Defaults</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Profile-wide model default for new Gemini chats and launches.
-                            </p>
+                            <Label className="text-sm font-medium">Gemini</Label>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
@@ -2902,10 +2667,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[200px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {AGENT_MODEL_OPTIONS.gemini.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
@@ -2918,10 +2683,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
-                            <Label className="text-sm font-medium">Pi Defaults</Label>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Profile-wide provider/model and thinking defaults for new Pi chats and launches.
-                            </p>
+                            <Label className="text-sm font-medium">Pi</Label>
                           </div>
                           <div className="flex items-center justify-between gap-4">
                             <Label className="text-xs text-muted-foreground">Model</Label>
@@ -2932,10 +2694,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[220px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {AGENT_MODEL_OPTIONS.pi.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
@@ -2953,10 +2715,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               }
                             >
                               <SelectTrigger className="h-9 w-[220px] text-xs">
-                                <SelectValue placeholder="Tool default" />
+                                <SelectValue placeholder="Default" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">Tool default</SelectItem>
+                                <SelectItem value="__none__">Default</SelectItem>
                                 {AGENT_THINKING_OPTIONS.pi.map((option) => (
                                   <SelectItem key={option.value} value={option.value}>
                                     {option.label}
