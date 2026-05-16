@@ -24,7 +24,7 @@ To uninstall: run `./uninstall.sh` from the repo checkout (pass `--remove-state`
 
 ## Active docs
 
-- `SPECS.md` — intent, goals, requirements, proof status
+- `INTENT.md` — intent, goals, requirements, proof status
 - `ARCHITECTURE.md` — current system shape, operating lanes, next target release
 - `AGENTS.md` — agent guardrails for working in this repo
 - `CLAUDE.md` — Claude Code specific guardrails
@@ -33,4 +33,4 @@ Historical and displaced root docs live under `docs/archives/root-docs/`.
 
 ## Versioning
 
-CalVer `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction), `YYYY.M.D-beta.N` (prerelease). See `SPECS.md` REQ-S-014 / REQ-S-015.
+CalVer `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction), `YYYY.M.D-beta.N` (prerelease). See `INTENT.md` REQ-S-014 / REQ-S-015.

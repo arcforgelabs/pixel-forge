@@ -17,7 +17,7 @@ function escapeXml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// SPECS.md REQ-F-006: the background rect is drawn OUTSIDE the icon clip
+// INTENT.md REQ-F-006: the background rect is drawn OUTSIDE the icon clip
 // group so that when includeBackground is true, the entire SVG frame is
 // filled; when false, the whole frame is transparent. No inner/outer split.
 export function buildSvgString(opts: SvgOptions): string {

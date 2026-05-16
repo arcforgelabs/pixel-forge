@@ -7,7 +7,7 @@
 
 The Logo Forge already exists as a standalone editor at `design/logo/tromino-forge.html`, backed by the DOM-free `@pixel-forge/logo-forge-core` package. It has not yet been promoted into the Pixel Forge shell as a tool slot alongside Live Editor and Screenshot.
 
-SPECS.md pins the product requirements (REQ-1.13, REQ-F-002, REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-007) and ARCHITECTURE.md pins the runtime shape (single-region background rule, preview/export separation, per-project persistence). Those say *what* must be true. This ADR decides *how* the tool slot gets built and confirms the scope boundaries before code lands.
+INTENT.md pins the product requirements (REQ-1.13, REQ-F-002, REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-007) and ARCHITECTURE.md pins the runtime shape (single-region background rule, preview/export separation, per-project persistence). Those say *what* must be true. This ADR decides *how* the tool slot gets built and confirms the scope boundaries before code lands.
 
 The trigger for writing this down now: we are moving workstations with the scaffold still unbuilt, and the next session needs to pick up without re-deriving the design.
 

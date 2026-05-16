@@ -13,7 +13,7 @@ const versionFiles = [
   ['packages/sdk-node/package.json', path.join(repoRoot, 'packages', 'sdk-node', 'package.json')],
 ]
 
-// CalVer per SPECS.md REQ-S-014:
+// CalVer per INTENT.md REQ-S-014:
 //   stable date tag:          YYYY.M.D
 //   same-day release ordinal: YYYY.M.D-N       (N >= 1)
 //   prerelease:               YYYY.M.D-beta.N  (N >= 1)

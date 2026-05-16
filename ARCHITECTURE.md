@@ -2,7 +2,7 @@
 
 This is the only active repo-level architecture and operating doc.
 
-- `SPECS.md` owns intent, goals, requirements, limiting factor, and proof status.
+- `INTENT.md` owns intent, goals, requirements, limiting factor, and proof status. `SPECS.md` remains only as a compatibility pointer.
 - `ARCHITECTURE.md` owns current system shape, next target release shape, final ideal shape, and the operating lanes that still deserve to exist.
 - `docs/adr/` owns durable design rationale that should survive implementation churn.
 - `AGENTS.md` and `CLAUDE.md` should only contain non-inferable agent guardrails.
@@ -89,7 +89,7 @@ Tuning env:
 
 ### Versioning
 
-Pixel Forge uses date-based CalVer per `SPECS.md` REQ-S-014 / REQ-S-015. Accepted tag shapes are `YYYY.M.D` (stable date tag), `YYYY.M.D-N` (same-day release ordinal, `N >= 1`), and `YYYY.M.D-beta.N` (prerelease). Ordering: `YYYY.M.D-beta.N < YYYY.M.D < YYYY.M.D-1 < YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere.
+Pixel Forge uses date-based CalVer per `INTENT.md` REQ-S-014 / REQ-S-015. Accepted tag shapes are `YYYY.M.D` (stable date tag), `YYYY.M.D-N` (same-day release ordinal, `N >= 1`), and `YYYY.M.D-beta.N` (prerelease). Ordering: `YYYY.M.D-beta.N < YYYY.M.D < YYYY.M.D-1 < YYYY.M.D-2`. SemVer MAJOR.MINOR.PATCH is not used anywhere.
 
 Version surfaces kept in lock-step: `VERSION`, root `package.json`, `apps/web/package.json`, `apps/desktop/package.json`, `packages/sdk-node/package.json`. `scripts/check-version-sync.mjs` (invoked by `pnpm check:version` and `pnpm verify`) enforces both drift and CalVer format; UI-side comparisons use `apps/web/src/lib/calver.ts`.
 
@@ -524,7 +524,7 @@ sequenceDiagram
 
 ## Next Target Release
 
-The next target release should attack the new current limiting factor from `SPECS.md`: universal native context ingress plus live browser attach. Pixel Forge now has truthful typed turn assembly, root-or-clone first-bind choice in the draft chat flow, prompt-first direct `@file` refs, inline attachment-token composer behavior, selection tunnels, live-preview context, and first-pass Gemini CLI parity through Agent Deck, but the final handoff still lands in Claude/Codex/Gemini through tool-specific edges instead of one thin universal item bridge plus one universal warm-browser attach contract.
+The next target release should attack the current limiting factor from `INTENT.md`: universal native context ingress plus live browser attach through provider-neutral agent integrations. Pixel Forge now has truthful typed turn assembly, root first-bind in the draft chat flow, prompt-first direct refs, inline attachment-token composer behavior, selection tunnels, live-preview context, and first-pass Gemini/Pi/OpenClaw parity through Agent Deck, but the final handoff still lands in Claude/Codex/Gemini/Pi/OpenClaw through tool-specific edges instead of one thin provider contract plus one universal warm-browser attach contract.
 
 The smallest complete unit that matters:
 
@@ -593,7 +593,7 @@ flowchart TD
 ## What No Longer Earns Active Space
 
 - separate quick-start and setup docs
-- progress or vision docs that duplicate `SPECS.md` or this file
+- progress or vision docs that duplicate `INTENT.md` or this file
 - test-run narratives that are just historical execution logs
 - root-level summaries or findings docs that are no longer operational truth
 

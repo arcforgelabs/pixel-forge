@@ -9,7 +9,7 @@ export interface ComposeOptions {
   appIconRadiusPct?: number;
 }
 
-// Single-region background fill (SPECS.md REQ-F-006). The canvas is either
+// Single-region background fill (INTENT.md REQ-F-006). The canvas is either
 // filled with params.background end-to-end, or left fully transparent.
 export function composeExportCanvas(opts: ComposeOptions): HTMLCanvasElement {
   const { pattern, params, size, includeBackground, appIconRadiusPct } = opts;
