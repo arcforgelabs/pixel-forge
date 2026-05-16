@@ -33,10 +33,15 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 13. Pixel Forge must host project-scoped creative authoring tools — starting with the Logo Forge for Pixel Forge-family brand marks — so the operator can forge, preview, and iterate on project-owned assets inside the same shell that already owns the project, without leaving for a separate editor surface or losing the per-project save state when switching between projects.
 14. Pixel Forge must be usable as a tool we can distribute from the website: easy to install, easy to configure, reliable for non-Linux users, and adaptable to users' existing Claude Code, Codex, Gemini, Pi, OpenClaw, Agent Deck, or future agent workflows.
 15. Platform support must be designed in from the core boundary: Linux-specific tmux/systemd behavior belongs in optional providers or launch adapters, not in the cross-platform Live Editor kernel.
+16. The current Pixel Forge-owned Agent Deck module must be sunset as a required internal interface and retained only as an optional provider/plugin path. Pixel Forge may bundle, install, or recommend Agent Deck where it helps, but the core product must be able to run, route context, and perform useful Live Editor handoffs through direct native providers without Agent Deck present.
 
 # Requirements
 
 ## Agent Provider Reduction Plan
+
+Tracking issue: https://github.com/arcforgelabs/pixel-forge/issues/7
+
+This plan owns the migration from "Pixel Forge requires its embedded Agent Deck module" to "Pixel Forge has a provider system where Agent Deck is one optional provider." Treat the current `foundations/agent-deck`, `agent_deck_bridge.py`, `scripts/agent-deck.sh`, and `pixel-forge-agent-deck` launcher as compatibility infrastructure to wrap first and peel away later, not as the permanent core boundary.
 
 ### Target Architecture
 
@@ -87,6 +92,17 @@ The first provider set should be:
 6. `openclaw-cli`: direct OpenClaw provider using OpenClaw's native TUI/session surface where available.
 
 Agent Deck may compose these native tools as one provider, but it must no longer be the only path to use them.
+
+### Required-to-Optional Migration Rules
+
+1. Do not delete the embedded Agent Deck path until the provider boundary can preserve today's Live Editor behavior through an `AgentDeckProvider`.
+2. New core APIs, DB columns, frontend state, request-pack fields, and event payloads must use provider-neutral names. Existing `agent_deck_*` names may remain only as compatibility projections during migration.
+3. Pixel Forge startup, project opening, preview selection, request-pack writing, and chat/thread persistence must not import, build, launch, or require Agent Deck.
+4. Agent Deck-specific tmux, systemd, cgroup memory, hook, transcript, skill, closeout, and TUI behavior belongs inside the Agent Deck provider package or optional bundle.
+5. Direct native providers must prefer the user's existing installed CLIs and config homes before Pixel Forge-owned copies.
+6. If Agent Deck is absent, disabled, broken, or not supported on the current platform, Pixel Forge should report the `agent-deck` provider as unavailable while keeping core UI and other providers usable.
+7. The optional Agent Deck provider may target either the bundled Pixel Forge foundation, the upstream standalone Agent Deck install, or both, but that selection must be explicit in provider configuration rather than hidden in global shell environment.
+8. Migration is complete only when `PIXEL_FORGE_WITH_AGENT_DECK=0` can install and open Pixel Forge, and at least one direct native provider can receive a Live Editor request from selected preview context.
 
 ### Phase 0: Stabilize Existing Behavior
 
@@ -166,6 +182,8 @@ Agent Deck may compose these native tools as one provider, but it must no longer
    - `PIXEL_FORGE_DEFAULT_PROVIDER=...`
 4. On Linux, Agent Deck provider may keep tmux/systemd/cgroup memory governance.
 5. On macOS and Windows, direct CLI providers should work before Agent Deck parity is required.
+
+The end state of this phase is not "no Agent Deck." The end state is "no hidden Agent Deck requirement." The Agent Deck provider can remain a strong default or recommended workflow on platforms where it is reliable, but the core installer and controller must not fail just because Agent Deck cannot be built, copied, launched, or isolated.
 
 ### Phase 5: UI Simplification
 
