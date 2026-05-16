@@ -73,7 +73,7 @@ func TestBuildDelegatedFinishPromptCloneMentionsScopeAndCleanup(t *testing.T) {
 	for _, want := range []string{
 		"AI closeout agent for one isolated Agent Deck session",
 		"Do not touch other clones",
-		"`intent-spec-loop` skill",
+		"`intent-loop` skill",
 		"`using-agent-deck` skill",
 		"Enumerate the source session's concrete deltas first",
 		"Do not discard a source delta unless you can state the exact behavioral or intent conflict",

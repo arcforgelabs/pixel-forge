@@ -12,8 +12,8 @@ Intent:
 Checkpoint this isolated clone in the way that best serves the canonical repo's current intent while keeping the source session open. Prefer deterministic progress when the clone fits a normal local checkpoint. When manual reconciliation or partial integration is needed, integrate the highest-value truthful result into the canonical repo root, then realign the source clone so it can continue from the new target tip without lying about its state.
 
 Current repo truth:
-- Use the repo's current operational truth source for intent, goals, and requirements. Today this is typically `SPECS.md` if present, but prefer current reality over filename conventions.
-- If available in this environment, use the `intent-spec-loop` skill to challenge requirements against intent and identify the current limiting factor before acting.
+- Use the repo's current operational truth source for intent, goals, and requirements. Prefer `INTENT.md` when present. Older repos may still use `SPECS.md`; prefer current reality over filename conventions.
+- If available in this environment, use the `intent-loop` skill to challenge requirements against intent and identify the current limiting factor before acting.
 - If available in this environment, use the `using-agent-deck` skill to discover the proper checkpoint, resync, and session lifecycle tools instead of inventing ad hoc cleanup.
 
 Requirements:
@@ -45,7 +45,7 @@ Useful starting points:
 - `agent-deck session output {{ printf "%q" .SourceTitle }} -q`
 - `agent-deck clone checkpoint {{ printf "%q" .SourceTitle }} --into {{ .TargetBranch }} --yes`
 - `agent-deck clone resync {{ printf "%q" .SourceTitle }} --into {{ .TargetBranch }} --force --yes`
-- `SPECS.md` or the repo's current operational truth source
+- `INTENT.md` or the repo's current operational truth source
 
 {{ if .UserPrompt }}
 Additional operator instructions:

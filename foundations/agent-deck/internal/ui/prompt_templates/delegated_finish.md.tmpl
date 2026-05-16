@@ -12,8 +12,8 @@ Intent:
 Close out this isolated session in the way that best serves the canonical repo's current intent. Extract the highest-value truthful outcome from the session with the least unnecessary process. Integrate complete work when warranted. Reconcile partial work when useful. Preserve useful operator-visible simplification, copy cleanup, and other low-risk improvements when they do not create a real behavioral or intent conflict. Preserve unrelated local work in the canonical root. Keep Agent Deck state truthful. Bias toward decisive forward motion.
 
 Current repo truth:
-- Use the repo's current operational truth source for intent, goals, and requirements. Today this is typically `SPECS.md` if present, but prefer current reality over filename conventions.
-- If available in this environment, use the `intent-spec-loop` skill to challenge requirements against intent and identify the current limiting factor before acting.
+- Use the repo's current operational truth source for intent, goals, and requirements. Prefer `INTENT.md` when present. Older repos may still use `SPECS.md`; prefer current reality over filename conventions.
+- If available in this environment, use the `intent-loop` skill to challenge requirements against intent and identify the current limiting factor before acting.
 - If available in this environment, use the `using-agent-deck` skill to discover the proper session lifecycle and cleanup tools instead of inventing ad hoc cleanup.
 
 Requirements:
@@ -45,7 +45,7 @@ Useful starting points:
 - `git -C {{ printf "%q" .RepoRoot }} diff --stat`
 - `git -C {{ printf "%q" .SourcePath }} diff --stat`
 - `agent-deck session output {{ printf "%q" .SourceTitle }} -q`
-- `SPECS.md` or the repo's current operational truth source
+- `INTENT.md` or the repo's current operational truth source
 - repo delivery scripts, CI config, and preview/staging docs if this repo normally validates integrated work beyond a local merge
 {{- if .IsClone }}
 - Relevant Agent Deck closeout tools likely include `agent-deck clone finish {{ printf "%q" .SourceTitle }} --into {{ .TargetBranch }}` and `agent-deck clone finish {{ printf "%q" .SourceTitle }} --no-merge`; verify the best path before using them.

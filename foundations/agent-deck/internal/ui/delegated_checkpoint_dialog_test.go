@@ -69,7 +69,7 @@ func TestBuildDelegatedCheckpointPromptMentionsCheckpointAndResync(t *testing.T)
 
 	for _, want := range []string{
 		"AI checkpoint agent for one isolated Agent Deck clone session",
-		"`intent-spec-loop` skill",
+		"`intent-loop` skill",
 		"`using-agent-deck` skill",
 		"`agent-deck clone checkpoint \"clone-session\" --into master --yes`",
 		"`agent-deck clone resync \"clone-session\" --into master --force --yes`",
