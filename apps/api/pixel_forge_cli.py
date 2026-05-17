@@ -412,6 +412,8 @@ def _clear_stale_pid_file() -> None:
 
 
 def _exec(command: Sequence[str], env: dict[str, str] | None = None) -> "NoReturn":
+    if not command:
+        raise SystemExit("No command configured")
     os.execvpe(command[0], list(command), env or _base_env())
 
 
@@ -982,6 +984,9 @@ def _agent_deck_tui_terminal_command(
     title: str,
     wm_class: str,
 ) -> list[str] | None:
+    if not command:
+        return None
+
     candidates: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("ghostty", (f"--class={wm_class}", f"--title={title}", "-e")),
         ("gnome-terminal", (f"--class={wm_class}", f"--title={title}", "--")),

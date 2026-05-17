@@ -117,8 +117,13 @@ def read_agent_deck_surface_status() -> dict[str, Any]:
 
 
 def agent_deck_surface_command() -> list[str]:
+    command = agent_deck_command()
+    if not command:
+        raise RuntimeError(
+            "Agent Deck provider is disabled or no Agent Deck command is configured"
+        )
     return [
-        *agent_deck_command(),
+        *command,
         "web-standalone",
         f"-listen={agent_deck_surface_host()}:{agent_deck_surface_port()}",
     ]

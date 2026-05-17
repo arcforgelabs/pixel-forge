@@ -17,18 +17,24 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
             "PIXEL_FORGE_SHARED_STATE_DIR": os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR"),
             "PIXEL_FORGE_RUNTIME_DIR": os.environ.get("PIXEL_FORGE_RUNTIME_DIR"),
             "PIXEL_FORGE_AGENT_DECK_HOME": os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME"),
+            "PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR": os.environ.get("PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR"),
             "PIXEL_FORGE_DB_PATH": os.environ.get("PIXEL_FORGE_DB_PATH"),
             "PIXEL_FORGE_AGENT_DECK_SURFACE_HOST": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_HOST"),
             "PIXEL_FORGE_AGENT_DECK_SURFACE_PORT": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_PORT"),
             "PIXEL_FORGE_AGENT_DECK_SURFACE_URL": os.environ.get("PIXEL_FORGE_AGENT_DECK_SURFACE_URL"),
+            "AGENTDECK_DIR": os.environ.get("AGENTDECK_DIR"),
+            "AGENT_DECK_DIR": os.environ.get("AGENT_DECK_DIR"),
         }
         os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
         os.environ["PIXEL_FORGE_RUNTIME_DIR"] = str(Path(self.tempdir.name) / "runtime")
         os.environ["PIXEL_FORGE_AGENT_DECK_HOME"] = str(Path(self.tempdir.name) / "agent-deck")
+        os.environ.pop("PIXEL_FORGE_AGENT_DECK_TMUX_TMPDIR", None)
         os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
         os.environ["PIXEL_FORGE_AGENT_DECK_SURFACE_HOST"] = "127.0.0.1"
         os.environ["PIXEL_FORGE_AGENT_DECK_SURFACE_PORT"] = "8842"
         os.environ.pop("PIXEL_FORGE_AGENT_DECK_SURFACE_URL", None)
+        os.environ.pop("AGENTDECK_DIR", None)
+        os.environ.pop("AGENT_DECK_DIR", None)
 
     def tearDown(self) -> None:
         for key, value in self.original_env.items():

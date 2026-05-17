@@ -142,7 +142,7 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
-        if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
+        if (url.includes("/api/projects/") && url.includes("/agent-sessions")) {
           return new Response(
             JSON.stringify({
               sessions: [
@@ -386,7 +386,7 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
-        if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
+        if (url.includes("/api/projects/") && url.includes("/agent-sessions")) {
           return new Response(
             JSON.stringify({
               sessions: [],
@@ -542,7 +542,7 @@ describe("session-store thread switching", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
-        if (url.includes("/api/projects/") && url.includes("/agent-deck-sessions")) {
+        if (url.includes("/api/projects/") && url.includes("/agent-sessions")) {
           return new Response(
             JSON.stringify({
               sessions: [
@@ -1046,7 +1046,7 @@ describe("session-store project ordering", () => {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
-        if (url.includes("/api/projects/") && url.endsWith("/agent-deck-sessions")) {
+        if (url.includes("/api/projects/") && url.endsWith("/agent-sessions")) {
           return new Response(
             JSON.stringify({ sessions: [] }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -1113,7 +1113,7 @@ describe("createAgentDeckTargetSession", () => {
         const url = typeof input === "string" ? input : input.toString();
         if (
           url.includes("/api/projects/")
-          && url.includes("/agent-deck-sessions")
+          && url.includes("/agent-sessions")
           && init?.method === "POST"
         ) {
           return new Response(

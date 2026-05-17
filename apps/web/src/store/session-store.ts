@@ -387,11 +387,15 @@ interface ApiProjectChat {
 }
 
 interface ApiAgentDeckSessionTarget {
+  provider_id?: string | null;
+  provider_session_id?: string | null;
   id: string;
   title: string;
-  path: string;
+  path?: string | null;
+  workspace_path?: string | null;
   group: string | null;
-  tool: string | null;
+  tool?: string | null;
+  agent_id?: string | null;
   command: string | null;
   status: string | null;
   created_at: string | null;
@@ -505,12 +509,15 @@ function normalizeProjectChat(chat: ApiProjectChat): ProjectChatRecord {
 function normalizeAgentDeckTarget(
   session: ApiAgentDeckSessionTarget
 ): AgentDeckSessionTarget {
+  const id = session.provider_session_id?.trim() || session.id;
+  const path = session.workspace_path?.trim() || session.path || "";
+  const tool = session.agent_id ?? session.tool ?? null;
   return {
-    id: session.id,
+    id,
     title: session.title,
-    path: session.path,
+    path,
     group: session.group,
-    tool: session.tool,
+    tool,
     command: session.command,
     status: session.status,
     createdAt: session.created_at,
@@ -1110,7 +1117,7 @@ async function fetchAgentDeckTargets(
   projectPath: string
 ): Promise<AgentDeckSessionTarget[]> {
   const payload = await requestJson<{ sessions: ApiAgentDeckSessionTarget[] }>(
-    `/api/projects/${encodeURIComponent(projectPath)}/agent-deck-sessions`
+    `/api/projects/${encodeURIComponent(projectPath)}/agent-sessions`
   );
   return payload.sessions.map(normalizeAgentDeckTarget);
 }
@@ -1125,7 +1132,7 @@ async function createAgentDeckTarget(
   }
 ): Promise<AgentDeckSessionTarget> {
   const payload = await requestJson<ApiAgentDeckSessionTarget>(
-    `/api/projects/${encodeURIComponent(projectPath)}/agent-deck-sessions`,
+    `/api/projects/${encodeURIComponent(projectPath)}/agent-sessions`,
     {
       method: "POST",
       body: JSON.stringify({

@@ -1,5 +1,17 @@
 # Agent Runtime Map
 
+## Provider Transport Checkpoint
+
+As of 2026-05-17, Agent Deck is an optional Pixel Forge provider boundary rather than an assumed core module. The installer accepts `PIXEL_FORGE_WITH_AGENT_DECK=auto|1|0`; `auto` prefers the standard workstation `agent-deck-standalone` or `agent-deck` command before falling back to the bundled foundation.
+
+Pixel Forge exposes provider metadata at `/api/agent-providers`, including current and preferred transport notes per supported agent:
+
+- Provider-owned Agent Deck operations now exist at the backend boundary. `AgentDeckProvider` wraps session list/create/rename/delete/activity calls, the frontend session store reads/writes provider-neutral `GET`/`POST /api/projects/{project_path}/agent-sessions`, and the old Agent Deck-specific routes remain shims while the broader naming and persistence layers migrate.
+- Codex: current warm-turn transport is `codex exec resume --json --dangerously-bypass-approvals-and-sandbox`, with JSONL/session-output observation. That is the best short-term bridge because it uses a native Codex entrypoint and supports image attachments, but it is not the end-state architecture because it does not make the visible Codex TUI the authoritative transport.
+- Codex preferred architecture: a direct `codex-cli` provider using the experimental `codex app-server`/remote TUI protocol. The installed CLI can generate protocol schemas with thread start/resume, turn start/completion, agent-message deltas, approval requests, images, and file-change notifications, which maps much more cleanly to Pixel Forge's provider contract.
+- Claude: current warm-turn transport remains `claude -p --resume` where a session id is available, with Agent Deck/tmux fallback for visible panes. Remote Control remains a candidate only where it preserves the native visible-session contract.
+- Gemini/Pi: current transport remains Agent Deck/tmux-mediated. Both expose non-interactive/session-capable CLI flags, but direct providers still need validation before they replace the Agent Deck wrapper.
+
 ```mermaid
 flowchart TD
   subgraph Operator["Operator Surfaces"]

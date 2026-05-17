@@ -29,7 +29,6 @@ from agent_deck_bridge import (
     assess_agent_deck_delete_state,
     claude_jsonl_path,
     claude_jsonl_payloads_for_record,
-    create_agent_deck_session_target,
     delete_agent_deck_session_target,
     get_agent_deck_session_activity,
     get_last_output,
@@ -52,6 +51,7 @@ from agent_deck_surface import (
     read_agent_deck_surface_status,
     stop_agent_deck_surface,
 )
+from agent_providers import get_agent_provider, list_agent_providers
 import pixel_forge_cli as _pf_cli
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
@@ -835,6 +835,10 @@ def serialize_agent_deck_session_target(
     }
 
 
+def serialize_agent_provider_session_target(session_target) -> dict[str, object]:
+    return session_target.to_dict()
+
+
 def serialize_project_chat(chat_record) -> dict[str, object]:
     return {
         "id": chat_record.id,
@@ -1304,15 +1308,36 @@ async def upsert_project_session(project_path: str, request: ProjectSessionUpser
     return serialize_session(session)
 
 
+def _agent_provider_or_error(provider_id: str):
+    normalized_provider_id = provider_id.strip() if isinstance(provider_id, str) else ""
+    provider = get_agent_provider(normalized_provider_id or "agent-deck")
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Agent provider not found")
+    status = provider.status()
+    if not status.enabled:
+        raise HTTPException(status_code=503, detail=status.reason or "Agent provider is disabled")
+    if not status.available:
+        raise HTTPException(status_code=503, detail=status.reason or "Agent provider is unavailable")
+    return provider
+
+
 @app.get("/api/projects/{project_path:path}/agent-deck-sessions")
 async def get_project_agent_deck_sessions(project_path: str):
     normalized_project_path = normalize_project_path(project_path)
     if not os.path.isdir(normalized_project_path):
         raise HTTPException(status_code=404, detail="Project path does not exist")
 
+    agent_provider = _agent_provider_or_error("agent-deck")
+
     try:
-        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
-        sessions = await list_project_agent_deck_sessions(normalized_project_path)
+        live_sessions = await agent_provider.list_sessions(
+            normalized_project_path,
+            include_live_editor=True,
+        )
+        sessions = await agent_provider.list_sessions(
+            normalized_project_path,
+            include_live_editor=False,
+        )
     except AgentDeckBridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1328,9 +1353,49 @@ async def get_project_agent_deck_sessions(project_path: str):
 
     return {
         "sessions": [
-            serialize_agent_deck_session_target(session)
+            serialize_agent_provider_session_target(session)
             for session in sessions
         ]
+    }
+
+
+@app.get("/api/projects/{project_path:path}/agent-sessions")
+async def get_project_agent_sessions(project_path: str, provider: str = "agent-deck"):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    agent_provider = _agent_provider_or_error(provider)
+
+    try:
+        live_sessions = await agent_provider.list_sessions(
+            normalized_project_path,
+            include_live_editor=True,
+        )
+        sessions = await agent_provider.list_sessions(
+            normalized_project_path,
+            include_live_editor=False,
+        )
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if agent_provider.provider_id == "agent-deck":
+        live_session_ids = {session.id for session in live_sessions}
+        detach_missing_agent_deck_session_bindings(
+            normalized_project_path,
+            live_session_ids,
+        )
+        detach_missing_agent_deck_thread_bindings(
+            normalized_project_path,
+            live_session_ids,
+        )
+
+    return {
+        "provider_id": agent_provider.provider_id,
+        "sessions": [
+            serialize_agent_provider_session_target(session)
+            for session in sessions
+        ],
     }
 
 
@@ -1348,8 +1413,10 @@ async def create_project_agent_deck_session(
         name=project_name_for_path(normalized_project_path),
     )
 
+    agent_provider = _agent_provider_or_error("agent-deck")
+
     try:
-        session = await create_agent_deck_session_target(
+        session = await agent_provider.create_session(
             normalized_project_path,
             agent_type=request.agent_type,
             title=request.title,
@@ -1360,7 +1427,39 @@ async def create_project_agent_deck_session(
     except AgentDeckBridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return serialize_agent_deck_session_target(session)
+    return serialize_agent_provider_session_target(session)
+
+
+@app.post("/api/projects/{project_path:path}/agent-sessions")
+async def create_project_agent_session(
+    project_path: str,
+    request: AgentDeckSessionRequest,
+    provider: str = "agent-deck",
+):
+    normalized_project_path = normalize_project_path(project_path)
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    agent_provider = _agent_provider_or_error(provider)
+
+    upsert_project(
+        normalized_project_path,
+        name=project_name_for_path(normalized_project_path),
+    )
+
+    try:
+        session = await agent_provider.create_session(
+            normalized_project_path,
+            agent_type=request.agent_type,
+            title=request.title,
+            workspace_mode=request.workspace_mode,
+            agent_model=request.agent_model,
+            agent_thinking=request.agent_thinking,
+        )
+    except AgentDeckBridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return serialize_agent_provider_session_target(session)
 
 
 @app.post("/api/projects/{project_path:path}/chats")
@@ -2117,6 +2216,16 @@ async def get_runtime_info():
     return await asyncio.to_thread(read_runtime_info)
 
 
+@app.get("/api/agent-providers")
+async def get_agent_providers():
+    return {
+        "providers": [
+            provider.to_dict()
+            for provider in await asyncio.to_thread(list_agent_providers)
+        ]
+    }
+
+
 @app.get("/api/agent-deck-surface")
 async def get_agent_deck_surface_status():
     return {"surface": await asyncio.to_thread(read_agent_deck_surface_status)}
@@ -2124,6 +2233,7 @@ async def get_agent_deck_surface_status():
 
 @app.post("/api/agent-deck-surface/start")
 async def start_agent_deck_surface():
+    _agent_provider_or_error("agent-deck")
     try:
         status = await asyncio.to_thread(ensure_agent_deck_surface_started)
     except RuntimeError as exc:
@@ -2138,6 +2248,8 @@ async def delete_agent_deck_surface():
 
 @app.post("/api/agent-deck-tui/open")
 async def open_agent_deck_tui():
+    _agent_provider_or_error("agent-deck")
+
     def _spawn() -> dict[str, Any]:
         env = _pf_cli._agent_deck_tui_exec_env(for_external_terminal=True)
         command = _pf_cli._agent_deck_tui_terminal_command(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 from state_root_migration import (
@@ -18,6 +19,8 @@ DEFAULT_AGENT_DECK_SURFACE_HOST = "127.0.0.1"
 DEFAULT_AGENT_DECK_SURFACE_PORT = 8422
 DEFAULT_RUNTIME_KIND = "controller"
 RETIRED_CLI_NAMES = frozenset({"pixel-forge-alpha", "pixel-forge-workstation-v2"})
+AGENT_DECK_ENABLED_VALUES = frozenset({"1", "true", "yes", "on"})
+AGENT_DECK_DISABLED_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 def _sanitize_slug(raw_value: str) -> str:
@@ -29,6 +32,31 @@ def _truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def agent_deck_provider_mode() -> str:
+    raw_mode = (os.environ.get("PIXEL_FORGE_WITH_AGENT_DECK") or "auto").strip().lower()
+    if raw_mode in AGENT_DECK_ENABLED_VALUES:
+        return "1"
+    if raw_mode in AGENT_DECK_DISABLED_VALUES:
+        return "0"
+    return "auto"
+
+
+def agent_deck_provider_enabled() -> bool:
+    mode = agent_deck_provider_mode()
+    if mode == "1":
+        return True
+    if mode == "0":
+        return False
+    explicit_command = (os.environ.get("PIXEL_FORGE_AGENT_DECK_CMD") or "").strip()
+    if explicit_command:
+        return True
+    return bool(
+        shutil.which("agent-deck-standalone")
+        or shutil.which("agent-deck")
+        or (source_root() / "scripts" / "agent-deck.sh").is_file()
+    )
 
 
 def instance_slug() -> str:

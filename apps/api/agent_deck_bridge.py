@@ -559,7 +559,12 @@ async def _run_command_with_env(
 
 
 def _agent_deck_args(*args: str) -> list[str]:
-    return [*agent_deck_command(), *args]
+    command = agent_deck_command()
+    if not command:
+        raise AgentDeckBridgeError(
+            "Agent Deck provider is disabled or no Agent Deck command is configured"
+        )
+    return [*command, *args]
 
 
 async def _run_agent_deck_command(

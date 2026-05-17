@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RETIRED_LANE_ENV_STRIP_SNIPPET=$(cat <<'RETIRED_LANE_STRIP'
 _pf_allow_retired_lane_env="${PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV:-0}"
 if [ "$_pf_allow_retired_lane_env" != "1" ]; then
-    _pf_lane_markers="${PIXEL_FORGE_INSTALL_NAME:-} ${PIXEL_FORGE_INSTANCE_SLUG:-} ${PIXEL_FORGE_CLI_NAME:-} ${PIXEL_FORGE_SHELL_NAME:-} ${PIXEL_FORGE_INSTALL_DIR:-} ${PIXEL_FORGE_BACKUP_DIR:-} ${PIXEL_FORGE_SERVICE_NAME:-} ${PIXEL_FORGE_SHARED_STATE_DIR:-} ${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-} ${PIXEL_FORGE_SKILLS_INSTALL_DIR:-} ${PIXEL_FORGE_DB_PATH:-} ${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-} ${PIXEL_FORGE_DESKTOP_FILE_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-} ${PIXEL_FORGE_DESKTOP_WM_CLASS:-} ${PIXEL_FORGE_DESKTOP_ICON_PATH:-} ${PIXEL_FORGE_AGENT_DECK_PROFILE:-} ${PIXEL_FORGE_AGENT_DECK_HOME:-} ${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-} ${PIXEL_FORGE_AGENT_DECK_CMD:-} ${PIXEL_FORGE_URL_HOST:-} ${PIXEL_FORGE_WEB_HOST:-} ${PIXEL_FORGE_SHELL_URL:-} ${PIXEL_FORGE_PREVIEW_PARTITION:-} ${PIXEL_FORGE_RUNTIME_DIR:-} ${AGENTDECK_PROFILE:-} ${AGENTDECK_DIR:-} ${AGENT_DECK_DIR:-}"
+    _pf_lane_markers="${PIXEL_FORGE_INSTALL_NAME:-} ${PIXEL_FORGE_INSTANCE_SLUG:-} ${PIXEL_FORGE_CLI_NAME:-} ${PIXEL_FORGE_SHELL_NAME:-} ${PIXEL_FORGE_INSTALL_DIR:-} ${PIXEL_FORGE_BACKUP_DIR:-} ${PIXEL_FORGE_SERVICE_NAME:-} ${PIXEL_FORGE_SHARED_STATE_DIR:-} ${PIXEL_FORGE_SKILLS_INSTALL_DIR:-} ${PIXEL_FORGE_DB_PATH:-} ${PIXEL_FORGE_DESKTOP_ENTRY_NAME:-} ${PIXEL_FORGE_DESKTOP_FILE_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_NAME:-} ${PIXEL_FORGE_DESKTOP_ICON_SOURCE:-} ${PIXEL_FORGE_DESKTOP_WM_CLASS:-} ${PIXEL_FORGE_DESKTOP_ICON_PATH:-} ${PIXEL_FORGE_AGENT_DECK_PROFILE:-} ${PIXEL_FORGE_AGENT_DECK_HOME:-} ${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-} ${PIXEL_FORGE_AGENT_DECK_CMD:-} ${PIXEL_FORGE_URL_HOST:-} ${PIXEL_FORGE_WEB_HOST:-} ${PIXEL_FORGE_SHELL_URL:-} ${PIXEL_FORGE_PREVIEW_PARTITION:-} ${PIXEL_FORGE_RUNTIME_DIR:-} ${AGENTDECK_PROFILE:-} ${AGENTDECK_DIR:-} ${AGENT_DECK_DIR:-}"
     case "$_pf_lane_markers" in
         *pixel-forge-alpha*|*pixel-forge-workstation-v2*)
             echo "Ignoring retired Pixel Forge lane env overrides from the current shell." >&2
@@ -64,6 +64,74 @@ RETIRED_LANE_STRIP
 
 eval "$RETIRED_LANE_ENV_STRIP_SNIPPET"
 
+# Resolve user-installed CLIs before deciding whether optional providers need
+# bundled fallbacks. Desktop/systemd launch environments are often thinner than
+# an interactive shell, so include common user binary roots up front.
+for p in "$HOME/.local/bin" "$HOME/.npm-global/bin" "$HOME/.local/share/pnpm" "$HOME/.bun/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.nvm/versions/node"/*/bin; do
+    [ -d "$p" ] && case ":$PATH:" in *":$p:"*) ;; *) export PATH="$p:$PATH" ;; esac
+done
+
+normalize_agent_deck_mode() {
+    case "$(printf '%s' "${1:-auto}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) echo "1" ;;
+        0|false|no|off) echo "0" ;;
+        *) echo "auto" ;;
+    esac
+}
+
+find_standard_agent_deck_command() {
+    if command -v agent-deck-standalone >/dev/null 2>&1; then
+        command -v agent-deck-standalone
+        return 0
+    fi
+    if command -v agent-deck >/dev/null 2>&1; then
+        command -v agent-deck
+        return 0
+    fi
+    return 1
+}
+
+agent_deck_command_is_resolvable() {
+    local raw_command="$1"
+    local executable=""
+    local resolved_executable=""
+    if [ -z "$raw_command" ]; then
+        return 1
+    fi
+    read -r -a _pf_agent_deck_command_parts <<< "$raw_command"
+    executable="${_pf_agent_deck_command_parts[0]:-}"
+    if [ -z "$executable" ]; then
+        return 1
+    fi
+    if command -v "$executable" >/dev/null 2>&1; then
+        return 0
+    fi
+    case "$executable" in
+        "~") resolved_executable="$HOME" ;;
+        "~/"*) resolved_executable="$HOME/${executable#~/}" ;;
+        *) resolved_executable="$executable" ;;
+    esac
+    if [[ "$resolved_executable" == */* ]] && [ -x "$resolved_executable" ]; then
+        return 0
+    fi
+    return 1
+}
+
+WITH_AGENT_DECK_MODE="$(normalize_agent_deck_mode "${PIXEL_FORGE_WITH_AGENT_DECK:-auto}")"
+EXPLICIT_AGENT_DECK_CMD="${PIXEL_FORGE_AGENT_DECK_CMD:-}"
+STANDARD_AGENT_DECK_CMD=""
+if [ -n "$EXPLICIT_AGENT_DECK_CMD" ]; then
+    if agent_deck_command_is_resolvable "$EXPLICIT_AGENT_DECK_CMD" \
+        || [ "$WITH_AGENT_DECK_MODE" = "1" ]; then
+        STANDARD_AGENT_DECK_CMD="$EXPLICIT_AGENT_DECK_CMD"
+    else
+        echo "Agent Deck provider: ignoring stale PIXEL_FORGE_AGENT_DECK_CMD=$EXPLICIT_AGENT_DECK_CMD" >&2
+    fi
+fi
+if [ -z "$STANDARD_AGENT_DECK_CMD" ]; then
+    STANDARD_AGENT_DECK_CMD="$(find_standard_agent_deck_command || true)"
+fi
+
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
 INSTANCE_SLUG="${PIXEL_FORGE_INSTANCE_SLUG:-$INSTALL_NAME}"
 CLI_NAME="${PIXEL_FORGE_CLI_NAME:-$INSTALL_NAME}"
@@ -99,7 +167,24 @@ AGENT_DECK_FOUNDATION_BUILD_DIR="$AGENT_DECK_FOUNDATION_INSTALL_DIR/build"
 AGENT_DECK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_BUILD_DIR/agent-deck"
 AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_INSTALL_DIR/agent-deck"
 AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck.sh"
-AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
+AGENT_DECK_PROVIDER_ENABLED="0"
+AGENT_DECK_SHOULD_BUNDLE="0"
+if [ "$WITH_AGENT_DECK_MODE" != "0" ]; then
+    if [ -n "$STANDARD_AGENT_DECK_CMD" ]; then
+        AGENT_DECK_PROVIDER_ENABLED="1"
+    elif [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
+        AGENT_DECK_PROVIDER_ENABLED="1"
+        AGENT_DECK_SHOULD_BUNDLE="1"
+    elif [ "$WITH_AGENT_DECK_MODE" = "1" ]; then
+        echo "Error: PIXEL_FORGE_WITH_AGENT_DECK=1 but no standard agent-deck command or bundled foundation is available." >&2
+        exit 1
+    fi
+fi
+if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ]; then
+    AGENT_DECK_CMD_DEFAULT="$AGENT_DECK_RUNNER_INSTALL_PATH"
+else
+    AGENT_DECK_CMD_DEFAULT="$STANDARD_AGENT_DECK_CMD"
+fi
 STATE_ROOT_MIGRATION_HELPER_INSTALL_PATH="$INSTALL_DIR/ensure_state_root.py"
 SHELL_URL="${PIXEL_FORGE_SHELL_URL:-http://${URL_HOST}:${API_PORT}}"
 PREVIEW_PARTITION="${PIXEL_FORGE_PREVIEW_PARTITION:-persist:${INSTANCE_SLUG}-preview}"
@@ -142,11 +227,6 @@ LEGACY_WS_V2_INSTALL_DIR="$HOME/.local/lib/pixel-forge-workstation-v2"
 LEGACY_WS_V2_BACKUP_DIR="$HOME/.local/lib/pixel-forge-workstation-v2.rollback"
 LEGACY_WS_V2_DESKTOP_FILE_NAME="pixel-forge-workstation-v2.desktop"
 LEGACY_WS_V2_DESKTOP_ICON_NAME="pixel-forge-workstation-v2"
-
-# Ensure pnpm/node are in PATH.
-for p in "$HOME/.local/bin" "$HOME/.local/share/pnpm" "$HOME/.nvm/versions/node"/*/bin; do
-    [ -d "$p" ] && case ":$PATH:" in *":$p:"*) ;; *) export PATH="$p:$PATH" ;; esac
-done
 
 require_command() {
     local command_name="$1"
@@ -390,7 +470,9 @@ fi
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$BIN_DIR"
 mkdir -p "$SKILLS_INSTALL_DIR"
-mkdir -p "$AGENT_DECK_HOME"
+if [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
+    mkdir -p "$AGENT_DECK_HOME"
+fi
 
 echo "Backing up current install to $BACKUP_DIR..."
 backup_install_dir
@@ -408,8 +490,8 @@ if [ -f "$SCRIPT_DIR/VERSION" ]; then
     cp "$SCRIPT_DIR/VERSION" "$INSTALL_DIR/VERSION"
 fi
 
-# --- Agent Deck foundation (with hash skip) ---
-if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
+# --- Optional Agent Deck provider foundation (with hash skip) ---
+if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
     AGENT_DECK_FOUNDATION_HASH=$(sha_of_paths "$AGENT_DECK_FOUNDATION_SOURCE_DIR")
     if cache_matches agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH" \
         && [ -d "$AGENT_DECK_FOUNDATION_INSTALL_DIR" ] \
@@ -423,9 +505,13 @@ if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
         install_agent_deck_foundation_binary
         cache_write agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH"
     fi
+elif [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
+    echo "Agent Deck provider: using standard command: $AGENT_DECK_CMD_DEFAULT"
+else
+    echo "Agent Deck provider: disabled/unavailable; core Pixel Forge install will continue."
 fi
 
-if [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
+if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
     mkdir -p "$INSTALL_DIR/scripts"
     cp "$AGENT_DECK_RUNNER_SOURCE" "$AGENT_DECK_RUNNER_INSTALL_PATH"
     chmod +x "$AGENT_DECK_RUNNER_INSTALL_PATH"
@@ -459,13 +545,18 @@ build_frontend() {
 }
 
 build_python() {
+    local created_venv=0
     if [ ! -d "$INSTALL_DIR/.venv" ]; then
         echo "[python] creating virtual environment..."
         python3 -m venv "$INSTALL_DIR/.venv"
+        created_venv=1
     fi
     local req_hash
     req_hash=$(sha_of_paths "$SCRIPT_DIR/apps/api/requirements.txt")
-    if cache_matches python_deps "$req_hash" && [ -x "$INSTALL_DIR/.venv/bin/pip" ]; then
+    if [ "$created_venv" = "0" ] \
+        && cache_matches python_deps "$req_hash" \
+        && [ -x "$INSTALL_DIR/.venv/bin/pip" ] \
+        && [ -x "$INSTALL_DIR/.venv/bin/uvicorn" ]; then
         echo "[python] cache hit, skipping pip install."
         return 0
     fi
@@ -609,6 +700,7 @@ SHARED_STATE_DIR="\${PIXEL_FORGE_SHARED_STATE_DIR:-$SHARED_STATE_DIR}"
 LEGACY_SHARED_STATE_DIR="\${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$LEGACY_SHARED_STATE_DIR}"
 RUNTIME_DIR="\${PIXEL_FORGE_RUNTIME_DIR:-\${SHARED_STATE_DIR}/runtime}"
 PIXEL_FORGE_DB_PATH="\${PIXEL_FORGE_DB_PATH:-$DB_PATH}"
+PIXEL_FORGE_WITH_AGENT_DECK="\${PIXEL_FORGE_WITH_AGENT_DECK:-$WITH_AGENT_DECK_MODE}"
 PIXEL_FORGE_AGENT_DECK_PROFILE="\${PIXEL_FORGE_AGENT_DECK_PROFILE:-$AGENT_DECK_PROFILE}"
 PIXEL_FORGE_AGENT_DECK_HOME="\${PIXEL_FORGE_AGENT_DECK_HOME:-$AGENT_DECK_HOME}"
 PIXEL_FORGE_AGENT_DECK_SURFACE_HOST="\${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-$AGENT_DECK_SURFACE_HOST}"
@@ -636,6 +728,7 @@ export PIXEL_FORGE_SHARED_STATE_DIR="\$SHARED_STATE_DIR"
 export PIXEL_FORGE_LEGACY_SHARED_STATE_DIR="\$LEGACY_SHARED_STATE_DIR"
 export PIXEL_FORGE_RUNTIME_DIR="\$RUNTIME_DIR"
 export PIXEL_FORGE_DB_PATH
+export PIXEL_FORGE_WITH_AGENT_DECK
 export PIXEL_FORGE_AGENT_DECK_PROFILE
 export PIXEL_FORGE_AGENT_DECK_HOME
 export PIXEL_FORGE_AGENT_DECK_SURFACE_HOST
@@ -657,7 +750,10 @@ if [ -f "\$PIXEL_FORGE_STATE_ROOT_MIGRATION_HELPER" ]; then
 fi
 
 mkdir -p "\$RUNTIME_DIR"
-mkdir -p "\$PIXEL_FORGE_AGENT_DECK_HOME"
+case "\$PIXEL_FORGE_WITH_AGENT_DECK" in
+    0|false|FALSE|no|NO|off|OFF) ;;
+    *) mkdir -p "\$PIXEL_FORGE_AGENT_DECK_HOME" ;;
+esac
 
 exec "\$INSTALL_DIR/.venv/bin/python" "\$INSTALL_DIR/pixel_forge_cli.py" "\$@"
 LAUNCHER
@@ -677,6 +773,7 @@ INSTALL_DIR="\${PIXEL_FORGE_INSTALL_DIR:-$INSTALL_DIR}"
 SHARED_STATE_DIR="\${PIXEL_FORGE_SHARED_STATE_DIR:-$SHARED_STATE_DIR}"
 LEGACY_SHARED_STATE_DIR="\${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$LEGACY_SHARED_STATE_DIR}"
 PIXEL_FORGE_DB_PATH="\${PIXEL_FORGE_DB_PATH:-$DB_PATH}"
+PIXEL_FORGE_WITH_AGENT_DECK="\${PIXEL_FORGE_WITH_AGENT_DECK:-$WITH_AGENT_DECK_MODE}"
 PIXEL_FORGE_AGENT_DECK_PROFILE="\${PIXEL_FORGE_AGENT_DECK_PROFILE:-$AGENT_DECK_PROFILE}"
 PIXEL_FORGE_AGENT_DECK_HOME="\${PIXEL_FORGE_AGENT_DECK_HOME:-$AGENT_DECK_HOME}"
 PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT="\${PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT:-$AGENT_DECK_FOUNDATION_INSTALL_DIR}"
@@ -688,6 +785,7 @@ export PIXEL_FORGE_INSTALL_DIR="\$INSTALL_DIR"
 export PIXEL_FORGE_SHARED_STATE_DIR="\$SHARED_STATE_DIR"
 export PIXEL_FORGE_LEGACY_SHARED_STATE_DIR="\$LEGACY_SHARED_STATE_DIR"
 export PIXEL_FORGE_DB_PATH
+export PIXEL_FORGE_WITH_AGENT_DECK
 export PIXEL_FORGE_AGENT_DECK_PROFILE
 export PIXEL_FORGE_AGENT_DECK_HOME
 export PIXEL_FORGE_AGENT_DECK_FOUNDATION_ROOT
@@ -699,8 +797,19 @@ export AGENTDECK_PROFILE="\${AGENTDECK_PROFILE:-\$PIXEL_FORGE_AGENT_DECK_PROFILE
 export AGENTDECK_DIR="\${AGENTDECK_DIR:-\$PIXEL_FORGE_AGENT_DECK_HOME}"
 export AGENT_DECK_DIR="\${AGENT_DECK_DIR:-\$PIXEL_FORGE_AGENT_DECK_HOME}"
 
+case "\$PIXEL_FORGE_WITH_AGENT_DECK" in
+    0|false|FALSE|no|NO|off|OFF)
+        echo "Agent Deck provider is disabled for this Pixel Forge install." >&2
+        exit 1
+        ;;
+esac
+
 if [[ "\${1:-}" == "run" ]]; then
     shift
+    if [ -z "\$PIXEL_FORGE_AGENT_DECK_CMD" ]; then
+        echo "Agent Deck provider command is not configured." >&2
+        exit 1
+    fi
     exec "\$PIXEL_FORGE_AGENT_DECK_CMD" "\$@"
 fi
 
@@ -738,6 +847,7 @@ SHARED_STATE_DIR="\${PIXEL_FORGE_SHARED_STATE_DIR:-$SHARED_STATE_DIR}"
 LEGACY_SHARED_STATE_DIR="\${PIXEL_FORGE_LEGACY_SHARED_STATE_DIR:-$LEGACY_SHARED_STATE_DIR}"
 RUNTIME_DIR="\${PIXEL_FORGE_RUNTIME_DIR:-\${SHARED_STATE_DIR}/runtime}"
 PIXEL_FORGE_DB_PATH="\${PIXEL_FORGE_DB_PATH:-$DB_PATH}"
+PIXEL_FORGE_WITH_AGENT_DECK="\${PIXEL_FORGE_WITH_AGENT_DECK:-$WITH_AGENT_DECK_MODE}"
 PIXEL_FORGE_AGENT_DECK_PROFILE="\${PIXEL_FORGE_AGENT_DECK_PROFILE:-$AGENT_DECK_PROFILE}"
 PIXEL_FORGE_AGENT_DECK_HOME="\${PIXEL_FORGE_AGENT_DECK_HOME:-$AGENT_DECK_HOME}"
 PIXEL_FORGE_AGENT_DECK_SURFACE_HOST="\${PIXEL_FORGE_AGENT_DECK_SURFACE_HOST:-$AGENT_DECK_SURFACE_HOST}"
@@ -773,6 +883,7 @@ export PIXEL_FORGE_SHARED_STATE_DIR="\$SHARED_STATE_DIR"
 export PIXEL_FORGE_LEGACY_SHARED_STATE_DIR="\$LEGACY_SHARED_STATE_DIR"
 export PIXEL_FORGE_RUNTIME_DIR="\$RUNTIME_DIR"
 export PIXEL_FORGE_DB_PATH
+export PIXEL_FORGE_WITH_AGENT_DECK
 export PIXEL_FORGE_SKILLS_INSTALL_DIR="\${PIXEL_FORGE_SKILLS_INSTALL_DIR:-$SKILLS_INSTALL_DIR}"
 export PIXEL_FORGE_AGENT_DECK_PROFILE
 export PIXEL_FORGE_AGENT_DECK_HOME
@@ -853,6 +964,7 @@ Environment=PIXEL_FORGE_SHARED_STATE_DIR=$SHARED_STATE_DIR
 Environment=PIXEL_FORGE_LEGACY_SHARED_STATE_DIR=$LEGACY_SHARED_STATE_DIR
 Environment=PIXEL_FORGE_DB_PATH=$DB_PATH
 Environment=PIXEL_FORGE_SKILLS_INSTALL_DIR=$SKILLS_INSTALL_DIR
+Environment=PIXEL_FORGE_WITH_AGENT_DECK=$WITH_AGENT_DECK_MODE
 Environment=PIXEL_FORGE_AGENT_DECK_PROFILE=$AGENT_DECK_PROFILE
 Environment=PIXEL_FORGE_AGENT_DECK_HOME=$AGENT_DECK_HOME
 Environment=PIXEL_FORGE_AGENT_DECK_SURFACE_HOST=$AGENT_DECK_SURFACE_HOST
@@ -897,11 +1009,13 @@ else
         exit 1
     fi
     cp "$DESKTOP_ICON_SOURCE" "$ICON_DIR/${DESKTOP_ICON_NAME}.png"
-    if [ ! -f "$AGENT_DECK_TUI_ICON_SOURCE" ]; then
-        echo "Error: Agent Deck icon source missing at $AGENT_DECK_TUI_ICON_SOURCE" >&2
-        exit 1
+    if [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
+        if [ ! -f "$AGENT_DECK_TUI_ICON_SOURCE" ]; then
+            echo "Error: Agent Deck icon source missing at $AGENT_DECK_TUI_ICON_SOURCE" >&2
+            exit 1
+        fi
+        cp "$AGENT_DECK_TUI_ICON_SOURCE" "$ICON_DIR/${AGENT_DECK_TUI_ICON_NAME}.png"
     fi
-    cp "$AGENT_DECK_TUI_ICON_SOURCE" "$ICON_DIR/${AGENT_DECK_TUI_ICON_NAME}.png"
 
     DESKTOP_DIR="$HOME/.local/share/applications"
     mkdir -p "$DESKTOP_DIR"
@@ -919,10 +1033,11 @@ StartupNotify=true
 StartupWMClass=${DESKTOP_WM_CLASS}
 DESKTOP
 
-    cat > "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}" << DESKTOP
+    if [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
+        cat > "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}" << DESKTOP
 [Desktop Entry]
 Name=${AGENT_DECK_TUI_DESKTOP_ENTRY_NAME}
-Comment=Agent Deck terminal app bundled with Pixel Forge
+Comment=Agent Deck provider terminal app for Pixel Forge
 Exec=bash -lc "exec ${AGENT_DECK_TUI_LAUNCHER_NAME}"
 Icon=${AGENT_DECK_TUI_ICON_NAME}
 Terminal=false
@@ -932,6 +1047,9 @@ Keywords=agent;deck;pixel-forge;terminal;
 StartupNotify=true
 StartupWMClass=${AGENT_DECK_TUI_WM_CLASS}
 DESKTOP
+    else
+        rm -f "$DESKTOP_DIR/${AGENT_DECK_TUI_DESKTOP_FILE_NAME}"
+    fi
 
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true

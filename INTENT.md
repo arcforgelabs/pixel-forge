@@ -171,6 +171,13 @@ Agent Deck may compose these native tools as one provider, but it must no longer
 
 ### Phase 4: Optional Agent Deck Packaging
 
+Current cut:
+
+- `PIXEL_FORGE_WITH_AGENT_DECK=auto|1|0` now gates Agent Deck as an optional provider. `auto` prefers the user's standard `agent-deck-standalone` or `agent-deck` command and only falls back to Pixel Forge's bundled foundation when no standard command exists.
+- Pixel Forge exposes `GET /api/agent-providers` with provider capability and transport metadata. The initial registry still contains only `agent-deck`, but that provider is now an explicit wrapper boundary rather than the implicit core runtime.
+- `apps/api/agent_providers/AgentDeckProvider` now owns the list/create/rename/delete/activity wrapper methods for Agent Deck, and Pixel Forge exposes provider-neutral `GET`/`POST /api/projects/{project_path}/agent-sessions` routes. The frontend session store now uses `/agent-sessions`; old `/agent-deck-sessions` routes remain compatibility shims during the wider naming/persistence migration.
+- Codex currently uses `codex exec resume --json` for warm turns when Pixel Forge has a native Codex session id. This is the right short-term bridge because it avoids tmux key stuffing and supports images, but the preferred architecture is a dedicated Codex provider around `codex app-server` / remote TUI protocol schemas.
+
 1. Stop treating bundled Agent Deck as an install prerequisite for Pixel Forge.
 2. Split installer work into:
    - core API/web/desktop install

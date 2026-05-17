@@ -85,6 +85,7 @@ export async function createSmokeContext(name) {
     PIXEL_FORGE_SHARED_STATE_DIR: paths.stateDir,
     PIXEL_FORGE_RUNTIME_DIR: paths.runtimeDir,
     PIXEL_FORGE_PORT: String(port),
+    PIXEL_FORGE_API_PORT: String(port),
     PIXEL_FORGE_URL_HOST: '127.0.0.1',
     PIXEL_FORGE_INSTALL_SKIP_SYSTEMD: '1',
     PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION: '1',
