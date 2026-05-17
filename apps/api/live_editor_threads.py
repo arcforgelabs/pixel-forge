@@ -26,10 +26,6 @@ class LiveEditorThreadRecord:
     project_path: str
     workspace_path: str
     backend: str
-    provider_id: str | None
-    provider_session_id: str | None
-    provider_session_title: str | None
-    provider_agent_id: str | None
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     acpx_agent: str | None
@@ -41,6 +37,10 @@ class LiveEditorThreadRecord:
     last_live_preview_hash: str | None
     created_at: str
     updated_at: str
+    provider_id: str | None = None
+    provider_session_id: str | None = None
+    provider_session_title: str | None = None
+    provider_agent_id: str | None = None
 
 
 def _db_path() -> Path:

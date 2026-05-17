@@ -806,6 +806,39 @@ describe("session-store project chat visibility", () => {
     });
   });
 
+  it("surfaces a provider-native session without an Agent Deck compatibility id", () => {
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-codex",
+      backend: "agent-provider",
+      workspacePath: "/tmp/example-project",
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      providerSessionTitle: "Codex direct",
+      providerAgentId: "codex",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+      requestId: "request-codex",
+    });
+
+    const state = useSessionStore.getState();
+    expect(getActiveProjectChats()[0]).toMatchObject({
+      id: "thread-codex",
+      threadId: "thread-codex",
+      title: "Codex direct",
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      agentDeckSessionId: null,
+      bindingState: "attached",
+    });
+    expect(state.agentTargets[0]).toMatchObject({
+      providerId: "codex-cli",
+      id: "codex-thread-a",
+      title: "Codex direct",
+      tool: "codex",
+    });
+  });
+
   it("does not surface an unbound local draft as a visible project chat", () => {
     useSessionStore.getState().upsertProjectSession({
       threadId: "draft-hidden",
@@ -1194,5 +1227,21 @@ describe("createAgentTargetSession", () => {
       id: "thread-a",
       title: "Existing chat",
     });
+  });
+
+  it("passes the selected provider when creating an agent target", async () => {
+    useSessionStore.setState({
+      defaultAgentProviderId: "codex-cli",
+      defaultAgentType: "codex",
+    });
+
+    await useSessionStore.getState().createAgentTargetSession({
+      refreshProjectChats: false,
+    });
+
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0] ?? "");
+    expect(calledUrl).toContain("/agent-sessions?");
+    expect(calledUrl).toContain("provider=codex-cli");
   });
 });

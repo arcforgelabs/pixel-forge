@@ -439,6 +439,20 @@ interface ChatDeleteAssessment {
   detail: string;
 }
 
+function chatProviderSessionId(chat: ProjectChatRecord | null | undefined): string | null {
+  return chat?.providerSessionId?.trim() || chat?.agentDeckSessionId?.trim() || null;
+}
+
+function chatProviderAgentId(chat: ProjectChatRecord | null | undefined): string | null {
+  return chat?.providerAgentId?.trim() || chat?.agentDeckTool?.trim() || null;
+}
+
+function liveEditorProviderSessionId(
+  session: { providerSessionId?: string | null; agentDeckSessionId?: string | null } | null | undefined
+): string | null {
+  return session?.providerSessionId?.trim() || session?.agentDeckSessionId?.trim() || null;
+}
+
 interface ChatDeleteResponse {
   status: "deleted" | "requires_closeout";
   assessment?: ChatDeleteAssessment;
@@ -514,7 +528,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     agentTargetsLoading,
     refreshProjectSessions,
     refreshProjectChats,
-    refreshAgentDeckTargets,
+    refreshAgentTargets,
     createProjectChatSession,
     selectedAgentTargetId,
     lastSavedFile,
@@ -635,20 +649,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     appState === AppState.CODING || appState === AppState.CODE_READY;
   const hasActiveSession = !!sessionId || !!liveEditorSession;
   const activeProjectChats = projectChats.filter(
-    (chat) => chat.threadId !== null || chat.agentDeckSessionId !== null
+    (chat) => chat.threadId !== null || chatProviderSessionId(chat) !== null
   );
+  const activeLiveProviderSessionId = liveEditorProviderSessionId(liveEditorSession);
   const currentProjectChat = liveEditorSession?.threadId
     ? activeProjectChats.find((chat) => chat.threadId === liveEditorSession.threadId) ?? null
-    : liveEditorSession?.agentDeckSessionId
+    : activeLiveProviderSessionId
       ? activeProjectChats.find(
-          (chat) => chat.agentDeckSessionId === liveEditorSession.agentDeckSessionId
+          (chat) => chatProviderSessionId(chat) === activeLiveProviderSessionId
         ) ?? null
       : null;
   const selectedProjectChat = currentProjectChat
     ?? (
       selectedAgentTargetId
         ? activeProjectChats.find(
-            (chat) => chat.agentDeckSessionId === selectedAgentTargetId
+            (chat) => chatProviderSessionId(chat) === selectedAgentTargetId
           ) ?? null
         : null
     );
@@ -659,8 +674,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           && session.threadId !== liveEditorSession?.threadId
       ) ?? null
     : null;
-  const selectedProjectChatDraftThreadKey = selectedProjectChat?.agentDeckSessionId
-    ? findThreadKeyByTargetAgentSessionId(selectedProjectChat.agentDeckSessionId)
+  const selectedProjectChatProviderSessionId = chatProviderSessionId(selectedProjectChat);
+  const selectedProjectChatDraftThreadKey = selectedProjectChatProviderSessionId
+    ? findThreadKeyByTargetAgentSessionId(selectedProjectChatProviderSessionId)
     : null;
   const selectedProjectChatDraftStatus = selectedProjectChatDraftThreadKey
     ? getThreadStatus(selectedProjectChatDraftThreadKey)
@@ -947,7 +963,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       refreshProjectChats(targetProjectPath),
     ]);
     if (targetProjectPath === projectPath) {
-      await refreshAgentDeckTargets();
+      await refreshAgentTargets();
     }
   }
 
@@ -1197,7 +1213,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     const activeDraftState = useLiveEditorStore.getState().getActiveThreadState();
     const activeLiveEditorSession = useSessionStore.getState().liveEditorSession;
     const shouldCarryDraftIntent =
-      !activeLiveEditorSession?.agentDeckSessionId
+      !liveEditorProviderSessionId(activeLiveEditorSession)
       && !activeDraftState.targetAgentSessionId;
     let emptyThreadKey: string | null = null;
     if (startFreshThread) {
@@ -1304,14 +1320,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       return "switched";
     }
 
-    if (
-      chat.agentDeckSessionId
-      && reopenExistingDraftTargetThread(chat.agentDeckSessionId)
-    ) {
+    const targetProviderSessionId = chatProviderSessionId(chat);
+    if (targetProviderSessionId && reopenExistingDraftTargetThread(targetProviderSessionId)) {
       return "reopened";
     }
 
-    resetLiveEditorThread(chat.agentDeckSessionId);
+    resetLiveEditorThread(targetProviderSessionId);
     return "draft";
   }
 
@@ -1734,8 +1748,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                       (session) => session.threadId === chat.threadId
                                     ) ?? null
                                   : null;
-                                const draftThreadKey = chat.agentDeckSessionId
-                                  ? findThreadKeyByTargetAgentSessionId(chat.agentDeckSessionId)
+                                const providerSessionId = chatProviderSessionId(chat);
+                                const draftThreadKey = providerSessionId
+                                  ? findThreadKeyByTargetAgentSessionId(providerSessionId)
                                   : null;
                                 const threadStatus = claimedThread
                                   ? getThreadStatus(claimedThread.threadId)
@@ -1745,8 +1760,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 const isActiveChat = chat.threadId
                                   ? liveEditorSession?.threadId === chat.threadId
                                   : (
-                                      liveEditorSession?.agentDeckSessionId === chat.agentDeckSessionId
-                                      || selectedAgentTargetId === chat.agentDeckSessionId
+                                      liveEditorProviderSessionId(liveEditorSession) === providerSessionId
+                                      || selectedAgentTargetId === providerSessionId
                                     );
 
                                 return renderChatRow({
@@ -1772,7 +1787,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                           path: project.path,
                                           preferredThreadId: chat.threadId ?? null,
                                         });
-                                        if (!chat.threadId && chat.agentDeckSessionId) {
+                                        if (!chat.threadId && providerSessionId) {
                                           focusProjectChat(chat);
                                         }
                                       })();
@@ -2471,7 +2486,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <div className="space-y-1 text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
-                          {formatAgentDeckTool(selectedProjectChat.agentDeckTool)}
+                          {formatAgentDeckTool(chatProviderAgentId(selectedProjectChat))}
                         </Badge>
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
                           {selectedProjectChat.bindingState === "detached"
@@ -2483,7 +2498,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         <p>This chat is active.</p>
                       ) : selectedProjectChatThread ? (
                         <p>
-                          {selectedProjectChat.agentDeckSessionId
+                          {selectedProjectChatProviderSessionId
                             ? "This chat already owns a live lane. Selecting it switches back to that lane."
                             : "This draft chat is still unbound. Selecting it reopens the same pre-send lane."}
                         </p>
@@ -2493,7 +2508,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         </p>
                       ) : selectedProjectChat.threadId ? (
                         <p>
-                          {selectedProjectChat.agentDeckSessionId
+                          {selectedProjectChatProviderSessionId
                             ? "Selecting this chat switches to its saved lane."
                             : "Selecting this chat switches to its saved draft."}
                         </p>
@@ -2521,20 +2536,26 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       </label>
                       <p className="mt-0.5 break-all font-mono text-xs">{liveEditorSession.threadId}</p>
                     </div>
-                    {liveEditorSession.agentDeckSessionId && liveEditorSession.agentDeckSessionTitle && (
+                    {liveEditorProviderSessionId(liveEditorSession) && (
                       <div>
                         <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Agent Deck Session
+                          Provider Session
                         </label>
-                        <p className="mt-0.5 font-mono text-xs">{liveEditorSession.agentDeckSessionTitle}</p>
+                        <p className="mt-0.5 font-mono text-xs">
+                          {liveEditorSession.providerSessionTitle
+                            || liveEditorSession.agentDeckSessionTitle
+                            || liveEditorProviderSessionId(liveEditorSession)}
+                        </p>
                       </div>
                     )}
-                    {liveEditorSession.agentDeckSessionId && (
+                    {liveEditorProviderSessionId(liveEditorSession) && (
                       <div>
                         <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Agent Deck ID
+                          Provider Session ID
                         </label>
-                        <p className="mt-0.5 break-all font-mono text-xs">{liveEditorSession.agentDeckSessionId}</p>
+                        <p className="mt-0.5 break-all font-mono text-xs">
+                          {liveEditorProviderSessionId(liveEditorSession)}
+                        </p>
                       </div>
                     )}
                     {liveEditorSession.workspacePath && (

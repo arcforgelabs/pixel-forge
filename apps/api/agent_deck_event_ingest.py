@@ -10,6 +10,7 @@ from pathlib import Path
 from agent_deck_bridge import (
     AgentDeckBridgeError,
     _session_output_has_meaningful_activity,
+    _summarize_codex_function_call,
     claude_jsonl_path,
     codex_jsonl_path,
     get_last_output,
@@ -833,6 +834,13 @@ class AgentDeckNativeEventIngestor:
         )
         self._active_claude_turns[agent_deck_session_id] = state
 
+        if prompt_text:
+            self._emit_claude_turn_input(
+                sessions,
+                request_id=request_id,
+                prompt_text=prompt_text,
+            )
+
         for session in sessions:
             append_workstation_event(
                 session.project_path,
@@ -846,13 +854,6 @@ class AgentDeckNativeEventIngestor:
                     "agent_deck_tool": session.agent_deck_tool,
                     "workspace_path": session.workspace_path,
                 },
-            )
-
-        if prompt_text:
-            self._emit_claude_turn_input(
-                sessions,
-                request_id=request_id,
-                prompt_text=prompt_text,
             )
 
         return state
@@ -1229,7 +1230,29 @@ class AgentDeckNativeEventIngestor:
                 tool_name = _normalized_text(payload.get("tool"))
                 tool_call_id = _normalized_text(payload.get("tool_call_id"))
                 tool_input = payload.get("input")
+                tool_summary = (
+                    _summarize_codex_function_call(tool_name, tool_input)
+                    if tool_name
+                    else ""
+                )
+                if tool_summary:
+                    turn_state.assistant_output += tool_summary
                 for session in sessions:
+                    if tool_summary:
+                        append_workstation_event(
+                            session.project_path,
+                            session.thread_id,
+                            agent_deck_session_id=session.agent_deck_session_id,
+                            event_type="turn_chunk",
+                            payload={
+                                "request_id": turn_state.request_id,
+                                "agent_deck_session_id": session.agent_deck_session_id,
+                                "agent_deck_session_title": session.agent_deck_session_title,
+                                "agent_deck_tool": session.agent_deck_tool,
+                                "workspace_path": session.workspace_path,
+                                "content": tool_summary,
+                            },
+                        )
                     append_workstation_event(
                         session.project_path,
                         session.thread_id,
