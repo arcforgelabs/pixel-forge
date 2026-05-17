@@ -286,6 +286,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(initial.active_project_path)
         self.assertIsNone(initial.last_workspace_browse_directory)
         self.assertIsNone(initial.active_live_editor_thread_id)
+        self.assertEqual(initial.default_agent_provider_id, "agent-deck")
         self.assertEqual(initial.default_agent_type, "claude")
         self.assertEqual(initial.default_workspace_mode, "root")
         self.assertEqual(initial.claude_default_model, "claude-opus-4-7")
@@ -302,6 +303,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             last_workspace_browse_directory=str(project_path.parent),
             active_mode="live-editor",
             active_live_editor_thread_id="thread-a",
+            default_agent_provider_id="codex-cli",
             default_agent_type="codex",
             default_workspace_mode="clone",
             claude_default_model="sonnet",
@@ -316,6 +318,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.last_workspace_browse_directory, str(project_path.parent))
         self.assertEqual(saved.active_mode, "live-editor")
         self.assertEqual(saved.active_live_editor_thread_id, "thread-a")
+        self.assertEqual(saved.default_agent_provider_id, "codex-cli")
         self.assertEqual(saved.default_agent_type, "codex")
         self.assertEqual(saved.default_workspace_mode, "root")
         self.assertEqual(saved.claude_default_model, "claude-sonnet-4-6")

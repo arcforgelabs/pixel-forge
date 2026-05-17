@@ -158,6 +158,7 @@ export interface ProfileStateRecord {
   lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentProviderId: string;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
   defaultAgentModels: Record<string, string | null>;
@@ -233,6 +234,7 @@ interface SessionStore {
       | "lastWorkspaceBrowseDirectory"
       | "activeMode"
       | "activeLiveEditorThreadId"
+      | "defaultAgentProviderId"
       | "defaultAgentType"
       | "defaultWorkspaceMode"
       | "defaultAgentModels"
@@ -288,9 +290,11 @@ interface SessionStore {
   ) => void;
 
   // Agent selection
+  defaultAgentProviderId: string;
   defaultAgentType: string;
   defaultAgentModels: Record<string, string | null>;
   defaultAgentThinking: Record<string, string | null>;
+  setDefaultAgentProviderId: (providerId: string) => void;
   setDefaultAgentType: (agentType: string) => void;
   setDefaultAgentModel: (agentType: string, model: string | null) => void;
   setDefaultAgentThinking: (agentType: string, thinking: string | null) => void;
@@ -369,6 +373,7 @@ interface ApiProfileState {
   last_workspace_browse_directory: string | null;
   active_mode: ActiveMode;
   active_live_editor_thread_id: string | null;
+  default_agent_provider_id?: string | null;
   default_agent_type: string;
   default_workspace_mode: string;
   claude_default_model: string | null;
@@ -489,6 +494,9 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
           ? "logo-forge"
           : "screenshot",
     activeLiveEditorThreadId: profileState.active_live_editor_thread_id,
+    defaultAgentProviderId: normalizeAgentProviderId(
+      profileState.default_agent_provider_id
+    ),
     defaultAgentType: normalizeAgentType(profileState.default_agent_type),
     defaultWorkspaceMode: normalizeWorkspaceMode(profileState.default_workspace_mode),
     defaultAgentModels: {
@@ -981,6 +989,11 @@ function normalizeAgentType(agentType: string | null | undefined): string {
     : "claude";
 }
 
+function normalizeAgentProviderId(providerId: string | null | undefined): string {
+  const normalized = providerId?.trim() || "";
+  return normalized === "codex-cli" ? "codex-cli" : "agent-deck";
+}
+
 function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspaceMode {
   void mode;
   return "root";
@@ -1109,6 +1122,7 @@ async function upsertProfileStateToApi(options: {
   lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentProviderId: string;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
   defaultAgentModels: Record<string, string | null>;
@@ -1122,6 +1136,7 @@ async function upsertProfileStateToApi(options: {
       last_workspace_browse_directory: options.lastWorkspaceBrowseDirectory,
       active_mode: options.activeMode,
       active_live_editor_thread_id: options.activeLiveEditorThreadId,
+      default_agent_provider_id: normalizeAgentProviderId(options.defaultAgentProviderId),
       default_agent_type: normalizeAgentType(options.defaultAgentType),
       default_workspace_mode: normalizeWorkspaceMode(options.defaultWorkspaceMode),
       claude_default_model: options.defaultAgentModels.claude,
@@ -1222,6 +1237,7 @@ function buildNextProfileState(
     | "projectPath"
     | "activeMode"
     | "liveEditorSession"
+    | "defaultAgentProviderId"
     | "defaultAgentType"
     | "defaultWorkspaceMode"
     | "defaultAgentModels"
@@ -1234,6 +1250,7 @@ function buildNextProfileState(
       | "lastWorkspaceBrowseDirectory"
       | "activeMode"
       | "activeLiveEditorThreadId"
+      | "defaultAgentProviderId"
       | "defaultAgentType"
       | "defaultWorkspaceMode"
       | "defaultAgentModels"
@@ -1246,6 +1263,7 @@ function buildNextProfileState(
   lastWorkspaceBrowseDirectory: string | null;
   activeMode: ActiveMode;
   activeLiveEditorThreadId: string | null;
+  defaultAgentProviderId: string;
   defaultAgentType: string;
   defaultWorkspaceMode: DraftWorkspaceMode;
   defaultAgentModels: Record<string, string | null>;
@@ -1269,6 +1287,13 @@ function buildNextProfileState(
       overrides?.activeLiveEditorThreadId !== undefined
         ? overrides.activeLiveEditorThreadId
         : currentState.liveEditorSession?.threadId ?? null,
+    defaultAgentProviderId:
+      overrides?.defaultAgentProviderId !== undefined
+        ? normalizeAgentProviderId(overrides.defaultAgentProviderId)
+        : normalizeAgentProviderId(
+            currentState.profileState?.defaultAgentProviderId
+              ?? currentState.defaultAgentProviderId
+          ),
     defaultAgentType:
       overrides?.defaultAgentType !== undefined
         ? normalizeAgentType(overrides.defaultAgentType)
@@ -1347,9 +1372,19 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   // Agent selection
+  defaultAgentProviderId: "agent-deck",
   defaultAgentType: "claude",
   defaultAgentModels: { claude: "claude-opus-4-7", codex: null, gemini: null, pi: null },
   defaultAgentThinking: { claude: "xhigh", codex: null, gemini: null, pi: null },
+  setDefaultAgentProviderId: (providerId: string) => {
+    const normalizedProviderId = normalizeAgentProviderId(providerId);
+    set({ defaultAgentProviderId: normalizedProviderId });
+    void get()
+      .persistProfileState({ defaultAgentProviderId: normalizedProviderId })
+      .catch((error) => {
+        console.error("[session-store] Failed to persist default agent provider:", error);
+      });
+  },
   setDefaultAgentType: (agentType: string) => {
     const normalizedAgentType = normalizeAgentType(agentType);
     set({ defaultAgentType: normalizedAgentType });
@@ -1451,6 +1486,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           recentProjects,
           profileState,
           profileLoaded: true,
+          defaultAgentProviderId: normalizeAgentProviderId(
+            profileState?.defaultAgentProviderId ?? state.defaultAgentProviderId
+          ),
           defaultAgentType: normalizeAgentType(
             profileState?.defaultAgentType ?? state.defaultAgentType
           ),

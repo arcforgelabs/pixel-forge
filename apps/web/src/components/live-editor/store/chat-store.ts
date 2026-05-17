@@ -2733,6 +2733,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
+      const providerId =
+        boundSession?.providerId
+        || selectedTarget?.providerId
+        || sessionState.defaultAgentProviderId
+        || 'agent-deck'
       const workspaceMode = normalizeDraftWorkspaceMode(activeThreadState.draftWorkspaceMode)
       void (async () => {
         let livePreviewPayload: Record<string, unknown> | null = null
@@ -2783,6 +2788,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           project_path: projectPath,
           element_context: elementContext,
           preview_url: previewUrl || '',
+          provider_id: providerId,
           agent_type: agentType,
         }
 
@@ -2821,7 +2827,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
         if (targetAgentDeckSessionId) {
           payload.target_agent_deck_session_id = targetAgentDeckSessionId
-          payload.target_provider_id = 'agent-deck'
+          payload.target_provider_id = selectedTarget?.providerId || 'agent-deck'
           payload.target_provider_session_id = targetAgentDeckSessionId
         }
 

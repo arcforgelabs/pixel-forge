@@ -470,6 +470,27 @@ interface AgentDeckSurfaceResponse {
   surface: AgentDeckSurfaceRecord;
 }
 
+interface AgentProviderStatus {
+  id: string;
+  display_name: string;
+  enabled: boolean;
+  available: boolean;
+  reason: string | null;
+  command: string[];
+  capabilities: Record<string, boolean>;
+  transports: {
+    agent_id: string;
+    display_name: string;
+    current_transport: string;
+    preferred_transport: string;
+    architecture_note: string;
+  }[];
+}
+
+interface AgentProvidersResponse {
+  providers: AgentProviderStatus[];
+}
+
 interface Props {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
@@ -498,9 +519,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     selectedAgentDeckTargetId,
     lastSavedFile,
     sessionId,
+    defaultAgentProviderId,
     defaultAgentType,
     defaultAgentModels,
     defaultAgentThinking,
+    setDefaultAgentProviderId,
     setDefaultAgentType,
     setDefaultAgentModel,
     setDefaultAgentThinking,
@@ -574,6 +597,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
   const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
+  const [agentProviders, setAgentProviders] = useState<AgentProviderStatus[]>([]);
+  const [agentProvidersLoading, setAgentProvidersLoading] = useState(false);
   const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
   const [isOpeningAgentDeckTui, setIsOpeningAgentDeckTui] = useState(false);
   const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
@@ -693,6 +718,33 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       })
       .catch((error) => {
         console.error("[settings] Failed to load Agent Deck surface status:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsSidebarOpen]);
+
+  useEffect(() => {
+    if (!settingsSidebarOpen) {
+      return;
+    }
+
+    let cancelled = false;
+    setAgentProvidersLoading(true);
+    void requestSidebarJson<AgentProvidersResponse>("/api/agent-providers")
+      .then((payload) => {
+        if (!cancelled) {
+          setAgentProviders(payload.providers);
+        }
+      })
+      .catch((error) => {
+        console.error("[settings] Failed to load agent providers:", error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAgentProvidersLoading(false);
+        }
       });
 
     return () => {
@@ -2535,6 +2587,95 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       className="mt-0 space-y-4"
                     >
                       <div className="space-y-4">
+                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <Label className="text-sm font-medium">Provider</Label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Live Editor sends new chats through this provider unless an existing lane is selected.
+                              </p>
+                            </div>
+                            <Select
+                              value={defaultAgentProviderId}
+                              onValueChange={(value) => setDefaultAgentProviderId(value)}
+                            >
+                              <SelectTrigger className="h-9 w-[180px] text-xs">
+                                <SelectValue placeholder="Provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {agentProviders.length === 0 && (
+                                  <SelectItem value="agent-deck">Agent Deck</SelectItem>
+                                )}
+                                {agentProviders.map((provider) => (
+                                  <SelectItem key={provider.id} value={provider.id}>
+                                    {provider.display_name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            {agentProvidersLoading ? (
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading providers
+                              </div>
+                            ) : (
+                              agentProviders.map((provider) => (
+                                <div
+                                  key={provider.id}
+                                  className="rounded-md border border-border/50 bg-background/60 p-3"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-medium text-foreground">
+                                        {provider.display_name}
+                                      </p>
+                                      <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                                        {provider.command.length > 0
+                                          ? provider.command.join(" ")
+                                          : "No command resolved"}
+                                      </p>
+                                    </div>
+                                    <Badge
+                                      variant="secondary"
+                                      className={
+                                        provider.enabled && provider.available
+                                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                          : provider.enabled
+                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                                            : "border-border/60 bg-muted text-muted-foreground"
+                                      }
+                                    >
+                                      {provider.enabled
+                                        ? provider.available ? "available" : "unavailable"
+                                        : "disabled"}
+                                    </Badge>
+                                  </div>
+                                  {provider.reason && (
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                      {provider.reason}
+                                    </p>
+                                  )}
+                                  {provider.transports.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                      {provider.transports.map((transport) => (
+                                        <p
+                                          key={`${provider.id}:${transport.agent_id}`}
+                                          className="text-xs text-muted-foreground"
+                                        >
+                                          {transport.display_name}: {transport.current_transport}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div className="flex items-center justify-between gap-4">
                             <div>

@@ -195,6 +195,7 @@ class ProfileStateRecord:
     last_workspace_browse_directory: str | None
     active_mode: str
     active_live_editor_thread_id: str | None
+    default_agent_provider_id: str
     default_agent_type: str
     default_workspace_mode: str
     claude_default_model: str | None
@@ -914,6 +915,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 last_workspace_browse_directory TEXT,
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
+                default_agent_provider_id TEXT NOT NULL DEFAULT 'agent-deck',
                 default_agent_type TEXT NOT NULL DEFAULT 'claude',
                 default_workspace_mode TEXT NOT NULL DEFAULT 'root',
                 claude_default_model TEXT,
@@ -1040,6 +1042,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             if "default_agent_type" not in existing_profile_columns:
                 conn.execute(
                     "ALTER TABLE profile_state ADD COLUMN default_agent_type TEXT NOT NULL DEFAULT 'claude'"
+                )
+            if "default_agent_provider_id" not in existing_profile_columns:
+                conn.execute(
+                    "ALTER TABLE profile_state ADD COLUMN default_agent_provider_id TEXT NOT NULL DEFAULT 'agent-deck'"
                 )
             if "default_workspace_mode" not in existing_profile_columns:
                 conn.execute(
@@ -1243,11 +1249,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             INSERT OR IGNORE INTO profile_state (
                 profile_id,
                 active_mode,
+                default_agent_provider_id,
                 default_agent_type,
                 default_workspace_mode,
                 claude_default_model,
                 claude_default_thinking
-            ) VALUES (?, 'screenshot', 'claude', 'root', ?, ?)
+            ) VALUES (?, 'screenshot', 'agent-deck', 'claude', 'root', ?, ?)
             """,
             (DEFAULT_PROFILE_ID, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
         )
@@ -1273,6 +1280,7 @@ def list_profiles() -> list[ProfileStateRecord]:
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
                    last_workspace_browse_directory,
+                   default_agent_provider_id,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
@@ -1346,6 +1354,11 @@ def _normalize_active_mode(value: object | None) -> str:
 
 def _normalize_agent_type(value: object | None) -> str:
     return str(value) if value in {"claude", "codex", "gemini", "pi", "openclaw"} else "claude"
+
+
+def _normalize_agent_provider_id(value: object | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in {"agent-deck", "codex-cli"} else "agent-deck"
 
 
 def _normalize_workspace_mode(value: object | None) -> str:
@@ -1812,6 +1825,9 @@ def _row_to_profile_state_record(row: sqlite3.Row) -> ProfileStateRecord:
             else None
         ),
         default_agent_type=_normalize_agent_type(row["default_agent_type"]),
+        default_agent_provider_id=_normalize_agent_provider_id(
+            row["default_agent_provider_id"]
+        ),
         default_workspace_mode=_normalize_workspace_mode(row["default_workspace_mode"]),
         claude_default_model=_normalize_claude_model(row["claude_default_model"]),
         claude_default_thinking=_normalize_claude_thinking(
@@ -2410,11 +2426,12 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
             INSERT OR IGNORE INTO profile_state (
                 profile_id,
                 active_mode,
+                default_agent_provider_id,
                 default_agent_type,
                 default_workspace_mode,
                 claude_default_model,
                 claude_default_thinking
-            ) VALUES (?, 'screenshot', 'claude', 'root', ?, ?)
+            ) VALUES (?, 'screenshot', 'agent-deck', 'claude', 'root', ?, ?)
             """,
             (normalized_profile_id, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
         )
@@ -2423,6 +2440,7 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
                    last_workspace_browse_directory,
+                   default_agent_provider_id,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,
@@ -2461,6 +2479,7 @@ def create_profile(
         last_workspace_browse_directory=source_profile.last_workspace_browse_directory,
         active_mode="screenshot",
         active_live_editor_thread_id=None,
+        default_agent_provider_id=source_profile.default_agent_provider_id,
         default_agent_type=source_profile.default_agent_type,
         default_workspace_mode=source_profile.default_workspace_mode,
         claude_default_model=source_profile.claude_default_model,
@@ -2480,6 +2499,7 @@ def upsert_profile_state(
     last_workspace_browse_directory: str | None = None,
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
+    default_agent_provider_id: str = "agent-deck",
     default_agent_type: str = "claude",
     default_workspace_mode: str = "root",
     claude_default_model: str | None = None,
@@ -2507,6 +2527,9 @@ def upsert_profile_state(
         if isinstance(active_live_editor_thread_id, str) and active_live_editor_thread_id.strip()
         else None
     )
+    normalized_default_agent_provider_id = _normalize_agent_provider_id(
+        default_agent_provider_id
+    )
     normalized_default_agent_type = _normalize_agent_type(default_agent_type)
     normalized_default_workspace_mode = _normalize_workspace_mode(default_workspace_mode)
     normalized_claude_default_model = _normalize_claude_model(claude_default_model)
@@ -2529,6 +2552,7 @@ def upsert_profile_state(
                 last_workspace_browse_directory,
                 active_mode,
                 active_live_editor_thread_id,
+                default_agent_provider_id,
                 default_agent_type,
                 default_workspace_mode,
                 claude_default_model,
@@ -2538,7 +2562,7 @@ def upsert_profile_state(
                 gemini_default_model,
                 pi_default_model,
                 pi_default_thinking
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(profile_id) DO UPDATE SET
                 active_project_path = excluded.active_project_path,
                 last_workspace_browse_directory = excluded.last_workspace_browse_directory,
@@ -2547,6 +2571,7 @@ def upsert_profile_state(
                     WHEN excluded.active_project_path IS NULL THEN NULL
                     ELSE excluded.active_live_editor_thread_id
                 END,
+                default_agent_provider_id = excluded.default_agent_provider_id,
                 default_agent_type = excluded.default_agent_type,
                 default_workspace_mode = excluded.default_workspace_mode,
                 claude_default_model = excluded.claude_default_model,
@@ -2564,6 +2589,7 @@ def upsert_profile_state(
                 normalized_last_workspace_browse_directory,
                 _normalize_active_mode(active_mode),
                 normalized_thread_id,
+                normalized_default_agent_provider_id,
                 normalized_default_agent_type,
                 normalized_default_workspace_mode,
                 normalized_claude_default_model,
@@ -2580,6 +2606,7 @@ def upsert_profile_state(
             """
             SELECT profile_id, active_project_path, active_mode, active_live_editor_thread_id,
                    last_workspace_browse_directory,
+                   default_agent_provider_id,
                    default_agent_type, default_workspace_mode,
                    claude_default_model, claude_default_thinking,
                    codex_default_model, codex_default_thinking,

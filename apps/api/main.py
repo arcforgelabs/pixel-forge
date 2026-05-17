@@ -554,6 +554,10 @@ class ProjectSessionUpsertRequest(BaseModel):
     thread_id: str
     backend: str = "agent-deck"
     workspace_path: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
+    provider_session_title: str | None = None
+    provider_agent_id: str | None = None
     agent_deck_session_id: str | None = None
     agent_deck_session_title: str | None = None
     agent_deck_tool: str | None = None
@@ -566,6 +570,7 @@ class ProfileStateRequest(BaseModel):
     last_workspace_browse_directory: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
+    default_agent_provider_id: Literal["agent-deck", "codex-cli"] = "agent-deck"
     default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "claude"
     default_workspace_mode: Literal["root"] = "root"
     claude_default_model: str | None = None
@@ -908,6 +913,7 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "last_workspace_browse_directory": profile_state.last_workspace_browse_directory,
         "active_mode": profile_state.active_mode,
         "active_live_editor_thread_id": profile_state.active_live_editor_thread_id,
+        "default_agent_provider_id": profile_state.default_agent_provider_id,
         "default_agent_type": profile_state.default_agent_type,
         "default_workspace_mode": profile_state.default_workspace_mode,
         "claude_default_model": profile_state.claude_default_model,
@@ -1103,6 +1109,7 @@ async def save_default_profile_state(request: ProfileStateRequest):
             last_workspace_browse_directory=request.last_workspace_browse_directory,
             active_mode=request.active_mode,
             active_live_editor_thread_id=request.active_live_editor_thread_id,
+            default_agent_provider_id=request.default_agent_provider_id,
             default_agent_type=request.default_agent_type,
             default_workspace_mode=request.default_workspace_mode,
             claude_default_model=request.claude_default_model,
@@ -1295,6 +1302,10 @@ async def upsert_project_session(project_path: str, request: ProjectSessionUpser
             update_live_editor_thread(
                 thread.thread_id,
                 workspace_path=request.workspace_path,
+                provider_id=request.provider_id,
+                provider_session_id=request.provider_session_id,
+                provider_session_title=request.provider_session_title,
+                provider_agent_id=request.provider_agent_id,
                 agent_deck_session_id=request.agent_deck_session_id,
                 agent_deck_session_title=request.agent_deck_session_title,
             )
@@ -1304,6 +1315,10 @@ async def upsert_project_session(project_path: str, request: ProjectSessionUpser
             thread_id=request.thread_id,
             backend=request.backend,
             workspace_path=request.workspace_path,
+            provider_id=request.provider_id,
+            provider_session_id=request.provider_session_id,
+            provider_session_title=request.provider_session_title,
+            provider_agent_id=request.provider_agent_id,
             agent_deck_session_id=request.agent_deck_session_id,
             agent_deck_session_title=request.agent_deck_session_title,
             agent_deck_tool=request.agent_deck_tool,
