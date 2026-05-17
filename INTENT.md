@@ -35,6 +35,41 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 15. Platform support must be designed in from the core boundary: Linux-specific tmux/systemd behavior belongs in optional providers or launch adapters, not in the cross-platform Live Editor kernel.
 16. The current Pixel Forge-owned Agent Deck module must be sunset as a required internal interface and retained only as an optional provider/plugin path. Pixel Forge may bundle, install, or recommend Agent Deck where it helps, but the core product must be able to run, route context, and perform useful Live Editor handoffs through direct native providers without Agent Deck present.
 
+## Current Goal: Complete Provider Plugin Migration
+
+`[active]` Finish the full migration from a Pixel Forge-owned integrated Agent Deck module to a provider/plugin architecture, then install and validate that architecture in the live canonical Pixel Forge runtime.
+
+Current source state:
+
+1. `[validated]` The repo is clean at commit `500cd30` (`Migrate Agent Deck behind provider boundary`).
+2. `[validated]` The current cut is ready to install from `/home/samuelrodda/repos/pixel-forge`.
+3. `[unvalidated]` The live controller has not yet been promoted to this cut; the running controller still comes from `/home/samuelrodda/.local/lib/pixel-forge` on port `7201` until the installer is run and the live runtime is rechecked.
+
+The goal is complete only when all of these are true:
+
+1. The canonical installed runtime has been updated from this repo and restarted without losing user state.
+2. The GUI Pixel Forge icon launches the installed controller/shell successfully.
+3. `GET /api/agent-providers` works in the installed runtime.
+4. `GET` and `POST /api/projects/{project_path}/agent-sessions` work in the installed runtime.
+5. `PIXEL_FORGE_WITH_AGENT_DECK=0` can install/start core Pixel Forge without Agent Deck.
+6. The Agent Deck GUI icon/path still works when the provider is enabled.
+7. Provider-neutral DB bindings exist and are backfilled from `agent_deck_session_id`, `agent_deck_session_title`, and `agent_deck_tool`.
+8. Live Editor dispatch calls provider registry methods for session ensure/send/observe instead of directly calling `ensure_agent_deck_session` or `send_agent_deck_prompt_reliably`.
+9. At least one direct native provider, starting with `codex-cli`, can receive a selected-preview Live Editor request without Agent Deck. The preferred Codex route is the official `codex app-server`/remote TUI protocol, with `codex exec resume --json` retained only as a short-term compatibility path.
+10. Frontend state, API payloads, labels, and settings use provider-neutral language first, with `agentDeck*` names kept only as compatibility projections.
+11. Settings exposes provider management: enabled state, detected command/config home, default provider/agent, model/thinking defaults, and capability diagnostics.
+12. Agent Deck remains available as one optional provider/plugin path, not as the core-shaped assumption.
+
+Smallest complete implementation sequence:
+
+1. Install and verify commit `500cd30` in the canonical runtime.
+2. Add and backfill generic provider binding fields in the shared DB.
+3. Extend `AgentProvider`/`AgentDeckProvider` with `ensure_session`, `send_turn`, `observe`, and closeout/delete parity.
+4. Route Live Editor websocket dispatch through the provider registry.
+5. Add the first direct `codex-cli` provider and prove a selected-preview request reaches Codex without Agent Deck.
+6. Rename frontend state and settings to provider-neutral concepts while preserving old response compatibility.
+7. Move Agent Deck-specific UI/config into the Agent Deck provider section.
+
 # Requirements
 
 ## Agent Provider Reduction Plan
@@ -419,10 +454,10 @@ The end state of this phase is not "no Agent Deck." The end state is "no hidden 
 
 # Current Limiting Factor
 
-- `[active]` Universal native context ingress plus live browser attach is now the current limiting factor. Pixel Forge now has truthful turn assembly, typed `turn-input.json`, request-pack mirrors, selection tunnels, live-preview context, prompt-first dispatch, direct native resumed Claude/Codex warm turns, first-pass Gemini and Pi launch/send parity through Agent Deck, and a cleaner attachment-token composer that keeps large pasted context as first-class artifacts instead of draft blobs. The remaining gap is no longer basic prompt cleanup; it is one durable universal bridge from Pixel Forge context into native agent sessions and back into the already-running browser session.
-- Why it is the limiter: the operator surface is materially cleaner now that large pasted context, files, and images can sit in the draft as inline references with real attached artifacts, but the underlying transport is still split by tool. Claude still relies on direct `@file` refs, Codex has a real native `--image` lane plus compact file refs, and live inspection of the prepared browser state still depends on tool-specific follow-through instead of one universal Pixel Forge-owned browser attach contract that any upstream agent can consume.
-- Smallest complete unit to attack it: promote the current internal attachment-token model into one thin universal transport contract, then pair it with a brokered live browser attach lane that emits the same CDP/MCP handle to Claude, Codex, and future agents. Prove one installed Pixel Forge Claude turn and one Codex turn that both receive the same truthful turn bundle and can attach to the same warm browser session through the same Pixel Forge-emitted handle.
-- Immediate proof target: in the installed Pixel Forge shell, the operator prompt reaches both tools unchanged, inline paste/image/file references resolve to real artifacts, `request.md` remains a mirror rather than the conversational surface, Codex still receives native `--image` inputs where available, and both tools can consume the same live browser attach manifest truthfully instead of needing divergent browser-control choreography.
+- `[active]` The provider/plugin migration is now the current limiting factor. Pixel Forge has a working first cut of the provider registry, optional Agent Deck install gate, provider-neutral session endpoints, and an `AgentDeckProvider` wrapper, but Live Editor dispatch, persistence, and most frontend state still assume Agent Deck-shaped bindings.
+- Why it is the limiter: the primary operator loop cannot honestly support "bring your existing agent runtime" until the persistent chat/session binding model and send/observe path are provider-neutral. Universal context ingress and browser attach still matter, but they must land through a selected provider boundary instead of growing another Agent Deck-shaped transport branch.
+- Smallest complete unit to attack it: promote provider-neutral DB bindings, route Live Editor websocket session ensure/send/observe through `AgentProvider`, and prove one installed selected-preview Codex handoff through a direct `codex-cli` provider without Agent Deck enabled.
+- Immediate proof target: the installed Pixel Forge runtime can run with `PIXEL_FORGE_WITH_AGENT_DECK=0`, show provider diagnostics, bind a Live Editor thread to a non-Agent-Deck provider session, send the request pack and selected preview context to that provider, and keep Agent Deck available as an optional provider when enabled.
 
 # Current Proof Status
 
