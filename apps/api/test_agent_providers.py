@@ -121,7 +121,7 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
             return [target]
 
         with patch(
-            "agent_providers.agent_deck.agent_deck_bridge.list_project_agent_deck_sessions",
+            "agent_provider_plugins.agent_deck.agent_deck_bridge.list_project_agent_deck_sessions",
             side_effect=fake_list,
         ):
             sessions = await AgentDeckProvider().list_sessions("/tmp/project")
@@ -153,7 +153,7 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
             return target
 
         with patch(
-            "agent_providers.agent_deck.agent_deck_bridge.create_agent_deck_session_target",
+            "agent_provider_plugins.agent_deck.agent_deck_bridge.create_agent_deck_session_target",
             side_effect=fake_create,
         ):
             session = await AgentDeckProvider().create_session(
@@ -182,7 +182,7 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
             return activity
 
         with patch(
-            "agent_providers.agent_deck.agent_deck_bridge.get_agent_deck_session_activity",
+            "agent_provider_plugins.agent_deck.agent_deck_bridge.get_agent_deck_session_activity",
             side_effect=fake_activity,
         ):
             serialized = (
@@ -211,7 +211,7 @@ class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
             return "done"
 
         with patch(
-            "agent_providers.codex_cli._run_codex_turn",
+            "agent_provider_plugins.codex_cli._run_codex_turn",
             side_effect=fake_run,
         ):
             dispatch = await CodexCliProvider().dispatch_turn(

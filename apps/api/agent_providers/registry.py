@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from .agent_deck import AgentDeckProvider
+from agent_provider_plugins.agent_deck import AgentDeckProvider
+from agent_provider_plugins.codex_cli import CodexCliProvider
+
 from .base import AgentProvider
-from .codex_cli import CodexCliProvider
 from .models import AgentProviderStatus
 
 
