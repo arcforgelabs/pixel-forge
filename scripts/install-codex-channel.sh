@@ -12,6 +12,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_SRC="${REPO_ROOT}/tools/claude-channel-spike"
 
 SHARED_STATE_DIR="${PIXEL_FORGE_SHARED_STATE_DIR:-${HOME}/.pixel-forge}"
+case "${SHARED_STATE_DIR}" in
+    /tmp/pixel-forge-install-*/state|/tmp/pixel-forge-install-*/state/)
+        if [ -z "${PIXEL_FORGE_CODEX_CHANNEL_DIR:-}" ]; then
+            echo "warn: ignoring temporary Pixel Forge install state for Codex MCP registration: ${SHARED_STATE_DIR}" >&2
+            SHARED_STATE_DIR="${HOME}/.pixel-forge"
+        fi
+        ;;
+esac
 CODEX_CHANNEL_DIR="${PIXEL_FORGE_CODEX_CHANNEL_DIR:-${SHARED_STATE_DIR}/codex-channel}"
 CODEX_CONFIG_DIR="${PIXEL_FORGE_CODEX_CONFIG_DIR:-${HOME}/.codex}"
 CODEX_CONFIG_FILE="${CODEX_CONFIG_DIR}/config.toml"
