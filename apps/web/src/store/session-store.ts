@@ -69,6 +69,10 @@ export interface LiveEditorSessionMeta {
   threadId: string;
   backend: string;
   workspacePath: string | null;
+  providerId?: string | null;
+  providerSessionId?: string | null;
+  providerSessionTitle?: string | null;
+  providerAgentId?: string | null;
   agentDeckSessionId: string | null;
   agentDeckSessionTitle: string | null;
   agentDeckTool: string | null;
@@ -77,6 +81,7 @@ export interface LiveEditorSessionMeta {
 }
 
 export interface AgentDeckSessionTarget {
+  providerId?: string;
   id: string;
   title: string;
   path: string;
@@ -132,6 +137,10 @@ export interface ProjectChatRecord {
   threadId: string | null;
   workspacePath: string;
   backend: string;
+  providerId?: string | null;
+  providerSessionId?: string | null;
+  providerSessionTitle?: string | null;
+  providerAgentId?: string | null;
   agentDeckSessionId: string | null;
   agentDeckSessionTitle: string | null;
   agentDeckTool: string | null;
@@ -342,6 +351,10 @@ interface ApiSession {
   workspace_path: string;
   thread_id: string;
   backend: string;
+  provider_id: string | null;
+  provider_session_id: string | null;
+  provider_session_title: string | null;
+  provider_agent_id: string | null;
   agent_deck_session_id: string | null;
   agent_deck_session_title: string | null;
   agent_deck_tool: string | null;
@@ -375,6 +388,10 @@ interface ApiProjectChat {
   thread_id: string | null;
   workspace_path: string;
   backend: string;
+  provider_id?: string | null;
+  provider_session_id?: string | null;
+  provider_session_title?: string | null;
+  provider_agent_id?: string | null;
   agent_deck_session_id: string | null;
   agent_deck_session_title: string | null;
   agent_deck_tool: string | null;
@@ -446,6 +463,10 @@ function normalizeSession(session: ApiSession): ProjectSessionRecord {
     workspacePath: session.workspace_path,
     threadId: session.thread_id,
     backend: session.backend,
+    providerId: session.provider_id ?? (session.agent_deck_session_id ? "agent-deck" : null),
+    providerSessionId: session.provider_session_id ?? session.agent_deck_session_id,
+    providerSessionTitle: session.provider_session_title ?? session.agent_deck_session_title,
+    providerAgentId: session.provider_agent_id ?? session.agent_deck_tool,
     agentDeckSessionId: session.agent_deck_session_id,
     agentDeckSessionTitle: session.agent_deck_session_title,
     agentDeckTool: session.agent_deck_tool,
@@ -494,6 +515,10 @@ function normalizeProjectChat(chat: ApiProjectChat): ProjectChatRecord {
     threadId: chat.thread_id,
     workspacePath: chat.workspace_path,
     backend: chat.backend,
+    providerId: chat.provider_id ?? (chat.agent_deck_session_id ? "agent-deck" : null),
+    providerSessionId: chat.provider_session_id ?? chat.agent_deck_session_id,
+    providerSessionTitle: chat.provider_session_title ?? chat.agent_deck_session_title,
+    providerAgentId: chat.provider_agent_id ?? chat.agent_deck_tool,
     agentDeckSessionId: chat.agent_deck_session_id,
     agentDeckSessionTitle: chat.agent_deck_session_title,
     agentDeckTool: chat.agent_deck_tool,
@@ -510,9 +535,11 @@ function normalizeAgentDeckTarget(
   session: ApiAgentDeckSessionTarget
 ): AgentDeckSessionTarget {
   const id = session.provider_session_id?.trim() || session.id;
+  const providerId = session.provider_id?.trim() || "agent-deck";
   const path = session.workspace_path?.trim() || session.path || "";
   const tool = session.agent_id ?? session.tool ?? null;
   return {
+    providerId,
     id,
     title: session.title,
     path,
@@ -781,6 +808,7 @@ function ensureAgentDeckTargetPresent(
 
   return [
     {
+      providerId: session?.providerId ?? "agent-deck",
       id: sessionId,
       title: session?.agentDeckSessionTitle || sessionId,
       path: "",
@@ -806,6 +834,7 @@ function agentDeckTargetFromProjectChat(
   }
 
   return {
+    providerId: chat.providerId ?? "agent-deck",
     id: sessionId,
     title: chat.agentDeckSessionTitle || chat.title || sessionId,
     path: chat.workspacePath,
@@ -836,6 +865,10 @@ function projectSessionFromProjectChat(
     workspacePath: chat.workspacePath,
     threadId: chat.threadId,
     backend: chat.backend,
+    providerId: chat.providerId,
+    providerSessionId: chat.providerSessionId,
+    providerSessionTitle: chat.providerSessionTitle,
+    providerAgentId: chat.providerAgentId,
     agentDeckSessionId: chat.agentDeckSessionId,
     agentDeckSessionTitle: chat.agentDeckSessionTitle ?? chat.title,
     agentDeckTool: chat.agentDeckTool,
@@ -882,6 +915,18 @@ function projectChatFromSession(
     threadId,
     workspacePath,
     backend: session.backend,
+    providerId: session.providerId ?? existingChat?.providerId ?? "agent-deck",
+    providerSessionId:
+      session.providerSessionId ?? existingChat?.providerSessionId ?? agentDeckSessionId,
+    providerSessionTitle:
+      session.providerSessionTitle
+      ?? existingChat?.providerSessionTitle
+      ?? session.agentDeckSessionTitle
+      ?? existingChat?.agentDeckSessionTitle
+      ?? existingChat?.title
+      ?? `Chat ${threadId}`,
+    providerAgentId:
+      session.providerAgentId ?? existingChat?.providerAgentId ?? session.agentDeckTool ?? null,
     agentDeckSessionId,
     agentDeckSessionTitle:
       session.agentDeckSessionTitle
@@ -1103,6 +1148,10 @@ async function upsertProjectSessionToApi(
         thread_id: session.threadId,
         backend: session.backend,
         workspace_path: session.workspacePath,
+        provider_id: session.providerId,
+        provider_session_id: session.providerSessionId,
+        provider_session_title: session.providerSessionTitle,
+        provider_agent_id: session.providerAgentId,
         agent_deck_session_id: session.agentDeckSessionId,
         agent_deck_session_title: session.agentDeckSessionTitle,
         agent_deck_tool: session.agentDeckTool,
@@ -1791,6 +1840,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         threadId: session.threadId,
         backend: session.backend,
         workspacePath: session.workspacePath,
+        providerId: session.providerId,
+        providerSessionId: session.providerSessionId,
+        providerSessionTitle: session.providerSessionTitle,
+        providerAgentId: session.providerAgentId,
         agentDeckSessionId: session.agentDeckSessionId,
         agentDeckSessionTitle: session.agentDeckSessionTitle,
         agentDeckTool: session.agentDeckTool,
@@ -1852,6 +1905,10 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           threadId: matchingLiveEditorSession.threadId,
           backend: matchingLiveEditorSession.backend,
           workspacePath: matchingLiveEditorSession.workspacePath,
+          providerId: matchingLiveEditorSession.providerId,
+          providerSessionId: matchingLiveEditorSession.providerSessionId,
+          providerSessionTitle: matchingLiveEditorSession.providerSessionTitle,
+          providerAgentId: matchingLiveEditorSession.providerAgentId,
           agentDeckSessionId: matchingLiveEditorSession.agentDeckSessionId,
           agentDeckSessionTitle: matchingLiveEditorSession.agentDeckSessionTitle,
           agentDeckTool: matchingLiveEditorSession.agentDeckTool,

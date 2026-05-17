@@ -1871,6 +1871,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       threadId: string
       backend: string
       workspacePath: string | null
+      providerId?: string | null
+      providerSessionId?: string | null
+      providerSessionTitle?: string | null
+      providerAgentId?: string | null
       agentDeckSessionId: string | null
       agentDeckSessionTitle: string | null
       agentDeckTool: string | null
@@ -1884,6 +1888,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       threadId: payload.threadId,
       backend: payload.backend,
       workspacePath: payload.workspacePath,
+      providerId: payload.providerId ?? (payload.agentDeckSessionId ? 'agent-deck' : null),
+      providerSessionId: payload.providerSessionId ?? payload.agentDeckSessionId,
+      providerSessionTitle: payload.providerSessionTitle ?? payload.agentDeckSessionTitle,
+      providerAgentId: payload.providerAgentId ?? payload.agentDeckTool,
       agentDeckSessionId: payload.agentDeckSessionId,
       agentDeckSessionTitle: payload.agentDeckSessionTitle,
       agentDeckTool: payload.agentDeckTool,
@@ -2184,6 +2192,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 threadId: nextThreadId,
                 backend: data.backend || 'agent-deck',
                 workspacePath: data.workspace_path ?? null,
+                providerId: data.provider_id ?? (data.agent_deck_session_id ? 'agent-deck' : null),
+                providerSessionId: data.provider_session_id ?? data.agent_deck_session_id ?? null,
+                providerSessionTitle:
+                  data.provider_session_title ?? data.agent_deck_session_title ?? null,
+                providerAgentId: data.provider_agent_id ?? data.agent_deck_tool ?? null,
                 agentDeckSessionId: data.agent_deck_session_id ?? null,
                 agentDeckSessionTitle: data.agent_deck_session_title ?? null,
                 agentDeckTool: data.agent_deck_tool ?? null,
@@ -2808,6 +2821,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
         if (targetAgentDeckSessionId) {
           payload.target_agent_deck_session_id = targetAgentDeckSessionId
+          payload.target_provider_id = 'agent-deck'
+          payload.target_provider_session_id = targetAgentDeckSessionId
         }
 
         const latestThreadState = getThreadStateSnapshot(

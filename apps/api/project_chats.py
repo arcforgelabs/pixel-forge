@@ -14,6 +14,10 @@ class ProjectChatRecord:
     thread_id: str | None
     workspace_path: str
     backend: str
+    provider_id: str | None
+    provider_session_id: str | None
+    provider_session_title: str | None
+    provider_agent_id: str | None
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     agent_deck_tool: str | None
@@ -160,6 +164,26 @@ def reconcile_project_chats(
                 thread_id=session.thread_id,
                 workspace_path=session.workspace_path,
                 backend=session.backend,
+                provider_id=(
+                    "agent-deck"
+                    if matched_target is not None
+                    else session.provider_id
+                ),
+                provider_session_id=(
+                    matched_target.id
+                    if matched_target is not None
+                    else session.provider_session_id
+                ),
+                provider_session_title=(
+                    matched_target.title
+                    if matched_target is not None and matched_target.title.strip()
+                    else session.provider_session_title
+                ),
+                provider_agent_id=(
+                    matched_target.tool
+                    if matched_target is not None and matched_target.tool
+                    else session.provider_agent_id
+                ),
                 agent_deck_session_id=(
                     matched_target.id
                     if matched_target is not None
@@ -200,6 +224,10 @@ def reconcile_project_chats(
                 thread_id=None,
                 workspace_path=target.path,
                 backend="agent-deck",
+                provider_id="agent-deck",
+                provider_session_id=target.id,
+                provider_session_title=target.title or None,
+                provider_agent_id=target.tool,
                 agent_deck_session_id=target.id,
                 agent_deck_session_title=target.title or None,
                 agent_deck_tool=target.tool,

@@ -32,18 +32,13 @@ from agent_deck_bridge import (
     delete_agent_deck_session_target,
     get_agent_deck_session_activity,
     get_last_output,
-    ensure_agent_deck_session,
     launch_agent_deck_closeout_session,
     list_project_agent_deck_sessions,
     list_live_editor_agent_deck_sessions,
-    send_agent_deck_prompt_reliably,
-    send_native_claude_prompt_reliably,
-    send_native_codex_prompt_reliably,
     rename_agent_deck_session_target,
     stream_claude_jsonl,
     stream_codex_jsonl,
     stream_codex_session_output,
-    wait_for_agent_deck_turn_completion,
 )
 from agent_deck_event_ingest import AgentDeckNativeEventIngestor
 from agent_deck_surface import (
@@ -808,6 +803,10 @@ def serialize_session(session_record) -> dict[str, object]:
         "workspace_path": session_record.workspace_path,
         "thread_id": session_record.thread_id,
         "backend": session_record.backend,
+        "provider_id": session_record.provider_id,
+        "provider_session_id": session_record.provider_session_id,
+        "provider_session_title": session_record.provider_session_title,
+        "provider_agent_id": session_record.provider_agent_id,
         "agent_deck_session_id": session_record.agent_deck_session_id,
         "agent_deck_session_title": session_record.agent_deck_session_title,
         "agent_deck_tool": session_record.agent_deck_tool,
@@ -847,6 +846,10 @@ def serialize_project_chat(chat_record) -> dict[str, object]:
         "thread_id": chat_record.thread_id,
         "workspace_path": chat_record.workspace_path,
         "backend": chat_record.backend,
+        "provider_id": chat_record.provider_id,
+        "provider_session_id": chat_record.provider_session_id,
+        "provider_session_title": chat_record.provider_session_title,
+        "provider_agent_id": chat_record.provider_agent_id,
         "agent_deck_session_id": chat_record.agent_deck_session_id,
         "agent_deck_session_title": chat_record.agent_deck_session_title,
         "agent_deck_tool": chat_record.agent_deck_tool,
@@ -876,6 +879,10 @@ def _project_chat_from_session_record(session_record) -> ProjectChatRecord:
         thread_id=thread_id,
         workspace_path=normalized_workspace_path,
         backend=session_record.backend,
+        provider_id=session_record.provider_id,
+        provider_session_id=session_record.provider_session_id,
+        provider_session_title=session_record.provider_session_title,
+        provider_agent_id=session_record.provider_agent_id,
         agent_deck_session_id=session_record.agent_deck_session_id,
         agent_deck_session_title=session_record.agent_deck_session_title,
         agent_deck_tool=session_record.agent_deck_tool,
@@ -3397,107 +3404,45 @@ def _native_image_attachment_paths(
     return image_paths
 
 
-async def _deliver_live_editor_prompt_to_agent_deck_session(
+async def _dispatch_live_editor_prompt_to_agent_provider(
     *,
+    agent_provider,
     session_info,
     websocket: WebSocket,
     dispatch_prompt: str,
     native_image_paths: list[str] | None = None,
     on_status: LiveEditorStatusCallback | None = None,
 ) -> tuple[str, asyncio.Task[object], asyncio.Task[object] | None]:
-    baseline_output = ""
-    normalized_session_status = (session_info.status or "").strip().lower()
-    queue_onto_busy_session = normalized_session_status not in {
-        "",
-        "waiting",
-        "idle",
-    }
-    normalized_native_image_paths = [
-        path.strip()
-        for path in (native_image_paths or [])
-        if isinstance(path, str) and path.strip()
-    ]
-
-    if session_info.tool == "codex" and not (
-        session_info.codex_session_id and session_info.jsonl_path
-    ):
-        baseline_output = await get_last_output(session_info.agent_deck_session_id)
-
-    tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
     status_heartbeat_task: asyncio.Task[object] | None = None
-    if (
-        session_info.tool == "claude"
-        and session_info.claude_session_id
-        and not queue_onto_busy_session
-        and not session_info.tmux_session
-    ):
-        turn_wait_task = asyncio.create_task(
-            send_native_claude_prompt_reliably(
-                session_info,
-                project_path=session_info.workspace_path,
-                prompt=dispatch_prompt,
+    dispatch = await agent_provider.dispatch_turn(
+        session_info,
+        project_path=session_info.workspace_path,
+        prompt=dispatch_prompt,
+        image_paths=native_image_paths,
+        startup_timeout_seconds=LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
+        completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+    )
+    turn_wait_task = dispatch.wait_task
+    if dispatch.status_heartbeat:
+        status_heartbeat_task = asyncio.create_task(
+            _emit_live_editor_wait_heartbeat(
+                websocket,
+                tool=session_info.tool,
+                wait_task=turn_wait_task,
+                on_status=on_status,
             )
         )
-        status_message = f"Request delivered to {tool_label}. Waiting for completion..."
-    elif (
-        session_info.tool == "codex"
-        and session_info.codex_session_id
-        and session_info.jsonl_path
-        and not queue_onto_busy_session
-        and not session_info.tmux_session
-    ):
-        turn_wait_task = asyncio.create_task(
-            send_native_codex_prompt_reliably(
-                session_info,
-                project_path=session_info.workspace_path,
-                prompt=dispatch_prompt,
-                image_paths=normalized_native_image_paths,
-            )
-        )
-        status_message = f"Request delivered to {tool_label}. Waiting for completion..."
-    else:
-        await send_agent_deck_prompt_reliably(
-            session_info,
-            project_path=session_info.workspace_path,
-            prompt=dispatch_prompt,
-            no_wait=queue_onto_busy_session and session_info.tool != "claude",
-        )
-        if session_info.tool == "codex":
-            status_message = (
-                f"Queued request to busy {tool_label} session. Waiting for completion..."
-                if queue_onto_busy_session
-                else f"Request delivered to {tool_label}. Waiting for completion..."
-            )
-        else:
-            status_message = f"Request delivered to {tool_label}. Waiting for completion..."
-
-        turn_wait_task = asyncio.create_task(
-            wait_for_agent_deck_turn_completion(
-                session_info,
-                startup_timeout_seconds=LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
-                completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
-            )
-        )
-        if session_info.tool != "claude":
-            status_heartbeat_task = asyncio.create_task(
-                _emit_live_editor_wait_heartbeat(
-                    websocket,
-                    tool=session_info.tool,
-                    wait_task=turn_wait_task,
-                    on_status=on_status,
-                )
-            )
 
     await websocket.send_json(
         {
             "type": "status",
-            "message": status_message,
+            "message": dispatch.status_message,
         }
     )
     if on_status is not None:
-        await on_status(status_message)
+        await on_status(dispatch.status_message)
 
-    return baseline_output, turn_wait_task, status_heartbeat_task
+    return dispatch.baseline_output, turn_wait_task, status_heartbeat_task
 
 
 async def generate_with_claude_cli(
@@ -4159,7 +4104,16 @@ async def live_editor_chat(websocket: WebSocket):
             agent_model = data.get("agent_model")
             agent_thinking = data.get("agent_thinking")
             workspace_mode = "root"
+            target_provider_id = data.get("target_provider_id") or data.get("provider_id")
+            provider_id = (
+                target_provider_id.strip()
+                if isinstance(target_provider_id, str) and target_provider_id.strip()
+                else "agent-deck"
+            )
+            target_provider_session_id = data.get("target_provider_session_id")
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
+            if not isinstance(target_provider_session_id, str):
+                target_provider_session_id = target_agent_deck_session_id
 
             if not attachments and legacy_images:
                 attachments = [
@@ -4192,6 +4146,15 @@ async def live_editor_chat(websocket: WebSocket):
                 await websocket.send_json({
                     "type": "error",
                     "message": f"Project path does not exist: {project_path}"
+                })
+                continue
+
+            try:
+                agent_provider = _agent_provider_or_error(provider_id)
+            except HTTPException as exc:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": str(exc.detail),
                 })
                 continue
 
@@ -4249,20 +4212,20 @@ async def live_editor_chat(websocket: WebSocket):
                 await websocket.send_json(
                     {
                         "type": "status",
-                        "message": "Resolving Agent Deck session...",
+                        "message": f"Resolving {agent_provider.display_name} session...",
                     }
                 )
 
                 try:
                     session_info = await asyncio.wait_for(
-                        ensure_agent_deck_session(
+                        agent_provider.ensure_live_session(
                             normalized_project_path,
                             thread,
                             agent_type=agent_type,
                             workspace_mode="root",
-                            target_agent_deck_session_id=(
-                                target_agent_deck_session_id
-                                if isinstance(target_agent_deck_session_id, str)
+                            target_provider_session_id=(
+                                target_provider_session_id
+                                if isinstance(target_provider_session_id, str)
                                 else None
                             ),
                             agent_model=(
@@ -4281,14 +4244,19 @@ async def live_editor_chat(websocket: WebSocket):
                         "The request was not sent, but a recovery snapshot was "
                         f"saved at `{preflight_snapshot_relative_path}`."
                     ) from exc
-                _assert_agent_deck_lane_available(
-                    normalized_project_path,
-                    thread.thread_id,
-                    session_info.agent_deck_session_id,
-                )
+                if agent_provider.provider_id == "agent-deck":
+                    _assert_agent_deck_lane_available(
+                        normalized_project_path,
+                        thread.thread_id,
+                        session_info.agent_deck_session_id,
+                    )
                 thread = update_live_editor_thread(
                     thread.thread_id,
                     workspace_path=session_info.workspace_path,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=session_info.agent_deck_session_id,
+                    provider_session_title=session_info.agent_deck_session_title,
+                    provider_agent_id=session_info.tool,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                     acpx_agent=session_info.acpx_agent or "",
@@ -4302,6 +4270,10 @@ async def live_editor_chat(websocket: WebSocket):
                     thread_id=thread.thread_id,
                     backend=thread.backend,
                     workspace_path=session_info.workspace_path,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=session_info.agent_deck_session_id,
+                    provider_session_title=session_info.agent_deck_session_title,
+                    provider_agent_id=session_info.tool,
                     agent_deck_session_id=session_info.agent_deck_session_id,
                     agent_deck_session_title=session_info.agent_deck_session_title,
                     agent_deck_tool=session_info.tool,
@@ -4460,6 +4432,10 @@ async def live_editor_chat(websocket: WebSocket):
                         "session_id": thread.thread_id,
                         "backend": thread.backend,
                         "workspace_path": session_info.workspace_path,
+                        "provider_id": agent_provider.provider_id,
+                        "provider_session_id": session_info.agent_deck_session_id,
+                        "provider_session_title": session_info.agent_deck_session_title,
+                        "provider_agent_id": session_info.tool,
                         "agent_deck_session_id": session_info.agent_deck_session_id,
                         "agent_deck_session_title": session_info.agent_deck_session_title,
                         "agent_deck_tool": session_info.tool,
@@ -4474,9 +4450,9 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
                 dispatch_status_message = (
-                    "Sending Pixel Forge turn into existing Agent Deck session..."
+                    f"Sending Pixel Forge turn into existing {agent_provider.display_name} session..."
                     if continuation_mode == "attached-session"
-                    else "Sending Pixel Forge turn to Agent Deck..."
+                    else f"Sending Pixel Forge turn to {agent_provider.display_name}..."
                 )
                 await websocket.send_json(
                     {
@@ -4572,7 +4548,8 @@ async def live_editor_chat(websocket: WebSocket):
                         baseline_output,
                         turn_wait_task,
                         status_heartbeat_task,
-                    ) = await _deliver_live_editor_prompt_to_agent_deck_session(
+                    ) = await _dispatch_live_editor_prompt_to_agent_provider(
+                        agent_provider=agent_provider,
                         session_info=session_info,
                         websocket=websocket,
                         dispatch_prompt=dispatch_prompt,
@@ -4582,7 +4559,18 @@ async def live_editor_chat(websocket: WebSocket):
                     send_task = turn_wait_task
 
                     stream_stats = None
-                    if session_info.tool == "claude" and jsonl_path:
+                    if agent_provider.provider_id != "agent-deck":
+                        direct_output = await turn_wait_task
+                        if isinstance(direct_output, str) and direct_output:
+                            await websocket.send_json(
+                                {
+                                    "type": "chunk",
+                                    "content": direct_output,
+                                }
+                            )
+                            await append_turn_event("turn_chunk", {"content": direct_output})
+                            assistant_output = direct_output
+                    elif session_info.tool == "claude" and jsonl_path:
                         stream_stats = await stream_claude_jsonl(
                             websocket,
                             jsonl_path,
@@ -4608,39 +4596,48 @@ async def live_editor_chat(websocket: WebSocket):
                             on_emit=mirror_stream_payload,
                         )
 
-                    await turn_wait_task
-                    assistant_output = getattr(stream_stats, "last_output", "")
+                    if agent_provider.provider_id == "agent-deck":
+                        await turn_wait_task
+                        assistant_output = getattr(stream_stats, "last_output", "")
 
-                    if not stream_stats or not stream_stats.streamed_text:
-                        fallback_output = getattr(stream_stats, "last_output", "")
-                        if not fallback_output:
-                            fallback_output = await get_last_output(
-                                session_info.agent_deck_session_id
-                            )
-                        if fallback_output:
-                            await websocket.send_json(
-                                {
-                                    "type": "chunk",
-                                    "content": fallback_output,
-                                }
-                            )
-                            await append_turn_event("turn_chunk", {"content": fallback_output})
-                            assistant_output = fallback_output
+                        if not stream_stats or not stream_stats.streamed_text:
+                            fallback_output = getattr(stream_stats, "last_output", "")
+                            if not fallback_output:
+                                fallback_output = await get_last_output(
+                                    session_info.agent_deck_session_id
+                                )
+                            if fallback_output:
+                                await websocket.send_json(
+                                    {
+                                        "type": "chunk",
+                                        "content": fallback_output,
+                                    }
+                                )
+                                await append_turn_event("turn_chunk", {"content": fallback_output})
+                                assistant_output = fallback_output
 
-                refreshed_session = await ensure_agent_deck_session(
-                    normalized_project_path,
-                    thread,
-                    agent_type=agent_type,
-                    workspace_mode="root",
-                )
-                _assert_agent_deck_lane_available(
-                    normalized_project_path,
-                    thread.thread_id,
-                    refreshed_session.agent_deck_session_id,
-                )
+                if agent_provider.provider_id == "agent-deck":
+                    refreshed_session = await agent_provider.ensure_live_session(
+                        normalized_project_path,
+                        thread,
+                        agent_type=agent_type,
+                        workspace_mode="root",
+                    )
+                else:
+                    refreshed_session = session_info
+                if agent_provider.provider_id == "agent-deck":
+                    _assert_agent_deck_lane_available(
+                        normalized_project_path,
+                        thread.thread_id,
+                        refreshed_session.agent_deck_session_id,
+                    )
                 update_live_editor_thread(
                     thread.thread_id,
                     workspace_path=refreshed_session.workspace_path,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=refreshed_session.agent_deck_session_id,
+                    provider_session_title=refreshed_session.agent_deck_session_title,
+                    provider_agent_id=refreshed_session.tool,
                     acpx_agent=refreshed_session.acpx_agent or "",
                     acpx_session_name=refreshed_session.acpx_session_name or "",
                     acpx_record_id=refreshed_session.acpx_record_id or "",
@@ -4652,6 +4649,10 @@ async def live_editor_chat(websocket: WebSocket):
                     thread_id=thread.thread_id,
                     backend=thread.backend,
                     workspace_path=refreshed_session.workspace_path,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=refreshed_session.agent_deck_session_id,
+                    provider_session_title=refreshed_session.agent_deck_session_title,
+                    provider_agent_id=refreshed_session.tool,
                     agent_deck_session_id=refreshed_session.agent_deck_session_id,
                     agent_deck_session_title=refreshed_session.agent_deck_session_title,
                     agent_deck_tool=refreshed_session.tool,
@@ -4687,6 +4688,10 @@ async def live_editor_chat(websocket: WebSocket):
                         "session_id": thread.thread_id,
                         "backend": thread.backend,
                         "workspace_path": refreshed_session.workspace_path,
+                        "provider_id": agent_provider.provider_id,
+                        "provider_session_id": refreshed_session.agent_deck_session_id,
+                        "provider_session_title": refreshed_session.agent_deck_session_title,
+                        "provider_agent_id": refreshed_session.tool,
                         "agent_deck_session_id": refreshed_session.agent_deck_session_id,
                         "agent_deck_session_title": refreshed_session.agent_deck_session_title,
                         "agent_deck_tool": refreshed_session.tool,

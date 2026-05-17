@@ -74,6 +74,10 @@ class SessionRecord:
     thread_id: str
     backend: str
     origin_kind: str
+    provider_id: str | None
+    provider_session_id: str | None
+    provider_session_title: str | None
+    provider_agent_id: str | None
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     agent_deck_tool: str | None
@@ -159,17 +163,14 @@ def should_surface_session(
     if (
         normalized_thread_id.startswith("draft-")
         and normalize_project_path(session.workspace_path) == normalized_project_path
-        and not (
-            isinstance(session.agent_deck_session_id, str)
-            and session.agent_deck_session_id.strip()
-        )
+        and not session.provider_session_id
     ):
         return False
 
     if not workspace_matches_project:
         return False
 
-    if session.agent_deck_session_id:
+    if session.provider_session_id:
         return True
 
     if normalize_project_path(session.workspace_path) != normalized_project_path:
@@ -279,6 +280,104 @@ def _should_promote_attached_draft_thread(
         normalized_thread_id.startswith("draft-")
         and isinstance(agent_deck_session_id, str)
         and agent_deck_session_id.strip()
+    )
+
+
+def _normalize_optional_text(value: object | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _provider_binding_from_agent_deck(
+    *,
+    agent_deck_session_id: str | None,
+    agent_deck_session_title: str | None = None,
+    agent_deck_tool: str | None = None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    normalized_session_id = _normalize_optional_text(agent_deck_session_id)
+    if not normalized_session_id:
+        return None, None, None, None
+    return (
+        "agent-deck",
+        normalized_session_id,
+        _normalize_optional_text(agent_deck_session_title),
+        _normalize_optional_text(agent_deck_tool),
+    )
+
+
+def _normalize_provider_binding(
+    *,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
+    agent_deck_session_id: str | None = None,
+    agent_deck_session_title: str | None = None,
+    agent_deck_tool: str | None = None,
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]:
+    normalized_provider_id = _normalize_optional_text(provider_id)
+    normalized_provider_session_id = _normalize_optional_text(provider_session_id)
+    normalized_provider_session_title = (
+        _normalize_optional_text(provider_session_title)
+        or _normalize_optional_text(agent_deck_session_title)
+    )
+    normalized_provider_agent_id = (
+        _normalize_optional_text(provider_agent_id)
+        or _normalize_optional_text(agent_deck_tool)
+    )
+    normalized_agent_deck_session_id = _normalize_optional_text(agent_deck_session_id)
+    normalized_agent_deck_session_title = _normalize_optional_text(agent_deck_session_title)
+    normalized_agent_deck_tool = _normalize_optional_text(agent_deck_tool)
+
+    if normalized_provider_session_id and not normalized_provider_id:
+        normalized_provider_id = "agent-deck" if normalized_agent_deck_session_id else "unknown"
+
+    if normalized_agent_deck_session_id and not normalized_provider_session_id:
+        (
+            normalized_provider_id,
+            normalized_provider_session_id,
+            fallback_title,
+            fallback_agent_id,
+        ) = _provider_binding_from_agent_deck(
+            agent_deck_session_id=normalized_agent_deck_session_id,
+            agent_deck_session_title=normalized_agent_deck_session_title,
+            agent_deck_tool=normalized_agent_deck_tool,
+        )
+        normalized_provider_session_title = normalized_provider_session_title or fallback_title
+        normalized_provider_agent_id = normalized_provider_agent_id or fallback_agent_id
+
+    if normalized_provider_id == "agent-deck":
+        normalized_agent_deck_session_id = (
+            normalized_agent_deck_session_id or normalized_provider_session_id
+        )
+        normalized_agent_deck_session_title = (
+            normalized_agent_deck_session_title or normalized_provider_session_title
+        )
+        normalized_agent_deck_tool = normalized_agent_deck_tool or normalized_provider_agent_id
+
+    if not normalized_provider_session_id:
+        normalized_provider_id = None
+        normalized_provider_session_title = None
+        normalized_provider_agent_id = None
+
+    return (
+        normalized_provider_id,
+        normalized_provider_session_id,
+        normalized_provider_session_title,
+        normalized_provider_agent_id,
+        normalized_agent_deck_session_id,
+        normalized_agent_deck_session_title,
+        normalized_agent_deck_tool,
     )
 
 
@@ -776,6 +875,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 thread_id TEXT NOT NULL UNIQUE,
                 backend TEXT NOT NULL,
                 origin_kind TEXT NOT NULL DEFAULT 'managed',
+                provider_id TEXT,
+                provider_session_id TEXT,
+                provider_session_title TEXT,
+                provider_agent_id TEXT,
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
@@ -791,6 +894,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 profile_id TEXT NOT NULL DEFAULT 'default',
                 project_path TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
+                provider_id TEXT,
+                provider_session_id TEXT,
+                provider_session_title TEXT,
+                provider_agent_id TEXT,
                 agent_deck_session_id TEXT NOT NULL UNIQUE,
                 agent_deck_session_title TEXT,
                 agent_deck_tool TEXT,
@@ -840,8 +947,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON project_urls (project_path, last_used DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_last_active
                 ON sessions (project_path, last_active DESC);
+            CREATE INDEX IF NOT EXISTS idx_sessions_provider_session
+                ON sessions (provider_id, provider_session_id);
             CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_project
                 ON chat_session_bindings (project_path, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_provider_session
+                ON chat_session_bindings (provider_id, provider_session_id);
             CREATE INDEX IF NOT EXISTS idx_profile_projects_last_opened
                 ON profile_projects (profile_id, last_opened DESC);
             """
@@ -875,6 +986,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN hidden_at TEXT"
             )
+        for column_name in (
+            "provider_id",
+            "provider_session_id",
+            "provider_session_title",
+            "provider_agent_id",
+        ):
+            if column_name not in existing_session_columns:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {column_name} TEXT")
         existing_binding_columns = {
             str(row[1])
             for row in conn.execute("PRAGMA table_info(chat_session_bindings)").fetchall()
@@ -887,6 +1006,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "ALTER TABLE chat_session_bindings ADD COLUMN hidden_at TEXT"
             )
+        for column_name in (
+            "provider_id",
+            "provider_session_id",
+            "provider_session_title",
+            "provider_agent_id",
+        ):
+            if column_name not in existing_binding_columns:
+                conn.execute(
+                    f"ALTER TABLE chat_session_bindings ADD COLUMN {column_name} TEXT"
+                )
         existing_profile_columns = {
             str(row[1])
             for row in conn.execute("PRAGMA table_info(profile_state)").fetchall()
@@ -988,6 +1117,42 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         conn.execute(
             """
+            UPDATE sessions
+            SET provider_id = 'agent-deck',
+                provider_session_id = agent_deck_session_id,
+                provider_session_title = agent_deck_session_title,
+                provider_agent_id = agent_deck_tool
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+              AND (provider_session_id IS NULL OR TRIM(provider_session_id) = '')
+            """
+        )
+        conn.execute(
+            """
+            UPDATE sessions
+            SET agent_deck_session_id = provider_session_id,
+                agent_deck_session_title = provider_session_title,
+                agent_deck_tool = provider_agent_id
+            WHERE provider_id = 'agent-deck'
+              AND provider_session_id IS NOT NULL
+              AND TRIM(provider_session_id) <> ''
+              AND (agent_deck_session_id IS NULL OR TRIM(agent_deck_session_id) = '')
+            """
+        )
+        conn.execute(
+            """
+            UPDATE chat_session_bindings
+            SET provider_id = 'agent-deck',
+                provider_session_id = agent_deck_session_id,
+                provider_session_title = agent_deck_session_title,
+                provider_agent_id = agent_deck_tool
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+              AND (provider_session_id IS NULL OR TRIM(provider_session_id) = '')
+            """
+        )
+        conn.execute(
+            """
             INSERT OR IGNORE INTO profile_projects (profile_id, project_path, created_at, last_opened)
             SELECT ?, path, created_at, last_opened
             FROM projects
@@ -996,6 +1161,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         _migrate_legacy_live_editor_state(conn)
         _migrate_legacy_instance_state(conn)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET provider_id = 'agent-deck',
+                provider_session_id = agent_deck_session_id,
+                provider_session_title = agent_deck_session_title,
+                provider_agent_id = agent_deck_tool
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+              AND (provider_session_id IS NULL OR TRIM(provider_session_id) = '')
+            """
+        )
         _backfill_claude_opus_47_defaults(conn)
         conn.commit()
         _promote_legacy_attached_draft_sessions(conn)
@@ -1010,6 +1187,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 profile_id,
                 project_path,
                 workspace_path,
+                provider_id,
+                provider_session_id,
+                provider_session_title,
+                provider_agent_id,
                 agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
@@ -1021,6 +1202,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 profile_id,
                 project_path,
                 workspace_path,
+                COALESCE(provider_id, 'agent-deck'),
+                COALESCE(provider_session_id, agent_deck_session_id),
+                COALESCE(provider_session_title, agent_deck_session_title),
+                COALESCE(provider_agent_id, agent_deck_tool),
                 agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
@@ -1041,6 +1226,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 profile_id = excluded.profile_id,
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
+                provider_id = excluded.provider_id,
+                provider_session_id = excluded.provider_session_id,
+                provider_session_title = excluded.provider_session_title,
+                provider_agent_id = excluded.provider_agent_id,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
@@ -1414,6 +1603,10 @@ def _row_to_session_record(row: sqlite3.Row) -> SessionRecord:
         thread_id=row["thread_id"],
         backend=row["backend"],
         origin_kind=_normalize_origin_kind(row["origin_kind"]),
+        provider_id=row["provider_id"],
+        provider_session_id=row["provider_session_id"],
+        provider_session_title=row["provider_session_title"],
+        provider_agent_id=row["provider_agent_id"],
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
         agent_deck_tool=row["agent_deck_tool"],
@@ -1432,6 +1625,34 @@ _SESSION_SELECT_SQL = """
         sessions.thread_id,
         sessions.backend,
         sessions.origin_kind,
+        COALESCE(
+            chat_session_bindings.provider_id,
+            sessions.provider_id,
+            CASE
+                WHEN COALESCE(chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id) IS NOT NULL
+                 AND TRIM(COALESCE(chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id)) <> ''
+                    THEN 'agent-deck'
+                ELSE NULL
+            END
+        ) AS provider_id,
+        COALESCE(
+            chat_session_bindings.provider_session_id,
+            sessions.provider_session_id,
+            chat_session_bindings.agent_deck_session_id,
+            sessions.agent_deck_session_id
+        ) AS provider_session_id,
+        COALESCE(
+            chat_session_bindings.provider_session_title,
+            sessions.provider_session_title,
+            chat_session_bindings.agent_deck_session_title,
+            sessions.agent_deck_session_title
+        ) AS provider_session_title,
+        COALESCE(
+            chat_session_bindings.provider_agent_id,
+            sessions.provider_agent_id,
+            chat_session_bindings.agent_deck_tool,
+            sessions.agent_deck_tool
+        ) AS provider_agent_id,
         COALESCE(
             chat_session_bindings.agent_deck_session_id,
             sessions.agent_deck_session_id
@@ -1512,6 +1733,10 @@ def _upsert_chat_binding(
     project_path: str,
     chat_id: str,
     workspace_path: str,
+    provider_id: str | None,
+    provider_session_id: str | None,
+    provider_session_title: str | None,
+    provider_agent_id: str | None,
     agent_deck_session_id: str,
     agent_deck_session_title: str | None,
     agent_deck_tool: str | None,
@@ -1523,14 +1748,22 @@ def _upsert_chat_binding(
             profile_id,
             project_path,
             workspace_path,
+            provider_id,
+            provider_session_id,
+            provider_session_title,
+            provider_agent_id,
             agent_deck_session_id,
             agent_deck_session_title,
             agent_deck_tool
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id) DO UPDATE SET
             profile_id = excluded.profile_id,
             project_path = excluded.project_path,
             workspace_path = excluded.workspace_path,
+            provider_id = excluded.provider_id,
+            provider_session_id = excluded.provider_session_id,
+            provider_session_title = excluded.provider_session_title,
+            provider_agent_id = excluded.provider_agent_id,
             agent_deck_session_id = excluded.agent_deck_session_id,
             agent_deck_session_title = excluded.agent_deck_session_title,
             agent_deck_tool = excluded.agent_deck_tool,
@@ -1542,6 +1775,10 @@ def _upsert_chat_binding(
             profile_id,
             project_path,
             workspace_path,
+            provider_id,
+            provider_session_id,
+            provider_session_title,
+            provider_agent_id,
             agent_deck_session_id,
             agent_deck_session_title,
             agent_deck_tool,
@@ -1811,7 +2048,11 @@ def detach_missing_agent_deck_session_bindings(
             conn.execute(
                 f"""
                 UPDATE sessions
-                SET agent_deck_session_id = NULL,
+                SET provider_id = NULL,
+                    provider_session_id = NULL,
+                    provider_session_title = NULL,
+                    provider_agent_id = NULL,
+                    agent_deck_session_id = NULL,
                     agent_deck_session_title = NULL,
                     agent_deck_tool = NULL
                 WHERE project_path = ?
@@ -1930,10 +2171,26 @@ def get_project_session_by_agent_deck_session_id(
     *,
     profile_id: str = DEFAULT_PROFILE_ID,
 ) -> SessionRecord | None:
+    return get_project_session_by_provider_session_id(
+        project_path,
+        "agent-deck",
+        agent_deck_session_id,
+        profile_id=profile_id,
+    )
+
+
+def get_project_session_by_provider_session_id(
+    project_path: str,
+    provider_id: str,
+    provider_session_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> SessionRecord | None:
     normalized_path = normalize_project_path(project_path)
     normalized_profile_id = _normalize_profile_id(profile_id)
-    normalized_session_id = agent_deck_session_id.strip()
-    if not normalized_session_id:
+    normalized_provider_id = _normalize_optional_text(provider_id)
+    normalized_session_id = _normalize_optional_text(provider_session_id)
+    if not normalized_provider_id or not normalized_session_id:
         return None
 
     with _connect() as conn:
@@ -1941,10 +2198,17 @@ def get_project_session_by_agent_deck_session_id(
             conn,
             where_sql=(
                 "sessions.project_path = ? AND COALESCE("
-                "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                "chat_session_bindings.provider_id, sessions.provider_id"
+                ") = ? AND COALESCE("
+                "chat_session_bindings.provider_session_id, sessions.provider_session_id"
                 ") = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
             ),
-            params=(normalized_path, normalized_session_id, normalized_profile_id),
+            params=(
+                normalized_path,
+                normalized_provider_id,
+                normalized_session_id,
+                normalized_profile_id,
+            ),
         )
 
     if not records:
@@ -1957,9 +2221,23 @@ def list_sessions_by_agent_deck_session_id(
     *,
     profile_id: str = DEFAULT_PROFILE_ID,
 ) -> list[SessionRecord]:
-    normalized_session_id = agent_deck_session_id.strip()
+    return list_sessions_by_provider_session_id(
+        "agent-deck",
+        agent_deck_session_id,
+        profile_id=profile_id,
+    )
+
+
+def list_sessions_by_provider_session_id(
+    provider_id: str,
+    provider_session_id: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> list[SessionRecord]:
+    normalized_provider_id = _normalize_optional_text(provider_id)
+    normalized_session_id = _normalize_optional_text(provider_session_id)
     normalized_profile_id = _normalize_profile_id(profile_id)
-    if not normalized_session_id:
+    if not normalized_provider_id or not normalized_session_id:
         return []
 
     with _connect() as conn:
@@ -1967,10 +2245,12 @@ def list_sessions_by_agent_deck_session_id(
             conn,
             where_sql=(
                 "COALESCE("
-                "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                "chat_session_bindings.provider_id, sessions.provider_id"
+                ") = ? AND COALESCE("
+                "chat_session_bindings.provider_session_id, sessions.provider_session_id"
                 ") = ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
             ),
-            params=(normalized_session_id, normalized_profile_id),
+            params=(normalized_provider_id, normalized_session_id, normalized_profile_id),
         )
 
 
@@ -1991,7 +2271,11 @@ def detach_project_session_binding(
         conn.execute(
             """
             UPDATE sessions
-            SET agent_deck_session_id = NULL,
+            SET provider_id = NULL,
+                provider_session_id = NULL,
+                provider_session_title = NULL,
+                provider_agent_id = NULL,
+                agent_deck_session_id = NULL,
                 agent_deck_session_title = NULL,
                 agent_deck_tool = NULL,
                 last_active = CURRENT_TIMESTAMP
@@ -2435,6 +2719,10 @@ def upsert_session(
     profile_id: str = DEFAULT_PROFILE_ID,
     origin_kind: str = "managed",
     workspace_path: str | None = None,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     agent_deck_tool: str | None = None,
@@ -2445,10 +2733,22 @@ def upsert_session(
     normalized_thread_id = thread_id.strip()
     if not normalized_thread_id:
         raise ValueError("thread_id is required")
-    normalized_agent_deck_session_id = (
-        agent_deck_session_id.strip()
-        if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
-        else None
+    (
+        normalized_provider_id,
+        normalized_provider_session_id,
+        normalized_provider_session_title,
+        normalized_provider_agent_id,
+        normalized_agent_deck_session_id,
+        normalized_agent_deck_session_title,
+        normalized_agent_deck_tool,
+    ) = _normalize_provider_binding(
+        provider_id=provider_id,
+        provider_session_id=provider_session_id,
+        provider_session_title=provider_session_title,
+        provider_agent_id=provider_agent_id,
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=agent_deck_session_title,
+        agent_deck_tool=agent_deck_tool,
     )
     normalized_workspace_path = normalize_project_path(workspace_path or project_path)
     serialized_editor_state = _serialize_session_editor_state(editor_state)
@@ -2490,17 +2790,20 @@ def upsert_session(
 
         conflicting_record: SessionRecord | None = None
         stale_ids: list[int] = []
-        if normalized_agent_deck_session_id:
+        if normalized_provider_session_id:
             rows = _fetch_session_records(
                 conn,
                 where_sql=(
                     "sessions.project_path = ? AND COALESCE("
-                    "chat_session_bindings.agent_deck_session_id, sessions.agent_deck_session_id"
+                    "chat_session_bindings.provider_id, sessions.provider_id"
+                    ") = ? AND COALESCE("
+                    "chat_session_bindings.provider_session_id, sessions.provider_session_id"
                     ") = ? AND sessions.thread_id <> ? AND sessions.profile_id = ? AND sessions.hidden_at IS NULL"
                 ),
                 params=(
                     normalized_path,
-                    normalized_agent_deck_session_id,
+                    normalized_provider_id,
+                    normalized_provider_session_id,
                     effective_thread_id,
                     normalized_profile_id,
                 ),
@@ -2519,8 +2822,8 @@ def upsert_session(
                 )
             if conflicting_record is not None:
                 raise ValueError(
-                    "Agent Deck session "
-                    f"{normalized_agent_deck_session_id} is already bound to Live Editor thread "
+                    "Agent provider session "
+                    f"{normalized_provider_session_id} is already bound to Live Editor thread "
                     f"{conflicting_record.thread_id}"
                 )
 
@@ -2533,17 +2836,25 @@ def upsert_session(
                 thread_id,
                 backend,
                 origin_kind,
+                provider_id,
+                provider_session_id,
+                provider_session_title,
+                provider_agent_id,
                 agent_deck_session_id,
                 agent_deck_session_title,
                 agent_deck_tool,
                 editor_state_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 profile_id = excluded.profile_id,
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
                 origin_kind = excluded.origin_kind,
+                provider_id = excluded.provider_id,
+                provider_session_id = excluded.provider_session_id,
+                provider_session_title = excluded.provider_session_title,
+                provider_agent_id = excluded.provider_agent_id,
                 agent_deck_session_id = excluded.agent_deck_session_id,
                 agent_deck_session_title = excluded.agent_deck_session_title,
                 agent_deck_tool = excluded.agent_deck_tool,
@@ -2558,9 +2869,13 @@ def upsert_session(
                 effective_thread_id,
                 backend.strip() or "agent-deck",
                 _normalize_origin_kind(origin_kind),
+                normalized_provider_id,
+                normalized_provider_session_id,
+                normalized_provider_session_title,
+                normalized_provider_agent_id,
                 normalized_agent_deck_session_id,
-                agent_deck_session_title,
-                agent_deck_tool,
+                normalized_agent_deck_session_title,
+                normalized_agent_deck_tool,
                 serialized_editor_state,
             ),
         )
@@ -2571,9 +2886,13 @@ def upsert_session(
                 project_path=normalized_path,
                 chat_id=effective_thread_id,
                 workspace_path=normalized_workspace_path,
+                provider_id=normalized_provider_id,
+                provider_session_id=normalized_provider_session_id,
+                provider_session_title=normalized_provider_session_title,
+                provider_agent_id=normalized_provider_agent_id,
                 agent_deck_session_id=normalized_agent_deck_session_id,
-                agent_deck_session_title=agent_deck_session_title,
-                agent_deck_tool=agent_deck_tool,
+                agent_deck_session_title=normalized_agent_deck_session_title,
+                agent_deck_tool=normalized_agent_deck_tool,
             )
         else:
             _delete_chat_binding(conn, effective_thread_id)
@@ -2654,24 +2973,38 @@ def update_session_title(
         conn.execute(
             """
             UPDATE sessions
-            SET agent_deck_session_title = ?,
+            SET provider_session_title = ?,
+                agent_deck_session_title = ?,
                 last_active = CURRENT_TIMESTAMP
             WHERE project_path = ?
               AND profile_id = ?
               AND thread_id = ?
             """,
-            (normalized_title, normalized_path, normalized_profile_id, normalized_thread_id),
+            (
+                normalized_title,
+                normalized_title,
+                normalized_path,
+                normalized_profile_id,
+                normalized_thread_id,
+            ),
         )
         conn.execute(
             """
             UPDATE chat_session_bindings
-            SET agent_deck_session_title = ?,
+            SET provider_session_title = ?,
+                agent_deck_session_title = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE project_path = ?
               AND profile_id = ?
               AND chat_id = ?
             """,
-            (normalized_title, normalized_path, normalized_profile_id, normalized_thread_id),
+            (
+                normalized_title,
+                normalized_title,
+                normalized_path,
+                normalized_profile_id,
+                normalized_thread_id,
+            ),
         )
         conn.commit()
 

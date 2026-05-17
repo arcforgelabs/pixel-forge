@@ -145,6 +145,35 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.editor_state["targetUrl"], "https://www.google.com/")
         self.assertEqual(saved.editor_state["previewTabs"][0]["title"], "Google")
 
+    def test_upsert_session_persists_provider_neutral_binding(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+
+        saved = project_store.upsert_session(
+            str(project_path),
+            thread_id="thread-codex",
+            backend="codex-cli",
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            provider_session_title="Codex thread",
+            provider_agent_id="codex",
+        )
+
+        self.assertEqual(saved.provider_id, "codex-cli")
+        self.assertEqual(saved.provider_session_id, "codex-thread-a")
+        self.assertEqual(saved.provider_session_title, "Codex thread")
+        self.assertEqual(saved.provider_agent_id, "codex")
+        self.assertIsNone(saved.agent_deck_session_id)
+        self.assertEqual(
+            project_store.get_project_session_by_provider_session_id(
+                str(project_path),
+                "codex-cli",
+                "codex-thread-a",
+            ),
+            saved,
+        )
+
     def test_detach_missing_agent_deck_session_binding_preserves_lane_state(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
         workspace_path = project_path / ".agents" / "thread-a"

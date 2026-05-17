@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .agent_deck import AgentDeckProvider
 from .base import AgentProvider
+from .codex_cli import CodexCliProvider
 from .models import AgentProviderStatus
 
 
@@ -9,6 +10,7 @@ class AgentProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, AgentProvider] = {
             AgentDeckProvider.provider_id: AgentDeckProvider(),
+            CodexCliProvider.provider_id: CodexCliProvider(),
         }
 
     def get(self, provider_id: str) -> AgentProvider | None:

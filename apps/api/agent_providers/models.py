@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 
@@ -138,3 +139,14 @@ class AgentProviderSessionActivity:
             "status": self.status,
             "output": self.output,
         }
+
+
+@dataclass(slots=True, frozen=True)
+class AgentProviderTurnDispatch:
+    provider_id: str
+    provider_session_id: str
+    agent_id: str | None
+    baseline_output: str
+    status_message: str
+    wait_task: asyncio.Task[object]
+    status_heartbeat: bool = False

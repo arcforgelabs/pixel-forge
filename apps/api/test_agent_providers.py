@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionTarget
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
+from agent_providers.codex_cli import CodexCliProvider, CodexCliSessionInfo
 
 
 class AgentProviderRegistryTest(unittest.TestCase):
@@ -89,6 +90,17 @@ class AgentProviderRegistryTest(unittest.TestCase):
         self.assertIn("codex", transports)
         self.assertIn("exec resume", transports["codex"]["current_transport"])
         self.assertIn("app-server", transports["codex"]["preferred_transport"])
+
+    def test_codex_cli_provider_is_registered_with_app_server_transport(self) -> None:
+        statuses = [status.to_dict() for status in list_agent_providers()]
+        matches = [status for status in statuses if status["id"] == "codex-cli"]
+        self.assertEqual(len(matches), 1)
+        transports = {
+            transport["agent_id"]: transport
+            for transport in matches[0]["transports"]  # type: ignore[index]
+        }
+        self.assertIn("codex", transports)
+        self.assertIn("app-server", transports["codex"]["current_transport"])
 
 
 class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
@@ -181,3 +193,38 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(serialized["provider_session_id"], "s3")
         self.assertEqual(serialized["agent_id"], "pi")
         self.assertEqual(serialized["output"], "done")
+
+
+class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dispatch_turn_uses_codex_app_server_runner(self) -> None:
+        session = CodexCliSessionInfo(
+            provider_session_id="codex-thread-a",
+            title="Codex thread",
+            workspace_path="/tmp/project",
+            status="idle",
+            codex_session_id="codex-thread-a",
+        )
+
+        async def fake_run(session_info, **kwargs):
+            self.assertEqual(session_info.provider_session_id, "codex-thread-a")
+            self.assertEqual(kwargs["prompt"], "hello")
+            return "done"
+
+        with patch(
+            "agent_providers.codex_cli._run_codex_turn",
+            side_effect=fake_run,
+        ):
+            dispatch = await CodexCliProvider().dispatch_turn(
+                session,
+                project_path="/tmp/project",
+                prompt="hello",
+                image_paths=[],
+                startup_timeout_seconds=1.0,
+                completion_timeout_seconds=2.0,
+            )
+            result = await dispatch.wait_task
+
+        self.assertEqual(dispatch.provider_id, "codex-cli")
+        self.assertEqual(dispatch.provider_session_id, "codex-thread-a")
+        self.assertEqual(dispatch.agent_id, "codex")
+        self.assertEqual(result, "done")

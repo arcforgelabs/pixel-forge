@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from agent_deck_runtime import (
     agent_deck_available,
     agent_deck_command,
@@ -11,6 +13,7 @@ from .models import (
     AgentProviderSessionActivity,
     AgentProviderSessionTarget,
     AgentProviderStatus,
+    AgentProviderTurnDispatch,
     AgentTransportDescriptor,
     ProviderCapabilitySet,
 )
@@ -177,4 +180,127 @@ class AgentDeckProvider:
             agent_id=activity.tool,
             status=activity.status,
             output=activity.output,
+        )
+
+    async def ensure_live_session(
+        self,
+        project_path: str,
+        thread,
+        *,
+        agent_type: str = "claude",
+        workspace_mode: str = "root",
+        target_provider_session_id: str | None = None,
+        agent_model: str | None = None,
+        agent_thinking: str | None = None,
+    ):
+        return await agent_deck_bridge.ensure_agent_deck_session(
+            project_path,
+            thread,
+            agent_type=agent_type,
+            workspace_mode=workspace_mode,
+            target_agent_deck_session_id=target_provider_session_id,
+            agent_model=agent_model,
+            agent_thinking=agent_thinking,
+        )
+
+    async def dispatch_turn(
+        self,
+        session_info,
+        *,
+        project_path: str,
+        prompt: str,
+        image_paths: list[str] | None = None,
+        startup_timeout_seconds: float,
+        completion_timeout_seconds: float,
+    ) -> AgentProviderTurnDispatch:
+        baseline_output = ""
+        normalized_session_status = (session_info.status or "").strip().lower()
+        queue_onto_busy_session = normalized_session_status not in {
+            "",
+            "waiting",
+            "idle",
+        }
+        normalized_image_paths = [
+            path.strip()
+            for path in (image_paths or [])
+            if isinstance(path, str) and path.strip()
+        ]
+
+        if session_info.tool == "codex" and not (
+            session_info.codex_session_id and session_info.jsonl_path
+        ):
+            baseline_output = await agent_deck_bridge.get_last_output(
+                session_info.agent_deck_session_id
+            )
+
+        tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
+        if (
+            session_info.tool == "claude"
+            and session_info.claude_session_id
+            and not queue_onto_busy_session
+            and not session_info.tmux_session
+        ):
+            wait_task = asyncio.create_task(
+                agent_deck_bridge.send_native_claude_prompt_reliably(
+                    session_info,
+                    project_path=project_path,
+                    prompt=prompt,
+                )
+            )
+            status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+        elif (
+            session_info.tool == "codex"
+            and session_info.codex_session_id
+            and session_info.jsonl_path
+            and not queue_onto_busy_session
+            and not session_info.tmux_session
+        ):
+            wait_task = asyncio.create_task(
+                agent_deck_bridge.send_native_codex_prompt_reliably(
+                    session_info,
+                    project_path=project_path,
+                    prompt=prompt,
+                    image_paths=normalized_image_paths,
+                )
+            )
+            status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+        else:
+            await agent_deck_bridge.send_agent_deck_prompt_reliably(
+                session_info,
+                project_path=project_path,
+                prompt=prompt,
+                no_wait=queue_onto_busy_session and session_info.tool != "claude",
+            )
+            if session_info.tool == "codex":
+                status_message = (
+                    f"Queued request to busy {tool_label} session. Waiting for completion..."
+                    if queue_onto_busy_session
+                    else f"Request delivered to {tool_label}. Waiting for completion..."
+                )
+            else:
+                status_message = f"Request delivered to {tool_label}. Waiting for completion..."
+
+            wait_task = asyncio.create_task(
+                agent_deck_bridge.wait_for_agent_deck_turn_completion(
+                    session_info,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    completion_timeout_seconds=completion_timeout_seconds,
+                )
+            )
+
+        return AgentProviderTurnDispatch(
+            provider_id=self.provider_id,
+            provider_session_id=session_info.agent_deck_session_id,
+            agent_id=session_info.tool,
+            baseline_output=baseline_output,
+            status_message=status_message,
+            wait_task=wait_task,
+            status_heartbeat=session_info.tool != "claude"
+            and not (
+                session_info.tool == "codex"
+                and session_info.codex_session_id
+                and session_info.jsonl_path
+                and not queue_onto_busy_session
+                and not session_info.tmux_session
+            ),
         )

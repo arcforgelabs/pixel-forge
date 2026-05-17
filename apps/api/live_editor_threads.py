@@ -26,6 +26,10 @@ class LiveEditorThreadRecord:
     project_path: str
     workspace_path: str
     backend: str
+    provider_id: str | None
+    provider_session_id: str | None
+    provider_session_title: str | None
+    provider_agent_id: str | None
     agent_deck_session_id: str | None
     agent_deck_session_title: str | None
     acpx_agent: str | None
@@ -47,6 +51,57 @@ def _connect() -> sqlite3.Connection:
     conn = connect_state_db()
     _ensure_schema(conn)
     return conn
+
+
+def _normalize_optional_text(value: object | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_provider_binding(
+    *,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
+    agent_deck_session_id: str | None = None,
+    agent_deck_session_title: str | None = None,
+) -> tuple[str | None, str | None, str | None, str | None, str | None, str | None]:
+    normalized_provider_id = _normalize_optional_text(provider_id)
+    normalized_provider_session_id = _normalize_optional_text(provider_session_id)
+    normalized_provider_session_title = (
+        _normalize_optional_text(provider_session_title)
+        or _normalize_optional_text(agent_deck_session_title)
+    )
+    normalized_provider_agent_id = _normalize_optional_text(provider_agent_id)
+    normalized_agent_deck_session_id = _normalize_optional_text(agent_deck_session_id)
+    normalized_agent_deck_session_title = _normalize_optional_text(agent_deck_session_title)
+
+    if normalized_agent_deck_session_id and not normalized_provider_session_id:
+        normalized_provider_id = "agent-deck"
+        normalized_provider_session_id = normalized_agent_deck_session_id
+    if normalized_provider_id == "agent-deck":
+        normalized_agent_deck_session_id = (
+            normalized_agent_deck_session_id or normalized_provider_session_id
+        )
+        normalized_agent_deck_session_title = (
+            normalized_agent_deck_session_title or normalized_provider_session_title
+        )
+    if not normalized_provider_session_id:
+        normalized_provider_id = None
+        normalized_provider_session_title = None
+        normalized_provider_agent_id = None
+
+    return (
+        normalized_provider_id,
+        normalized_provider_session_id,
+        normalized_provider_session_title,
+        normalized_provider_agent_id,
+        normalized_agent_deck_session_id,
+        normalized_agent_deck_session_title,
+    )
 
 
 def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
@@ -212,6 +267,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 project_path TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
                 backend TEXT NOT NULL,
+                provider_id TEXT,
+                provider_session_id TEXT,
+                provider_session_title TEXT,
+                provider_agent_id TEXT,
                 agent_deck_session_id TEXT,
                 agent_deck_session_title TEXT,
                 acpx_agent TEXT,
@@ -241,6 +300,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             "acp_session_id",
             "hidden_at",
             "last_live_preview_hash",
+            "provider_id",
+            "provider_session_id",
+            "provider_session_title",
+            "provider_agent_id",
         ):
             if column_name in existing_columns:
                 continue
@@ -266,8 +329,41 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             WHERE profile_id IS NULL OR TRIM(profile_id) = ''
             """
         )
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET provider_id = 'agent-deck',
+                provider_session_id = agent_deck_session_id,
+                provider_session_title = agent_deck_session_title
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+              AND (provider_session_id IS NULL OR TRIM(provider_session_id) = '')
+            """
+        )
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET agent_deck_session_id = provider_session_id,
+                agent_deck_session_title = provider_session_title
+            WHERE provider_id = 'agent-deck'
+              AND provider_session_id IS NOT NULL
+              AND TRIM(provider_session_id) <> ''
+              AND (agent_deck_session_id IS NULL OR TRIM(agent_deck_session_id) = '')
+            """
+        )
         _migrate_legacy_rows(conn)
         _migrate_legacy_instance_rows(conn)
+        conn.execute(
+            """
+            UPDATE live_editor_threads
+            SET provider_id = 'agent-deck',
+                provider_session_id = agent_deck_session_id,
+                provider_session_title = agent_deck_session_title
+            WHERE agent_deck_session_id IS NOT NULL
+              AND TRIM(agent_deck_session_id) <> ''
+              AND (provider_session_id IS NULL OR TRIM(provider_session_id) = '')
+            """
+        )
         conn.commit()
         _DB_INITIALIZED = True
 
@@ -290,6 +386,10 @@ def _row_to_record(row: sqlite3.Row) -> LiveEditorThreadRecord:
         project_path=row["project_path"],
         workspace_path=row["workspace_path"] or row["project_path"],
         backend=row["backend"],
+        provider_id=_column_or_none(row, "provider_id"),
+        provider_session_id=_column_or_none(row, "provider_session_id"),
+        provider_session_title=_column_or_none(row, "provider_session_title"),
+        provider_agent_id=_column_or_none(row, "provider_agent_id"),
         agent_deck_session_id=row["agent_deck_session_id"],
         agent_deck_session_title=row["agent_deck_session_title"],
         acpx_agent=row["acpx_agent"],
@@ -312,7 +412,9 @@ def get_live_editor_thread(
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend,
+                   provider_id, provider_session_id, provider_session_title, provider_agent_id,
+                   agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
@@ -357,13 +459,15 @@ def get_or_create_live_editor_thread(
                 profile_id,
                 project_path,
                 workspace_path,
-                backend
-            ) VALUES (?, ?, ?, ?, ?)
+                backend,
+                provider_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 profile_id = excluded.profile_id,
                 project_path = excluded.project_path,
                 workspace_path = excluded.workspace_path,
                 backend = excluded.backend,
+                provider_id = COALESCE(live_editor_threads.provider_id, excluded.provider_id),
                 hidden_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             """,
@@ -372,6 +476,7 @@ def get_or_create_live_editor_thread(
                 normalized_profile_id,
                 normalized_project_path,
                 normalized_project_path,
+                "agent-deck",
                 "agent-deck",
             ),
         )
@@ -388,6 +493,10 @@ def update_live_editor_thread(
     *,
     profile_id: str = "default",
     workspace_path: str | None = None,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     acpx_agent: str | None = None,
@@ -401,15 +510,39 @@ def update_live_editor_thread(
     assignments: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
     values: list[str] = []
 
-    if agent_deck_session_id is not None:
+    (
+        normalized_provider_id,
+        normalized_provider_session_id,
+        normalized_provider_session_title,
+        normalized_provider_agent_id,
+        normalized_agent_deck_session_id,
+        normalized_agent_deck_session_title,
+    ) = _normalize_provider_binding(
+        provider_id=provider_id,
+        provider_session_id=provider_session_id,
+        provider_session_title=provider_session_title,
+        provider_agent_id=provider_agent_id,
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=agent_deck_session_title,
+    )
+
+    if provider_session_id is not None or agent_deck_session_id is not None:
+        assignments.append("provider_id = ?")
+        values.append(normalized_provider_id)
+        assignments.append("provider_session_id = ?")
+        values.append(normalized_provider_session_id)
+        assignments.append("provider_session_title = ?")
+        values.append(normalized_provider_session_title)
+        assignments.append("provider_agent_id = ?")
+        values.append(normalized_provider_agent_id)
         assignments.append("agent_deck_session_id = ?")
-        values.append(agent_deck_session_id)
+        values.append(normalized_agent_deck_session_id)
     if workspace_path is not None:
         assignments.append("workspace_path = ?")
         values.append(str(Path(workspace_path).resolve()))
-    if agent_deck_session_title is not None:
+    if provider_session_title is not None or agent_deck_session_title is not None:
         assignments.append("agent_deck_session_title = ?")
-        values.append(agent_deck_session_title)
+        values.append(normalized_agent_deck_session_title)
     if acpx_agent is not None:
         assignments.append("acpx_agent = ?")
         values.append(acpx_agent)
@@ -470,7 +603,9 @@ def detach_missing_agent_deck_thread_bindings(
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend,
+                   provider_id, provider_session_id, provider_session_title, provider_agent_id,
+                   agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
@@ -494,7 +629,11 @@ def detach_missing_agent_deck_thread_bindings(
             conn.execute(
                 f"""
                 UPDATE live_editor_threads
-                SET agent_deck_session_id = NULL,
+                SET provider_id = NULL,
+                    provider_session_id = NULL,
+                    provider_session_title = NULL,
+                    provider_agent_id = NULL,
+                    agent_deck_session_id = NULL,
                     agent_deck_session_title = NULL,
                     acpx_agent = NULL,
                     acpx_session_name = NULL,
@@ -513,7 +652,9 @@ def detach_missing_agent_deck_thread_bindings(
 
         refreshed_rows = conn.execute(
             """
-            SELECT thread_id, profile_id, project_path, workspace_path, backend, agent_deck_session_id,
+            SELECT thread_id, profile_id, project_path, workspace_path, backend,
+                   provider_id, provider_session_id, provider_session_title, provider_agent_id,
+                   agent_deck_session_id,
                    agent_deck_session_title, acpx_agent, acpx_session_name,
                    acpx_record_id, acp_session_id, claude_session_id, last_request_id, last_live_preview_hash,
                    created_at, updated_at
