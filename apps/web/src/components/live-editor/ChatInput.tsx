@@ -369,7 +369,7 @@ export function ChatInput() {
   const pendingComposerSeed = useLiveEditorStore((state) => state.pendingComposerSeed)
   const consumePendingComposerSeed = useLiveEditorStore((state) => state.consumePendingComposerSeed)
   const selectedElements = useLiveEditorStore((state) => state.selectedElements)
-  const targetAgentDeckSessionId = useLiveEditorStore((state) => state.targetAgentDeckSessionId)
+  const targetAgentSessionId = useLiveEditorStore((state) => state.targetAgentSessionId)
   const draftAgentType = useLiveEditorStore((state) => state.draftAgentType)
   const setDraftAgentType = useLiveEditorStore((state) => state.setDraftAgentType)
   const {
@@ -377,7 +377,7 @@ export function ChatInput() {
     defaultAgentModels,
     defaultAgentThinking,
     liveEditorSession,
-    agentDeckTargets,
+    agentTargets,
     installedSkills,
     skillsLoaded,
     skillsLoading,
@@ -386,16 +386,16 @@ export function ChatInput() {
   const sourceCount = new Set(
     selectedElements.map((element) => `${element.sourceTabId}::${element.sourceUrl}`)
   ).size
-  const selectedAgentDeckTarget = agentDeckTargets.find(
-    (target) => target.id === targetAgentDeckSessionId
+  const selectedAgentTarget = agentTargets.find(
+    (target) => target.id === targetAgentSessionId
   )
   const effectiveAgentType =
     liveEditorSession?.agentDeckTool
-    || selectedAgentDeckTarget?.tool
+    || selectedAgentTarget?.tool
     || draftAgentType
     || defaultAgentType
   const agentSelectionLocked = Boolean(
-    liveEditorSession?.agentDeckSessionId || targetAgentDeckSessionId
+    liveEditorSession?.agentDeckSessionId || targetAgentSessionId
   )
   const agentModelOptions = getAgentModelOptions(effectiveAgentType)
   const activeAgentModel = effectiveAgentType

@@ -176,7 +176,7 @@ describe('mirror target resolution', () => {
         liveWorkspacePath: missingClone,
         liveAgentDeckSessionId: 'missing-session',
         selectedTargetId: null,
-        agentDeckTargets: [],
+        agentTargets: [],
       })
     ).toBeNull()
   })
@@ -188,7 +188,7 @@ describe('mirror target resolution', () => {
         liveWorkspacePath: missingClone,
         liveAgentDeckSessionId: 'missing-session',
         selectedTargetId: 'clone-b',
-        agentDeckTargets: [
+        agentTargets: [
           {
             id: 'clone-b',
             path: cloneB,

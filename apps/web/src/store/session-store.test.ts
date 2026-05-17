@@ -199,8 +199,8 @@ describe("session-store thread switching", () => {
       projectChatsByProject: {},
       profileState: null,
       profileLoaded: false,
-      agentDeckTargets: [],
-      selectedAgentDeckTargetId: null,
+      agentTargets: [],
+      selectedAgentTargetId: null,
       defaultAgentType: "claude",
       activeMode: "live-editor",
     });
@@ -211,7 +211,7 @@ describe("session-store thread switching", () => {
     vi.restoreAllMocks();
   });
 
-  it("clears the selected Agent Deck target when resetting the live editor session", () => {
+  it("clears the selected agent target when resetting the live editor session", () => {
     useSessionStore.setState({
       liveEditorSession: {
         threadId: "thread-a",
@@ -222,13 +222,13 @@ describe("session-store thread switching", () => {
         agentDeckTool: "codex",
         requestId: "request-a",
       },
-      selectedAgentDeckTargetId: "deck-session-a",
+      selectedAgentTargetId: "deck-session-a",
     });
 
     useSessionStore.getState().clearLiveEditorSession();
 
     expect(useSessionStore.getState().liveEditorSession).toBeNull();
-    expect(useSessionStore.getState().selectedAgentDeckTargetId).toBeNull();
+    expect(useSessionStore.getState().selectedAgentTargetId).toBeNull();
   });
 
   it("switches the active live editor lane to the chosen project thread", () => {
@@ -250,7 +250,7 @@ describe("session-store thread switching", () => {
       agentDeckTool: "codex",
       requestId: "request-b",
     });
-    expect(useSessionStore.getState().selectedAgentDeckTargetId).toBe(
+    expect(useSessionStore.getState().selectedAgentTargetId).toBe(
       "deck-session-b"
     );
     expect(useSessionStore.getState().defaultAgentType).toBe("claude");
@@ -411,7 +411,7 @@ describe("session-store thread switching", () => {
       persistProfile: false,
     });
 
-    expect(useSessionStore.getState().agentDeckTargetsLoading).toBe(true);
+    expect(useSessionStore.getState().agentTargetsLoading).toBe(true);
 
     await vi.waitFor(() => {
       expect(useSessionStore.getState().liveEditorSession).toMatchObject({
@@ -431,8 +431,8 @@ describe("session-store thread switching", () => {
       bindingState: "detached",
       agentDeckSessionId: "dead-session-a",
     });
-    expect(useSessionStore.getState().selectedAgentDeckTargetId).toBeNull();
-    expect(useSessionStore.getState().agentDeckTargetsLoading).toBe(false);
+    expect(useSessionStore.getState().selectedAgentTargetId).toBeNull();
+    expect(useSessionStore.getState().agentTargetsLoading).toBe(false);
     expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 
@@ -660,8 +660,8 @@ describe("session-store chat creation", () => {
     useSessionStore.setState({
       projectPath: "/tmp/example-project",
       projectChatsByProject: {},
-      agentDeckTargets: [],
-      selectedAgentDeckTargetId: null,
+      agentTargets: [],
+      selectedAgentTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
       projectSessionsByProject: {},
@@ -703,8 +703,8 @@ describe("session-store chat creation", () => {
       agentDeckSessionTitle: "pixel-forge-thread-b",
       agentDeckTool: null,
     });
-    expect(state.agentDeckTargets).toHaveLength(0);
-    expect(state.selectedAgentDeckTargetId).toBeNull();
+    expect(state.agentTargets).toHaveLength(0);
+    expect(state.selectedAgentTargetId).toBeNull();
     expect(state.defaultAgentType).toBe("claude");
     expect(createChatBody).toMatchObject({
       agent_type: "codex",
@@ -773,8 +773,8 @@ describe("session-store project chat visibility", () => {
       projectPath: "/tmp/example-project",
       projectChatsByProject: {},
       projectSessionsByProject: {},
-      agentDeckTargets: [],
-      selectedAgentDeckTargetId: null,
+      agentTargets: [],
+      selectedAgentTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
     });
@@ -1080,8 +1080,8 @@ describe("session-store project ordering", () => {
       ],
       projectSessionsByProject: {},
       projectChatsByProject: {},
-      agentDeckTargets: [],
-      selectedAgentDeckTargetId: null,
+      agentTargets: [],
+      selectedAgentTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
     });
@@ -1105,7 +1105,7 @@ describe("session-store project ordering", () => {
   });
 });
 
-describe("createAgentDeckTargetSession", () => {
+describe("createAgentTargetSession", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
@@ -1160,8 +1160,8 @@ describe("createAgentDeckTargetSession", () => {
       projectChatsByProject: {
         "/tmp/example-project": [existingChat],
       },
-      agentDeckTargets: [],
-      selectedAgentDeckTargetId: null,
+      agentTargets: [],
+      selectedAgentTargetId: null,
       defaultAgentType: "claude",
       liveEditorSession: null,
       projectSessionsByProject: {},
@@ -1174,7 +1174,7 @@ describe("createAgentDeckTargetSession", () => {
   });
 
   it("can create an Agent Deck lane without refreshing adopted project chats yet", async () => {
-    const created = await useSessionStore.getState().createAgentDeckTargetSession({
+    const created = await useSessionStore.getState().createAgentTargetSession({
       refreshProjectChats: false,
     });
 
@@ -1184,8 +1184,8 @@ describe("createAgentDeckTargetSession", () => {
       path: "/tmp/example-project/.agents/pixel-forge-thread-a",
       tool: "claude",
     });
-    expect(state.selectedAgentDeckTargetId).toBe("deck-thread-a");
-    expect(state.agentDeckTargets[0]).toMatchObject({
+    expect(state.selectedAgentTargetId).toBe("deck-thread-a");
+    expect(state.agentTargets[0]).toMatchObject({
       id: "deck-thread-a",
       path: "/tmp/example-project/.agents/pixel-forge-thread-a",
     });

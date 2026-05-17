@@ -15,7 +15,7 @@ export interface ActiveMirrorTargetRef {
   instanceSlug: string
 }
 
-export interface MirrorAgentDeckTargetRef {
+export interface MirrorAgentTargetRef {
   id: string
   path: string | null | undefined
 }
@@ -61,14 +61,14 @@ export function resolveUsableIsolatedMirrorTarget(options: {
   liveWorkspacePath: string | null | undefined
   liveAgentDeckSessionId: string | null | undefined
   selectedTargetId: string | null | undefined
-  agentDeckTargets: MirrorAgentDeckTargetRef[]
+  agentTargets: MirrorAgentTargetRef[]
 }): ResolvedIsolatedMirrorTarget | null {
   const projectPath = options.projectPath?.trim() || null
   if (!projectPath) {
     return null
   }
 
-  const cloneTargets = options.agentDeckTargets.filter((target) =>
+  const cloneTargets = options.agentTargets.filter((target) =>
     isCloneWorkspaceBound({ projectPath, workspacePath: target.path })
   )
 

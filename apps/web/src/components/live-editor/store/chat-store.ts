@@ -268,7 +268,7 @@ export interface ThreadChatState {
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
   pendingComposerSeed: ComposerSeed | null
-  targetAgentDeckSessionId: string | null
+  targetAgentSessionId: string | null
   draftAgentType: string
   draftWorkspaceMode: DraftWorkspaceMode
   selectedElements: SelectedElement[]
@@ -302,7 +302,7 @@ interface ActiveThreadViewState {
   connected: boolean
   queuedMessages: PendingOutboundMessage[]
   pendingComposerSeed: ComposerSeed | null
-  targetAgentDeckSessionId: string | null
+  targetAgentSessionId: string | null
   draftAgentType: string
   draftWorkspaceMode: DraftWorkspaceMode
   selectedElements: SelectedElement[]
@@ -359,13 +359,13 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
   retryMessageInCurrentChat: (messageId: string) => Promise<void>
   consumePendingComposerSeed: (threadKey?: string | null) => ComposerSeed | null
   clearMessages: () => void
-  newSession: (targetAgentDeckSessionId?: string | null) => void
+  newSession: (targetAgentSessionId?: string | null) => void
   removeThread: (threadKey: string | null | undefined, fallbackThreadKey?: string | null) => void
-  setTargetAgentDeckSessionId: (sessionId: string | null) => void
+  setTargetAgentSessionId: (sessionId: string | null) => void
   setDraftAgentType: (agentType: string) => void
   setDraftWorkspaceMode: (workspaceMode: DraftWorkspaceMode) => void
-  getTargetAgentDeckSessionId: (threadKey?: string | null) => string | null
-  findThreadKeyByTargetAgentDeckSessionId: (
+  getTargetAgentSessionId: (threadKey?: string | null) => string | null
+  findThreadKeyByTargetAgentSessionId: (
     sessionId: string | null | undefined
   ) => string | null
   setActivePreviewTool: (tool: PixelForgeDesktopPreviewTool) => void
@@ -551,7 +551,7 @@ function createEmptyThreadState(projectPath: string | null = getCurrentProjectPa
     connected: false,
     queuedMessages: [],
     pendingComposerSeed: null,
-    targetAgentDeckSessionId: null,
+    targetAgentSessionId: null,
     selectedElements: [],
     selectionUndoStack: [],
     selectionRedoStack: [],
@@ -761,7 +761,7 @@ function createThreadStateFromSession(
 ): ThreadChatState {
   return {
     ...createEmptyThreadState(session.projectPath?.trim() || null),
-    targetAgentDeckSessionId: session.agentDeckSessionId ?? null,
+    targetAgentSessionId: session.agentDeckSessionId ?? null,
     ...createThreadEditorStateFromPersisted(session.editorState, fallbackUrl),
   }
 }
@@ -774,7 +774,7 @@ function shouldPersistThreadState(
     return true
   }
 
-  if (threadState.targetAgentDeckSessionId) {
+  if (threadState.targetAgentSessionId) {
     return true
   }
 
@@ -827,7 +827,7 @@ function buildActiveThreadViewState(
     connected: threadState.connected,
     queuedMessages: threadState.queuedMessages,
     pendingComposerSeed: threadState.pendingComposerSeed,
-    targetAgentDeckSessionId: threadState.targetAgentDeckSessionId,
+    targetAgentSessionId: threadState.targetAgentSessionId,
     draftAgentType: threadState.draftAgentType,
     draftWorkspaceMode: threadState.draftWorkspaceMode,
     selectedElements: threadState.selectedElements,
@@ -1101,8 +1101,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const resolvedThreadKey = threadKey?.trim() || null
     const threadState = getThreadStateSnapshot(get().threadStates, resolvedThreadKey)
     const boundSession = resolveThreadSession(resolvedThreadKey)
-    useSessionStore.getState().setSelectedAgentDeckTargetId(
-      boundSession?.agentDeckSessionId ?? threadState.targetAgentDeckSessionId ?? null
+    useSessionStore.getState().setSelectedAgentTargetId(
+      boundSession?.agentDeckSessionId ?? threadState.targetAgentSessionId ?? null
     )
   }
 
@@ -1688,7 +1688,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const chatId = boundSession?.threadId ?? threadKey
     const agentDeckSessionId =
       boundSession?.agentDeckSessionId
-      ?? threadState.targetAgentDeckSessionId
+      ?? threadState.targetAgentSessionId
       ?? null
     const fromNow = options?.fromNow === true
 
@@ -1799,7 +1799,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const boundSession = resolveThreadSession(activeThreadKey)
     const agentDeckSessionId =
       boundSession?.agentDeckSessionId
-      ?? threadState.targetAgentDeckSessionId
+      ?? threadState.targetAgentSessionId
       ?? null
     if (!agentDeckSessionId || !canObserveThreadEvents(threadState)) {
       stopObservedThreadStreaming()
@@ -1924,12 +1924,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return
     }
 
-    const targetAgentDeckSessionId =
+    const targetAgentSessionId =
       boundSession?.agentDeckSessionId
-      ?? threadState.targetAgentDeckSessionId
+      ?? threadState.targetAgentSessionId
       ?? null
-    const selectedTarget = targetAgentDeckSessionId
-      ? sessionStore.agentDeckTargets.find((target) => target.id === targetAgentDeckSessionId) ?? null
+    const selectedTarget = targetAgentSessionId
+      ? sessionStore.agentTargets.find((target) => target.id === targetAgentSessionId) ?? null
       : null
     const savedSession = await sessionStore.persistProjectSession({
       projectPath,
@@ -1939,7 +1939,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         boundSession?.workspacePath
         ?? selectedTarget?.path
         ?? projectPath,
-      agentDeckSessionId: targetAgentDeckSessionId,
+      agentDeckSessionId: targetAgentSessionId,
       agentDeckSessionTitle:
         boundSession?.agentDeckSessionTitle
         ?? selectedTarget?.title
@@ -2216,10 +2216,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               Number.isFinite(Number(data.selection_count))
                 ? Number(data.selection_count)
                 : threadState.currentSelectionCount,
-            targetAgentDeckSessionId:
+            targetAgentSessionId:
               typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
                 ? data.agent_deck_session_id
-                : threadState.targetAgentDeckSessionId,
+                : threadState.targetAgentSessionId,
           }))
 
           if (wasActiveThread) {
@@ -2350,8 +2350,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
             return resetThreadRuntimeState(currentThreadState, {
               messages: nextMessages,
-              targetAgentDeckSessionId:
-                resolvedAgentDeckSessionId ?? currentThreadState.targetAgentDeckSessionId,
+              targetAgentSessionId:
+                resolvedAgentDeckSessionId ?? currentThreadState.targetAgentSessionId,
             })
           })
 
@@ -2475,22 +2475,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     },
     getSessionId: () => useSessionStore.getState().liveEditorSession?.threadId ?? null,
     getProjectPath: () => useSessionStore.getState().projectPath,
-    getTargetAgentDeckSessionId: (threadKey) => {
+    getTargetAgentSessionId: (threadKey) => {
       const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
       const boundSession = resolveThreadSession(resolvedThreadKey)
       if (boundSession?.agentDeckSessionId) {
         return boundSession.agentDeckSessionId
       }
-      return getThreadStateSnapshot(get().threadStates, resolvedThreadKey).targetAgentDeckSessionId
+      return getThreadStateSnapshot(get().threadStates, resolvedThreadKey).targetAgentSessionId
     },
-    findThreadKeyByTargetAgentDeckSessionId: (sessionId) => {
+    findThreadKeyByTargetAgentSessionId: (sessionId) => {
       const normalizedSessionId = sessionId?.trim() || null
       if (!normalizedSessionId) {
         return null
       }
 
       for (const [threadKey, threadState] of Object.entries(get().threadStates)) {
-        if (threadState.targetAgentDeckSessionId === normalizedSessionId) {
+        if (threadState.targetAgentSessionId === normalizedSessionId) {
           return threadKey
         }
       }
@@ -2668,22 +2668,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         )
         return
       }
-      const targetAgentDeckSessionId =
+      const targetAgentSessionId =
         boundSession?.agentDeckSessionId
-        ?? activeThreadState.targetAgentDeckSessionId
+        ?? activeThreadState.targetAgentSessionId
         ?? null
-      const conflictingThread = targetAgentDeckSessionId
+      const conflictingThread = targetAgentSessionId
         ? selectActiveProjectSessions(sessionState).find(
             (session) =>
               session.threadId !== activeThreadKey
-              && session.agentDeckSessionId === targetAgentDeckSessionId
+              && session.agentDeckSessionId === targetAgentSessionId
           ) ?? null
         : null
 
       if (conflictingThread) {
         appendSystemError(
           activeThreadKey,
-          `Agent Deck session ${targetAgentDeckSessionId} is already bound to Live Editor thread ${conflictingThread.threadId}. Switch to that thread or choose a different session.`
+          `Agent Deck session ${targetAgentSessionId} is already bound to Live Editor thread ${conflictingThread.threadId}. Switch to that thread or choose a different session.`
         )
         return
       }
@@ -2724,8 +2724,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         (tab) => tab.id === activeThreadState.activePreviewTabId
       ) ?? activeThreadState.previewTabs[0] ?? null
       const selectedTarget =
-        sessionState.agentDeckTargets.find(
-          (target) => target.id === targetAgentDeckSessionId
+        sessionState.agentTargets.find(
+          (target) => target.id === targetAgentSessionId
         ) ?? null
       const agentType =
         boundSession?.agentDeckTool
@@ -2800,7 +2800,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           payload.agent_thinking = agentThinking.trim()
         }
 
-        if (!boundSession?.agentDeckSessionId && !targetAgentDeckSessionId) {
+        if (!boundSession?.agentDeckSessionId && !targetAgentSessionId) {
           payload.workspace_mode = workspaceMode
         }
 
@@ -2825,10 +2825,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           payload.thread_id = boundSession.threadId
         }
 
-        if (targetAgentDeckSessionId) {
-          payload.target_agent_deck_session_id = targetAgentDeckSessionId
+        if (targetAgentSessionId) {
+          payload.target_agent_deck_session_id = targetAgentSessionId
           payload.target_provider_id = selectedTarget?.providerId || 'agent-deck'
-          payload.target_provider_session_id = targetAgentDeckSessionId
+          payload.target_provider_session_id = targetAgentSessionId
         }
 
         const latestThreadState = getThreadStateSnapshot(
@@ -2896,7 +2896,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       updateThreadState(created.threadId, (threadState) => ({
         ...threadState,
         projectPath: targetProjectPath,
-        targetAgentDeckSessionId: null,
+        targetAgentSessionId: null,
         selectedElements: cloneSelectionState(replayDraft.selectedElements),
         selectionUndoStack: [],
         selectionRedoStack: [],
@@ -2973,15 +2973,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       maybeObserveActiveThread()
     },
 
-    newSession: (targetAgentDeckSessionId = null) => {
+    newSession: (targetAgentSessionId = null) => {
       const nextDraftKey = createDraftThreadKey()
       const nextThreadState = {
         ...createEmptyThreadState(getCurrentProjectPathSnapshot()),
-        targetAgentDeckSessionId: targetAgentDeckSessionId?.trim() || null,
+        targetAgentSessionId: targetAgentSessionId?.trim() || null,
       }
       useSessionStore.getState().clearLiveEditorSession()
-      useSessionStore.getState().setSelectedAgentDeckTargetId(
-        nextThreadState.targetAgentDeckSessionId
+      useSessionStore.getState().setSelectedAgentTargetId(
+        nextThreadState.targetAgentSessionId
       )
       set((state) =>
         createStoreState(nextDraftKey, {
@@ -2989,7 +2989,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           [nextDraftKey]: nextThreadState,
         })
       )
-      if (nextThreadState.targetAgentDeckSessionId) {
+      if (nextThreadState.targetAgentSessionId) {
         scheduleThreadPersistence(nextDraftKey, 0)
       }
       maybeObserveActiveThread()
@@ -3034,7 +3034,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       maybeObserveActiveThread()
     },
 
-    setTargetAgentDeckSessionId: (sessionId) => {
+    setTargetAgentSessionId: (sessionId) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedSessionId = sessionId?.trim() || null
       const boundSession = resolveThreadSession(activeThreadKey)
@@ -3051,9 +3051,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
-        targetAgentDeckSessionId: normalizedSessionId,
+        targetAgentSessionId: normalizedSessionId,
       }))
-      useSessionStore.getState().setSelectedAgentDeckTargetId(normalizedSessionId)
+      useSessionStore.getState().setSelectedAgentTargetId(normalizedSessionId)
       scheduleThreadPersistence(activeThreadKey)
       maybeObserveActiveThread()
     },
@@ -3062,7 +3062,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedAgentType = normalizeDraftAgentType(agentType)
       const boundSession = resolveThreadSession(activeThreadKey)
-      const targetedSessionId = get().getTargetAgentDeckSessionId(activeThreadKey)
+      const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
       if (boundSession?.agentDeckSessionId || targetedSessionId) {
         return
       }
@@ -3078,7 +3078,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedWorkspaceMode = normalizeDraftWorkspaceMode(workspaceMode)
       const boundSession = resolveThreadSession(activeThreadKey)
-      const targetedSessionId = get().getTargetAgentDeckSessionId(activeThreadKey)
+      const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
       if (boundSession?.agentDeckSessionId || targetedSessionId) {
         return
       }

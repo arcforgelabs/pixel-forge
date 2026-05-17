@@ -557,8 +557,8 @@ export function LiveEditorPane({
     previewUrl,
     activeMode,
     liveEditorSession,
-    agentDeckTargets,
-    createAgentDeckTargetSession,
+    agentTargets,
+    createAgentTargetSession,
     refreshProjectChats,
     pendingControllerUpdate,
     pendingPreviewUpdate,
@@ -664,7 +664,7 @@ export function LiveEditorPane({
   const activateThread = useLiveEditorStore((state) => state.activateThread)
   const hydrateProjectThreads = useLiveEditorStore((state) => state.hydrateProjectThreads)
   const persistThreadState = useLiveEditorStore((state) => state.persistThreadState)
-  const getTargetAgentDeckSessionId = useLiveEditorStore((state) => state.getTargetAgentDeckSessionId)
+  const getTargetAgentSessionId = useLiveEditorStore((state) => state.getTargetAgentSessionId)
   const draftAgentType = useLiveEditorStore((state) => state.draftAgentType)
   const activePreviewTool = useLiveEditorStore((state) => state.activePreviewTool)
   const targetUrl = useLiveEditorStore((state) => state.targetUrl)
@@ -677,7 +677,7 @@ export function LiveEditorPane({
   const urlHistory = useLiveEditorStore((state) => state.urlHistory)
   const urlHistoryCursor = useLiveEditorStore((state) => state.urlHistoryCursor)
   const setActivePreviewTool = useLiveEditorStore((state) => state.setActivePreviewTool)
-  const setTargetAgentDeckSessionId = useLiveEditorStore((state) => state.setTargetAgentDeckSessionId)
+  const setTargetAgentSessionId = useLiveEditorStore((state) => state.setTargetAgentSessionId)
   const setTargetUrl = useLiveEditorStore((state) => state.setTargetUrl)
   const setActiveTab = useLiveEditorStore((state) => state.setActiveTab)
   const setViewportMode = useLiveEditorStore((state) => state.setViewportMode)
@@ -718,9 +718,9 @@ export function LiveEditorPane({
         ? liveEditorSession
         : null
     )
-  const activeThreadTargetAgentDeckSessionId =
+  const activeThreadTargetAgentSessionId =
     currentThreadSession?.agentDeckSessionId
-    || getTargetAgentDeckSessionId()
+    || getTargetAgentSessionId()
     || liveEditorSession?.agentDeckSessionId
     || null
   const currentProjectChat =
@@ -728,8 +728,8 @@ export function LiveEditorPane({
       ? projectChats.find((chat) => chat.threadId === currentThreadSession.threadId) ?? null
       : null)
     || (
-      activeThreadTargetAgentDeckSessionId
-        ? projectChats.find((chat) => chat.agentDeckSessionId === activeThreadTargetAgentDeckSessionId) ?? null
+      activeThreadTargetAgentSessionId
+        ? projectChats.find((chat) => chat.agentDeckSessionId === activeThreadTargetAgentSessionId) ?? null
         : null
     )
   const currentChatWorkspacePath =
@@ -741,22 +741,22 @@ export function LiveEditorPane({
     projectPath,
     workspacePath: currentChatWorkspacePath,
   })
-  const selectedAgentDeckTarget = agentDeckTargets.find(
-    (target) => target.id === activeThreadTargetAgentDeckSessionId
+  const selectedAgentTarget = agentTargets.find(
+    (target) => target.id === activeThreadTargetAgentSessionId
   ) ?? null
   const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
     projectPath,
     liveWorkspacePath: currentChatWorkspacePath,
-    liveAgentDeckSessionId: activeThreadTargetAgentDeckSessionId,
-    selectedTargetId: activeThreadTargetAgentDeckSessionId,
-    agentDeckTargets,
+    liveAgentDeckSessionId: activeThreadTargetAgentSessionId,
+    selectedTargetId: activeThreadTargetAgentSessionId,
+    agentTargets,
   })
   const previewAudienceWorkspacePath = currentChatIsCloneBacked
     ? currentChatWorkspacePath || resolvedMirrorTarget?.workspacePath || null
     : projectPath || null
   const workspacePreviewWorkspacePath = currentChatWorkspacePath || projectPath || null
   const previewAudienceSessionId = currentChatIsCloneBacked
-    ? activeThreadTargetAgentDeckSessionId
+    ? activeThreadTargetAgentSessionId
     : null
   const relevantPendingPreviewUpdate = isPendingPreviewUpdateForAudience({
     pendingPreviewUpdate,
@@ -2048,7 +2048,7 @@ export function LiveEditorPane({
       currentThreadSession?.agentDeckSessionId === target.id
       && currentThreadSession?.workspacePath === workspacePath
     if (!alreadyBound) {
-      setTargetAgentDeckSessionId(target.id)
+      setTargetAgentSessionId(target.id)
       await persistThreadState(activeThreadKey)
       await refreshProjectChats().catch((error) => {
         console.error('[live-editor] Failed to refresh project chats after mirror bind:', error)
@@ -2066,7 +2066,7 @@ export function LiveEditorPane({
     persistThreadState,
     projectPath,
     refreshProjectChats,
-    setTargetAgentDeckSessionId,
+    setTargetAgentSessionId,
   ])
 
   const ensureIsolatedMirrorLaunchContext = useCallback(async () => {
@@ -2093,10 +2093,10 @@ export function LiveEditorPane({
     const resolvedSourceRoot = resolveIsolatedMirrorSourceRoot({
       projectPath,
       liveWorkspacePath: resolvedMirrorTarget?.workspacePath || null,
-      selectedTargetPath: selectedAgentDeckTarget?.path || null,
+      selectedTargetPath: selectedAgentTarget?.path || null,
     })
     if (resolvedSourceRoot) {
-      const existingTarget = agentDeckTargets.find(
+      const existingTarget = agentTargets.find(
         (target) => target.id === resolvedMirrorTarget?.agentDeckSessionId
       ) ?? null
       if (existingTarget) {
@@ -2108,7 +2108,7 @@ export function LiveEditorPane({
       }
     }
 
-    const created = await createAgentDeckTargetSession({
+    const created = await createAgentTargetSession({
       agentType: draftAgentType,
       refreshProjectChats: false,
     })
@@ -2123,9 +2123,9 @@ export function LiveEditorPane({
       audienceWorkspacePath: createdPath,
     }
   }, [
-    agentDeckTargets,
+    agentTargets,
     bindMirrorTargetToActiveThread,
-    createAgentDeckTargetSession,
+    createAgentTargetSession,
     currentChatIsCloneBacked,
     currentChatWorkspacePath,
     currentProjectChat,
@@ -2135,7 +2135,7 @@ export function LiveEditorPane({
     relevantPendingPreviewUpdate?.snapshotPath,
     resolvedMirrorTarget?.workspacePath,
     resolvedMirrorTarget?.agentDeckSessionId,
-    selectedAgentDeckTarget?.path,
+    selectedAgentTarget?.path,
   ])
 
   const loadUpdatedPixelForgePreview = useCallback(async () => {

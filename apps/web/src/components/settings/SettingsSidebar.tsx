@@ -511,12 +511,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     liveEditorSession,
     projectChatsByProject,
     projectSessionsByProject,
-    agentDeckTargetsLoading,
+    agentTargetsLoading,
     refreshProjectSessions,
     refreshProjectChats,
     refreshAgentDeckTargets,
     createProjectChatSession,
-    selectedAgentDeckTargetId,
+    selectedAgentTargetId,
     lastSavedFile,
     sessionId,
     defaultAgentProviderId,
@@ -627,7 +627,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     persistThreadState,
     removeThread,
     getThreadStatus,
-    findThreadKeyByTargetAgentDeckSessionId,
+    findThreadKeyByTargetAgentSessionId,
     threadStates,
   } = useLiveEditorStore();
   const { appState } = useAppStore();
@@ -646,9 +646,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       : null;
   const selectedProjectChat = currentProjectChat
     ?? (
-      selectedAgentDeckTargetId
+      selectedAgentTargetId
         ? activeProjectChats.find(
-            (chat) => chat.agentDeckSessionId === selectedAgentDeckTargetId
+            (chat) => chat.agentDeckSessionId === selectedAgentTargetId
           ) ?? null
         : null
     );
@@ -660,12 +660,12 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       ) ?? null
     : null;
   const selectedProjectChatDraftThreadKey = selectedProjectChat?.agentDeckSessionId
-    ? findThreadKeyByTargetAgentDeckSessionId(selectedProjectChat.agentDeckSessionId)
+    ? findThreadKeyByTargetAgentSessionId(selectedProjectChat.agentDeckSessionId)
     : null;
   const selectedProjectChatDraftStatus = selectedProjectChatDraftThreadKey
     ? getThreadStatus(selectedProjectChatDraftThreadKey)
     : null;
-  const isUpdatingChatTargets = isRefreshingChatTargets || agentDeckTargetsLoading;
+  const isUpdatingChatTargets = isRefreshingChatTargets || agentTargetsLoading;
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
@@ -1125,7 +1125,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         liveEditorSession?.threadId === deleteDialogItem.threadId
       || (
         deleteDialogItem.agentDeckSessionId !== null
-        && selectedAgentDeckTargetId === deleteDialogItem.agentDeckSessionId
+        && selectedAgentTargetId === deleteDialogItem.agentDeckSessionId
       ));
 
     try {
@@ -1198,7 +1198,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     const activeLiveEditorSession = useSessionStore.getState().liveEditorSession;
     const shouldCarryDraftIntent =
       !activeLiveEditorSession?.agentDeckSessionId
-      && !activeDraftState.targetAgentDeckSessionId;
+      && !activeDraftState.targetAgentSessionId;
     let emptyThreadKey: string | null = null;
     if (startFreshThread) {
       emptyThreadKey = Object.entries(threadStates).find(
@@ -1206,7 +1206,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           if (ts.messages.length > 0) {
             return false;
           }
-          if (ts.targetAgentDeckSessionId) {
+          if (ts.targetAgentSessionId) {
             return false;
           }
           return !projectSessions.some((session) => session.threadId === threadKey);
@@ -1276,7 +1276,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   }
 
   function reopenExistingDraftTargetThread(targetId: string): boolean {
-    const existingThreadKey = findThreadKeyByTargetAgentDeckSessionId(targetId);
+    const existingThreadKey = findThreadKeyByTargetAgentSessionId(targetId);
     if (!existingThreadKey) {
       return false;
     }
@@ -1735,7 +1735,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                     ) ?? null
                                   : null;
                                 const draftThreadKey = chat.agentDeckSessionId
-                                  ? findThreadKeyByTargetAgentDeckSessionId(chat.agentDeckSessionId)
+                                  ? findThreadKeyByTargetAgentSessionId(chat.agentDeckSessionId)
                                   : null;
                                 const threadStatus = claimedThread
                                   ? getThreadStatus(claimedThread.threadId)
@@ -1746,7 +1746,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   ? liveEditorSession?.threadId === chat.threadId
                                   : (
                                       liveEditorSession?.agentDeckSessionId === chat.agentDeckSessionId
-                                      || selectedAgentDeckTargetId === chat.agentDeckSessionId
+                                      || selectedAgentTargetId === chat.agentDeckSessionId
                                     );
 
                                 return renderChatRow({

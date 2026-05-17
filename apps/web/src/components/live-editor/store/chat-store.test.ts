@@ -114,7 +114,7 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       ws: nextThreadState.ws,
       connected: nextThreadState.connected,
       queuedMessages: nextThreadState.queuedMessages,
-      targetAgentDeckSessionId: nextThreadState.targetAgentDeckSessionId,
+      targetAgentSessionId: nextThreadState.targetAgentSessionId,
       draftAgentType: nextThreadState.draftAgentType,
       draftWorkspaceMode: nextThreadState.draftWorkspaceMode,
       selectedElements: nextThreadState.selectedElements,
@@ -175,8 +175,8 @@ describe('live editor selection history', () => {
       activeMode: 'live-editor',
       recentProjects: [],
       projectSessionsByProject: {},
-      agentDeckTargets: [],
-      agentDeckTargetsLoading: false,
+      agentTargets: [],
+      agentTargetsLoading: false,
       projectsLoaded: true,
       projectsLoading: false,
       outputMode: 'scratch',
@@ -194,7 +194,7 @@ describe('live editor selection history', () => {
         message: '',
         error: null,
       },
-      selectedAgentDeckTargetId: null,
+      selectedAgentTargetId: null,
       defaultAgentType: 'claude',
       settingsSidebarOpen: false,
     })
@@ -263,21 +263,21 @@ describe('live editor selection history', () => {
     const store = useLiveEditorStore.getState()
     const firstThreadKey = store.activeThreadKey
 
-    store.setTargetAgentDeckSessionId('deck-session-a')
+    store.setTargetAgentSessionId('deck-session-a')
     store.addElement(createSelection('one'))
 
     store.newSession('deck-session-b')
     const secondThreadKey = useLiveEditorStore.getState().activeThreadKey
     useLiveEditorStore.getState().addElement(createSelection('two'))
 
-    expect(useLiveEditorStore.getState().getTargetAgentDeckSessionId()).toBe('deck-session-b')
+    expect(useLiveEditorStore.getState().getTargetAgentSessionId()).toBe('deck-session-b')
     expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual([
       'two',
     ])
 
     useLiveEditorStore.getState().activateThread(firstThreadKey)
 
-    expect(useLiveEditorStore.getState().getTargetAgentDeckSessionId()).toBe('deck-session-a')
+    expect(useLiveEditorStore.getState().getTargetAgentSessionId()).toBe('deck-session-a')
     expect(useLiveEditorStore.getState().selectedElements.map((entry) => entry.id)).toEqual([
       'one',
     ])
@@ -399,7 +399,7 @@ describe('live editor selection history', () => {
   it('renames the active thread when persistence promotes a draft to a chat lane', async () => {
     const draftThreadKey = useLiveEditorStore.getState().activeThreadKey
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
     })
 
     const persistSpy = vi
@@ -634,18 +634,18 @@ describe('live editor selection history', () => {
     const store = useLiveEditorStore.getState()
     const firstThreadKey = store.activeThreadKey
 
-    store.setTargetAgentDeckSessionId('deck-session-a')
+    store.setTargetAgentSessionId('deck-session-a')
     store.newSession('deck-session-b')
     const secondThreadKey = useLiveEditorStore.getState().activeThreadKey
 
     expect(
-      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-a')
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentSessionId('deck-session-a')
     ).toBe(firstThreadKey)
     expect(
-      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-b')
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentSessionId('deck-session-b')
     ).toBe(secondThreadKey)
     expect(
-      useLiveEditorStore.getState().findThreadKeyByTargetAgentDeckSessionId('deck-session-missing')
+      useLiveEditorStore.getState().findThreadKeyByTargetAgentSessionId('deck-session-missing')
     ).toBeNull()
   })
 
@@ -805,7 +805,7 @@ describe('live editor selection history', () => {
 
   it('hydrates attached Agent Deck snapshot output into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
     })
 
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
@@ -838,7 +838,7 @@ describe('live editor selection history', () => {
 
   it('hydrates native Agent Deck session events into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
     })
 
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
@@ -886,7 +886,7 @@ describe('live editor selection history', () => {
 
   it('hydrates typed workstation turn events into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
     })
 
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
@@ -956,7 +956,7 @@ describe('live editor selection history', () => {
   it('tails future observed Agent Deck turns into active Pixel Forge chat history', async () => {
     const threadId = useLiveEditorStore.getState().activeThreadKey
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
       messages: [
         {
           id: 'msg-local-user',
@@ -1058,7 +1058,7 @@ describe('live editor selection history', () => {
 
   it('does not duplicate turn-scoped observed Claude output with later session snapshots', async () => {
     setActiveThreadState({
-      targetAgentDeckSessionId: 'deck-session-a',
+      targetAgentSessionId: 'deck-session-a',
     })
 
     useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
@@ -1178,7 +1178,7 @@ describe('live editor selection history', () => {
     )
 
     useSessionStore.setState({
-      agentDeckTargets: [
+      agentTargets: [
         {
           id: 'deck-session-a',
           title: 'pixel-forge-thread-a',
@@ -1191,7 +1191,7 @@ describe('live editor selection history', () => {
         },
       ],
     })
-    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-a')
+    useLiveEditorStore.getState().setTargetAgentSessionId('deck-session-a')
     useLiveEditorStore.getState().setTargetUrl('https://claude.ai/new')
     useLiveEditorStore.getState().setViewportMode('desktop')
     useLiveEditorStore.getState().setPreviewTabs([
@@ -1244,10 +1244,10 @@ describe('live editor selection history', () => {
     expect(JSON.parse(String(requestInit?.body)).editor_state.previewTabs[0]).not.toHaveProperty('browserTabId')
   })
 
-  it('includes the selected Agent Deck target in outbound live-edit payloads', () => {
+  it('includes the selected agent target in outbound live-edit payloads', () => {
     useSessionStore.setState({
-      selectedAgentDeckTargetId: 'deck-session-123',
-      agentDeckTargets: [
+      selectedAgentTargetId: 'deck-session-123',
+      agentTargets: [
         {
           id: 'deck-session-123',
           title: 'codex-target',
@@ -1260,7 +1260,7 @@ describe('live editor selection history', () => {
         },
       ],
     })
-    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
+    useLiveEditorStore.getState().setTargetAgentSessionId('deck-session-123')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
@@ -1483,8 +1483,8 @@ describe('live editor selection history', () => {
         agentDeckTool: 'codex',
         requestId: null,
       },
-      selectedAgentDeckTargetId: 'deck-session-456',
-      agentDeckTargets: [
+      selectedAgentTargetId: 'deck-session-456',
+      agentTargets: [
         {
           id: 'deck-session-456',
           title: 'bound-codex',
@@ -1566,8 +1566,8 @@ describe('live editor selection history', () => {
     useSessionStore.setState({
       projectPath: '/tmp/example-project',
       defaultAgentType: 'claude',
-      selectedAgentDeckTargetId: 'deck-session-123',
-      agentDeckTargets: [
+      selectedAgentTargetId: 'deck-session-123',
+      agentTargets: [
         {
           id: 'deck-session-123',
           title: 'codex-target',
@@ -1581,7 +1581,7 @@ describe('live editor selection history', () => {
       ],
     })
     useLiveEditorStore.getState().setDraftWorkspaceMode('root')
-    useLiveEditorStore.getState().setTargetAgentDeckSessionId('deck-session-123')
+    useLiveEditorStore.getState().setTargetAgentSessionId('deck-session-123')
     useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
     useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
     const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
