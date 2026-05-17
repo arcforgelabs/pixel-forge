@@ -949,12 +949,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 ON project_urls (project_path, last_used DESC);
             CREATE INDEX IF NOT EXISTS idx_sessions_last_active
                 ON sessions (project_path, last_active DESC);
-            CREATE INDEX IF NOT EXISTS idx_sessions_provider_session
-                ON sessions (provider_id, provider_session_id);
             CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_project
                 ON chat_session_bindings (project_path, updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_provider_session
-                ON chat_session_bindings (provider_id, provider_session_id);
             CREATE INDEX IF NOT EXISTS idx_profile_projects_last_opened
                 ON profile_projects (profile_id, last_opened DESC);
             """
@@ -1018,6 +1014,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(
                     f"ALTER TABLE chat_session_bindings ADD COLUMN {column_name} TEXT"
                 )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sessions_provider_session
+                ON sessions (provider_id, provider_session_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_session_bindings_provider_session
+                ON chat_session_bindings (provider_id, provider_session_id)
+            """
+        )
         existing_profile_columns = {
             str(row[1])
             for row in conn.execute("PRAGMA table_info(profile_state)").fetchall()

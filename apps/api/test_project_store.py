@@ -174,6 +174,70 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             saved,
         )
 
+    def test_legacy_schema_adds_provider_columns_before_provider_indexes(self) -> None:
+        with sqlite3.connect(state_db_path()) as conn:
+            conn.execute(
+                """
+                CREATE TABLE sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_id TEXT NOT NULL DEFAULT 'default',
+                    project_path TEXT NOT NULL,
+                    workspace_path TEXT NOT NULL,
+                    thread_id TEXT NOT NULL UNIQUE,
+                    backend TEXT NOT NULL,
+                    origin_kind TEXT NOT NULL DEFAULT 'managed',
+                    agent_deck_session_id TEXT,
+                    agent_deck_session_title TEXT,
+                    agent_deck_tool TEXT,
+                    editor_state_json TEXT,
+                    hidden_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_active TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE chat_session_bindings (
+                    chat_id TEXT PRIMARY KEY,
+                    profile_id TEXT NOT NULL DEFAULT 'default',
+                    project_path TEXT NOT NULL,
+                    workspace_path TEXT NOT NULL,
+                    agent_deck_session_id TEXT NOT NULL UNIQUE,
+                    agent_deck_session_title TEXT,
+                    agent_deck_tool TEXT,
+                    hidden_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+
+        project_store.ensure_state_store_initialized()
+
+        with sqlite3.connect(state_db_path()) as conn:
+            session_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(sessions)")
+            }
+            binding_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(chat_session_bindings)")
+            }
+            index_names = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                )
+            }
+
+        self.assertIn("provider_id", session_columns)
+        self.assertIn("provider_session_id", session_columns)
+        self.assertIn("provider_id", binding_columns)
+        self.assertIn("provider_session_id", binding_columns)
+        self.assertIn("idx_sessions_provider_session", index_names)
+        self.assertIn("idx_chat_session_bindings_provider_session", index_names)
+
     def test_detach_missing_agent_deck_session_binding_preserves_lane_state(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
         workspace_path = project_path / ".agents" / "thread-a"
