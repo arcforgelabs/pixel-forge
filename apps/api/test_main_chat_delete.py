@@ -642,6 +642,32 @@ class BackfillChatHistoryTest(unittest.TestCase):
         self.assertEqual(events[-1].payload["reason"], "existing turn events found")
 
 class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_wait_heartbeat_names_selected_provider(self) -> None:
+        websocket = Mock()
+        websocket.send_json = AsyncMock()
+        statuses: list[str] = []
+
+        async def record_status(message: str) -> None:
+            statuses.append(message)
+
+        async def finish_soon() -> None:
+            await main.asyncio.sleep(0.01)
+
+        wait_task = main.asyncio.create_task(finish_soon())
+
+        await main._emit_live_editor_wait_heartbeat(
+            websocket,
+            tool="codex",
+            provider_label="Codex CLI",
+            wait_task=wait_task,
+            interval_seconds=0.001,
+            on_status=record_status,
+        )
+
+        self.assertTrue(statuses)
+        self.assertIn("Codex is still working in Codex CLI", statuses[0])
+        websocket.send_json.assert_awaited()
+
     def test_build_dispatch_prompt_uses_prompt_first_transport_with_native_file_refs(self) -> None:
         prompt = main.build_live_editor_dispatch_prompt(
             ".pixel-forge/requests/abcd/request.md",

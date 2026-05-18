@@ -305,6 +305,7 @@ async def _emit_live_editor_wait_heartbeat(
     websocket: WebSocket,
     *,
     tool: str,
+    provider_label: str,
     wait_task: asyncio.Task[None],
     interval_seconds: float = LIVE_EDITOR_AGENT_STATUS_HEARTBEAT_INTERVAL_SECONDS,
     on_status: LiveEditorStatusCallback | None = None,
@@ -312,6 +313,7 @@ async def _emit_live_editor_wait_heartbeat(
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     tool_label = (tool or "agent").strip().capitalize() or "Agent"
+    normalized_provider_label = provider_label.strip() if provider_label.strip() else "provider"
 
     while not wait_task.done():
         await asyncio.sleep(interval_seconds)
@@ -319,7 +321,7 @@ async def _emit_live_editor_wait_heartbeat(
             return
         try:
             status_message = (
-                f"{tool_label} is still working in Agent Deck... "
+                f"{tool_label} is still working in {normalized_provider_label}... "
                 f"{_format_elapsed_duration(loop.time() - started_at)} elapsed."
             )
             await websocket.send_json(
@@ -3736,6 +3738,7 @@ async def _dispatch_live_editor_prompt_to_agent_provider(
             _emit_live_editor_wait_heartbeat(
                 websocket,
                 tool=session_info.tool,
+                provider_label=agent_provider.display_name,
                 wait_task=turn_wait_task,
                 on_status=on_status,
             )
@@ -4386,9 +4389,9 @@ async def unified_chat(websocket: WebSocket):
 @app.websocket("/ws/live-editor")
 async def live_editor_chat(websocket: WebSocket):
     """
-    Live Editor WebSocket endpoint backed by Agent Deck sessions.
+    Live Editor WebSocket endpoint backed by agent provider sessions.
     Stores each request as a disk request pack and dispatches a short prompt
-    into a persistent Agent Deck Claude session for the target project.
+    into a persistent provider session for the target project.
     """
     await websocket.accept()
     print("[live-editor] Connection opened", flush=True)
