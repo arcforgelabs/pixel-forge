@@ -719,8 +719,10 @@ export function LiveEditorPane({
         : null
     )
   const activeThreadTargetAgentSessionId =
-    currentThreadSession?.agentDeckSessionId
+    currentThreadSession?.providerSessionId
+    || currentThreadSession?.agentDeckSessionId
     || getTargetAgentSessionId()
+    || liveEditorSession?.providerSessionId
     || liveEditorSession?.agentDeckSessionId
     || null
   const currentProjectChat =
@@ -729,7 +731,10 @@ export function LiveEditorPane({
       : null)
     || (
       activeThreadTargetAgentSessionId
-        ? projectChats.find((chat) => chat.agentDeckSessionId === activeThreadTargetAgentSessionId) ?? null
+        ? projectChats.find((chat) =>
+            chat.providerSessionId === activeThreadTargetAgentSessionId
+            || chat.agentDeckSessionId === activeThreadTargetAgentSessionId
+          ) ?? null
         : null
     )
   const currentChatWorkspacePath =
@@ -747,6 +752,7 @@ export function LiveEditorPane({
   const resolvedMirrorTarget = resolveUsableIsolatedMirrorTarget({
     projectPath,
     liveWorkspacePath: currentChatWorkspacePath,
+    liveProviderSessionId: activeThreadTargetAgentSessionId,
     liveAgentDeckSessionId: activeThreadTargetAgentSessionId,
     selectedTargetId: activeThreadTargetAgentSessionId,
     agentTargets,
@@ -1063,7 +1069,7 @@ export function LiveEditorPane({
       `/api/preview-updates/latest?${new URLSearchParams({
         project_path: projectPath,
         workspace_path: previewAudienceWorkspacePath,
-        ...(previewAudienceSessionId ? { agent_deck_session_id: previewAudienceSessionId } : {}),
+        ...(previewAudienceSessionId ? { provider_session_id: previewAudienceSessionId } : {}),
       }).toString()}`
     ).then((payload) => {
       if (!cancelled) {
@@ -2013,7 +2019,7 @@ export function LiveEditorPane({
 
   const fetchLatestPendingPreviewUpdate = useCallback(async (
     workspacePath: string,
-    agentDeckSessionId: string | null,
+    providerSessionId: string | null,
   ) => {
     if (!projectPath) {
       return null
@@ -2023,8 +2029,8 @@ export function LiveEditorPane({
       project_path: projectPath,
       workspace_path: workspacePath,
     })
-    if (agentDeckSessionId) {
-      query.set('agent_deck_session_id', agentDeckSessionId)
+    if (providerSessionId) {
+      query.set('provider_session_id', providerSessionId)
     }
 
     const payload = await requestPreviewJson<{
@@ -2045,7 +2051,7 @@ export function LiveEditorPane({
     }
 
     const alreadyBound =
-      currentThreadSession?.agentDeckSessionId === target.id
+      currentThreadSession?.providerSessionId === target.id
       && currentThreadSession?.workspacePath === workspacePath
     if (!alreadyBound) {
       setTargetAgentSessionId(target.id)
@@ -2057,11 +2063,12 @@ export function LiveEditorPane({
 
     return {
       workspacePath,
+      providerSessionId: target.id,
       agentDeckSessionId: target.id,
     }
   }, [
     activeThreadKey,
-    currentThreadSession?.agentDeckSessionId,
+    currentThreadSession?.providerSessionId,
     currentThreadSession?.workspacePath,
     persistThreadState,
     projectPath,
@@ -2097,7 +2104,7 @@ export function LiveEditorPane({
     })
     if (resolvedSourceRoot) {
       const existingTarget = agentTargets.find(
-        (target) => target.id === resolvedMirrorTarget?.agentDeckSessionId
+        (target) => target.id === resolvedMirrorTarget?.providerSessionId
       ) ?? null
       if (existingTarget) {
         await bindMirrorTargetToActiveThread(existingTarget)
@@ -2134,7 +2141,7 @@ export function LiveEditorPane({
     relevantPendingControllerUpdate?.snapshotPath,
     relevantPendingPreviewUpdate?.snapshotPath,
     resolvedMirrorTarget?.workspacePath,
-    resolvedMirrorTarget?.agentDeckSessionId,
+    resolvedMirrorTarget?.providerSessionId,
     selectedAgentTarget?.path,
   ])
 

@@ -734,6 +734,8 @@ class PendingPreviewUpdateRequest(BaseModel):
     summary: str | None = None
     source: str | None = None
     request_id: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
     agent_deck_session_id: str | None = None
 
 
@@ -2592,12 +2594,14 @@ async def delete_pending_controller_update():
 async def get_latest_pending_preview_update(
     project_path: str,
     workspace_path: str | None = None,
+    provider_session_id: str | None = None,
     agent_deck_session_id: str | None = None,
 ):
     update = await asyncio.to_thread(
         read_latest_pending_preview_update,
         project_path,
         workspace_path=workspace_path,
+        provider_session_id=provider_session_id,
         agent_deck_session_id=agent_deck_session_id,
     )
     return {"update": update}
@@ -2616,6 +2620,8 @@ async def stage_pending_preview_update(payload: PendingPreviewUpdateRequest):
                 "summary": payload.summary,
                 "source": payload.source,
                 "requestId": payload.request_id,
+                "providerId": payload.provider_id,
+                "providerSessionId": payload.provider_session_id,
                 "agentDeckSessionId": payload.agent_deck_session_id,
             },
         )

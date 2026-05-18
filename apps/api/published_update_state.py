@@ -82,6 +82,16 @@ def normalize_pending_preview_update(payload: dict[str, Any]) -> dict[str, Any]:
     if active_mode not in {"live-editor", "screenshot", "logo-forge", None}:
         active_mode = None
 
+    agent_deck_session_id = _normalize_text(
+        payload.get("agentDeckSessionId") or payload.get("agent_deck_session_id")
+    )
+    provider_session_id = _normalize_text(
+        payload.get("providerSessionId") or payload.get("provider_session_id")
+    ) or agent_deck_session_id
+    provider_id = _normalize_text(payload.get("providerId") or payload.get("provider_id"))
+    if not provider_id and agent_deck_session_id:
+        provider_id = "agent-deck"
+
     return {
         "id": _normalize_text(payload.get("id")) or uuid4().hex[:12],
         "projectPath": project_path,
@@ -92,9 +102,9 @@ def normalize_pending_preview_update(payload: dict[str, Any]) -> dict[str, Any]:
         "summary": _normalize_text(payload.get("summary")) or "Preview update ready to load.",
         "source": _normalize_text(payload.get("source")) or "live-editor",
         "requestId": _normalize_text(payload.get("requestId") or payload.get("request_id")),
-        "agentDeckSessionId": _normalize_text(
-            payload.get("agentDeckSessionId") or payload.get("agent_deck_session_id")
-        ),
+        "providerId": provider_id,
+        "providerSessionId": provider_session_id,
+        "agentDeckSessionId": agent_deck_session_id,
         "createdAt": _normalize_text(payload.get("createdAt") or payload.get("created_at"))
         or datetime.now(timezone.utc).isoformat(),
     }
@@ -137,7 +147,11 @@ def _write_pending_preview_updates(payload: list[dict[str, Any]]) -> None:
 
 def _preview_update_audience_key(payload: dict[str, Any]) -> tuple[str, str]:
     project_path = str(payload["projectPath"])
-    audience = str(payload.get("agentDeckSessionId") or payload["workspacePath"])
+    audience = str(
+        payload.get("providerSessionId")
+        or payload.get("agentDeckSessionId")
+        or payload["workspacePath"]
+    )
     return project_path, audience
 
 
@@ -185,6 +199,7 @@ def read_latest_pending_preview_update(
     project_path: str,
     *,
     workspace_path: str | None = None,
+    provider_session_id: str | None = None,
     agent_deck_session_id: str | None = None,
 ) -> dict[str, Any] | None:
     normalized_project_path = str(normalize_project_root(project_path))
@@ -193,13 +208,19 @@ def read_latest_pending_preview_update(
         if workspace_path
         else None
     )
-    normalized_agent_deck_session_id = _normalize_text(agent_deck_session_id)
+    normalized_provider_session_id = (
+        _normalize_text(provider_session_id)
+        or _normalize_text(agent_deck_session_id)
+    )
 
     for update in _read_preview_update_payloads():
         if update["projectPath"] != normalized_project_path:
             continue
-        if normalized_agent_deck_session_id:
-            if update.get("agentDeckSessionId") == normalized_agent_deck_session_id:
+        if normalized_provider_session_id:
+            if (
+                update.get("providerSessionId") == normalized_provider_session_id
+                or update.get("agentDeckSessionId") == normalized_provider_session_id
+            ):
                 return update
             continue
         if normalized_workspace_path and update["workspacePath"] == normalized_workspace_path:

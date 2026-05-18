@@ -324,6 +324,8 @@ export interface PixelForgePendingPreviewUpdate {
   summary: string
   source: string
   requestId: string | null
+  providerId: string | null
+  providerSessionId: string | null
   agentDeckSessionId: string | null
   createdAt: string
 }

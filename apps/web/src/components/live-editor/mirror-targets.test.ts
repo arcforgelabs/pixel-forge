@@ -197,6 +197,7 @@ describe('mirror target resolution', () => {
       })
     ).toEqual({
       workspacePath: cloneB,
+      providerSessionId: 'clone-b',
       agentDeckSessionId: 'clone-b',
     })
   })
@@ -296,6 +297,7 @@ describe('mirror target resolution', () => {
         pendingPreviewUpdate: {
           projectPath: projectRoot,
           workspacePath: cloneA,
+          providerSessionId: 'clone-a-session',
           agentDeckSessionId: 'clone-a-session',
         },
         projectPath: projectRoot,
@@ -310,6 +312,7 @@ describe('mirror target resolution', () => {
         pendingPreviewUpdate: {
           projectPath: projectRoot,
           workspacePath: cloneA,
+          providerSessionId: 'clone-a-session',
           agentDeckSessionId: 'clone-a-session',
         },
         projectPath: projectRoot,

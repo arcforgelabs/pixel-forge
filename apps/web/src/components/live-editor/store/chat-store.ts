@@ -1133,6 +1133,8 @@ async function stagePreviewUpdateNotice(options: {
   previewUrl: string | null
   activeMode: 'live-editor' | 'screenshot' | 'logo-forge'
   requestId: string | null
+  providerId: string | null
+  providerSessionId: string | null
   agentDeckSessionId: string | null
 }) {
   if (typeof fetch === 'undefined') {
@@ -1154,7 +1156,12 @@ async function stagePreviewUpdateNotice(options: {
       summary: `Pixel Forge preview from ${requestLabel} is ready to load.`,
       source: 'live-editor',
       request_id: options.requestId,
-      agent_deck_session_id: options.agentDeckSessionId,
+      provider_id: options.providerId,
+      provider_session_id: options.providerSessionId,
+      agent_deck_session_id:
+        options.providerId === 'agent-deck'
+          ? options.agentDeckSessionId
+          : null,
     }),
   })
 
@@ -2417,6 +2424,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
               ? data.agent_deck_session_id
               : knownSession?.agentDeckSessionId ?? null
+          const resolvedProviderId =
+            typeof data.provider_id === 'string' && data.provider_id
+              ? data.provider_id
+              : knownSession?.providerId ?? (resolvedAgentDeckSessionId ? 'agent-deck' : null)
+          const resolvedProviderSessionId =
+            typeof data.provider_session_id === 'string' && data.provider_session_id
+              ? data.provider_session_id
+              : knownSession?.providerSessionId ?? resolvedAgentDeckSessionId
 
           if (nextThreadId) {
             syncSessionRecord(
@@ -2427,11 +2442,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 threadId: nextThreadId,
                 backend: data.backend || 'agent-deck',
                 workspacePath: resolvedWorkspacePath,
-                providerId: data.provider_id ?? knownSession?.providerId ?? null,
-                providerSessionId:
-                  data.provider_session_id
-                  ?? knownSession?.providerSessionId
-                  ?? resolvedAgentDeckSessionId,
+                providerId: resolvedProviderId,
+                providerSessionId: resolvedProviderSessionId,
                 providerSessionTitle:
                   data.provider_session_title
                   ?? knownSession?.providerSessionTitle
@@ -2533,7 +2545,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             return resetThreadRuntimeState(currentThreadState, {
               messages: nextMessages,
               targetAgentSessionId:
-                resolvedAgentDeckSessionId ?? currentThreadState.targetAgentSessionId,
+                resolvedProviderSessionId ?? currentThreadState.targetAgentSessionId,
             })
           })
 
@@ -2549,6 +2561,8 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 previewUrl: getThreadPreviewUrl(threadKeyRef),
                 activeMode: sessionState.activeMode,
                 requestId,
+                providerId: resolvedProviderId,
+                providerSessionId: resolvedProviderSessionId,
                 agentDeckSessionId: resolvedAgentDeckSessionId,
               }).catch((error) => {
                 console.error('[live-editor] Failed to stage preview update notice:', error)

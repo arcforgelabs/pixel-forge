@@ -23,6 +23,7 @@ export interface MirrorAgentTargetRef {
 export interface MirrorPreviewUpdateRef {
   projectPath: string
   workspacePath: string
+  providerSessionId?: string | null | undefined
   agentDeckSessionId: string | null | undefined
 }
 
@@ -40,6 +41,7 @@ export interface MirrorPreviewTabRef {
 
 export interface ResolvedIsolatedMirrorTarget {
   workspacePath: string
+  providerSessionId: string
   agentDeckSessionId: string
 }
 
@@ -59,6 +61,7 @@ export function isCloneWorkspaceBound(options: {
 export function resolveUsableIsolatedMirrorTarget(options: {
   projectPath: string | null | undefined
   liveWorkspacePath: string | null | undefined
+  liveProviderSessionId?: string | null | undefined
   liveAgentDeckSessionId: string | null | undefined
   selectedTargetId: string | null | undefined
   agentTargets: MirrorAgentTargetRef[]
@@ -72,13 +75,17 @@ export function resolveUsableIsolatedMirrorTarget(options: {
     isCloneWorkspaceBound({ projectPath, workspacePath: target.path })
   )
 
-  const liveAgentDeckSessionId = options.liveAgentDeckSessionId?.trim() || null
+  const liveProviderSessionId =
+    options.liveProviderSessionId?.trim()
+    || options.liveAgentDeckSessionId?.trim()
+    || null
   const liveWorkspacePath = options.liveWorkspacePath?.trim() || null
-  if (liveAgentDeckSessionId) {
-    const liveTarget = cloneTargets.find((target) => target.id === liveAgentDeckSessionId) || null
+  if (liveProviderSessionId) {
+    const liveTarget = cloneTargets.find((target) => target.id === liveProviderSessionId) || null
     if (liveTarget) {
       return {
         workspacePath: liveTarget.path?.trim() || liveWorkspacePath || '',
+        providerSessionId: liveTarget.id,
         agentDeckSessionId: liveTarget.id,
       }
     }
@@ -90,6 +97,7 @@ export function resolveUsableIsolatedMirrorTarget(options: {
     if (selectedTarget?.path?.trim()) {
       return {
         workspacePath: selectedTarget.path.trim(),
+        providerSessionId: selectedTarget.id,
         agentDeckSessionId: selectedTarget.id,
       }
     }
@@ -193,7 +201,11 @@ export function isPendingPreviewUpdateForAudience(options: {
   }
 
   if (audienceSessionId) {
-    return (pendingPreviewUpdate.agentDeckSessionId?.trim() || null) === audienceSessionId
+    return (
+      pendingPreviewUpdate.providerSessionId?.trim()
+      || pendingPreviewUpdate.agentDeckSessionId?.trim()
+      || null
+    ) === audienceSessionId
   }
 
   if (!audienceWorkspacePath) {
