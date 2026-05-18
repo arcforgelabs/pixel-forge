@@ -11,6 +11,7 @@ import { create } from 'zustand'
 
 import { HTTP_BACKEND_URL, WS_BACKEND_URL } from '@/config'
 import { getDesktopApp, hasDesktopAppMethod } from '@/lib/desktop-app'
+import { formatProviderLabel } from '@/lib/agent-labels'
 import { getResponseErrorMessage, readResponsePayload } from '@/lib/http-response'
 import {
   findLatestRecoverablePdfUrl,
@@ -127,6 +128,11 @@ interface SendMessageOptions {
 interface ObservedAgentDeckActivity {
   chat_id?: string | null
   thread_id: string | null
+  provider_id?: string | null
+  provider_session_id?: string | null
+  provider_session_title?: string | null
+  provider_agent_id?: string | null
+  provider_session_status?: string | null
   agent_deck_session_id: string | null
   agent_deck_session_title: string | null
   agent_deck_tool: string | null
@@ -146,6 +152,11 @@ interface ObservedAgentDeckSessionStatusEvent {
   event_type: 'session_status'
   chat_id?: string | null
   thread_id: string | null
+  provider_id?: string | null
+  provider_session_id?: string | null
+  provider_session_title?: string | null
+  provider_agent_id?: string | null
+  provider_session_status?: string | null
   agent_deck_session_id: string | null
   agent_deck_session_title: string | null
   agent_deck_tool: string | null
@@ -160,6 +171,11 @@ interface ObservedAgentDeckSessionOutputEvent {
   event_type: 'session_output'
   chat_id?: string | null
   thread_id: string | null
+  provider_id?: string | null
+  provider_session_id?: string | null
+  provider_session_title?: string | null
+  provider_agent_id?: string | null
+  provider_session_status?: string | null
   agent_deck_session_id: string | null
   agent_deck_session_title: string | null
   agent_deck_tool: string | null
@@ -185,6 +201,11 @@ interface ObservedAgentDeckTurnEvent {
   chat_id?: string | null
   thread_id: string | null
   request_id: string | null
+  provider_id?: string | null
+  provider_session_id?: string | null
+  provider_session_title?: string | null
+  provider_agent_id?: string | null
+  provider_session_status?: string | null
   agent_deck_session_id: string | null
   agent_deck_session_title?: string | null
   agent_deck_tool?: string | null
@@ -1247,17 +1268,57 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
   const removeObservedMessage = (messages: ChatMessage[], messageId: string): ChatMessage[] =>
     messages.filter((message) => message.id !== messageId)
 
-  const observedSnapshotMessageId = (agentDeckSessionId: string) =>
-    `observed:snapshot:${agentDeckSessionId}`
+  const observedSnapshotMessageId = (providerSessionId: string) =>
+    `observed:snapshot:${providerSessionId}`
 
-  const observedSessionStatusMessageId = (agentDeckSessionId: string) =>
-    `observed:session-status:${agentDeckSessionId}`
+  const observedSessionStatusMessageId = (providerSessionId: string) =>
+    `observed:session-status:${providerSessionId}`
 
   const observedTurnMessageId = (requestId: string) => `observed:turn:${requestId}`
 
   const observedTurnStatusMessageId = (requestId: string) => `observed:status:${requestId}`
 
   const observedTurnFailureMessageId = (requestId: string) => `observed:error:${requestId}`
+
+  const observedProviderSessionId = (
+    event: {
+      provider_session_id?: string | null
+      agent_deck_session_id?: string | null
+    }
+  ) => event.provider_session_id?.trim() || event.agent_deck_session_id?.trim() || null
+
+  const observedProviderStatus = (
+    event: {
+      provider_session_status?: string | null
+      agent_deck_session_status?: string | null
+    }
+  ) => event.provider_session_status?.trim() || event.agent_deck_session_status?.trim() || null
+
+  const observedProviderSessionTitle = (
+    event: {
+      provider_session_title?: string | null
+      agent_deck_session_title?: string | null
+    },
+    fallbackSessionId: string | null
+  ) =>
+    event.provider_session_title?.trim()
+    || event.agent_deck_session_title?.trim()
+    || fallbackSessionId
+    || 'provider session'
+
+  const observedProviderId = (
+    event: {
+      provider_id?: string | null
+      agent_deck_session_id?: string | null
+    }
+  ) => event.provider_id?.trim() || (event.agent_deck_session_id?.trim() ? 'agent-deck' : null)
+
+  const observedProviderLabel = (
+    event: {
+      provider_id?: string | null
+      agent_deck_session_id?: string | null
+    }
+  ) => formatProviderLabel(observedProviderId(event))
 
   const applyObservedAgentDeckActivity = (
     threadKey: string,
@@ -1268,17 +1329,17 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return currentState
       }
 
-      const agentDeckSessionId = activity.agent_deck_session_id?.trim() || null
-      if (!agentDeckSessionId) {
+      const providerSessionId = observedProviderSessionId(activity)
+      if (!providerSessionId) {
         return {
           ...currentState,
           messages: currentState.messages.filter((message) => !message.observedSessionId),
         }
       }
 
-      const observedMessageId = observedSnapshotMessageId(agentDeckSessionId)
+      const observedMessageId = observedSnapshotMessageId(providerSessionId)
       const nextMessages = currentState.messages.filter(
-        (message) => message.observedSessionId === agentDeckSessionId || !message.observedSessionId
+        (message) => message.observedSessionId === providerSessionId || !message.observedSessionId
       )
       const existingObservedIndex = nextMessages.findIndex(
         (message) => message.id === observedMessageId
@@ -1292,20 +1353,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           role: 'assistant',
           content: meaningfulOutput,
           timestamp: new Date(),
-          observedSessionId: agentDeckSessionId,
+          observedSessionId: providerSessionId,
         }
       } else if (activity.binding_state === 'attached') {
-        const sessionLabel =
-          activity.agent_deck_session_title?.trim()
-          || agentDeckSessionId
-        const statusLabel = activity.agent_deck_session_status?.trim() || 'connected'
+        const sessionLabel = observedProviderSessionTitle(activity, providerSessionId)
+        const statusLabel = observedProviderStatus(activity) || 'connected'
+        const providerLabel = observedProviderLabel(activity)
         observedMessage = {
           id: observedMessageId,
           role: 'system',
-          content: `Attached to Agent Deck session \`${sessionLabel}\` (${statusLabel}). Waiting for output...`,
+          content: `Attached to ${providerLabel} session \`${sessionLabel}\` (${statusLabel}). Waiting for output...`,
           timestamp: new Date(),
           systemTone: 'info',
-          observedSessionId: agentDeckSessionId,
+          observedSessionId: providerSessionId,
         }
       }
 
@@ -1337,25 +1397,27 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return currentState
       }
 
-      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
-      if (!agentDeckSessionId) {
+      const providerSessionId = observedProviderSessionId(event)
+      if (!providerSessionId) {
         return currentState
       }
 
-      const statusMessageId = observedSessionStatusMessageId(agentDeckSessionId)
-      const normalizedStatus = event.agent_deck_session_status?.trim().toLowerCase() || ''
+      const statusMessageId = observedSessionStatusMessageId(providerSessionId)
+      const normalizedStatus = observedProviderStatus(event)?.toLowerCase() || ''
       const hasObservedOutput = currentState.messages.some(
         (message) =>
           message.role === 'assistant'
-          && message.observedSessionId === agentDeckSessionId
+          && message.observedSessionId === providerSessionId
       )
+      const sessionLabel = observedProviderSessionTitle(event, providerSessionId)
+      const providerLabel = observedProviderLabel(event)
       const content =
         event.message?.trim()
         || (
           normalizedStatus === 'error'
-            ? `Agent Deck session \`${event.agent_deck_session_title?.trim() || agentDeckSessionId}\` entered an error state.`
+            ? `${providerLabel} session \`${sessionLabel}\` entered an error state.`
             : normalizedStatus && !hasObservedOutput && !['idle', 'waiting'].includes(normalizedStatus)
-              ? `Attached to Agent Deck session \`${event.agent_deck_session_title?.trim() || agentDeckSessionId}\` (${normalizedStatus}).`
+              ? `Attached to ${providerLabel} session \`${sessionLabel}\` (${normalizedStatus}).`
               : ''
         )
 
@@ -1369,7 +1431,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           content,
           timestamp: new Date(),
           systemTone: normalizedStatus === 'error' ? 'error' : 'info',
-          observedSessionId: agentDeckSessionId,
+          observedSessionId: providerSessionId,
         })
       }
 
@@ -1390,14 +1452,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return currentState
       }
 
-      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
-      if (!agentDeckSessionId) {
+      const providerSessionId = observedProviderSessionId(event)
+      if (!providerSessionId) {
         return currentState
       }
 
       const output = event.output?.trim() || ''
-      const snapshotMessageId = observedSnapshotMessageId(agentDeckSessionId)
-      const statusMessageId = observedSessionStatusMessageId(agentDeckSessionId)
+      const snapshotMessageId = observedSnapshotMessageId(providerSessionId)
+      const statusMessageId = observedSessionStatusMessageId(providerSessionId)
       let nextMessages = currentState.messages
       if (!output) {
         nextMessages = removeObservedMessage(nextMessages, snapshotMessageId)
@@ -1405,12 +1467,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         const hasTurnScopedObservedOutput = nextMessages.some(
           (message) =>
             message.role === 'assistant'
-            && message.observedSessionId === agentDeckSessionId
+            && message.observedSessionId === providerSessionId
             && message.id !== snapshotMessageId
         )
         if (hasTurnScopedObservedOutput) {
           nextMessages = removeObservedMessage(nextMessages, snapshotMessageId)
-          if (['idle', 'waiting'].includes(event.agent_deck_session_status?.trim().toLowerCase() || '')) {
+          if (['idle', 'waiting'].includes(observedProviderStatus(event)?.toLowerCase() || '')) {
             nextMessages = removeObservedMessage(nextMessages, statusMessageId)
           }
           return {
@@ -1423,9 +1485,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           role: 'assistant',
           content: output,
           timestamp: new Date(),
-          observedSessionId: agentDeckSessionId,
+          observedSessionId: providerSessionId,
         })
-        if (['idle', 'waiting'].includes(event.agent_deck_session_status?.trim().toLowerCase() || '')) {
+        if (['idle', 'waiting'].includes(observedProviderStatus(event)?.toLowerCase() || '')) {
           nextMessages = removeObservedMessage(nextMessages, statusMessageId)
         }
       }
@@ -1448,24 +1510,22 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       }
 
       const requestId = event.request_id?.trim() || `event-${event.id}`
-      const agentDeckSessionId = event.agent_deck_session_id?.trim() || null
+      const providerSessionId = observedProviderSessionId(event)
       const assistantMessageId = observedTurnMessageId(requestId)
       const statusMessageId = observedTurnStatusMessageId(requestId)
       const failureMessageId = observedTurnFailureMessageId(requestId)
-      const sessionLabel =
-        event.agent_deck_session_title?.trim()
-        || agentDeckSessionId
-        || 'Agent Deck session'
+      const sessionLabel = observedProviderSessionTitle(event, providerSessionId)
+      const providerLabel = observedProviderLabel(event)
 
       let nextMessages = currentState.messages
-      if (agentDeckSessionId) {
+      if (providerSessionId) {
         nextMessages = removeObservedMessage(
           nextMessages,
-          observedSnapshotMessageId(agentDeckSessionId)
+          observedSnapshotMessageId(providerSessionId)
         )
         nextMessages = removeObservedMessage(
           nextMessages,
-          observedSessionStatusMessageId(agentDeckSessionId)
+          observedSessionStatusMessageId(providerSessionId)
         )
       }
 
@@ -1483,7 +1543,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               role: 'user',
               content: promptText,
               timestamp: new Date(),
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
             }),
           }
         }
@@ -1496,10 +1556,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             messages: upsertObservedMessage(nextMessages, {
               id: statusMessageId,
               role: 'system',
-              content: `Attached to Agent Deck session \`${sessionLabel}\`. Waiting for output...`,
+              content: `Attached to ${providerLabel} session \`${sessionLabel}\`. Waiting for output...`,
               timestamp: new Date(),
               systemTone: 'info',
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
             }),
           }
         }
@@ -1518,7 +1578,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               content: statusText,
               timestamp: new Date(),
               systemTone: 'info',
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
             }),
           }
         }
@@ -1536,7 +1596,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               role: 'assistant',
               content: `${existingMessage?.content ?? ''}${chunk}`,
               timestamp: new Date(),
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
             }),
           }
         }
@@ -1569,7 +1629,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               role: 'tool',
               content: '',
               timestamp: new Date(),
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
               toolActivity,
             }),
           }
@@ -1586,7 +1646,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           const matchingMessage = [...nextMessages].reverse().find((message) => {
             if (message.role !== 'tool' || !message.toolActivity) return false
             if (toolCallId) return message.toolActivity.toolCallId === toolCallId
-            return message.observedSessionId === agentDeckSessionId
+            return message.observedSessionId === providerSessionId
               && message.toolActivity.status === 'running'
           })
           if (!matchingMessage?.toolActivity) {
@@ -1607,7 +1667,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 role: 'tool',
                 content: '',
                 timestamp: new Date(),
-                observedSessionId: agentDeckSessionId,
+                observedSessionId: providerSessionId,
                 toolActivity: fallbackActivity,
               }),
             }
@@ -1641,7 +1701,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               role: 'assistant',
               content: assistantOutput,
               timestamp: new Date(),
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
             })
           }
           return {
@@ -1652,7 +1712,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         }
 
         case 'turn_failed': {
-          const failureText = event.message?.trim() || 'Observed Agent Deck turn failed.'
+          const failureText = event.message?.trim() || 'Observed provider turn failed.'
           nextMessages = removeObservedMessage(nextMessages, statusMessageId)
           const replayDraft = cloneReplayDraftSnapshot(findLastUserReplayDraft(nextMessages))
           return {
@@ -1664,7 +1724,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
               content: failureText,
               timestamp: new Date(),
               systemTone: 'error',
-              observedSessionId: agentDeckSessionId,
+              observedSessionId: providerSessionId,
               replayDraft,
             }),
           }

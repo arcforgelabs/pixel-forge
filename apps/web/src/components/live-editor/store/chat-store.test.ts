@@ -965,6 +965,44 @@ describe('live editor selection history', () => {
     })
   })
 
+  it('hydrates direct provider activity from provider-neutral event fields', async () => {
+    setActiveThreadState({
+      targetAgentSessionId: 'codex-thread-a',
+    })
+
+    useLiveEditorStore.getState().activateThread(useLiveEditorStore.getState().activeThreadKey)
+    const stream = MockEventSource.instances.at(-1)
+    expect(stream).toBeTruthy()
+    stream?.emitEvent('activity', {
+      id: 1,
+      event_type: 'activity',
+      chat_id: useLiveEditorStore.getState().activeThreadKey,
+      thread_id: useLiveEditorStore.getState().activeThreadKey,
+      provider_id: 'codex-cli',
+      provider_session_id: 'codex-thread-a',
+      provider_session_title: 'Codex Thread',
+      provider_agent_id: 'codex',
+      provider_session_status: null,
+      agent_deck_session_id: null,
+      agent_deck_session_title: null,
+      agent_deck_tool: null,
+      agent_deck_session_status: null,
+      workspace_path: '/tmp/example-project',
+      binding_state: 'attached',
+      output: '',
+    })
+
+    await vi.waitFor(() => {
+      expect(useLiveEditorStore.getState().messages).toMatchObject([
+        {
+          role: 'system',
+          content: 'Attached to Codex CLI session `Codex Thread` (connected). Waiting for output...',
+          observedSessionId: 'codex-thread-a',
+        },
+      ])
+    })
+  })
+
   it('hydrates native Agent Deck session events into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
       targetAgentSessionId: 'deck-session-a',

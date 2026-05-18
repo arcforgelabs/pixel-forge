@@ -39,6 +39,10 @@ class WorkstationEventRecord:
     id: int
     project_path: str
     chat_id: str
+    provider_id: str | None
+    provider_session_id: str | None
+    provider_session_title: str | None
+    provider_agent_id: str | None
     agent_deck_session_id: str | None
     event_type: str
     payload: dict[str, Any]
@@ -84,20 +88,42 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _row_to_event_record(row: sqlite3.Row) -> WorkstationEventRecord:
     payload = json.loads(row["payload_json"])
+    normalized_payload = payload if isinstance(payload, dict) else {}
+    agent_deck_session_id = _normalize_payload_text(row["agent_deck_session_id"])
+    provider_id = _normalize_payload_text(normalized_payload.get("provider_id"))
+    provider_session_id = _normalize_payload_text(
+        normalized_payload.get("provider_session_id")
+    )
     return WorkstationEventRecord(
         id=row["id"],
         project_path=row["project_path"],
         chat_id=row["chat_id"],
-        agent_deck_session_id=row["agent_deck_session_id"],
+        provider_id=provider_id or ("agent-deck" if agent_deck_session_id else None),
+        provider_session_id=provider_session_id or agent_deck_session_id,
+        provider_session_title=_normalize_payload_text(
+            normalized_payload.get("provider_session_title")
+        )
+        or _normalize_payload_text(normalized_payload.get("agent_deck_session_title")),
+        provider_agent_id=_normalize_payload_text(
+            normalized_payload.get("provider_agent_id")
+        )
+        or _normalize_payload_text(normalized_payload.get("agent_deck_tool")),
+        agent_deck_session_id=agent_deck_session_id,
         event_type=row["event_type"],
-        payload=payload if isinstance(payload, dict) else {},
+        payload=normalized_payload,
         created_at=row["created_at"],
     )
+
+
+def _normalize_payload_text(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def normalize_workstation_event_payload(
     chat_id: str,
     payload: dict[str, Any],
+    *,
+    agent_deck_session_id: str | None = None,
 ) -> dict[str, Any]:
     normalized_chat_id = chat_id.strip()
     normalized_payload: dict[str, Any] = {
@@ -105,6 +131,32 @@ def normalize_workstation_event_payload(
         "thread_id": normalized_chat_id,
     }
     normalized_payload.update(payload)
+    normalized_agent_deck_session_id = _normalize_payload_text(
+        normalized_payload.get("agent_deck_session_id")
+    ) or _normalize_payload_text(agent_deck_session_id)
+    if normalized_agent_deck_session_id:
+        normalized_payload["agent_deck_session_id"] = normalized_agent_deck_session_id
+        normalized_payload.setdefault("provider_id", "agent-deck")
+        normalized_payload.setdefault(
+            "provider_session_id",
+            normalized_agent_deck_session_id,
+        )
+
+    if _normalize_payload_text(normalized_payload.get("agent_deck_session_title")):
+        normalized_payload.setdefault(
+            "provider_session_title",
+            normalized_payload["agent_deck_session_title"],
+        )
+    if _normalize_payload_text(normalized_payload.get("agent_deck_tool")):
+        normalized_payload.setdefault(
+            "provider_agent_id",
+            normalized_payload["agent_deck_tool"],
+        )
+    if _normalize_payload_text(normalized_payload.get("agent_deck_session_status")):
+        normalized_payload.setdefault(
+            "provider_session_status",
+            normalized_payload["agent_deck_session_status"],
+        )
     return normalized_payload
 
 
@@ -291,6 +343,7 @@ def append_workstation_event(
     normalized_payload = normalize_workstation_event_payload(
         normalized_chat_id,
         payload,
+        agent_deck_session_id=agent_deck_session_id,
     )
 
     with _connect() as conn:
@@ -456,6 +509,11 @@ def _activity_snapshot(
     project_path: str,
     chat_id: str,
     workspace_path: str,
+    provider_id: str | None,
+    provider_session_id: str | None,
+    provider_session_title: str | None,
+    provider_agent_id: str | None,
+    provider_session_status: str | None,
     agent_deck_session_id: str | None,
     agent_deck_session_title: str | None,
     agent_deck_tool: str | None,
@@ -466,6 +524,11 @@ def _activity_snapshot(
     return {
         "chat_id": chat_id,
         "thread_id": chat_id,
+        "provider_id": provider_id,
+        "provider_session_id": provider_session_id,
+        "provider_session_title": provider_session_title,
+        "provider_agent_id": provider_agent_id,
+        "provider_session_status": provider_session_status,
         "agent_deck_session_id": agent_deck_session_id,
         "agent_deck_session_title": agent_deck_session_title,
         "agent_deck_tool": agent_deck_tool,
@@ -485,15 +548,29 @@ async def _build_current_activity_snapshot(
         raise ValueError("Chat not found")
 
     if not session_record.agent_deck_session_id:
+        provider_session_id = _normalize_payload_text(session_record.provider_session_id)
         return None, _activity_snapshot(
             project_path=project_path,
             chat_id=chat_id,
             workspace_path=session_record.workspace_path,
+            provider_id=session_record.provider_id,
+            provider_session_id=provider_session_id,
+            provider_session_title=session_record.provider_session_title,
+            provider_agent_id=session_record.provider_agent_id,
+            provider_session_status=None,
             agent_deck_session_id=None,
-            agent_deck_session_title=session_record.agent_deck_session_title,
-            agent_deck_tool=session_record.agent_deck_tool,
+            agent_deck_session_title=(
+                session_record.agent_deck_session_title
+                if session_record.provider_id == "agent-deck"
+                else None
+            ),
+            agent_deck_tool=(
+                session_record.agent_deck_tool
+                if session_record.provider_id == "agent-deck"
+                else None
+            ),
             agent_deck_session_status=None,
-            binding_state="detached",
+            binding_state="attached" if provider_session_id else "detached",
             output="",
         )
 
@@ -506,6 +583,11 @@ async def _build_current_activity_snapshot(
             project_path=project_path,
             chat_id=chat_id,
             workspace_path=activity.workspace_path,
+            provider_id="agent-deck",
+            provider_session_id=activity.session_id,
+            provider_session_title=activity.session_title,
+            provider_agent_id=activity.tool,
+            provider_session_status=activity.status,
             agent_deck_session_id=activity.session_id,
             agent_deck_session_title=activity.session_title,
             agent_deck_tool=activity.tool,
@@ -537,6 +619,11 @@ async def _build_current_activity_snapshot(
         project_path=project_path,
         chat_id=chat_id,
         workspace_path=detached_workspace_path,
+        provider_id=None,
+        provider_session_id=None,
+        provider_session_title=None,
+        provider_agent_id=None,
+        provider_session_status=None,
         agent_deck_session_id=None,
         agent_deck_session_title=detached_title,
         agent_deck_tool=detached_tool,
@@ -607,10 +694,15 @@ async def get_chat_activity_snapshot(
         project_path=normalized_project_path,
         chat_id=normalized_chat_id,
         workspace_path=session_record.workspace_path,
+        provider_id=session_record.provider_id,
+        provider_session_id=session_record.provider_session_id,
+        provider_session_title=session_record.provider_session_title,
+        provider_agent_id=session_record.provider_agent_id,
+        provider_session_status=None,
         agent_deck_session_id=session_record.agent_deck_session_id,
         agent_deck_session_title=session_record.agent_deck_session_title,
         agent_deck_tool=session_record.agent_deck_tool,
         agent_deck_session_status=None,
-        binding_state="attached" if session_record.agent_deck_session_id else "detached",
+        binding_state="attached" if session_record.provider_session_id else "detached",
         output="",
     )

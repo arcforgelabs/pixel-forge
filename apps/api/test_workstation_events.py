@@ -74,8 +74,40 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].event_type, "activity")
+        self.assertEqual(events[0].provider_id, "agent-deck")
+        self.assertEqual(events[0].provider_session_id, "deck-a")
+        self.assertEqual(events[0].payload["provider_id"], "agent-deck")
+        self.assertEqual(events[0].payload["provider_session_id"], "deck-a")
         self.assertEqual(events[0].payload["binding_state"], "attached")
         self.assertEqual(events[0].payload["output"], "Working on the change...")
+
+    async def test_direct_provider_activity_snapshot_uses_provider_fields(self) -> None:
+        project_store.upsert_session(
+            str(self.project_path),
+            thread_id="thread-direct",
+            backend="codex-cli",
+            workspace_path=str(self.project_path),
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            provider_session_title="Codex Thread",
+            provider_agent_id="codex",
+        )
+
+        record = await workstation_events.sync_chat_activity_event(
+            str(self.project_path),
+            "thread-direct",
+        )
+
+        assert record is not None
+        self.assertEqual(record.agent_deck_session_id, None)
+        self.assertEqual(record.provider_id, "codex-cli")
+        self.assertEqual(record.provider_session_id, "codex-thread-a")
+        self.assertEqual(record.payload["provider_id"], "codex-cli")
+        self.assertEqual(record.payload["provider_session_id"], "codex-thread-a")
+        self.assertEqual(record.payload["provider_session_title"], "Codex Thread")
+        self.assertEqual(record.payload["provider_agent_id"], "codex")
+        self.assertEqual(record.payload["agent_deck_session_id"], None)
+        self.assertEqual(record.payload["binding_state"], "attached")
 
     async def test_missing_agent_deck_session_detaches_binding_and_records_detached_snapshot(self) -> None:
         with patch.object(
@@ -114,6 +146,10 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(record.event_type, "turn_input")
+        self.assertEqual(record.provider_id, "agent-deck")
+        self.assertEqual(record.provider_session_id, "deck-a")
+        self.assertEqual(record.payload["provider_id"], "agent-deck")
+        self.assertEqual(record.payload["provider_session_id"], "deck-a")
         self.assertTrue(
             workstation_events.chat_has_typed_turn_events(
                 str(self.project_path),
