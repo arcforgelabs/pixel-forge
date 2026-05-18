@@ -2,7 +2,7 @@
 # One-command installer for Pixel Forge on Ubuntu.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/IAMSamuelRodda/pixel-forge/master/scripts/quick-install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/arcforgelabs/pixel-forge/master/scripts/quick-install.sh | bash
 #
 # Environment:
 #   PIXEL_FORGE_SRC        Clone target (default: $HOME/.local/src/pixel-forge).
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO_URL="${PIXEL_FORGE_REPO_URL:-https://github.com/IAMSamuelRodda/pixel-forge.git}"
+REPO_URL="${PIXEL_FORGE_REPO_URL:-https://github.com/arcforgelabs/pixel-forge.git}"
 REF="${PIXEL_FORGE_REF:-master}"
 SRC_DIR="${PIXEL_FORGE_SRC:-$HOME/.local/src/pixel-forge}"
 UNATTENDED="${PIXEL_FORGE_UNATTENDED:-0}"

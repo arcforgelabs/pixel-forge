@@ -31,7 +31,7 @@ function releaseState(
       prerelease: false,
       draft: false,
     },
-    currentVersion: '2026.5.9-1',
+    currentVersion: '2026.5.19',
     updateAvailable: false,
     skippedVersion: null,
     status: 'checked_tags',
@@ -45,32 +45,32 @@ describe('SettingsSidebar version display helpers', () => {
   it('marks a locally installed controller ahead of the stable tag without calling it up to date', () => {
     const status = resolveControllerUpdateStatus({
       pendingControllerUpdate: null,
-      controllerVersion: '2026.5.9-1',
+      controllerVersion: '2026.5.19',
       controllerReleaseUpdate: releaseState(),
     })
 
     expect(status.label).toBe('Local build')
-    expect(status.detail).toContain('Running installed build v2026.5.9-1')
+    expect(status.detail).toContain('Running installed build v2026.5.19')
     expect(status.detail).toContain('newer than the latest stable GitHub tag v2026.4.14')
   })
 
   it('labels tag fallback state as tags instead of GitHub releases', () => {
     const display = resolveReleaseDisplayText({
-      controllerVersion: '2026.5.9-1',
+      controllerVersion: '2026.5.19',
       controllerReleaseUpdate: releaseState(),
     })
 
     expect(display.title).toBe('GitHub Tags')
     expect(display.latestLabel).toBe('Latest Tag')
     expect(display.detail).toBe(
-      'Installed build v2026.5.9-1 is newer than the latest stable GitHub tag v2026.4.14; this can happen when master is installed before a new stable tag is pushed.'
+      'Installed build v2026.5.19 is newer than the latest stable GitHub tag v2026.4.14; this can happen when master is installed before a new stable tag is pushed.'
     )
   })
 
   it('shows a release available state when the backend reports a newer channel version', () => {
     const status = resolveControllerUpdateStatus({
       pendingControllerUpdate: null,
-      controllerVersion: '2026.5.9-1',
+      controllerVersion: '2026.5.19',
       controllerReleaseUpdate: releaseState({
         source: 'release',
         latest: {

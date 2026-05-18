@@ -113,14 +113,15 @@ try {
     await pathExists(path.join(context.paths.installDir, 'desktop', 'package.json')),
     'Updated install is missing desktop/package.json.',
   )
-  const updatedRootHtml = await fetchJson(`${context.baseUrl}/`)
-    .then(() => null)
-    .catch(async () => {
-      const result = await runProcess('curl', ['-fsS', `${context.baseUrl}/`], { cwd: repoRoot })
-      return result.stdout
-    })
+  const updatedRootResponse = await fetch(`${context.baseUrl}/`, { cache: 'no-store' })
   assert(
-    typeof updatedRootHtml === 'string' && updatedRootHtml.includes('<!doctype html'),
+    updatedRootResponse.ok,
+    `Updated runtime root returned HTTP ${updatedRootResponse.status}.`,
+  )
+  const updatedRootHtml = await updatedRootResponse.text()
+  assert(
+    typeof updatedRootHtml === 'string'
+      && updatedRootHtml.toLowerCase().includes('<!doctype html'),
     'Updated runtime root did not return HTML.',
   )
 
