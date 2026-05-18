@@ -12,6 +12,7 @@ from agent_providers.models import (
     AgentProviderStatus,
     AgentProviderTurnDispatch,
     AgentTransportDescriptor,
+    AgentTurnRequest,
     ProviderCapabilitySet,
 )
 
@@ -234,8 +235,9 @@ class ClaudeCliProvider:
         target_provider_session_id: str | None = None,
         agent_model: str | None = None,
         agent_thinking: str | None = None,
+        request: AgentTurnRequest | None = None,
     ) -> ClaudeCliSessionInfo:
-        del agent_type, workspace_mode, agent_model, agent_thinking
+        del request, agent_type, workspace_mode, agent_model, agent_thinking
         persisted_id = (
             thread.provider_session_id
             if getattr(thread, "provider_id", None) == self.provider_id
@@ -277,8 +279,12 @@ class ClaudeCliProvider:
         image_paths: list[str] | None = None,
         startup_timeout_seconds: float,
         completion_timeout_seconds: float,
+        request: AgentTurnRequest | None = None,
     ) -> AgentProviderTurnDispatch:
         del project_path, startup_timeout_seconds
+        if request is not None:
+            prompt = request.prompt or prompt
+            image_paths = list(request.image_paths) or image_paths
         wait_task = asyncio.create_task(
             _run_claude_turn(
                 session_info,

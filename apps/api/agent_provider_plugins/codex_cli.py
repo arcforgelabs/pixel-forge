@@ -15,6 +15,7 @@ from agent_providers.models import (
     AgentProviderStatus,
     AgentProviderTurnDispatch,
     AgentTransportDescriptor,
+    AgentTurnRequest,
     ProviderCapabilitySet,
 )
 
@@ -449,8 +450,9 @@ class CodexCliProvider:
         target_provider_session_id: str | None = None,
         agent_model: str | None = None,
         agent_thinking: str | None = None,
+        request: AgentTurnRequest | None = None,
     ) -> CodexCliSessionInfo:
-        del agent_type, workspace_mode
+        del request, agent_type, workspace_mode
         persisted_id = (
             thread.provider_session_id
             if getattr(thread, "provider_id", None) == self.provider_id
@@ -491,8 +493,12 @@ class CodexCliProvider:
         image_paths: list[str] | None = None,
         startup_timeout_seconds: float,
         completion_timeout_seconds: float,
+        request: AgentTurnRequest | None = None,
     ) -> AgentProviderTurnDispatch:
         del project_path, startup_timeout_seconds
+        if request is not None:
+            prompt = request.prompt or prompt
+            image_paths = list(request.image_paths) or image_paths
         wait_task = asyncio.create_task(
             _run_codex_turn(
                 session_info,

@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+from agent_deck_launch import (
+    agent_deck_no_approval_launch_required,
+    agent_deck_runtime_origin,
+    build_agent_deck_launch_args,
+)
 from agent_deck_runtime import (
     agent_deck_available,
     agent_deck_command,
@@ -10,6 +15,8 @@ import agent_deck_bridge
 from runtime_config import agent_deck_provider_enabled
 
 from agent_providers.models import (
+    AgentTurnPolicy,
+    AgentTurnRequest,
     AgentProviderSessionActivity,
     AgentProviderSessionTarget,
     AgentProviderStatus,
@@ -95,16 +102,73 @@ class AgentDeckProvider:
     def status(self) -> AgentProviderStatus:
         enabled = agent_deck_provider_enabled()
         available, reason = agent_deck_available()
+        surface_command = agent_deck_command() if enabled else []
+        launch_command = agent_deck_command(require_launch_yolo=True) if enabled else []
+        launch_available, launch_reason = (
+            agent_deck_available(require_launch_yolo=True)
+            if enabled
+            else (False, "Agent Deck provider is disabled")
+        )
         return AgentProviderStatus(
             id=self.provider_id,
             display_name=self.display_name,
             enabled=enabled,
             available=available,
             reason=reason,
-            command=agent_deck_command() if enabled else [],
+            command=surface_command,
             capabilities=self.capabilities,
             transports=self.transports,
+            diagnostics={
+                "surface_command": surface_command,
+                "launch_command": launch_command,
+                "runtime_origin": agent_deck_runtime_origin(launch_command or surface_command),
+                "surface_runtime_origin": agent_deck_runtime_origin(surface_command),
+                "launch_runtime_origin": agent_deck_runtime_origin(launch_command),
+                "launch_capabilities": {
+                    "no_approval": launch_available,
+                    "flag": "--yolo",
+                    "reason": launch_reason,
+                },
+            },
         )
+
+    async def _launch_session(
+        self,
+        project_path: str,
+        *,
+        session_title: str,
+        agent_type: str = "claude",
+        workspace_mode: str = "root",
+        workspace_path: str | None = None,
+        agent_model: str | None = None,
+        agent_thinking: str | None = None,
+        turn_request: AgentTurnRequest | None = None,
+    ) -> dict[str, object]:
+        del workspace_mode
+        policy = turn_request.policy if turn_request is not None else AgentTurnPolicy(no_approval=True)
+        normalized_agent_type = agent_type.strip().lower() or "claude"
+        if agent_deck_no_approval_launch_required(normalized_agent_type, policy):
+            available, reason = agent_deck_available(require_launch_yolo=True)
+            if not available:
+                raise agent_deck_bridge.AgentDeckBridgeError(
+                    reason or "Agent Deck provider lacks required no-approval launch capability"
+                )
+        await agent_deck_bridge._enforce_agent_deck_launch_admission()
+        if normalized_agent_type == "pi":
+            await asyncio.to_thread(
+                agent_deck_bridge._sync_pi_ollama_models_for_launch,
+                agent_model,
+            )
+        args = build_agent_deck_launch_args(
+            project_path,
+            session_title=session_title,
+            agent_type=normalized_agent_type,
+            workspace_path=workspace_path,
+            agent_model=agent_model,
+            agent_thinking=agent_thinking,
+            policy=policy,
+        )
+        return await agent_deck_bridge._run_agent_deck_json_object_command(args)
 
     async def list_sessions(
         self,
@@ -128,14 +192,20 @@ class AgentDeckProvider:
         agent_model: str | None = None,
         agent_thinking: str | None = None,
     ) -> AgentProviderSessionTarget:
-        session = await agent_deck_bridge.create_agent_deck_session_target(
+        session_title = (
+            title.strip()
+            if isinstance(title, str) and title.strip()
+            else agent_deck_bridge._session_title_for_target(project_path)
+        )
+        payload = await self._launch_session(
             project_path,
+            session_title=session_title,
             agent_type=agent_type,
-            title=title,
             workspace_mode=workspace_mode,
             agent_model=agent_model,
             agent_thinking=agent_thinking,
         )
+        session = agent_deck_bridge._payload_to_session_target(payload)
         return self._session_target(session)
 
     async def rename_session(
@@ -192,7 +262,20 @@ class AgentDeckProvider:
         target_provider_session_id: str | None = None,
         agent_model: str | None = None,
         agent_thinking: str | None = None,
+        request: AgentTurnRequest | None = None,
     ):
+        turn_request = request or AgentTurnRequest(
+            project_path=project_path,
+            workspace_path=getattr(thread, "workspace_path", None),
+            thread_id=getattr(thread, "thread_id", None),
+            prompt="",
+            agent_id=agent_type,
+            workspace_mode=workspace_mode,
+            target_provider_session_id=target_provider_session_id,
+            agent_model=agent_model,
+            agent_thinking=agent_thinking,
+            policy=AgentTurnPolicy(no_approval=True),
+        )
         return await agent_deck_bridge.ensure_agent_deck_session(
             project_path,
             thread,
@@ -201,6 +284,8 @@ class AgentDeckProvider:
             target_agent_deck_session_id=target_provider_session_id,
             agent_model=agent_model,
             agent_thinking=agent_thinking,
+            launch_session=self._launch_session,
+            turn_request=turn_request,
         )
 
     async def dispatch_turn(
@@ -212,7 +297,11 @@ class AgentDeckProvider:
         image_paths: list[str] | None = None,
         startup_timeout_seconds: float,
         completion_timeout_seconds: float,
+        request: AgentTurnRequest | None = None,
     ) -> AgentProviderTurnDispatch:
+        if request is not None:
+            prompt = request.prompt or prompt
+            image_paths = list(request.image_paths) or image_paths
         baseline_output = ""
         normalized_session_status = (session_info.status or "").strip().lower()
         queue_onto_busy_session = normalized_session_status not in {

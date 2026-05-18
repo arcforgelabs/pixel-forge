@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import main
+import agent_deck_bridge
 import live_editor_threads
 import project_store
 import workstation_events
@@ -17,6 +18,7 @@ from agent_deck_bridge import (
     AgentDeckDeleteAssessment,
     AgentDeckSessionInfo,
 )
+from agent_providers.agent_deck import AgentDeckProvider
 from agent_providers.models import AgentProviderStatus, ProviderCapabilitySet
 
 
@@ -46,7 +48,7 @@ class _FakeProvider:
 
 
 class LiveEditorProviderSelectionTest(unittest.TestCase):
-    def test_agent_deck_selected_codex_handoff_requires_agent_deck_launch_contract(self) -> None:
+    def test_agent_deck_selected_codex_handoff_leaves_launch_policy_to_provider(self) -> None:
         agent_deck = _FakeProvider("agent-deck")
         codex_cli = _FakeProvider("codex-cli")
         thread = SimpleNamespace(provider_id=None, provider_session_id=None)
@@ -57,27 +59,15 @@ class LiveEditorProviderSelectionTest(unittest.TestCase):
                 "codex-cli": codex_cli,
             }.get(provider_id)
 
-        with (
-            patch.object(main, "get_agent_provider", side_effect=fake_get_provider),
-            patch.object(
-                main,
-                "agent_deck_available",
-                return_value=(
-                    False,
-                    "Agent Deck executable does not support the required `launch --yolo` contract",
-                ),
-            ),
-        ):
-            with self.assertRaises(main.HTTPException) as raised:
-                main._live_editor_agent_provider_or_error(
-                    "agent-deck",
-                    agent_type="codex",
-                    target_provider_session_id=None,
-                    thread=thread,
-                )
+        with patch.object(main, "get_agent_provider", side_effect=fake_get_provider):
+            provider = main._live_editor_agent_provider_or_error(
+                "agent-deck",
+                agent_type="codex",
+                target_provider_session_id=None,
+                thread=thread,
+            )
 
-        self.assertEqual(raised.exception.status_code, 503)
-        self.assertIn("launch --yolo", str(raised.exception.detail))
+        self.assertIs(provider, agent_deck)
 
     def test_codex_cli_selected_handoff_uses_direct_codex_provider(self) -> None:
         agent_deck = _FakeProvider("agent-deck")
@@ -132,27 +122,15 @@ class LiveEditorProviderSelectionTest(unittest.TestCase):
                 "codex-cli": codex_cli,
             }.get(provider_id)
 
-        with (
-            patch.object(main, "get_agent_provider", side_effect=fake_get_provider),
-            patch.object(
-                main,
-                "agent_deck_available",
-                return_value=(
-                    False,
-                    "Agent Deck executable does not support the required `launch --yolo` contract",
-                ),
-            ),
-        ):
-            with self.assertRaises(main.HTTPException) as raised:
-                main._live_editor_agent_provider_or_error(
-                    "agent-deck",
-                    agent_type="codex",
-                    target_provider_session_id=None,
-                    thread=thread,
-                )
+        with patch.object(main, "get_agent_provider", side_effect=fake_get_provider):
+            provider = main._live_editor_agent_provider_or_error(
+                "agent-deck",
+                agent_type="codex",
+                target_provider_session_id=None,
+                thread=thread,
+            )
 
-        self.assertEqual(raised.exception.status_code, 503)
-        self.assertIn("launch --yolo", str(raised.exception.detail))
+        self.assertIs(provider, agent_deck)
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
@@ -871,29 +849,32 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             return fake_wait_task
 
         with (
-            patch.object(main, "get_last_output", AsyncMock()) as get_last_output,
             patch.object(
-                main,
+                agent_deck_bridge,
                 "send_native_claude_prompt_reliably",
                 AsyncMock(),
             ) as native_send,
             patch.object(
-                main,
+                agent_deck_bridge,
                 "wait_for_agent_deck_turn_completion",
                 AsyncMock(return_value=None),
             ) as wait_for_completion,
             patch.object(main.asyncio, "create_task", side_effect=fake_create_task),
         ):
             baseline_output, turn_wait_task, status_heartbeat_task = (
-                await main._deliver_live_editor_prompt_to_agent_deck_session(
+                await main._dispatch_live_editor_prompt_to_agent_provider(
+                    agent_provider=AgentDeckProvider(),
                     session_info=session_info,
                     websocket=websocket,
                     dispatch_prompt="Read request.md",
                 )
             )
 
-        get_last_output.assert_not_awaited()
-        native_send.assert_not_awaited()
+        native_send.assert_called_once_with(
+            session_info,
+            project_path="/tmp/project/.agents/thread-a",
+            prompt="Read request.md",
+        )
         websocket.send_json.assert_awaited_once_with(
             {
                 "type": "status",
@@ -904,7 +885,7 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIsNone(status_heartbeat_task)
         self.assertEqual(len(create_task_calls), 1)
-        wait_for_completion.assert_not_awaited()
+        wait_for_completion.assert_not_called()
 
     async def test_deliver_live_editor_prompt_falls_back_to_agent_deck_send_for_busy_codex(self) -> None:
         session_info = AgentDeckSessionInfo(
@@ -938,19 +919,18 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             return fake_heartbeat_task
 
         with (
-            patch.object(main, "get_last_output", AsyncMock(return_value="baseline")) as get_last_output,
             patch.object(
-                main,
+                agent_deck_bridge,
                 "send_native_codex_prompt_reliably",
                 AsyncMock(),
             ) as native_send,
             patch.object(
-                main,
+                agent_deck_bridge,
                 "send_agent_deck_prompt_reliably",
                 AsyncMock(),
             ) as send_prompt,
             patch.object(
-                main,
+                agent_deck_bridge,
                 "wait_for_agent_deck_turn_completion",
                 AsyncMock(return_value=None),
             ) as wait_for_completion,
@@ -962,7 +942,8 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
             patch.object(main.asyncio, "create_task", side_effect=fake_create_task),
         ):
             baseline_output, turn_wait_task, status_heartbeat_task = (
-                await main._deliver_live_editor_prompt_to_agent_deck_session(
+                await main._dispatch_live_editor_prompt_to_agent_provider(
+                    agent_provider=AgentDeckProvider(),
                     session_info=session_info,
                     websocket=websocket,
                     dispatch_prompt="Review the request",
@@ -970,15 +951,18 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-        native_send.assert_not_awaited()
-        get_last_output.assert_not_awaited()
+        native_send.assert_not_called()
         send_prompt.assert_awaited_once_with(
             session_info,
             project_path="/tmp/project/.agents/thread-a",
             prompt="Review the request",
             no_wait=True,
         )
-        wait_for_completion.assert_not_awaited()
+        wait_for_completion.assert_called_once_with(
+            session_info,
+            startup_timeout_seconds=main.LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
+            completion_timeout_seconds=main.LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+        )
         self.assertEqual(baseline_output, "")
         self.assertIs(turn_wait_task, fake_wait_task)
         self.assertIs(status_heartbeat_task, fake_heartbeat_task)

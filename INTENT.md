@@ -41,14 +41,14 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 
 Next implementation target:
 
-The next actionable goal is to tighten the provider boundary so Agent Deck-specific launch mechanics live inside `AgentDeckProvider`, while Pixel Forge core stays provider-neutral. The immediate `launch --yolo` failure is fixed as a compatibility problem, but the architecture is not done: Pixel Forge still has Agent Deck-shaped bridge/runtime/surface helpers spread through the API layer. The next step is to make Agent Deck feel native when selected by routing through Agent Deck's own launch surface, while preventing Agent Deck details from leaking into core Live Editor dispatch.
+The next actionable goal is to finish the remaining generic persistence and provider-management migration. The Agent Deck launch-policy boundary is now validated, but the architecture is not complete: database records, frontend compatibility payloads, and some Settings surfaces still carry `agent_deck_*` names as more than temporary projections. The next step is to make provider/session bindings generic end to end while keeping Agent Deck as one optional provider and preserving the explicit direct-provider replay behavior.
 
 The target architecture for this next improvement is:
 
-1. Pixel Forge core emits one provider-neutral `AgentTurnRequest` plus policy fields such as autonomy/no-approval. Core must not append provider-specific flags such as `--yolo`, choose tmux/systemd behavior, or know Agent Deck storage conventions.
-2. `AgentDeckProvider` owns all Agent Deck translation: candidate selection, capability probing, `agent-deck launch -json`, group/title/workspace mapping, model/effort forwarding, no-approval flag mapping, send/resume behavior, observation, and TUI/surface opening.
-3. Agent Deck provider status must expose separate runtime facts: `surface_command` for list/open/show behavior, `launch_command` for the contract Pixel Forge will use to create a lane, and `runtime_origin` (`external`, `bundled`, or `disabled`). The UI should not imply the external executable is the launch runtime when the bundled binary is actually selected for the launch contract.
-4. The first stable boundary remains Agent Deck's own native CLI JSON surface (`agent-deck launch -json`, `session show -json`, session send/start APIs). Pixel Forge should not import or duplicate Agent Deck Go internals from Python. A local Agent Deck control API/RPC can replace the CLI later, but the CLI JSON path remains the compatibility fallback.
+1. Provider-neutral DB bindings are the canonical persisted fields, with `agent_deck_session_id`, `agent_deck_session_title`, and `agent_deck_tool` retained only as compatibility projections.
+2. Live Editor events, request-pack metadata, websocket payloads, and frontend stores prefer `provider_id`, `provider_session_id`, `provider_session_title`, and `provider_agent_id`.
+3. Settings exposes provider management from `GET /api/agent-providers`: enabled state, detected command/config home, default provider/agent, model/thinking defaults, and capability diagnostics.
+4. Agent Deck diagnostics remain split by responsibility (`surface_command`, `launch_command`, runtime origins, launch capabilities) and the UI must not imply the external executable is the no-approval launch runtime when the bundled binary is selected.
 5. Direct providers such as `codex-cli` and `claude-cli` remain explicit alternatives, not hidden fallbacks. If Agent Deck is selected and fails, Pixel Forge should show a loud failure plus deliberate direct-provider replay actions.
 
 Current source state:
@@ -58,7 +58,8 @@ Current source state:
 3. `[validated]` The installed controller no longer silently routes a selected Agent Deck Codex request to direct Codex when the external Agent Deck executable lacks the newer `launch --yolo` contract. Basis: commit `5bea58d` gates the Agent Deck launch contract and commit `6fb0549` validates direct Codex CLI resolution in the service runtime.
 4. `[validated]` Agent Deck-selected failures are loud and provide deliberate direct-provider replay actions instead of hidden fallback. Basis: commit `b898efa` adds `claude-cli`, explicit direct retry metadata, and chat replay actions for matching direct CLI providers.
 5. `[validated]` Agent Deck launch-contract selection can use Pixel Forge's bundled native Agent Deck binary when the external install lacks `launch --yolo`. Basis: commit `72977aa` makes bundled `foundations/agent-deck/build/agent-deck` and `foundations/agent-deck/agent-deck` first-class launch candidates; installed proof on May 18, 2026 resolves generic Agent Deck to `/home/samuelrodda/.local/bin/agent-deck-standalone` but the required no-approval launch contract to `/home/samuelrodda/.local/lib/pixel-forge/foundations/agent-deck/build/agent-deck`.
-6. `[active]` The next runtime blocker is provider-boundary cleanup: core Live Editor still knows too much Agent Deck shape even though the selected Agent Deck launch now uses a compatible native Agent Deck surface.
+6. `[validated]` The provider-boundary cleanup cut moved Agent Deck launch policy translation behind `AgentDeckProvider` and installed successfully on May 18, 2026. Basis: core Live Editor now constructs provider-neutral `AgentTurnRequest`/`AgentTurnPolicy` objects; `AgentDeckProvider` owns no-approval launch validation, `agent-deck launch -json` argv construction, model/effort translation, and split runtime diagnostics. Installed proof: `GET /api/agent-providers` reports external `surface_command` and bundled `launch_command` separately, generic `GET /api/projects/{project_path}/agent-sessions` works, generic `POST /api/projects/{project_path}/agent-sessions?provider=claude-cli` works, and `PIXEL_FORGE_WITH_AGENT_DECK=0` keeps provider listing alive while marking Agent Deck disabled.
+7. `[active]` The next runtime blocker is completing the remaining generic persistence/UI migration: core data still carries compatibility `agent_deck_*` projections and Settings still needs full provider management for defaults, command/config homes, and capability diagnostics.
 
 The goal is complete only when all of these are true:
 
@@ -77,12 +78,12 @@ The goal is complete only when all of these are true:
 
 Smallest complete implementation sequence:
 
-1. Introduce provider-neutral request/policy dataclasses at the Live Editor dispatch boundary, starting with `AgentTurnRequest` and an autonomy/no-approval policy object.
-2. Move Agent Deck launch argument construction and no-approval/model/effort translation from `agent_deck_bridge.py` into `AgentDeckProvider`, with tests proving core request policy maps to the correct Agent Deck CLI JSON call.
-3. Split Agent Deck provider diagnostics into `surface_command`, `launch_command`, `runtime_origin`, and launch-capability fields so Settings and error cards explain whether Pixel Forge is using external or bundled Agent Deck for each responsibility.
-4. Keep the existing `agent-deck launch -json` path as the stable provider implementation and document the future control-plane/RPC boundary as a provider-internal replacement, not a core API dependency.
-5. Update Live Editor dispatch and tests so core selects a provider and passes an `AgentTurnRequest`; provider adapters own `ensure_session`, `dispatch_turn`, `observe`, and replay/failure metadata.
-6. Preserve direct-provider replay behavior for explicit Agent Deck failures and keep `codex-cli`/`claude-cli` as explicit alternatives rather than automatic hidden fallbacks.
+1. Audit `project_store`, `live_editor_threads`, websocket session payloads, and frontend stores for remaining canonical `agent_deck_*` ownership versus compatibility-only projections.
+2. Add or verify migrations/backfills so provider-neutral fields are always populated from existing Agent Deck rows.
+3. Update API serializers and Live Editor events so provider-neutral fields are primary and legacy Agent Deck fields are emitted only where older clients still need them.
+4. Update Settings to render provider diagnostics and defaults from provider-neutral status/config data, including split Agent Deck runtime facts.
+5. Exercise the installed runtime with Agent Deck enabled and `PIXEL_FORGE_WITH_AGENT_DECK=0`, then prove one direct provider can receive a selected-preview Live Editor turn without Agent Deck.
+6. Keep direct-provider replay behavior and Agent Deck optional-provider behavior covered by tests while removing any remaining core dispatch dependency on Agent Deck bridge calls.
 
 # Requirements
 

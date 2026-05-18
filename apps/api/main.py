@@ -41,13 +41,13 @@ from agent_deck_bridge import (
     stream_codex_session_output,
 )
 from agent_deck_event_ingest import AgentDeckNativeEventIngestor
-from agent_deck_runtime import agent_deck_available
 from agent_deck_surface import (
     ensure_agent_deck_surface_started,
     read_agent_deck_surface_status,
     stop_agent_deck_surface,
 )
 from agent_providers import get_agent_provider, list_agent_providers
+from agent_providers.models import AgentTurnPolicy, AgentTurnRequest
 import pixel_forge_cli as _pf_cli
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
@@ -1391,28 +1391,13 @@ def _live_editor_agent_provider_or_error(
         raise HTTPException(status_code=404, detail="Agent provider not found")
 
     status = provider.status()
-    normalized_agent_type = agent_type.strip().lower() if isinstance(agent_type, str) else ""
-    requires_agent_deck_yolo = (
-        selected_provider_id == "agent-deck"
-        and normalized_agent_type in {"codex", "gemini"}
-    )
-    yolo_available = True
-    yolo_reason: str | None = None
-    if requires_agent_deck_yolo:
-        yolo_available, yolo_reason = agent_deck_available(require_launch_yolo=True)
+    del agent_type, target_provider_session_id, thread
 
-    if status.enabled and status.available and not (
-        requires_agent_deck_yolo and not yolo_available
-    ):
+    if status.enabled and status.available:
         return provider
 
     if not status.enabled:
         raise HTTPException(status_code=503, detail=status.reason or "Agent provider is disabled")
-    if requires_agent_deck_yolo and not yolo_available:
-        raise HTTPException(
-            status_code=503,
-            detail=yolo_reason or "Agent Deck provider lacks required launch capability",
-        )
     raise HTTPException(status_code=503, detail=status.reason or "Agent provider is unavailable")
 
 
@@ -3499,6 +3484,7 @@ async def _dispatch_live_editor_prompt_to_agent_provider(
     websocket: WebSocket,
     dispatch_prompt: str,
     native_image_paths: list[str] | None = None,
+    turn_request: AgentTurnRequest | None = None,
     on_status: LiveEditorStatusCallback | None = None,
 ) -> tuple[str, asyncio.Task[object], asyncio.Task[object] | None]:
     status_heartbeat_task: asyncio.Task[object] | None = None
@@ -3509,6 +3495,7 @@ async def _dispatch_live_editor_prompt_to_agent_provider(
         image_paths=native_image_paths,
         startup_timeout_seconds=LIVE_EDITOR_AGENT_STARTUP_TIMEOUT_SECONDS,
         completion_timeout_seconds=LIVE_EDITOR_AGENT_COMPLETION_TIMEOUT_SECONDS,
+        request=turn_request,
     )
     turn_wait_task = dispatch.wait_task
     if dispatch.status_heartbeat:
@@ -4264,6 +4251,26 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
                 )
+                turn_policy = AgentTurnPolicy(
+                    autonomy="no-approval",
+                    no_approval=True,
+                )
+                turn_request = AgentTurnRequest(
+                    project_path=normalized_project_path,
+                    workspace_path=getattr(thread, "workspace_path", None),
+                    thread_id=thread.thread_id,
+                    prompt=request_message,
+                    agent_id=agent_type if isinstance(agent_type, str) else "claude",
+                    workspace_mode=workspace_mode,
+                    target_provider_session_id=(
+                        target_provider_session_id
+                        if isinstance(target_provider_session_id, str)
+                        else None
+                    ),
+                    agent_model=agent_model if isinstance(agent_model, str) else None,
+                    agent_thinking=agent_thinking if isinstance(agent_thinking, str) else None,
+                    policy=turn_policy,
+                )
                 try:
                     agent_provider = _live_editor_agent_provider_or_error(
                         provider_id,
@@ -4337,6 +4344,7 @@ async def live_editor_chat(websocket: WebSocket):
                             agent_thinking=(
                                 agent_thinking if isinstance(agent_thinking, str) else None
                             ),
+                            request=turn_request,
                         ),
                         timeout=LIVE_EDITOR_AGENT_RESOLUTION_TIMEOUT_SECONDS,
                     )
@@ -4627,6 +4635,23 @@ async def live_editor_chat(websocket: WebSocket):
                         or current_live_preview_hash != previous_live_preview_hash
                     ),
                 )
+                dispatch_turn_request = AgentTurnRequest(
+                    project_path=normalized_project_path,
+                    workspace_path=session_info.workspace_path,
+                    thread_id=thread.thread_id,
+                    prompt=dispatch_prompt,
+                    agent_id=session_info.tool or (
+                        agent_type if isinstance(agent_type, str) else "claude"
+                    ),
+                    workspace_mode=workspace_mode,
+                    target_provider_session_id=provider_session_id,
+                    agent_model=agent_model if isinstance(agent_model, str) else None,
+                    agent_thinking=agent_thinking if isinstance(agent_thinking, str) else None,
+                    image_paths=tuple(native_image_paths),
+                    request_pack_path=request_pack.relative_request_file,
+                    request_pack_directory=request_pack.relative_directory,
+                    policy=turn_policy,
+                )
                 assistant_output = ""
                 if session_info.acpx_agent and session_info.acpx_session_name:
                     refreshed_acpx_session, fallback_output, streamed_text = await prompt_acpx_session(
@@ -4670,6 +4695,7 @@ async def live_editor_chat(websocket: WebSocket):
                         websocket=websocket,
                         dispatch_prompt=dispatch_prompt,
                         native_image_paths=native_image_paths,
+                        turn_request=dispatch_turn_request,
                         on_status=emit_turn_status,
                     )
                     send_task = turn_wait_task

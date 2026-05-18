@@ -7,6 +7,7 @@ from .models import (
     AgentProviderSessionTarget,
     AgentProviderStatus,
     AgentProviderTurnDispatch,
+    AgentTurnRequest,
 )
 
 
@@ -71,6 +72,7 @@ class AgentProvider(Protocol):
         target_provider_session_id: str | None = None,
         agent_model: str | None = None,
         agent_thinking: str | None = None,
+        request: AgentTurnRequest | None = None,
     ):
         ...
 
@@ -83,5 +85,6 @@ class AgentProvider(Protocol):
         image_paths: list[str] | None = None,
         startup_timeout_seconds: float,
         completion_timeout_seconds: float,
+        request: AgentTurnRequest | None = None,
     ) -> AgentProviderTurnDispatch:
         ...

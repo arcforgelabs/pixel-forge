@@ -15,6 +15,13 @@ from typing import Awaitable, Callable
 from uuid import uuid4
 
 from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
+from agent_deck_launch import (
+    PI_LOCAL_MODEL_RE,
+    PI_OLLAMA_BASE_URL,
+    PI_OLLAMA_TAGS_URL,
+    build_agent_deck_launch_args,
+    resolve_agent_model_effort_args as _resolve_agent_model_effort_args,
+)
 from agent_deck_runtime import agent_deck_available, agent_deck_command, agent_deck_env
 from live_editor_threads import LiveEditorThreadRecord
 from memory_governance import plan_agent_deck_launch_admission
@@ -27,125 +34,7 @@ CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
-DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
-CLAUDE_MODEL_ALIASES = {
-    "opus": DEFAULT_CLAUDE_MODEL,
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
-}
-
-# Allowlists for agent model + thinking-effort overrides plumbed from the
-# Pixel Forge chat composer through to agent-deck launch. These values end
-# up as argv elements on `agent-deck launch`, not inside a shell string —
-# the agent-deck CLI then stores them on the session's ToolOptions. We
-# still validate them here so an unexpected value gets silently dropped
-# (treated as "use tool defaults") rather than forwarded to the tool and
-# causing a surprising failure.
-CLAUDE_MODEL_ALLOWLIST = frozenset({
-    DEFAULT_CLAUDE_MODEL,
-    "claude-opus-4-6",
-    "claude-opus-4-5-20251101",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-5-20250929",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001",
-})
-CLAUDE_EFFORT_ALLOWLIST = frozenset({"low", "medium", "high", "xhigh", "max"})
-CODEX_MODEL_ALLOWLIST = frozenset(
-    {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
-)
-CODEX_EFFORT_ALLOWLIST = frozenset({"minimal", "low", "medium", "high", "xhigh"})
-GEMINI_MODEL_ALLOWLIST = frozenset({
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-})
-PI_MODEL_ALLOWLIST = frozenset({
-    "xai/grok-code-fast-1",
-    "xai/grok-4.20-0309-reasoning",
-    "xai/grok-4.20-0309-non-reasoning",
-    "xai/grok-4-1-fast",
-    "xai/grok-4-1-fast-non-reasoning",
-    "xai/grok-4-fast",
-    "xai/grok-4-fast-non-reasoning",
-    "xai/grok-4",
-    "xai/grok-3-mini-fast",
-    "xai/grok-3-mini",
-    "ollama/qwen2.5:32b",
-    "ollama/deepseek-coder:33b",
-    "ollama/qwq:32b",
-    "ollama/deepseek-r1:32b",
-    "ollama/qwen2.5:14b",
-    "ollama/deepseek-r1:14b",
-    "ollama/qwen2.5:7b",
-    "ollama/llama3.1:8b",
-    "ollama/mistral:7b",
-})
-PI_THINKING_ALLOWLIST = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
-PI_OLLAMA_BASE_URL = "http://localhost:11434/v1"
-PI_OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
-PI_LOCAL_MODEL_RE = re.compile(r"^ollama/[A-Za-z0-9._:/+-]+$")
-
-
-def _normalize_claude_model(model: str | None) -> str:
-    normalized = (model or "").strip()
-    normalized = CLAUDE_MODEL_ALIASES.get(normalized, normalized)
-    return normalized
-
-
-def _claude_effort_allowlist_for_model(model: str | None) -> frozenset[str]:
-    if _normalize_claude_model(model) == DEFAULT_CLAUDE_MODEL:
-        return frozenset({"low", "medium", "high", "xhigh", "max"})
-    return frozenset({"low", "medium", "high", "max"})
-
-
-def _resolve_agent_model_effort_args(
-    agent_type: str,
-    agent_model: str | None,
-    agent_thinking: str | None,
-) -> list[str]:
-    """Return the `--model`/`--effort` argv fragment for `agent-deck launch`.
-
-    These flags get set on the session's ToolOptions (ClaudeOptions.Model /
-    ClaudeOptions.Effort / CodexOptions.Model / CodexOptions.ReasoningEffort)
-    rather than smuggled through a `{command}` wrapper. The wrapper path is
-    broken for Claude specifically because Pixel Forge wraps the claude
-    command inside `python3 dev_channel_wrapper.py -- /bin/bash -lc "…"` —
-    any wrapper-appended flags land OUTSIDE that quoted envelope and bash
-    swallows them as positional parameters instead of passing them to
-    claude.
-    """
-    tool = (agent_type or "claude").strip().lower()
-    model = (agent_model or "").strip()
-    thinking = (agent_thinking or "").strip()
-
-    if tool == "claude":
-        model_allowed = CLAUDE_MODEL_ALLOWLIST
-        model = _normalize_claude_model(model)
-        effort_allowed = _claude_effort_allowlist_for_model(model)
-    elif tool == "codex":
-        model_allowed = CODEX_MODEL_ALLOWLIST
-        effort_allowed = CODEX_EFFORT_ALLOWLIST
-    elif tool == "gemini":
-        model_allowed = GEMINI_MODEL_ALLOWLIST
-        effort_allowed = frozenset()
-    elif tool == "pi":
-        model_allowed = PI_MODEL_ALLOWLIST
-        effort_allowed = PI_THINKING_ALLOWLIST
-    else:
-        return []
-
-    args: list[str] = []
-    if model and (model in model_allowed or (tool == "pi" and PI_LOCAL_MODEL_RE.fullmatch(model))):
-        args.extend(["--model", model])
-    if thinking and thinking in effort_allowed:
-        args.extend(["--effort", thinking])
-    return args
-
-
+AgentDeckLaunchSession = Callable[..., Awaitable[dict[str, object]]]
 def _pi_agent_dir() -> Path:
     configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
     if configured:
@@ -789,42 +678,22 @@ async def _launch_new_session(
     workspace_path: str | None = None,
     agent_model: str | None = None,
     agent_thinking: str | None = None,
+    turn_request: object | None = None,
 ) -> dict[str, object]:
     await _enforce_agent_deck_launch_admission()
     del workspace_mode
     normalized_agent_type = agent_type.strip().lower() or "claude"
     if normalized_agent_type == "pi":
         await asyncio.to_thread(_sync_pi_ollama_models_for_launch, agent_model)
-    launch_path = (
-        _normalize_path(workspace_path)
-        if isinstance(workspace_path, str) and workspace_path.strip()
-        else _normalize_path(project_path)
+    args = build_agent_deck_launch_args(
+        project_path,
+        session_title=session_title,
+        agent_type=normalized_agent_type,
+        workspace_path=workspace_path,
+        agent_model=agent_model,
+        agent_thinking=agent_thinking,
+        policy=getattr(turn_request, "policy", None),
     )
-    args = [
-        "launch",
-        "-json",
-        "-no-wait",
-        f"-t={session_title}",
-        f"-g={_group_path(project_path)}",
-        (
-            f"-c=openclaw tui --session {_openclaw_session_key(session_title)}"
-            if normalized_agent_type == "openclaw"
-            else f"-c={normalized_agent_type}"
-        ),
-    ]
-    # Route model/effort through agent-deck's ToolOptions rather than a
-    # `-cmd` wrapper string. The wrapper approach is broken for Claude
-    # because the dev-channel wrap envelopes the claude command inside
-    # `bash -lc "…"` and any wrapper-appended flags land outside the
-    # quoted envelope where bash swallows them as positional parameters.
-    args.extend(
-        _resolve_agent_model_effort_args(
-            normalized_agent_type, agent_model, agent_thinking
-        )
-    )
-    if normalized_agent_type in {"codex", "gemini"}:
-        args.append("--yolo")
-    args.append(launch_path)
     return await _run_agent_deck_json_object_command(args)
 
 
@@ -1657,6 +1526,8 @@ async def ensure_agent_deck_session(
     target_agent_deck_session_id: str | None = None,
     agent_model: str | None = None,
     agent_thinking: str | None = None,
+    launch_session: AgentDeckLaunchSession | None = None,
+    turn_request: object | None = None,
 ) -> AgentDeckSessionInfo:
     del workspace_mode
     payload: dict[str, object]
@@ -1680,6 +1551,12 @@ async def ensure_agent_deck_session(
             "This Live Editor thread is already bound to a different Agent Deck session. Start a fresh live thread to retarget it."
         )
 
+    async def launch_agent_deck_session(**kwargs: object) -> dict[str, object]:
+        launcher = launch_session or _launch_new_session
+        if turn_request is not None:
+            kwargs["turn_request"] = turn_request
+        return await launcher(project_path, **kwargs)
+
     if explicit_target_id:
         try:
             payload = await _load_existing_session(project_path, explicit_target_id)
@@ -1694,8 +1571,7 @@ async def ensure_agent_deck_session(
                 explicit_target_id == bound_session_id
                 and _is_missing_session_error(exc)
             ):
-                payload = await _launch_new_session(
-                    project_path,
+                payload = await launch_agent_deck_session(
                     session_title=preferred_session_title,
                     agent_type=agent_type,
                     workspace_mode=launch_workspace_mode,
@@ -1715,8 +1591,7 @@ async def ensure_agent_deck_session(
                 requested_agent_type=agent_type,
             )
         except AgentDeckBridgeError:
-            payload = await _launch_new_session(
-                project_path,
+            payload = await launch_agent_deck_session(
                 session_title=preferred_session_title,
                 agent_type=agent_type,
                 workspace_mode=launch_workspace_mode,
@@ -1725,8 +1600,7 @@ async def ensure_agent_deck_session(
                 agent_thinking=agent_thinking,
             )
     else:
-        payload = await _launch_new_session(
-            project_path,
+        payload = await launch_agent_deck_session(
             session_title=preferred_session_title,
             agent_type=agent_type,
             workspace_mode=launch_workspace_mode,
