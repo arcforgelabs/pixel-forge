@@ -631,7 +631,11 @@ describe("session-store chat creation", () => {
           && url.includes("/chats")
           && init?.method === "POST"
         ) {
-          createChatBody = JSON.parse(String(init.body || "{}"));
+          const parsedBody = JSON.parse(String(init.body || "{}")) as Record<string, unknown>;
+          createChatBody = parsedBody;
+          const requestedProviderId = String(parsedBody.provider_id || "agent-deck");
+          const requestedAgentType = String(parsedBody.agent_type || "claude");
+          const isAgentDeck = requestedProviderId === "agent-deck";
           return new Response(
             JSON.stringify({
               id: "thread-b",
@@ -639,10 +643,14 @@ describe("session-store chat creation", () => {
               title: "pixel-forge-thread-b",
               thread_id: "thread-b",
               workspace_path: "/tmp/example-project",
-              backend: "agent-deck",
+              backend: requestedProviderId,
+              provider_id: requestedProviderId,
+              provider_session_id: null,
+              provider_session_title: "pixel-forge-thread-b",
+              provider_agent_id: requestedAgentType,
               agent_deck_session_id: null,
-              agent_deck_session_title: "pixel-forge-thread-b",
-              agent_deck_tool: null,
+              agent_deck_session_title: isAgentDeck ? "pixel-forge-thread-b" : null,
+              agent_deck_tool: isAgentDeck ? requestedAgentType : null,
               agent_deck_session_status: null,
               binding_state: "detached",
               workspace_kind: "root",
@@ -701,12 +709,13 @@ describe("session-store chat creation", () => {
       workspacePath: "/tmp/example-project",
       agentDeckSessionId: null,
       agentDeckSessionTitle: "pixel-forge-thread-b",
-      agentDeckTool: null,
+      agentDeckTool: "codex",
     });
     expect(state.agentTargets).toHaveLength(0);
     expect(state.selectedAgentTargetId).toBeNull();
     expect(state.defaultAgentType).toBe("claude");
     expect(createChatBody).toMatchObject({
+      provider_id: "agent-deck",
       agent_type: "codex",
       workspace_mode: "root",
       reuse_empty_draft: true,
@@ -723,6 +732,36 @@ describe("session-store chat creation", () => {
       agent_type: "claude",
       workspace_mode: "root",
       reuse_empty_draft: true,
+    });
+  });
+
+  it("keeps direct-provider draft chat state out of Agent Deck compatibility fields", async () => {
+    useSessionStore.setState({
+      defaultAgentProviderId: "codex-cli",
+      defaultAgentType: "codex",
+    });
+
+    await useSessionStore.getState().createProjectChatSession({
+      agentType: "codex",
+    });
+
+    expect(createChatBody).toMatchObject({
+      provider_id: "codex-cli",
+      agent_type: "codex",
+    });
+    expect(getActiveProjectChats()[0]).toMatchObject({
+      providerId: "codex-cli",
+      providerSessionTitle: "pixel-forge-thread-b",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+    });
+    expect(getActiveProjectSessions()[0]).toMatchObject({
+      providerId: "codex-cli",
+      providerSessionTitle: "pixel-forge-thread-b",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
     });
   });
 

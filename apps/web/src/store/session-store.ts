@@ -913,6 +913,8 @@ function projectSessionFromProjectChat(
   }
 
   const fallbackTimestamp = new Date().toISOString();
+  const providerId = getAgentBindingProviderId(chat) ?? chat.providerId ?? null;
+  const isAgentDeckChat = providerId === "agent-deck";
   return {
     id: -1,
     projectPath: chat.projectPath,
@@ -923,9 +925,11 @@ function projectSessionFromProjectChat(
     providerSessionId: chat.providerSessionId,
     providerSessionTitle: chat.providerSessionTitle,
     providerAgentId: chat.providerAgentId,
-    agentDeckSessionId: chat.agentDeckSessionId,
-    agentDeckSessionTitle: chat.agentDeckSessionTitle ?? chat.title,
-    agentDeckTool: chat.agentDeckTool,
+    agentDeckSessionId: isAgentDeckChat ? chat.agentDeckSessionId : null,
+    agentDeckSessionTitle: isAgentDeckChat
+      ? chat.agentDeckSessionTitle ?? chat.title
+      : null,
+    agentDeckTool: isAgentDeckChat ? chat.agentDeckTool : null,
     editorState: null,
     createdAt: chat.createdAt ?? fallbackTimestamp,
     lastActive: chat.lastActive ?? fallbackTimestamp,
@@ -965,7 +969,11 @@ function projectChatFromSession(
   const providerSessionTitle =
     getAgentBindingTitle(session)
     ?? existingChat?.providerSessionTitle
-    ?? existingChat?.agentDeckSessionTitle
+    ?? (
+      existingChat?.providerId === "agent-deck"
+        ? existingChat.agentDeckSessionTitle
+        : null
+    )
     ?? existingChat?.title
     ?? `Chat ${threadId}`;
   const providerAgentId =
@@ -973,7 +981,7 @@ function projectChatFromSession(
   const agentDeckSessionId =
     providerId === "agent-deck"
       ? providerSessionId
-      : session.agentDeckSessionId?.trim() || existingChat?.agentDeckSessionId || null;
+      : null;
 
   return {
     id: existingChat?.id ?? threadId,
@@ -991,12 +999,15 @@ function projectChatFromSession(
     providerAgentId,
     agentDeckSessionId,
     agentDeckSessionTitle:
-      session.agentDeckSessionTitle
-      ?? existingChat?.agentDeckSessionTitle
-      ?? (providerId === "agent-deck" ? providerSessionTitle : null),
-    agentDeckTool: session.agentDeckTool ?? existingChat?.agentDeckTool ?? (
-      providerId === "agent-deck" ? providerAgentId : null
-    ),
+      providerId === "agent-deck"
+        ? session.agentDeckSessionTitle
+          ?? existingChat?.agentDeckSessionTitle
+          ?? providerSessionTitle
+        : null,
+    agentDeckTool:
+      providerId === "agent-deck"
+        ? session.agentDeckTool ?? existingChat?.agentDeckTool ?? providerAgentId
+        : null,
     agentDeckSessionStatus:
       existingChat?.agentDeckSessionStatus
       ?? (agentDeckSessionId ? "unknown" : null),
