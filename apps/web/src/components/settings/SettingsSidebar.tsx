@@ -300,6 +300,14 @@ function formatAgentDeckTool(tool: string | null | undefined): string {
             : capitalize(tool);
 }
 
+const DIRECT_AGENT_PROVIDER_BY_AGENT: Record<string, string> = {
+  claude: "claude-cli",
+  codex: "codex-cli",
+  gemini: "gemini-cli",
+  pi: "pi-cli",
+  openclaw: "openclaw-cli",
+};
+
 const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   claude: [
     { value: "claude-opus-4-7", label: "Opus 4.7" },
@@ -525,13 +533,31 @@ function formatRuntimeOrigin(origin: string | null | undefined): string {
   return origin.replace(/[-_]+/g, " ");
 }
 
+function formatProviderCapabilities(capabilities: Record<string, boolean> | null | undefined): string | null {
+  if (!capabilities) {
+    return null;
+  }
+  const enabledCapabilities = Object.entries(capabilities)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name.replace(/[-_]+/g, " "))
+    .sort();
+  return enabledCapabilities.length > 0 ? enabledCapabilities.join(", ") : "none";
+}
+
 function providerDiagnosticRows(provider: AgentProviderStatus): { label: string; value: string }[] {
   const diagnostics = provider.diagnostics;
+  const rows: { label: string; value: string }[] = [];
+  const capabilitySummary = formatProviderCapabilities(provider.capabilities);
+  if (capabilitySummary) {
+    rows.push({
+      label: "Capabilities",
+      value: capabilitySummary,
+    });
+  }
   if (!diagnostics) {
-    return [];
+    return rows;
   }
 
-  const rows: { label: string; value: string }[] = [];
   if (diagnostics.surface_command) {
     rows.push({
       label: "Surface",
@@ -687,6 +713,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       && project.path === TARGET_PROJECT_PATH
     )
   ));
+  const providerIds = new Set(agentProviders.map((provider) => provider.id));
+  const preferredDirectProviderId =
+    DIRECT_AGENT_PROVIDER_BY_AGENT[defaultAgentType] ?? `${defaultAgentType}-cli`;
+  const fallbackDirectProviderId =
+    agentProviders.find((provider) => provider.id !== "agent-deck" && provider.enabled)?.id
+    ?? preferredDirectProviderId;
+  const directRoutingProviderId =
+    agentProviders.length === 0 || providerIds.has(preferredDirectProviderId)
+      ? preferredDirectProviderId
+      : fallbackDirectProviderId;
+  const agentDeckRoutingEnabled = defaultAgentProviderId === "agent-deck";
+
+  function setAgentDeckRoutingEnabled(enabled: boolean) {
+    setDefaultAgentProviderId(enabled ? "agent-deck" : directRoutingProviderId);
+  }
 
   const {
     connected,
@@ -2632,6 +2673,24 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     >
                       <div className="space-y-4">
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <Label htmlFor="settings-agent-deck-routing" className="text-sm font-medium">
+                                Agent Deck Mode
+                              </Label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {agentDeckRoutingEnabled
+                                  ? "New chats route through Agent Deck."
+                                  : `New chats route through ${directRoutingProviderId}.`}
+                              </p>
+                            </div>
+                            <Switch
+                              id="settings-agent-deck-routing"
+                              checked={agentDeckRoutingEnabled}
+                              onCheckedChange={setAgentDeckRoutingEnabled}
+                            />
+                          </div>
+
                           <div className="flex items-center justify-between gap-4">
                             <div>
                               <Label className="text-sm font-medium">Provider</Label>
