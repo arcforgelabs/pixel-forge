@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionTarget
+from agent_provider_plugins import codex_cli as codex_cli_plugin
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
 from agent_providers.codex_cli import CodexCliProvider, CodexCliSessionInfo
@@ -19,12 +20,15 @@ class AgentProviderRegistryTest(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.original_env = {
             "PATH": os.environ.get("PATH"),
+            "HOME": os.environ.get("HOME"),
             "PIXEL_FORGE_WITH_AGENT_DECK": os.environ.get("PIXEL_FORGE_WITH_AGENT_DECK"),
             "PIXEL_FORGE_AGENT_DECK_CMD": os.environ.get("PIXEL_FORGE_AGENT_DECK_CMD"),
             "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": os.environ.get("PIXEL_FORGE_RUNTIME_SOURCE_ROOT"),
         }
+        codex_cli_plugin._resolve_codex_executable.cache_clear()
 
     def tearDown(self) -> None:
+        codex_cli_plugin._resolve_codex_executable.cache_clear()
         for key, value in self.original_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -109,6 +113,26 @@ class AgentProviderRegistryTest(unittest.TestCase):
         }
         self.assertIn("codex", transports)
         self.assertIn("app-server", transports["codex"]["current_transport"])
+
+    def test_codex_cli_provider_resolves_user_npm_global_bin_without_service_path(self) -> None:
+        codex_bin = Path(self.tempdir.name) / ".npm-global" / "bin" / "codex"
+        codex_bin.parent.mkdir(parents=True)
+        codex_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        codex_bin.chmod(0o755)
+
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": self.tempdir.name,
+                "PATH": "/usr/bin:/bin",
+            },
+            clear=False,
+        ):
+            codex_cli_plugin._resolve_codex_executable.cache_clear()
+            status = CodexCliProvider().status()
+
+        self.assertTrue(status.available)
+        self.assertEqual(status.command, [str(codex_bin)])
 
 
 class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):

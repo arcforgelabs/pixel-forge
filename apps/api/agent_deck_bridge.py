@@ -495,6 +495,7 @@ def _resolve_runtime_executable(binary_name: str) -> str:
 
     home = Path.home()
     for extra_path in (
+        home / ".npm-global" / "bin",
         home / ".local" / "bin",
         home / ".local" / "share" / "pnpm",
         home / "bin",

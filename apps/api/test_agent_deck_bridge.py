@@ -580,6 +580,24 @@ class AgentDeckBridgeExecutableResolutionTest(unittest.TestCase):
     def tearDown(self) -> None:
         agent_deck_bridge._resolve_runtime_executable.cache_clear()
 
+    def test_resolve_runtime_executable_falls_back_to_npm_global_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = Path(tempdir)
+            npm_bin = home / ".npm-global" / "bin"
+            npm_bin.mkdir(parents=True)
+            codex_path = npm_bin / "codex"
+            codex_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            codex_path.chmod(0o755)
+
+            with (
+                patch.dict(agent_deck_bridge.os.environ, {"PATH": "/usr/bin:/bin"}, clear=False),
+                patch.object(agent_deck_bridge.Path, "home", return_value=home),
+                patch.object(agent_deck_bridge.shutil, "which", side_effect=lambda name, path=None: str(codex_path) if name == "codex" and path and str(npm_bin) in path else None),
+            ):
+                resolved = agent_deck_bridge._resolve_runtime_executable("codex")
+
+        self.assertEqual(resolved, str(codex_path))
+
     def test_resolve_runtime_executable_falls_back_to_nvm_bin(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = Path(tempdir)

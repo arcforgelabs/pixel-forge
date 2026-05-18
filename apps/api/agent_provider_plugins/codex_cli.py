@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +21,57 @@ from agent_providers.models import (
 
 class CodexCliProviderError(RuntimeError):
     pass
+
+
+@lru_cache(maxsize=1)
+def _resolve_codex_executable() -> str:
+    direct_match = shutil.which("codex")
+    if direct_match:
+        return direct_match
+
+    search_paths: list[str] = []
+    seen_paths: set[str] = set()
+
+    def append_path(path_value: str | Path | None) -> None:
+        if path_value is None:
+            return
+        normalized_path = str(path_value).strip()
+        if not normalized_path or normalized_path in seen_paths:
+            return
+        seen_paths.add(normalized_path)
+        search_paths.append(normalized_path)
+
+    for path_value in os.environ.get("PATH", "").split(os.pathsep):
+        append_path(path_value)
+
+    home = Path.home()
+    for extra_path in (
+        home / ".npm-global" / "bin",
+        home / ".local" / "bin",
+        home / ".local" / "share" / "pnpm",
+        home / "bin",
+        home / ".bun" / "bin",
+        home / ".cargo" / "bin",
+    ):
+        append_path(extra_path)
+
+    nvm_versions_root = home / ".nvm" / "versions" / "node"
+    if nvm_versions_root.is_dir():
+        for version_dir in sorted(
+            (entry for entry in nvm_versions_root.iterdir() if entry.is_dir()),
+            key=lambda entry: entry.name,
+            reverse=True,
+        ):
+            append_path(version_dir / "bin")
+
+    if search_paths:
+        resolved = shutil.which("codex", path=os.pathsep.join(search_paths))
+        if resolved:
+            return resolved
+
+    raise CodexCliProviderError(
+        "codex command not found in the Pixel Forge service environment"
+    )
 
 
 @dataclass(slots=True)
@@ -57,7 +110,7 @@ class _CodexAppServerClient:
 
     async def __aenter__(self) -> "_CodexAppServerClient":
         self._proc = await asyncio.create_subprocess_exec(
-            "codex",
+            _resolve_codex_executable(),
             "app-server",
             "--listen",
             "stdio://",
@@ -298,13 +351,18 @@ class CodexCliProvider:
     )
 
     def status(self) -> AgentProviderStatus:
-        command = shutil.which("codex")
+        unavailable_reason: str | None = None
+        try:
+            command = _resolve_codex_executable()
+        except CodexCliProviderError as exc:
+            command = None
+            unavailable_reason = str(exc)
         return AgentProviderStatus(
             id=self.provider_id,
             display_name=self.display_name,
             enabled=True,
             available=bool(command),
-            reason=None if command else "codex command not found on PATH",
+            reason=None if command else unavailable_reason,
             command=[command] if command else [],
             capabilities=self.capabilities,
             transports=self.transports,
