@@ -390,12 +390,15 @@ export function ChatInput() {
     (target) => target.id === targetAgentSessionId
   )
   const effectiveAgentType =
-    liveEditorSession?.agentDeckTool
+    liveEditorSession?.providerAgentId
+    || liveEditorSession?.agentDeckTool
     || selectedAgentTarget?.tool
     || draftAgentType
     || defaultAgentType
   const agentSelectionLocked = Boolean(
-    liveEditorSession?.agentDeckSessionId || targetAgentSessionId
+    liveEditorSession?.providerSessionId
+    || liveEditorSession?.agentDeckSessionId
+    || targetAgentSessionId
   )
   const agentModelOptions = getAgentModelOptions(effectiveAgentType)
   const activeAgentModel = effectiveAgentType

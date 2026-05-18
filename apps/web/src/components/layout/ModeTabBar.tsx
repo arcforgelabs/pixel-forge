@@ -22,10 +22,13 @@ export function ModeTabBar() {
     || (
       selectedAgentTargetId
         ? projectChats.find(
-            (chat) => chat.agentDeckSessionId === selectedAgentTargetId
+            (chat) =>
+              chat.providerSessionId === selectedAgentTargetId
+              || chat.agentDeckSessionId === selectedAgentTargetId
           )?.title
         : null
     )
+    || liveEditorSession?.providerSessionTitle
     || liveEditorSession?.agentDeckSessionTitle
     || null;
   const modeLabel =

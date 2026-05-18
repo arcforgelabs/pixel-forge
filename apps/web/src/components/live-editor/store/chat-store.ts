@@ -859,7 +859,7 @@ function createThreadStateFromSession(
 ): ThreadChatState {
   return {
     ...createEmptyThreadState(session.projectPath?.trim() || null),
-    targetAgentSessionId: session.agentDeckSessionId ?? null,
+    targetAgentSessionId: providerBindingSessionId(session) ?? null,
     ...createThreadEditorStateFromPersisted(session.editorState, fallbackUrl),
   }
 }
@@ -1830,13 +1830,13 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const threadState = getThreadStateSnapshot(get().threadStates, threadKey)
     const boundSession = resolveThreadSession(threadKey)
     const chatId = boundSession?.threadId ?? threadKey
-    const agentDeckSessionId =
-      boundSession?.agentDeckSessionId
+    const providerSessionId =
+      providerBindingSessionId(boundSession)
       ?? threadState.targetAgentSessionId
       ?? null
     const fromNow = options?.fromNow === true
 
-    if (!projectPath || !chatId || !agentDeckSessionId || typeof EventSource === 'undefined') {
+    if (!projectPath || !chatId || !providerSessionId || typeof EventSource === 'undefined') {
       stopObservedThreadStreaming()
       return
     }
@@ -1941,11 +1941,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const activeThreadKey = get().activeThreadKey
     const threadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
     const boundSession = resolveThreadSession(activeThreadKey)
-    const agentDeckSessionId =
-      boundSession?.agentDeckSessionId
+    const providerSessionId =
+      providerBindingSessionId(boundSession)
       ?? threadState.targetAgentSessionId
       ?? null
-    if (!agentDeckSessionId || !canObserveThreadEvents(threadState)) {
+    if (!providerSessionId || !canObserveThreadEvents(threadState)) {
       stopObservedThreadStreaming()
       return
     }
