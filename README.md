@@ -7,7 +7,7 @@ Status: early public-release groundwork. Linux is the primary install path today
 ## Install
 
 ```bash
-npx @iamsamuelrodda/pixel-forge
+npx @arcforgelabs/pixel-forge
 ```
 
 Linux source installer:
@@ -38,8 +38,8 @@ Retired `pixel-forge-alpha` / `pixel-forge-workstation-v2` install env overrides
 
 ## npm Packages
 
-- `@iamsamuelrodda/pixel-forge`: public installer entrypoint.
-- `@iamsamuelrodda/pixel-forge-sdk`: Node SDK for screenshot bootstrap workflows.
+- `@arcforgelabs/pixel-forge`: public installer entrypoint.
+- `@arcforgelabs/pixel-forge-sdk`: Node SDK for screenshot bootstrap workflows.
 
 ## Active docs
 

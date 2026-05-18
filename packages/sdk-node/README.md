@@ -5,13 +5,13 @@ Node SDK for Pixel Forge screenshot bootstrap workflows.
 ## Install
 
 ```bash
-npm install @iamsamuelrodda/pixel-forge-sdk
+npm install @arcforgelabs/pixel-forge-sdk
 ```
 
 ## Use
 
 ```js
-import { generateFromFile } from "@iamsamuelrodda/pixel-forge-sdk";
+import { generateFromFile } from "@arcforgelabs/pixel-forge-sdk";
 
 const result = await generateFromFile("./design.png", {
   apiKey: process.env.ANTHROPIC_API_KEY,
