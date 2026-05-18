@@ -1926,6 +1926,15 @@ describe('live editor selection history', () => {
       agentDeckSessionTitle: null,
       agentDeckTool: null,
     })
+
+    expect(useLiveEditorStore.getState().getTargetAgentSessionId()).toBe('codex-thread-a')
+    useLiveEditorStore.getState().setTargetAgentSessionId('other-provider-session')
+    expect(useLiveEditorStore.getState().getTargetAgentSessionId()).toBe('codex-thread-a')
+    expect(useLiveEditorStore.getState().messages.at(-1)).toMatchObject({
+      role: 'system',
+      systemTone: 'error',
+      content: expect.stringContaining('provider session'),
+    })
   })
 
   it('stages clone-backed self-edit completions as preview-only updates', async () => {

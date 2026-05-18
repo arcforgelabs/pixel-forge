@@ -1179,7 +1179,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     const threadState = getThreadStateSnapshot(get().threadStates, resolvedThreadKey)
     const boundSession = resolveThreadSession(resolvedThreadKey)
     useSessionStore.getState().setSelectedAgentTargetId(
-      boundSession?.agentDeckSessionId ?? threadState.targetAgentSessionId ?? null
+      providerBindingSessionId(boundSession) ?? threadState.targetAgentSessionId ?? null
     )
   }
 
@@ -2001,30 +2001,47 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return
     }
 
-    const targetAgentSessionId =
-      boundSession?.agentDeckSessionId
+    const targetProviderSessionId =
+      providerBindingSessionId(boundSession)
       ?? threadState.targetAgentSessionId
       ?? null
-    const selectedTarget = targetAgentSessionId
-      ? sessionStore.agentTargets.find((target) => target.id === targetAgentSessionId) ?? null
+    const selectedTarget = targetProviderSessionId
+      ? sessionStore.agentTargets.find((target) => target.id === targetProviderSessionId) ?? null
       : null
+    const targetProviderId =
+      providerBindingProviderId(boundSession)
+      ?? selectedTarget?.providerId
+      ?? (targetProviderSessionId ? 'agent-deck' : null)
+    const targetProviderAgentId =
+      providerBindingAgentId(boundSession)
+      ?? selectedTarget?.tool
+      ?? null
+    const targetProviderSessionTitle =
+      boundSession?.providerSessionTitle
+      ?? boundSession?.agentDeckSessionTitle
+      ?? selectedTarget?.title
+      ?? null
+    const agentDeckSessionId =
+      targetProviderId === 'agent-deck' ? targetProviderSessionId : null
+    const agentDeckSessionTitle =
+      targetProviderId === 'agent-deck' ? targetProviderSessionTitle : null
+    const agentDeckTool =
+      targetProviderId === 'agent-deck' ? targetProviderAgentId : null
     const savedSession = await sessionStore.persistProjectSession({
       projectPath,
       threadId: threadKey,
-      backend: boundSession?.backend ?? 'agent-deck',
+      backend: boundSession?.backend ?? targetProviderId ?? 'agent-deck',
       workspacePath:
         boundSession?.workspacePath
         ?? selectedTarget?.path
         ?? projectPath,
-      agentDeckSessionId: targetAgentSessionId,
-      agentDeckSessionTitle:
-        boundSession?.agentDeckSessionTitle
-        ?? selectedTarget?.title
-        ?? null,
-      agentDeckTool:
-        boundSession?.agentDeckTool
-        ?? selectedTarget?.tool
-        ?? null,
+      providerId: targetProviderId,
+      providerSessionId: targetProviderSessionId,
+      providerSessionTitle: targetProviderSessionTitle,
+      providerAgentId: targetProviderAgentId,
+      agentDeckSessionId,
+      agentDeckSessionTitle,
+      agentDeckTool,
       requestId: boundSession?.requestId ?? null,
       editorState: buildPersistedEditorState(threadState),
     })
@@ -2040,6 +2057,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         threadId: savedSession.threadId,
         backend: savedSession.backend,
         workspacePath: savedSession.workspacePath,
+        providerId: savedSession.providerId,
+        providerSessionId: savedSession.providerSessionId,
+        providerSessionTitle: savedSession.providerSessionTitle,
+        providerAgentId: savedSession.providerAgentId,
         agentDeckSessionId: savedSession.agentDeckSessionId,
         agentDeckSessionTitle: savedSession.agentDeckSessionTitle,
         agentDeckTool: savedSession.agentDeckTool,
@@ -2583,8 +2604,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     getTargetAgentSessionId: (threadKey) => {
       const resolvedThreadKey = threadKey?.trim() || get().activeThreadKey
       const boundSession = resolveThreadSession(resolvedThreadKey)
-      if (boundSession?.agentDeckSessionId) {
-        return boundSession.agentDeckSessionId
+      const providerSessionId = providerBindingSessionId(boundSession)
+      if (providerSessionId) {
+        return providerSessionId
       }
       return getThreadStateSnapshot(get().threadStates, resolvedThreadKey).targetAgentSessionId
     },
@@ -2925,7 +2947,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           payload.agent_thinking = agentThinking.trim()
         }
 
-        if (!boundSession?.agentDeckSessionId && !targetAgentSessionId) {
+        if (!providerBindingSessionId(boundSession) && !targetAgentSessionId) {
           payload.workspace_mode = workspaceMode
         }
 
@@ -3218,13 +3240,14 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedSessionId = sessionId?.trim() || null
       const boundSession = resolveThreadSession(activeThreadKey)
+      const boundProviderSessionId = providerBindingSessionId(boundSession)
       if (
-        boundSession?.agentDeckSessionId
-        && boundSession.agentDeckSessionId !== normalizedSessionId
+        boundProviderSessionId
+        && boundProviderSessionId !== normalizedSessionId
       ) {
         appendSystemError(
           activeThreadKey,
-          'This Live Editor thread is already bound. Start a fresh live thread to target a different Agent Deck session.'
+          'This Live Editor thread is already bound. Start a fresh live thread to target a different provider session.'
         )
         return
       }
@@ -3243,7 +3266,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const normalizedAgentType = normalizeDraftAgentType(agentType)
       const boundSession = resolveThreadSession(activeThreadKey)
       const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
-      if (boundSession?.agentDeckSessionId || targetedSessionId) {
+      if (providerBindingSessionId(boundSession) || targetedSessionId) {
         return
       }
 
@@ -3259,7 +3282,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const normalizedWorkspaceMode = normalizeDraftWorkspaceMode(workspaceMode)
       const boundSession = resolveThreadSession(activeThreadKey)
       const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
-      if (boundSession?.agentDeckSessionId || targetedSessionId) {
+      if (providerBindingSessionId(boundSession) || targetedSessionId) {
         return
       }
 
