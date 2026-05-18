@@ -574,8 +574,9 @@ def create_request_pack(
     normalized_requested_skills = normalize_requested_skills(
         requested_skills if requested_skills is not None else extract_requested_skills(message)
     )
+    selection_items = _normalized_selection_items(selection_tunnel)
     selection_sources = _selection_source_summary(selection_tunnel)
-    selection_count = sum(count for _, _, count in selection_sources)
+    selection_count = len(selection_items)
 
     selected_path: Path | None = None
     relative_selected_path: str | None = None
@@ -703,7 +704,7 @@ def create_request_pack(
                 }
                 for label, url, count in selection_sources
             ],
-            "items": _normalized_selection_items(selection_tunnel),
+            "items": selection_items,
         },
         "live_preview": live_preview_payload,
         "attachments": attachment_manifest,

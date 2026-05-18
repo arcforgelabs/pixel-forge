@@ -85,6 +85,38 @@ do not treat /tmp/workspace as a skill.
                 ],
             )
 
+    def test_selection_count_uses_items_when_source_metadata_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Check the selected element.",
+                "<button id=\"selected-target\">Smoke Target</button>",
+                [],
+                selection_tunnel={
+                    "selections": [
+                        {
+                            "id": "selected-target",
+                            "selector": "#selected-target",
+                            "tag": "button",
+                            "text": "Smoke Target",
+                        }
+                    ]
+                },
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+            turn_input_payload = json.loads(
+                request_pack.turn_input_file.read_text(encoding="utf-8")
+            )
+
+            self.assertIn("- Selected element count: `1`", request_body)
+            self.assertEqual(manifest["selected_element_count"], 1)
+            self.assertEqual(turn_input_payload["selection"]["count"], 1)
+            self.assertEqual(turn_input_payload["selection"]["items"][0]["id"], "selected-target")
+            self.assertEqual(manifest["selection_sources"], [])
+
     def test_request_pack_writes_live_preview_context_section_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             request_pack = create_request_pack(
