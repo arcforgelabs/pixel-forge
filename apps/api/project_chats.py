@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_deck_bridge import AgentDeckSessionTarget
+from agent_providers.models import AgentProviderSessionTarget
 from project_store import SessionRecord, normalize_project_path, should_surface_session
 
 
@@ -41,7 +41,7 @@ def _chat_title(
     *,
     thread_id: str | None,
     persisted_title: str | None,
-    target: AgentDeckSessionTarget | None,
+    target: AgentProviderSessionTarget | None,
 ) -> str:
     normalized_persisted_title = (
         persisted_title.strip()
@@ -59,7 +59,7 @@ def _chat_title(
     return "Chat"
 
 
-def _target_sort_key(target: AgentDeckSessionTarget) -> tuple[str, str, str]:
+def _target_sort_key(target: AgentProviderSessionTarget) -> tuple[str, str, str]:
     normalized_title = (
         target.title.strip().lower()
         if isinstance(target.title, str) and target.title.strip()
@@ -71,18 +71,38 @@ def _target_sort_key(target: AgentDeckSessionTarget) -> tuple[str, str, str]:
 def _match_target_for_session(
     session: SessionRecord,
     *,
-    visible_targets: list[AgentDeckSessionTarget],
-    visible_targets_by_id: dict[str, AgentDeckSessionTarget],
-    used_target_ids: set[str],
-) -> AgentDeckSessionTarget | None:
-    normalized_session_id = (
-        session.agent_deck_session_id.strip()
-        if isinstance(session.agent_deck_session_id, str)
-        and session.agent_deck_session_id.strip()
+    visible_targets: list[AgentProviderSessionTarget],
+    visible_targets_by_id: dict[tuple[str, str], AgentProviderSessionTarget],
+    used_target_ids: set[tuple[str, str]],
+) -> AgentProviderSessionTarget | None:
+    normalized_provider_id = (
+        session.provider_id.strip()
+        if isinstance(session.provider_id, str) and session.provider_id.strip()
         else None
     )
+    if (
+        normalized_provider_id is None
+        and isinstance(session.agent_deck_session_id, str)
+        and session.agent_deck_session_id.strip()
+    ):
+        normalized_provider_id = "agent-deck"
+    normalized_session_id = (
+        session.provider_session_id.strip()
+        if isinstance(session.provider_session_id, str)
+        and session.provider_session_id.strip()
+        else None
+    )
+    if (
+        normalized_session_id is None
+        and normalized_provider_id == "agent-deck"
+        and isinstance(session.agent_deck_session_id, str)
+        and session.agent_deck_session_id.strip()
+    ):
+        normalized_session_id = session.agent_deck_session_id.strip()
     if normalized_session_id:
-        matched = visible_targets_by_id.get(normalized_session_id)
+        matched = visible_targets_by_id.get(
+            (normalized_provider_id or "agent-deck", normalized_session_id)
+        )
         if matched is not None:
             return matched
 
@@ -94,18 +114,29 @@ def _match_target_for_session(
     path_candidates = [
         target
         for target in visible_targets
-        if target.id not in used_target_ids
+        if (target.provider_id, target.id) not in used_target_ids
+        and (
+            normalized_provider_id is None
+            or target.provider_id == normalized_provider_id
+        )
         and normalize_project_path(target.path) == normalized_workspace_path
     ]
     if len(path_candidates) == 1:
         return path_candidates[0]
 
     normalized_title = (
-        session.agent_deck_session_title.strip()
-        if isinstance(session.agent_deck_session_title, str)
-        and session.agent_deck_session_title.strip()
+        session.provider_session_title.strip()
+        if isinstance(session.provider_session_title, str)
+        and session.provider_session_title.strip()
         else None
     )
+    if (
+        normalized_title is None
+        and normalized_provider_id == "agent-deck"
+        and isinstance(session.agent_deck_session_title, str)
+        and session.agent_deck_session_title.strip()
+    ):
+        normalized_title = session.agent_deck_session_title.strip()
     if normalized_title:
         titled_candidates = [
             target
@@ -122,27 +153,31 @@ def reconcile_project_chats(
     project_path: str,
     *,
     sessions: list[SessionRecord],
-    visible_targets: list[AgentDeckSessionTarget],
+    visible_targets: list[AgentProviderSessionTarget],
 ) -> list[ProjectChatRecord]:
     normalized_project_path = normalize_project_path(project_path)
-    visible_targets_by_id = {target.id: target for target in visible_targets}
-    used_target_ids: set[str] = set()
+    visible_targets_by_id = {
+        (target.provider_id, target.id): target for target in visible_targets
+    }
+    used_target_ids: set[tuple[str, str]] = set()
     chats: list[ProjectChatRecord] = []
 
     for session in sessions:
         if not should_surface_session(session, normalized_project_path):
             continue
 
-        # Only attempt target matching when the session still holds an AD
-        # binding.  Detached sessions (agent_deck_session_id cleared on
-        # detach) must not claim targets — the target appears separately
-        # as an adopted entry instead.
-        has_ad_binding = (
+        # Only attempt target matching when the session still holds a provider
+        # binding. Detached sessions must not claim visible provider targets;
+        # unmatched targets surface separately as adopted entries.
+        has_provider_binding = (
+            isinstance(session.provider_session_id, str)
+            and session.provider_session_id.strip()
+        ) or (
             isinstance(session.agent_deck_session_id, str)
             and session.agent_deck_session_id.strip()
         )
         matched_target = None
-        if has_ad_binding:
+        if has_provider_binding:
             matched_target = _match_target_for_session(
                 session,
                 visible_targets=visible_targets,
@@ -150,7 +185,7 @@ def reconcile_project_chats(
                 used_target_ids=used_target_ids,
             )
         if matched_target is not None:
-            used_target_ids.add(matched_target.id)
+            used_target_ids.add((matched_target.provider_id, matched_target.id))
 
         chats.append(
             ProjectChatRecord(
@@ -158,14 +193,17 @@ def reconcile_project_chats(
                 project_path=normalized_project_path,
                 title=_chat_title(
                     thread_id=session.thread_id,
-                    persisted_title=session.agent_deck_session_title,
+                    persisted_title=(
+                        session.provider_session_title
+                        or session.agent_deck_session_title
+                    ),
                     target=matched_target,
                 ),
                 thread_id=session.thread_id,
                 workspace_path=session.workspace_path,
                 backend=session.backend,
                 provider_id=(
-                    "agent-deck"
+                    matched_target.provider_id
                     if matched_target is not None
                     else session.provider_id
                 ),
@@ -187,19 +225,29 @@ def reconcile_project_chats(
                 agent_deck_session_id=(
                     matched_target.id
                     if matched_target is not None
+                    and matched_target.provider_id == "agent-deck"
                     else session.agent_deck_session_id
                 ),
                 agent_deck_session_title=(
                     matched_target.title
-                    if matched_target is not None and matched_target.title.strip()
+                    if matched_target is not None
+                    and matched_target.provider_id == "agent-deck"
+                    and matched_target.title.strip()
                     else session.agent_deck_session_title
                 ),
                 agent_deck_tool=(
                     matched_target.tool
-                    if matched_target is not None and matched_target.tool
+                    if matched_target is not None
+                    and matched_target.provider_id == "agent-deck"
+                    and matched_target.tool
                     else session.agent_deck_tool
                 ),
-                agent_deck_session_status=matched_target.status if matched_target is not None else None,
+                agent_deck_session_status=(
+                    matched_target.status
+                    if matched_target is not None
+                    and matched_target.provider_id == "agent-deck"
+                    else None
+                ),
                 binding_state="attached" if matched_target is not None else "detached",
                 workspace_kind=_workspace_kind(normalized_project_path, session.workspace_path),
                 origin_kind=session.origin_kind,
@@ -209,12 +257,16 @@ def reconcile_project_chats(
         )
 
     for target in sorted(
-        (target for target in visible_targets if target.id not in used_target_ids),
+        (
+            target
+            for target in visible_targets
+            if (target.provider_id, target.id) not in used_target_ids
+        ),
         key=_target_sort_key,
     ):
         chats.append(
             ProjectChatRecord(
-                id=f"agent-deck:{target.id}",
+                id=f"{target.provider_id}:{target.id}",
                 project_path=normalized_project_path,
                 title=_chat_title(
                     thread_id=None,
@@ -223,15 +275,19 @@ def reconcile_project_chats(
                 ),
                 thread_id=None,
                 workspace_path=target.path,
-                backend="agent-deck",
-                provider_id="agent-deck",
+                backend=target.provider_id,
+                provider_id=target.provider_id,
                 provider_session_id=target.id,
                 provider_session_title=target.title or None,
                 provider_agent_id=target.tool,
-                agent_deck_session_id=target.id,
-                agent_deck_session_title=target.title or None,
-                agent_deck_tool=target.tool,
-                agent_deck_session_status=target.status,
+                agent_deck_session_id=target.id if target.provider_id == "agent-deck" else None,
+                agent_deck_session_title=(
+                    target.title or None if target.provider_id == "agent-deck" else None
+                ),
+                agent_deck_tool=target.tool if target.provider_id == "agent-deck" else None,
+                agent_deck_session_status=(
+                    target.status if target.provider_id == "agent-deck" else None
+                ),
                 binding_state="attached",
                 workspace_kind=_workspace_kind(normalized_project_path, target.path),
                 origin_kind="adopted",
@@ -259,6 +315,45 @@ def find_project_chat_by_agent_deck_session_id(
         if (
             isinstance(chat.agent_deck_session_id, str)
             and chat.agent_deck_session_id.strip() == normalized_session_id
+        ):
+            return chat
+
+    return None
+
+
+def find_project_chat_by_provider_session_id(
+    chats: list[ProjectChatRecord],
+    provider_id: str | None,
+    provider_session_id: str | None,
+) -> ProjectChatRecord | None:
+    normalized_provider_id = (
+        provider_id.strip()
+        if isinstance(provider_id, str) and provider_id.strip()
+        else None
+    )
+    normalized_session_id = (
+        provider_session_id.strip()
+        if isinstance(provider_session_id, str) and provider_session_id.strip()
+        else None
+    )
+    if normalized_provider_id is None or normalized_session_id is None:
+        return None
+
+    for chat in chats:
+        chat_provider_id = (
+            chat.provider_id.strip()
+            if isinstance(chat.provider_id, str) and chat.provider_id.strip()
+            else "agent-deck" if chat.agent_deck_session_id else None
+        )
+        chat_session_id = (
+            chat.provider_session_id.strip()
+            if isinstance(chat.provider_session_id, str)
+            and chat.provider_session_id.strip()
+            else chat.agent_deck_session_id
+        )
+        if (
+            chat_provider_id == normalized_provider_id
+            and chat_session_id == normalized_session_id
         ):
             return chat
 

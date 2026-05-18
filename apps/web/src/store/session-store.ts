@@ -1153,6 +1153,7 @@ async function fetchProjectChats(projectPath: string): Promise<ProjectChatRecord
 async function createProjectChat(
   projectPath: string,
   options: {
+    providerId?: string | null;
     agentType: string;
     title?: string | null;
     workspaceMode?: DraftWorkspaceMode;
@@ -1164,6 +1165,7 @@ async function createProjectChat(
     {
       method: "POST",
       body: JSON.stringify({
+        provider_id: options.providerId ?? null,
         agent_type: options.agentType,
         title: options.title ?? null,
         workspace_mode: "root",
@@ -2160,7 +2162,12 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   createProjectChatSession: async (options) => {
-    const { projectPath, defaultAgentType, liveEditorSession } = get();
+    const {
+      projectPath,
+      defaultAgentProviderId,
+      defaultAgentType,
+      liveEditorSession,
+    } = get();
     if (!projectPath) {
       throw new Error("Project path is required");
     }
@@ -2168,6 +2175,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     set({ agentTargetsLoading: true });
     try {
       const created = await createProjectChat(projectPath, {
+        providerId: defaultAgentProviderId,
         agentType: options?.agentType ?? defaultAgentType,
         title: options?.title ?? null,
         workspaceMode: "root",

@@ -366,10 +366,12 @@ def _normalize_provider_binding(
         )
         normalized_agent_deck_tool = normalized_agent_deck_tool or normalized_provider_agent_id
 
-    if not normalized_provider_session_id:
+    if not normalized_provider_session_id and not (
+        normalized_provider_id
+        or normalized_provider_session_title
+        or normalized_provider_agent_id
+    ):
         normalized_provider_id = None
-        normalized_provider_session_title = None
-        normalized_provider_agent_id = None
 
     return (
         normalized_provider_id,

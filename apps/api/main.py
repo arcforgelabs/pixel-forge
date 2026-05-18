@@ -33,8 +33,6 @@ from agent_deck_bridge import (
     get_agent_deck_session_activity,
     get_last_output,
     launch_agent_deck_closeout_session,
-    list_project_agent_deck_sessions,
-    list_live_editor_agent_deck_sessions,
     rename_agent_deck_session_target,
     stream_claude_jsonl,
     stream_codex_jsonl,
@@ -47,7 +45,11 @@ from agent_deck_surface import (
     stop_agent_deck_surface,
 )
 from agent_providers import get_agent_provider, list_agent_providers
-from agent_providers.models import AgentTurnPolicy, AgentTurnRequest
+from agent_providers.models import (
+    AgentProviderSessionTarget,
+    AgentTurnPolicy,
+    AgentTurnRequest,
+)
 import pixel_forge_cli as _pf_cli
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
@@ -89,7 +91,6 @@ from project_store import (
     upsert_session,
 )
 from project_chats import (
-    find_project_chat_by_agent_deck_session_id,
     find_project_chat_by_thread_id,
     ProjectChatRecord,
     reconcile_project_chats,
@@ -606,6 +607,7 @@ class ClaudeGlobalSettingsRequest(BaseModel):
 
 
 class AgentDeckSessionRequest(BaseModel):
+    provider_id: str | None = None
     agent_type: str = "claude"
     title: str | None = None
     workspace_mode: Literal["root"] = "root"
@@ -895,11 +897,20 @@ def _project_chat_from_session_record(session_record) -> ProjectChatRecord:
     normalized_project_path = normalize_project_path(session_record.project_path)
     normalized_workspace_path = normalize_project_path(session_record.workspace_path)
     thread_id = session_record.thread_id
-    title = (
-        session_record.agent_deck_session_title.strip()
-        if isinstance(session_record.agent_deck_session_title, str)
-        and session_record.agent_deck_session_title.strip()
-        else f"Chat {thread_id[:8]}"
+    title = next(
+        (
+            candidate.strip()
+            for candidate in (
+                getattr(session_record, "provider_session_title", None),
+                getattr(session_record, "agent_deck_session_title", None),
+            )
+            if isinstance(candidate, str) and candidate.strip()
+        ),
+        f"Chat {thread_id[:8]}",
+    )
+    has_provider_binding = bool(
+        getattr(session_record, "provider_session_id", None)
+        or getattr(session_record, "agent_deck_session_id", None)
     )
     return ProjectChatRecord(
         id=thread_id,
@@ -912,13 +923,11 @@ def _project_chat_from_session_record(session_record) -> ProjectChatRecord:
         provider_session_id=getattr(session_record, "provider_session_id", None),
         provider_session_title=getattr(session_record, "provider_session_title", None),
         provider_agent_id=getattr(session_record, "provider_agent_id", None),
-        agent_deck_session_id=session_record.agent_deck_session_id,
-        agent_deck_session_title=session_record.agent_deck_session_title,
-        agent_deck_tool=session_record.agent_deck_tool,
+        agent_deck_session_id=getattr(session_record, "agent_deck_session_id", None),
+        agent_deck_session_title=getattr(session_record, "agent_deck_session_title", None),
+        agent_deck_tool=getattr(session_record, "agent_deck_tool", None),
         agent_deck_session_status=None,
-        binding_state=(
-            "attached" if session_record.agent_deck_session_id else "detached"
-        ),
+        binding_state="attached" if has_provider_binding else "detached",
         workspace_kind=(
             "root"
             if normalized_workspace_path == normalized_project_path
@@ -1088,31 +1097,52 @@ def _serialize_delete_assessment(
 async def _load_reconciled_project_chats(
     project_path: str,
     *,
-    extra_visible_targets: list[AgentDeckSessionTarget] | None = None,
+    extra_visible_targets: list[AgentProviderSessionTarget] | None = None,
 ) -> tuple[str, list[object]]:
     normalized_project_path = normalize_project_path(project_path)
     if not os.path.isdir(normalized_project_path):
         raise HTTPException(status_code=404, detail="Project path does not exist")
 
-    try:
-        live_sessions = await list_live_editor_agent_deck_sessions(normalized_project_path)
-        visible_sessions = await list_project_agent_deck_sessions(normalized_project_path)
-    except AgentDeckBridgeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    live_sessions: list[AgentProviderSessionTarget] = []
+    visible_sessions: list[AgentProviderSessionTarget] = []
+    agent_deck_provider = get_agent_provider("agent-deck")
+    agent_deck_status = agent_deck_provider.status() if agent_deck_provider else None
+    if (
+        agent_deck_provider is not None
+        and agent_deck_status is not None
+        and agent_deck_status.enabled
+        and agent_deck_status.available
+    ):
+        try:
+            live_sessions = await agent_deck_provider.list_sessions(
+                normalized_project_path,
+                include_live_editor=True,
+            )
+            visible_sessions = await agent_deck_provider.list_sessions(
+                normalized_project_path,
+                include_live_editor=False,
+            )
+        except AgentDeckBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    visible_sessions_by_id = {session.id: session for session in visible_sessions}
+    visible_sessions_by_id = {
+        (session.provider_id, session.id): session for session in visible_sessions
+    }
     for session in extra_visible_targets or []:
-        visible_sessions_by_id.setdefault(session.id, session)
+        visible_sessions_by_id.setdefault((session.provider_id, session.id), session)
 
-    live_session_ids = {session.id for session in live_sessions}
-    sessions = detach_missing_agent_deck_session_bindings(
-        normalized_project_path,
-        live_session_ids,
-    )
-    detach_missing_agent_deck_thread_bindings(
-        normalized_project_path,
-        live_session_ids,
-    )
+    if agent_deck_status and agent_deck_status.enabled and agent_deck_status.available:
+        live_session_ids = {session.id for session in live_sessions}
+        sessions = detach_missing_agent_deck_session_bindings(
+            normalized_project_path,
+            live_session_ids,
+        )
+        detach_missing_agent_deck_thread_bindings(
+            normalized_project_path,
+            live_session_ids,
+        )
+    else:
+        sessions = list_project_sessions(normalized_project_path)
 
     chats = reconcile_project_chats(
         normalized_project_path,
@@ -1125,6 +1155,7 @@ async def _load_reconciled_project_chats(
         if chat.origin_kind == "adopted"
         and chat.thread_id is None
         and chat.agent_deck_session_id
+        and chat.provider_id == "agent-deck"
     ]
     if adopted_chats:
         for chat in adopted_chats:
@@ -1628,13 +1659,25 @@ async def create_project_chat(
         name=project_name_for_path(normalized_project_path),
     )
 
+    selected_provider_id = (
+        request.provider_id.strip()
+        if isinstance(request.provider_id, str) and request.provider_id.strip()
+        else get_profile_state().default_agent_provider_id
+    )
+    if selected_provider_id not in {"agent-deck", "claude-cli", "codex-cli"}:
+        selected_provider_id = "agent-deck"
+    selected_agent_id = request.agent_type.strip() if request.agent_type.strip() else "claude"
+
     if request.reuse_empty_draft:
-        # Reuse an existing empty draft chat without paying for live Agent Deck
+        # Reuse an existing empty draft chat without paying for live provider
         # reconciliation. Draft creation is a local persisted-state operation.
         for existing in list_project_sessions(normalized_project_path):
             thread_id = existing.thread_id or ""
             if (
-                not existing.agent_deck_session_id
+                not getattr(existing, "provider_session_id", None)
+                and not getattr(existing, "agent_deck_session_id", None)
+                and getattr(existing, "provider_id", selected_provider_id) == selected_provider_id
+                and getattr(existing, "provider_agent_id", selected_agent_id) == selected_agent_id
                 and thread_id.startswith("chat-")
                 and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
             ):
@@ -1646,18 +1689,25 @@ async def create_project_chat(
         if request.title and request.title.strip()
         else f"Chat {thread_id[:8]}"
     )
+    agent_deck_title = draft_title if selected_provider_id == "agent-deck" else None
+    agent_deck_tool = selected_agent_id if selected_provider_id == "agent-deck" else None
 
     try:
         created_session = upsert_session(
             normalized_project_path,
             thread_id=thread_id,
-            backend="agent-deck",
+            backend=selected_provider_id,
             workspace_path=normalized_project_path,
+            provider_id=selected_provider_id,
+            provider_session_id=None,
+            provider_session_title=draft_title,
+            provider_agent_id=selected_agent_id,
             agent_deck_session_id=None,
-            agent_deck_session_title=draft_title,
-            agent_deck_tool=None,
+            agent_deck_session_title=agent_deck_title,
+            agent_deck_tool=agent_deck_tool,
             editor_state={
-                "draftAgentType": request.agent_type,
+                "draftAgentType": selected_agent_id,
+                "draftProviderId": selected_provider_id,
                 "draftWorkspaceMode": request.workspace_mode,
             },
         )

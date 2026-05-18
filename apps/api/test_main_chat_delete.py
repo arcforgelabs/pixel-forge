@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import tempfile
@@ -418,6 +419,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             upsert_session.call_args.kwargs["editor_state"],
             {
                 "draftAgentType": "claude",
+                "draftProviderId": "agent-deck",
                 "draftWorkspaceMode": "root",
             },
         )
@@ -480,6 +482,35 @@ class ProviderNeutralSessionTitleTest(unittest.TestCase):
         self.assertIsNotNone(updated)
         self.assertEqual(updated.provider_session_title, "New Codex")
         self.assertIsNone(updated.agent_deck_session_title)
+
+    def test_direct_provider_chat_draft_does_not_populate_agent_deck_fields(self) -> None:
+        project_path = str(Path(self.tempdir.name) / "project")
+        Path(project_path).mkdir()
+
+        payload = asyncio.run(
+            main.create_project_chat(
+                project_path,
+                main.AgentDeckSessionRequest(
+                    provider_id="codex-cli",
+                    agent_type="codex",
+                    title="Codex draft",
+                    reuse_empty_draft=False,
+                ),
+            )
+        )
+        stored = project_store.list_project_sessions(project_path)
+
+        self.assertEqual(payload["provider_id"], "codex-cli")
+        self.assertIsNone(payload["provider_session_id"])
+        self.assertEqual(payload["provider_session_title"], "Codex draft")
+        self.assertEqual(payload["provider_agent_id"], "codex")
+        self.assertIsNone(payload["agent_deck_session_id"])
+        self.assertIsNone(payload["agent_deck_session_title"])
+        self.assertIsNone(payload["agent_deck_tool"])
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0].provider_id, "codex-cli")
+        self.assertEqual(stored[0].provider_session_title, "Codex draft")
+        self.assertIsNone(stored[0].agent_deck_session_title)
 
 
 class LiveEditorPreflightSnapshotTest(unittest.TestCase):
