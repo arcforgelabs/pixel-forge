@@ -488,6 +488,18 @@ interface AgentProviderStatus {
   reason: string | null;
   command: string[];
   capabilities: Record<string, boolean>;
+  diagnostics?: {
+    surface_command?: string[];
+    launch_command?: string[];
+    runtime_origin?: string;
+    surface_runtime_origin?: string;
+    launch_runtime_origin?: string;
+    launch_capabilities?: {
+      no_approval?: boolean;
+      flag?: string;
+      reason?: string | null;
+    };
+  };
   transports: {
     agent_id: string;
     display_name: string;
@@ -499,6 +511,48 @@ interface AgentProviderStatus {
 
 interface AgentProvidersResponse {
   providers: AgentProviderStatus[];
+}
+
+function formatCommand(command: string[] | null | undefined): string {
+  return command && command.length > 0 ? command.join(" ") : "not resolved";
+}
+
+function formatRuntimeOrigin(origin: string | null | undefined): string {
+  if (!origin || !origin.trim()) {
+    return "unknown";
+  }
+  return origin.replace(/[-_]+/g, " ");
+}
+
+function providerDiagnosticRows(provider: AgentProviderStatus): { label: string; value: string }[] {
+  const diagnostics = provider.diagnostics;
+  if (!diagnostics) {
+    return [];
+  }
+
+  const rows: { label: string; value: string }[] = [];
+  if (diagnostics.surface_command) {
+    rows.push({
+      label: "Surface",
+      value: `${formatCommand(diagnostics.surface_command)} · ${formatRuntimeOrigin(diagnostics.surface_runtime_origin)}`,
+    });
+  }
+  if (diagnostics.launch_command) {
+    rows.push({
+      label: "Launch",
+      value: `${formatCommand(diagnostics.launch_command)} · ${formatRuntimeOrigin(diagnostics.launch_runtime_origin)}`,
+    });
+  }
+  if (diagnostics.launch_capabilities) {
+    const capability = diagnostics.launch_capabilities;
+    rows.push({
+      label: "No approval",
+      value: capability.no_approval
+        ? `available${capability.flag ? ` via ${capability.flag}` : ""}`
+        : capability.reason || "unavailable",
+    });
+  }
+  return rows;
 }
 
 interface Props {
@@ -2610,15 +2664,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   key={provider.id}
                                   className="rounded-md border border-border/50 bg-background/60 p-3"
                                 >
+                                  {(() => {
+                                    const diagnosticRows = providerDiagnosticRows(provider);
+                                    return (
+                                      <>
                                   <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
                                       <p className="text-xs font-medium text-foreground">
                                         {provider.display_name}
                                       </p>
                                       <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                                        {provider.command.length > 0
-                                          ? provider.command.join(" ")
-                                          : "No command resolved"}
+                                        {formatCommand(provider.command)}
                                       </p>
                                     </div>
                                     <Badge
@@ -2641,6 +2697,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                       {provider.reason}
                                     </p>
                                   )}
+                                  {diagnosticRows.length > 0 && (
+                                    <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-muted/20 p-2">
+                                      {diagnosticRows.map((row) => (
+                                        <div
+                                          key={`${provider.id}:${row.label}`}
+                                          className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-[11px]"
+                                        >
+                                          <span className="text-muted-foreground">{row.label}</span>
+                                          <span className="break-all font-mono text-foreground/80">
+                                            {row.value}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   {provider.transports.length > 0 && (
                                     <div className="mt-2 space-y-1">
                                       {provider.transports.map((transport) => (
@@ -2653,6 +2724,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                       ))}
                                     </div>
                                   )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               ))
                             )}
