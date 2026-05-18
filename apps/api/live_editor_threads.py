@@ -89,10 +89,12 @@ def _normalize_provider_binding(
         normalized_agent_deck_session_title = (
             normalized_agent_deck_session_title or normalized_provider_session_title
         )
-    if not normalized_provider_session_id:
+    if not normalized_provider_session_id and not (
+        normalized_provider_id
+        or normalized_provider_session_title
+        or normalized_provider_agent_id
+    ):
         normalized_provider_id = None
-        normalized_provider_session_title = None
-        normalized_provider_agent_id = None
 
     return (
         normalized_provider_id,
@@ -527,7 +529,13 @@ def update_live_editor_thread(
         agent_deck_session_title=agent_deck_session_title,
     )
 
-    if provider_session_id is not None or agent_deck_session_id is not None:
+    if (
+        provider_id is not None
+        or provider_session_id is not None
+        or provider_session_title is not None
+        or provider_agent_id is not None
+        or agent_deck_session_id is not None
+    ):
         assignments.append("provider_id = ?")
         values.append(normalized_provider_id)
         assignments.append("provider_session_id = ?")

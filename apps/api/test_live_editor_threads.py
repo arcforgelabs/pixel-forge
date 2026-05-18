@@ -95,6 +95,29 @@ class LiveEditorThreadStoreTest(unittest.TestCase):
         self.assertEqual(updated.provider_agent_id, "codex")
         self.assertIsNone(updated.agent_deck_session_id)
 
+    def test_update_live_editor_thread_preserves_direct_provider_draft_metadata(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+
+        thread = live_editor_threads.get_or_create_live_editor_thread(
+            str(project_path),
+            thread_id="thread-codex-draft",
+        )
+        updated = live_editor_threads.update_live_editor_thread(
+            thread.thread_id,
+            provider_id="codex-cli",
+            provider_session_id=None,
+            provider_session_title="Codex draft",
+            provider_agent_id="codex",
+        )
+
+        self.assertEqual(updated.provider_id, "codex-cli")
+        self.assertIsNone(updated.provider_session_id)
+        self.assertEqual(updated.provider_session_title, "Codex draft")
+        self.assertEqual(updated.provider_agent_id, "codex")
+        self.assertIsNone(updated.agent_deck_session_id)
+        self.assertIsNone(updated.agent_deck_session_title)
+
     def test_update_live_editor_thread_can_switch_backend_to_direct_provider(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
         project_path.mkdir(parents=True)
