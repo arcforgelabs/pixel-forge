@@ -197,6 +197,16 @@ class AgentProviderRegistryTest(unittest.TestCase):
 
 
 class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_missing_session_detection_is_provider_owned(self) -> None:
+        provider = AgentDeckProvider()
+
+        self.assertTrue(
+            provider.is_missing_session_error(
+                Exception('{"code":"NOT_FOUND","error":"session `abc` not found"}')
+            )
+        )
+        self.assertFalse(provider.is_missing_session_error(Exception("launch failed")))
+
     async def test_list_sessions_delegates_to_bridge_and_returns_neutral_shape(self) -> None:
         target = AgentDeckSessionTarget(
             id="s1",

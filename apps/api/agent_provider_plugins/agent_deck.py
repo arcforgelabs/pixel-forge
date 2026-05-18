@@ -80,6 +80,13 @@ class AgentDeckProvider:
         ),
     )
 
+    def is_missing_session_error(self, error: BaseException) -> bool:
+        message = str(error).lower()
+        return (
+            "not_found" in message
+            or "not found" in message
+        ) and "session" in message
+
     def _session_target(
         self,
         session: agent_deck_bridge.AgentDeckSessionTarget,

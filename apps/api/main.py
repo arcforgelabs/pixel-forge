@@ -4738,7 +4738,17 @@ async def live_editor_chat(websocket: WebSocket):
                         f"saved at `{preflight_snapshot_relative_path}`."
                     ) from exc
                 except AgentDeckBridgeError as exc:
-                    if target_provider_session_id and _is_missing_provider_session_error(exc):
+                    provider_missing_session_error = getattr(
+                        agent_provider,
+                        "is_missing_session_error",
+                        None,
+                    )
+                    missing_provider_session = (
+                        provider_missing_session_error(exc)
+                        if callable(provider_missing_session_error)
+                        else _is_missing_provider_session_error(exc)
+                    )
+                    if target_provider_session_id and missing_provider_session:
                         detach_project_session_binding(
                             normalized_project_path,
                             thread.thread_id,
