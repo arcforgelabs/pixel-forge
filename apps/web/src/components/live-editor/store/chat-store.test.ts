@@ -1721,6 +1721,80 @@ describe('live editor selection history', () => {
     )
   })
 
+  it('lets a fresh target-intent draft change agent even if stale target state remains', () => {
+    setActiveThreadState({
+      draftAgentType: 'claude',
+      targetAgentSessionId: 'stale-provider-session',
+      targetIntent: {
+        mode: 'new',
+        providerId: 'agent-deck',
+        providerSessionId: null,
+        agentId: 'claude',
+        workspaceMode: 'root',
+      },
+    })
+
+    useLiveEditorStore.getState().setDraftAgentType('codex')
+
+    expect(useLiveEditorStore.getState().draftAgentType).toBe('codex')
+    expect(useLiveEditorStore.getState().targetIntent).toMatchObject({
+      mode: 'new',
+      agentId: 'codex',
+    })
+  })
+
+  it('does not send stale target session fields for fresh target-intent drafts', () => {
+    useSessionStore.setState({
+      defaultAgentType: 'claude',
+      agentTargets: [
+        {
+          providerId: 'agent-deck',
+          id: 'stale-provider-session',
+          title: 'stale target',
+          path: '/tmp/example-project',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    setActiveThreadState({
+      draftAgentType: 'codex',
+      targetAgentSessionId: 'stale-provider-session',
+      targetIntent: {
+        mode: 'new',
+        providerId: 'agent-deck',
+        providerSessionId: null,
+        agentId: 'codex',
+        workspaceMode: 'root',
+      },
+    })
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Start clean from stale state')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      agent_type: 'codex',
+      target_intent: {
+        mode: 'new',
+        provider_id: 'agent-deck',
+        agent_id: 'codex',
+        workspace_mode: 'root',
+      },
+    })
+    expect(payload).not.toHaveProperty('target_provider_session_id')
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+  })
+
   it('does not route a fresh draft send through ambient sidebar target selection', () => {
     useSessionStore.setState({
       defaultAgentType: 'claude',

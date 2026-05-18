@@ -208,6 +208,8 @@ importers:
 
   packages/logo-forge-core: {}
 
+  packages/npm-installer: {}
+
   packages/sdk-node:
     dependencies:
       '@anthropic-ai/sdk':

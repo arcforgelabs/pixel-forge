@@ -60,6 +60,7 @@ const VERSION_PACKAGE_RELATIVE_PATHS = [
 const STABLE_OR_RELEASE_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)(?:-([1-9]\d*))?$/
 const BETA_VERSION_REGEX = /^(\d{4})\.([1-9]\d?)\.([1-9]\d?)-beta\.([1-9]\d*)$/
 const APP_DISPLAY_NAME = process.env.PIXEL_FORGE_DESKTOP_ENTRY_NAME || 'Pixel Forge'
+const DESKTOP_FILE_NAME = process.env.PIXEL_FORGE_DESKTOP_FILE_NAME || `${INSTANCE_SLUG}.desktop`
 const DESKTOP_WM_CLASS = process.env.PIXEL_FORGE_DESKTOP_WM_CLASS || `${INSTANCE_SLUG}-desktop`
 const DESKTOP_ICON_PATH = [
   process.env.PIXEL_FORGE_DESKTOP_ICON_PATH,
@@ -84,6 +85,9 @@ function desktopWindowOptions(options = {}) {
 }
 
 app.setName(APP_DISPLAY_NAME)
+if (typeof app.setDesktopName === 'function') {
+  app.setDesktopName(DESKTOP_FILE_NAME)
+}
 app.commandLine.appendSwitch('class', DESKTOP_WM_CLASS)
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('enable-webgl')

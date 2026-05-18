@@ -1,0 +1,38 @@
+{
+  "name": "@iamsamuelrodda/pixel-forge",
+  "version": "2026.5.9-1",
+  "description": "Public installer entrypoint for Pixel Forge.",
+  "type": "module",
+  "bin": {
+    "pixel-forge": "bin/pixel-forge-install.mjs",
+    "pixel-forge-windows": "bin/pixel-forge-windows.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "keywords": [
+    "pixel-forge",
+    "visual-editor",
+    "live-editor",
+    "agent",
+    "installer"
+  ],
+  "author": "Samuel Rodda",
+  "license": "MIT",
+  "homepage": "https://github.com/arcforgelabs/pixel-forge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arcforgelabs/pixel-forge.git",
+    "directory": "packages/npm-installer"
+  },
+  "bugs": {
+    "url": "https://github.com/arcforgelabs/pixel-forge/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

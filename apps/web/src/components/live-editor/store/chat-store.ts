@@ -456,6 +456,27 @@ function providerBindingTargetIntent(
   }
 }
 
+function targetIntentUsesExistingSession(
+  intent: LiveEditorTargetIntent | null | undefined
+): boolean {
+  return intent?.mode === 'bound' || intent?.mode === 'attach_existing'
+}
+
+function explicitExistingTargetSessionId(
+  threadState: ThreadChatState,
+  intent: LiveEditorTargetIntent | null | undefined
+): string | null {
+  if (targetIntentUsesExistingSession(intent)) {
+    return threadState.targetAgentSessionId || intent?.providerSessionId || null
+  }
+
+  if (!intent) {
+    return threadState.targetAgentSessionId || null
+  }
+
+  return null
+}
+
 interface SelectionPayload {
   elementContext: string
   selectionTunnel: {
@@ -2970,10 +2991,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         : resolveThreadSession(activeThreadKey)
       const boundProviderSessionId = providerBindingSessionId(boundSession)
       const explicitTargetIntent = normalizeLiveEditorTargetIntent(activeThreadState.targetIntent)
-      const explicitTargetSessionId =
-        activeThreadState.targetAgentSessionId
-        ?? explicitTargetIntent?.providerSessionId
-        ?? null
+      const explicitTargetSessionId = explicitExistingTargetSessionId(
+        activeThreadState,
+        explicitTargetIntent
+      )
       const projectPath =
         activeThreadState.projectPath?.trim() || sessionProjectPath
       if (
@@ -3539,7 +3560,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedAgentType = normalizeDraftAgentType(agentType)
       const boundSession = resolveThreadSession(activeThreadKey)
-      const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
+      const threadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+      const targetIntent = normalizeLiveEditorTargetIntent(threadState.targetIntent)
+      const targetedSessionId = explicitExistingTargetSessionId(threadState, targetIntent)
       if (providerBindingSessionId(boundSession) || targetedSessionId) {
         return
       }
@@ -3547,6 +3570,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         draftAgentType: normalizedAgentType,
+        targetIntent: threadState.targetIntent?.mode === 'new'
+          ? {
+              ...threadState.targetIntent,
+              agentId: normalizedAgentType,
+            }
+          : threadState.targetIntent,
       }))
       scheduleThreadPersistence(activeThreadKey)
     },
@@ -3555,7 +3584,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activeThreadKey = get().activeThreadKey
       const normalizedWorkspaceMode = normalizeDraftWorkspaceMode(workspaceMode)
       const boundSession = resolveThreadSession(activeThreadKey)
-      const targetedSessionId = get().getTargetAgentSessionId(activeThreadKey)
+      const threadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+      const targetIntent = normalizeLiveEditorTargetIntent(threadState.targetIntent)
+      const targetedSessionId = explicitExistingTargetSessionId(threadState, targetIntent)
       if (providerBindingSessionId(boundSession) || targetedSessionId) {
         return
       }
@@ -3563,6 +3594,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       updateThreadState(activeThreadKey, (threadState) => ({
         ...threadState,
         draftWorkspaceMode: normalizedWorkspaceMode,
+        targetIntent: threadState.targetIntent?.mode === 'new'
+          ? {
+              ...threadState.targetIntent,
+              workspaceMode: normalizedWorkspaceMode,
+            }
+          : threadState.targetIntent,
       }))
       scheduleThreadPersistence(activeThreadKey)
     },

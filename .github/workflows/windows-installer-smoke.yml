@@ -1,0 +1,49 @@
+name: Windows Installer Smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.25.0
+          run_install: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Parse installer
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\install-windows.ps1 -Raw), [ref]$parseErrors)
+          if ($parseErrors) {
+            $parseErrors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Bootstrap smoke
+        shell: pwsh
+        run: |
+          .\install-windows.ps1 -SourceDir "$PWD" -InstallRoot "$env:RUNNER_TEMP\pixel-forge" -BootstrapOnly

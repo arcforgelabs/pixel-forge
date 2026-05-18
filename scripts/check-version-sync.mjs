@@ -10,6 +10,7 @@ const versionFiles = [
   ['package.json', path.join(repoRoot, 'package.json')],
   ['apps/web/package.json', path.join(repoRoot, 'apps', 'web', 'package.json')],
   ['apps/desktop/package.json', path.join(repoRoot, 'apps', 'desktop', 'package.json')],
+  ['packages/npm-installer/package.json', path.join(repoRoot, 'packages', 'npm-installer', 'package.json')],
   ['packages/sdk-node/package.json', path.join(repoRoot, 'packages', 'sdk-node', 'package.json')],
 ]
 

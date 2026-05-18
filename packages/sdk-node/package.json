@@ -1,5 +1,5 @@
 {
-  "name": "@pixel-forge/sdk",
+  "name": "@iamsamuelrodda/pixel-forge-sdk",
   "version": "2026.5.9-1",
   "description": "SDK for Pixel Forge screenshot bootstrap workflows",
   "type": "module",
@@ -7,6 +7,11 @@
   "exports": {
     ".": "./index.js"
   },
+  "files": [
+    "index.js",
+    "README.md",
+    "README-legacy-20260314.md"
+  ],
   "scripts": {
     "test": "node test.js"
   },
@@ -17,8 +22,20 @@
     "screenshot-bootstrap",
     "design-to-code"
   ],
-  "author": "",
+  "author": "Samuel Rodda",
   "license": "MIT",
+  "homepage": "https://github.com/arcforgelabs/pixel-forge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arcforgelabs/pixel-forge.git",
+    "directory": "packages/sdk-node"
+  },
+  "bugs": {
+    "url": "https://github.com/arcforgelabs/pixel-forge/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0"
   },
