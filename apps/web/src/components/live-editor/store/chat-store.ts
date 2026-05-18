@@ -125,7 +125,7 @@ interface SendMessageOptions {
   ignoreTargetProviderSession?: boolean
 }
 
-interface ObservedAgentDeckActivity {
+interface ObservedProviderActivity {
   chat_id?: string | null
   thread_id: string | null
   provider_id?: string | null
@@ -142,12 +142,12 @@ interface ObservedAgentDeckActivity {
   output: string
 }
 
-interface ObservedAgentDeckActivityEvent extends ObservedAgentDeckActivity {
+interface ObservedProviderActivityEvent extends ObservedProviderActivity {
   id: number
   event_type: 'activity'
 }
 
-interface ObservedAgentDeckSessionStatusEvent {
+interface ObservedProviderSessionStatusEvent {
   id: number
   event_type: 'session_status'
   chat_id?: string | null
@@ -166,7 +166,7 @@ interface ObservedAgentDeckSessionStatusEvent {
   message?: string
 }
 
-interface ObservedAgentDeckSessionOutputEvent {
+interface ObservedProviderSessionOutputEvent {
   id: number
   event_type: 'session_output'
   chat_id?: string | null
@@ -185,7 +185,7 @@ interface ObservedAgentDeckSessionOutputEvent {
   output: string
 }
 
-type ObservedAgentDeckTurnEventType =
+type ObservedProviderTurnEventType =
   | 'turn_input'
   | 'turn_started'
   | 'turn_status'
@@ -195,9 +195,9 @@ type ObservedAgentDeckTurnEventType =
   | 'turn_completed'
   | 'turn_failed'
 
-interface ObservedAgentDeckTurnEvent {
+interface ObservedProviderTurnEvent {
   id: number
-  event_type: ObservedAgentDeckTurnEventType
+  event_type: ObservedProviderTurnEventType
   chat_id?: string | null
   thread_id: string | null
   request_id: string | null
@@ -1327,9 +1327,9 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     }
   ) => formatProviderLabel(observedProviderId(event))
 
-  const applyObservedAgentDeckActivity = (
+  const applyObservedProviderActivity = (
     threadKey: string,
-    activity: ObservedAgentDeckActivity
+    activity: ObservedProviderActivity
   ) => {
     updateThreadState(threadKey, (currentState) => {
       if (!canHydrateObservedThread(currentState) || observedThreadHasPrimaryEvents.has(threadKey)) {
@@ -1396,7 +1396,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const applyObservedSessionStatusEvent = (
     threadKey: string,
-    event: ObservedAgentDeckSessionStatusEvent
+    event: ObservedProviderSessionStatusEvent
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
@@ -1451,7 +1451,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const applyObservedSessionOutputEvent = (
     threadKey: string,
-    event: ObservedAgentDeckSessionOutputEvent
+    event: ObservedProviderSessionOutputEvent
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
@@ -1508,7 +1508,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
 
   const applyObservedTurnEvent = (
     threadKey: string,
-    event: ObservedAgentDeckTurnEvent
+    event: ObservedProviderTurnEvent
   ) => {
     observedThreadHasPrimaryEvents.add(threadKey)
     updateThreadState(threadKey, (currentState) => {
@@ -1821,7 +1821,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     es?.close()
   }
 
-  const startObservedAgentDeckActivityStream = (
+  const startObservedProviderActivityStream = (
     threadKey: string,
     options?: { fromNow?: boolean }
   ) => {
@@ -1891,12 +1891,12 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           return
         }
         const payload = JSON.parse(messageEvent.data) as
-          | ObservedAgentDeckActivityEvent
-          | ObservedAgentDeckSessionStatusEvent
-          | ObservedAgentDeckSessionOutputEvent
-          | ObservedAgentDeckTurnEvent
+          | ObservedProviderActivityEvent
+          | ObservedProviderSessionStatusEvent
+          | ObservedProviderSessionOutputEvent
+          | ObservedProviderTurnEvent
         if (payload.event_type === 'activity') {
-          applyObservedAgentDeckActivity(threadKey, payload)
+          applyObservedProviderActivity(threadKey, payload)
           return
         }
         if (payload.event_type === 'session_status') {
@@ -1907,7 +1907,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           applyObservedSessionOutputEvent(threadKey, payload)
           return
         }
-        applyObservedTurnEvent(threadKey, payload as ObservedAgentDeckTurnEvent)
+        applyObservedTurnEvent(threadKey, payload as ObservedProviderTurnEvent)
       } catch (error) {
         console.error('[live-editor] Failed to parse workstation event:', error)
       }
@@ -1960,7 +1960,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return
     }
 
-    startObservedAgentDeckActivityStream(activeThreadKey, { fromNow })
+    startObservedProviderActivityStream(activeThreadKey, { fromNow })
   }
 
   const closeThreadSocket = (threadKey: string, silent = true) => {
