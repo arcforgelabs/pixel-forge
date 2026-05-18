@@ -53,6 +53,25 @@ def _bundled_agent_deck_runner() -> Path:
     return source_root() / "scripts" / "agent-deck.sh"
 
 
+def _bundled_agent_deck_binary_candidates() -> list[Path]:
+    foundation_root = source_root() / "foundations" / "agent-deck"
+    return [
+        foundation_root / "build" / "agent-deck",
+        foundation_root / "agent-deck",
+    ]
+
+
+def _bundled_agent_deck_commands() -> list[list[str]]:
+    commands: list[list[str]] = []
+    runner = _bundled_agent_deck_runner()
+    if runner.is_file():
+        commands.append([str(runner)])
+    for binary_path in _bundled_agent_deck_binary_candidates():
+        if binary_path.is_file():
+            commands.append([str(binary_path)])
+    return commands
+
+
 @lru_cache(maxsize=32)
 def _agent_deck_launch_help_supports_yolo(command: tuple[str, ...]) -> bool:
     env = dict(os.environ)
@@ -97,9 +116,7 @@ def _resolve_agent_deck_command(*, require_launch_yolo: bool = False) -> _AgentD
     if installed:
         candidates.append([installed])
 
-    runner = _bundled_agent_deck_runner()
-    if runner.is_file():
-        candidates.append([str(runner)])
+    candidates.extend(_bundled_agent_deck_commands())
 
     for candidate in candidates:
         if require_launch_yolo and not _agent_deck_launch_help_supports_yolo(

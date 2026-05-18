@@ -115,7 +115,40 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
             [str(runner)],
         )
 
-    def test_launch_command_reports_incompatible_standard_without_bundled_runner(self) -> None:
+    def test_launch_command_falls_back_to_bundled_binary_when_standard_lacks_yolo(self) -> None:
+        fake_bin = Path(self.tempdir.name) / "agent-deck-standalone"
+        self._write_agent_deck_bin(fake_bin, supports_yolo=False)
+        repo = Path(self.tempdir.name) / "repo"
+        bundled = repo / "foundations" / "agent-deck" / "agent-deck"
+        bundled.parent.mkdir(parents=True)
+        self._write_agent_deck_bin(bundled, supports_yolo=True)
+        os.environ["PATH"] = self.tempdir.name
+        os.environ["PIXEL_FORGE_RUNTIME_SOURCE_ROOT"] = str(repo)
+
+        self.assertEqual(agent_deck_runtime.agent_deck_command(), [str(fake_bin)])
+        self.assertEqual(
+            agent_deck_runtime.agent_deck_command(require_launch_yolo=True),
+            [str(bundled)],
+        )
+
+    def test_agent_deck_available_when_only_bundled_binary_exists(self) -> None:
+        os.environ["PATH"] = str(Path(self.tempdir.name) / "empty-bin")
+        repo = Path(self.tempdir.name) / "repo"
+        bundled = repo / "foundations" / "agent-deck" / "agent-deck"
+        bundled.parent.mkdir(parents=True)
+        self._write_agent_deck_bin(bundled, supports_yolo=True)
+        os.environ["PIXEL_FORGE_RUNTIME_SOURCE_ROOT"] = str(repo)
+
+        available, reason = agent_deck_runtime.agent_deck_available(require_launch_yolo=True)
+
+        self.assertTrue(available)
+        self.assertIsNone(reason)
+        self.assertEqual(
+            agent_deck_runtime.agent_deck_command(require_launch_yolo=True),
+            [str(bundled)],
+        )
+
+    def test_launch_command_reports_incompatible_standard_without_bundled_runtime(self) -> None:
         fake_bin = Path(self.tempdir.name) / "agent-deck-standalone"
         self._write_agent_deck_bin(fake_bin, supports_yolo=False)
         os.environ["PATH"] = self.tempdir.name

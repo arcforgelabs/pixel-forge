@@ -56,6 +56,8 @@ def agent_deck_provider_enabled() -> bool:
         shutil.which("agent-deck-standalone")
         or shutil.which("agent-deck")
         or (source_root() / "scripts" / "agent-deck.sh").is_file()
+        or (source_root() / "foundations" / "agent-deck" / "build" / "agent-deck").is_file()
+        or (source_root() / "foundations" / "agent-deck" / "agent-deck").is_file()
     )
 
 
