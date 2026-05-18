@@ -421,6 +421,8 @@ interface ChatSidebarActionItem {
   label: string;
   projectPath: string;
   threadId: string | null;
+  providerId: string | null;
+  providerSessionId: string | null;
   agentDeckSessionId: string | null;
 }
 
@@ -1211,6 +1213,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           method: "POST",
           body: JSON.stringify({
             thread_id: renameDialogItem.threadId,
+            provider_id: renameDialogItem.providerId,
+            provider_session_id: renameDialogItem.providerSessionId,
             agent_deck_session_id: renameDialogItem.agentDeckSessionId,
             title: normalizedTitle,
           }),
@@ -1238,8 +1242,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       && (
         liveEditorSession?.threadId === deleteDialogItem.threadId
       || (
-        deleteDialogItem.agentDeckSessionId !== null
-        && selectedAgentTargetId === deleteDialogItem.agentDeckSessionId
+        deleteDialogItem.providerSessionId !== null
+        && selectedAgentTargetId === deleteDialogItem.providerSessionId
       ));
 
     try {
@@ -1250,6 +1254,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           method: "POST",
           body: JSON.stringify({
             thread_id: deleteDialogItem.threadId,
+            provider_id: deleteDialogItem.providerId,
+            provider_session_id: deleteDialogItem.providerSessionId,
             agent_deck_session_id: deleteDialogItem.agentDeckSessionId,
             force_clone_remove: forceCloneRemove,
           }),
@@ -1288,6 +1294,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           method: "POST",
           body: JSON.stringify({
             thread_id: deleteDialogItem.threadId,
+            provider_id: deleteDialogItem.providerId,
+            provider_session_id: deleteDialogItem.providerSessionId,
             agent_deck_session_id: deleteDialogItem.agentDeckSessionId,
             tool: "codex",
           }),
@@ -1867,6 +1875,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   label: chat.title,
                                   projectPath: project.path,
                                   threadId: chat.threadId,
+                                  providerId: chat.providerId ?? (
+                                    chat.agentDeckSessionId ? "agent-deck" : null
+                                  ),
+                                  providerSessionId,
                                   agentDeckSessionId: chat.agentDeckSessionId,
                                   isActive: isActiveChat,
                                   isReady: (claimedThread !== null || draftThreadKey !== null) && !threadStatus?.isStreaming && !threadStatus?.isObservedStreaming,
@@ -2046,7 +2058,15 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
             <p className="text-sm text-muted-foreground">
               {deleteAssessment?.requires_closeout
                 ? deleteAssessment.detail
-                : `Delete ${deleteDialogItem?.label ?? "this chat"} from Pixel Forge${deleteDialogItem?.agentDeckSessionId ? " and Agent Deck" : ""}?`}
+                : `Delete ${deleteDialogItem?.label ?? "this chat"} from Pixel Forge${
+                    deleteDialogItem?.providerSessionId
+                      ? ` and ${
+                          deleteDialogItem.providerId === "agent-deck"
+                            ? "Agent Deck"
+                            : "the provider binding"
+                        }`
+                      : ""
+                  }?`}
             </p>
 
             {deleteAssessment && (

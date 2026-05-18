@@ -134,6 +134,45 @@ class LiveEditorProviderSelectionTest(unittest.TestCase):
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_delete_direct_provider_chat_does_not_call_agent_deck(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-direct",
+                    object(),
+                    object(),
+                    "codex-cli",
+                    "codex-thread-a",
+                    None,
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "assess_agent_deck_delete_state", AsyncMock()) as assess_delete,
+            patch.object(main, "delete_agent_deck_session_target", AsyncMock()) as delete_target,
+            patch.object(main, "delete_session", Mock(return_value=True)) as delete_session,
+            patch.object(main, "delete_live_editor_thread", Mock(return_value=True)) as delete_thread,
+        ):
+            payload = await main.delete_project_chat_item(
+                "/tmp/project",
+                main.ChatItemDeleteRequest(
+                    thread_id="thread-direct",
+                    provider_id="codex-cli",
+                    provider_session_id="codex-thread-a",
+                ),
+            )
+
+        self.assertEqual(payload["status"], "deleted")
+        self.assertEqual(payload["provider_id"], "codex-cli")
+        self.assertEqual(payload["provider_session_id"], "codex-thread-a")
+        self.assertIsNone(payload["agent_deck_session_id"])
+        assess_delete.assert_not_awaited()
+        delete_target.assert_not_awaited()
+        delete_session.assert_called_once_with("/tmp/project", "thread-direct")
+        delete_thread.assert_called_once_with("thread-direct")
+
     async def test_delete_chat_allows_local_cleanup_when_agent_deck_session_is_already_missing(self) -> None:
         with (
             patch.object(
@@ -144,6 +183,8 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
                     "thread-a",
                     object(),
                     object(),
+                    "agent-deck",
+                    "deck-a",
                     "deck-a",
                 ),
             ),
@@ -191,6 +232,8 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
                     "thread-a",
                     object(),
                     object(),
+                    "agent-deck",
+                    "deck-a",
                     "deck-a",
                 ),
             ),
@@ -383,6 +426,62 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["binding_state"], "detached")
 
 
+class ProviderNeutralSessionTitleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.original_shared_state_dir = main.os.environ.get("PIXEL_FORGE_SHARED_STATE_DIR")
+        self.original_xdg_state_home = main.os.environ.get("XDG_STATE_HOME")
+        self.original_db_path = main.os.environ.get("PIXEL_FORGE_DB_PATH")
+        main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.tempdir.name
+        main.os.environ["XDG_STATE_HOME"] = self.tempdir.name
+        main.os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
+        project_store._DB_INITIALIZED = False
+
+    def tearDown(self) -> None:
+        if self.original_shared_state_dir is None:
+            main.os.environ.pop("PIXEL_FORGE_SHARED_STATE_DIR", None)
+        else:
+            main.os.environ["PIXEL_FORGE_SHARED_STATE_DIR"] = self.original_shared_state_dir
+        if self.original_xdg_state_home is None:
+            main.os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            main.os.environ["XDG_STATE_HOME"] = self.original_xdg_state_home
+        if self.original_db_path is None:
+            main.os.environ.pop("PIXEL_FORGE_DB_PATH", None)
+        else:
+            main.os.environ["PIXEL_FORGE_DB_PATH"] = self.original_db_path
+        project_store._DB_INITIALIZED = False
+
+    def test_direct_provider_rename_does_not_populate_agent_deck_title(self) -> None:
+        project_path = str(Path(self.tempdir.name) / "project")
+        Path(project_path).mkdir()
+        project_store.upsert_project(project_path)
+        project_store.upsert_session(
+            project_path,
+            thread_id="thread-direct",
+            backend="codex-cli",
+            workspace_path=project_path,
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            provider_session_title="Old Codex",
+            provider_agent_id="codex",
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+            agent_deck_tool=None,
+        )
+
+        updated = project_store.update_session_title(
+            project_path,
+            "thread-direct",
+            "New Codex",
+        )
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.provider_session_title, "New Codex")
+        self.assertIsNone(updated.agent_deck_session_title)
+
+
 class LiveEditorPreflightSnapshotTest(unittest.TestCase):
     def test_preflight_snapshot_persists_prompt_and_selection_before_agent_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -402,6 +501,8 @@ class LiveEditorPreflightSnapshotTest(unittest.TestCase):
                 ],
                 preview_url="https://example.test/capture",
                 live_preview={"preview_tab_id": "tab-one"},
+                target_provider_id="codex-cli",
+                target_provider_session_id="codex-thread-a",
                 agent_type="codex",
                 workspace_mode="root",
                 target_agent_deck_session_id=None,
@@ -412,7 +513,9 @@ class LiveEditorPreflightSnapshotTest(unittest.TestCase):
 
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(payload["kind"], "live-editor-pre-agent-deck-snapshot")
+        self.assertEqual(payload["kind"], "live-editor-pre-provider-snapshot")
+        self.assertEqual(payload["target_provider_id"], "codex-cli")
+        self.assertEqual(payload["target_provider_session_id"], "codex-thread-a")
         self.assertEqual(payload["thread_id"], "chat-b91d262c1ccc")
         self.assertEqual(payload["prompt_text"], "Fix the selected elements")
         self.assertEqual(payload["selection"]["count"], 1)

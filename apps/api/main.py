@@ -74,6 +74,7 @@ from project_store import (
     delete_session,
     get_project_session,
     get_project_session_by_agent_deck_session_id,
+    get_project_session_by_provider_session_id,
     list_project_sessions,
     list_project_urls,
     get_project_logo_forge_state,
@@ -615,18 +616,24 @@ class AgentDeckSessionRequest(BaseModel):
 
 class ChatItemRenameRequest(BaseModel):
     thread_id: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
     agent_deck_session_id: str | None = None
     title: str
 
 
 class ChatItemDeleteRequest(BaseModel):
     thread_id: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
     agent_deck_session_id: str | None = None
     force_clone_remove: bool = False
 
 
 class ChatItemCloseoutRequest(BaseModel):
     thread_id: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
     agent_deck_session_id: str | None = None
     tool: str = "codex"
     prompt: str | None = None
@@ -948,8 +955,18 @@ def _resolve_chat_item_context(
     project_path: str,
     *,
     thread_id: str | None,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
     agent_deck_session_id: str | None,
-) -> tuple[str, str | None, object | None, object | None, str | None]:
+) -> tuple[
+    str,
+    str | None,
+    object | None,
+    object | None,
+    str | None,
+    str | None,
+    str | None,
+]:
     normalized_project_path = normalize_project_path(project_path)
     normalized_thread_id = thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None
     session_record = (
@@ -966,11 +983,40 @@ def _resolve_chat_item_context(
     if thread_record is not None and thread_record.project_path != normalized_project_path:
         raise HTTPException(status_code=404, detail="Chat thread does not belong to this project")
 
+    resolved_provider_id = (
+        provider_id.strip()
+        if isinstance(provider_id, str) and provider_id.strip()
+        else None
+    )
+    resolved_provider_session_id = (
+        provider_session_id.strip()
+        if isinstance(provider_session_id, str) and provider_session_id.strip()
+        else None
+    )
     resolved_agent_deck_session_id = (
         agent_deck_session_id.strip()
         if isinstance(agent_deck_session_id, str) and agent_deck_session_id.strip()
         else None
     )
+    if resolved_agent_deck_session_id and not resolved_provider_session_id:
+        resolved_provider_id = resolved_provider_id or "agent-deck"
+        resolved_provider_session_id = resolved_agent_deck_session_id
+    if resolved_provider_session_id and not resolved_provider_id:
+        resolved_provider_id = "agent-deck" if resolved_agent_deck_session_id else "unknown"
+
+    if (
+        session_record is None
+        and resolved_provider_id
+        and resolved_provider_session_id
+    ):
+        session_record = get_project_session_by_provider_session_id(
+            normalized_project_path,
+            resolved_provider_id,
+            resolved_provider_session_id,
+        )
+        if session_record is not None:
+            normalized_thread_id = session_record.thread_id
+            thread_record = get_live_editor_thread(normalized_thread_id)
     if session_record is None and resolved_agent_deck_session_id is not None:
         session_record = get_project_session_by_agent_deck_session_id(
             normalized_project_path,
@@ -979,16 +1025,30 @@ def _resolve_chat_item_context(
         if session_record is not None:
             normalized_thread_id = session_record.thread_id
             thread_record = get_live_editor_thread(normalized_thread_id)
-    if not resolved_agent_deck_session_id and session_record is not None:
-        resolved_agent_deck_session_id = session_record.agent_deck_session_id
-    if not resolved_agent_deck_session_id and thread_record is not None:
-        resolved_agent_deck_session_id = thread_record.agent_deck_session_id
+    if session_record is not None:
+        resolved_provider_id = resolved_provider_id or session_record.provider_id
+        resolved_provider_session_id = (
+            resolved_provider_session_id or session_record.provider_session_id
+        )
+        if not resolved_agent_deck_session_id:
+            resolved_agent_deck_session_id = session_record.agent_deck_session_id
+    if thread_record is not None:
+        resolved_provider_id = resolved_provider_id or thread_record.provider_id
+        resolved_provider_session_id = (
+            resolved_provider_session_id or thread_record.provider_session_id
+        )
+        if not resolved_agent_deck_session_id:
+            resolved_agent_deck_session_id = thread_record.agent_deck_session_id
+    if resolved_provider_id == "agent-deck" and not resolved_agent_deck_session_id:
+        resolved_agent_deck_session_id = resolved_provider_session_id
 
     return (
         normalized_project_path,
         normalized_thread_id,
         session_record,
         thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
         resolved_agent_deck_session_id,
     )
 
@@ -1612,10 +1672,20 @@ async def rename_project_chat_item(
     project_path: str,
     request: ChatItemRenameRequest,
 ):
-    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+    (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
+        resolved_agent_deck_session_id,
+    ) = (
         _resolve_chat_item_context(
             project_path,
             thread_id=request.thread_id,
+            provider_id=request.provider_id,
+            provider_session_id=request.provider_session_id,
             agent_deck_session_id=request.agent_deck_session_id,
         )
     )
@@ -1628,13 +1698,16 @@ async def rename_project_chat_item(
 
     if (
         normalized_thread_id is None
-        and resolved_agent_deck_session_id is None
         and session_record is None
         and thread_record is None
+        and (
+            resolved_provider_id != "agent-deck"
+            or resolved_agent_deck_session_id is None
+        )
     ):
         raise HTTPException(status_code=404, detail="Chat item not found")
 
-    if resolved_agent_deck_session_id:
+    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
         try:
             await rename_agent_deck_session_target(
                 normalized_project_path,
@@ -1649,12 +1722,20 @@ async def rename_project_chat_item(
         if thread_record is not None:
             update_live_editor_thread(
                 normalized_thread_id,
-                agent_deck_session_title=normalized_title,
+                provider_id=resolved_provider_id,
+                provider_session_id=resolved_provider_session_id,
+                provider_session_title=normalized_title,
+                agent_deck_session_id=resolved_agent_deck_session_id,
+                agent_deck_session_title=(
+                    normalized_title if resolved_provider_id == "agent-deck" else None
+                ),
             )
 
     return {
         "status": "renamed",
         "thread_id": normalized_thread_id,
+        "provider_id": resolved_provider_id,
+        "provider_session_id": resolved_provider_session_id,
         "agent_deck_session_id": resolved_agent_deck_session_id,
         "title": normalized_title,
     }
@@ -1665,10 +1746,20 @@ async def delete_project_chat_item(
     project_path: str,
     request: ChatItemDeleteRequest,
 ):
-    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+    (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
+        resolved_agent_deck_session_id,
+    ) = (
         _resolve_chat_item_context(
             project_path,
             thread_id=request.thread_id,
+            provider_id=request.provider_id,
+            provider_session_id=request.provider_session_id,
             agent_deck_session_id=request.agent_deck_session_id,
         )
     )
@@ -1677,14 +1768,17 @@ async def delete_project_chat_item(
 
     if (
         normalized_thread_id is None
-        and resolved_agent_deck_session_id is None
         and session_record is None
         and thread_record is None
+        and (
+            resolved_provider_id != "agent-deck"
+            or resolved_agent_deck_session_id is None
+        )
     ):
         raise HTTPException(status_code=404, detail="Chat item not found")
 
     assessment: AgentDeckDeleteAssessment | None = None
-    if resolved_agent_deck_session_id:
+    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
         try:
             assessment = await assess_agent_deck_delete_state(
                 normalized_project_path,
@@ -1700,7 +1794,7 @@ async def delete_project_chat_item(
         if resolved_agent_deck_session_id is None:
             assessment = None
 
-    if resolved_agent_deck_session_id:
+    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
         if assessment is not None and assessment.requires_closeout and not request.force_clone_remove:
             return {
                 "status": "requires_closeout",
@@ -1748,6 +1842,8 @@ async def delete_project_chat_item(
     return {
         "status": "deleted",
         "thread_id": normalized_thread_id,
+        "provider_id": resolved_provider_id,
+        "provider_session_id": resolved_provider_session_id,
         "agent_deck_session_id": resolved_agent_deck_session_id,
     }
 
@@ -1757,10 +1853,20 @@ async def start_project_chat_item_closeout(
     project_path: str,
     request: ChatItemCloseoutRequest,
 ):
-    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+    (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
+        resolved_agent_deck_session_id,
+    ) = (
         _resolve_chat_item_context(
             project_path,
             thread_id=request.thread_id,
+            provider_id=request.provider_id,
+            provider_session_id=request.provider_session_id,
             agent_deck_session_id=request.agent_deck_session_id,
         )
     )
@@ -1768,12 +1874,15 @@ async def start_project_chat_item_closeout(
         raise HTTPException(status_code=404, detail="Project path does not exist")
     if (
         normalized_thread_id is None
-        and resolved_agent_deck_session_id is None
         and session_record is None
         and thread_record is None
+        and (
+            resolved_provider_id != "agent-deck"
+            or resolved_agent_deck_session_id is None
+        )
     ):
         raise HTTPException(status_code=404, detail="Chat item not found")
-    if not resolved_agent_deck_session_id:
+    if resolved_provider_id != "agent-deck" or not resolved_agent_deck_session_id:
         raise HTTPException(status_code=400, detail="Chat is not bound to an Agent Deck session")
 
     try:
@@ -1796,12 +1905,24 @@ async def start_project_chat_item_closeout(
 async def get_project_chat_item_activity(
     project_path: str,
     thread_id: str | None = None,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
     agent_deck_session_id: str | None = None,
 ):
-    normalized_project_path, normalized_thread_id, session_record, thread_record, resolved_agent_deck_session_id = (
+    (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
+        resolved_agent_deck_session_id,
+    ) = (
         _resolve_chat_item_context(
             project_path,
             thread_id=thread_id,
+            provider_id=provider_id,
+            provider_session_id=provider_session_id,
             agent_deck_session_id=agent_deck_session_id,
         )
     )
@@ -1819,9 +1940,13 @@ async def get_project_chat_item_activity(
         except AgentDeckBridgeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    if not resolved_agent_deck_session_id:
+    if resolved_provider_id != "agent-deck" or not resolved_agent_deck_session_id:
         return {
             "thread_id": normalized_thread_id,
+            "provider_id": resolved_provider_id,
+            "provider_session_id": resolved_provider_session_id,
+            "provider_session_title": getattr(session_record, "provider_session_title", None),
+            "provider_agent_id": getattr(session_record, "provider_agent_id", None),
             "agent_deck_session_id": None,
             "agent_deck_session_title": getattr(session_record, "agent_deck_session_title", None),
             "agent_deck_tool": getattr(session_record, "agent_deck_tool", None),
@@ -1841,6 +1966,10 @@ async def get_project_chat_item_activity(
         if _is_missing_agent_deck_session_error(exc):
             return {
                 "thread_id": normalized_thread_id,
+                "provider_id": resolved_provider_id,
+                "provider_session_id": resolved_provider_session_id,
+                "provider_session_title": getattr(session_record, "provider_session_title", None),
+                "provider_agent_id": getattr(session_record, "provider_agent_id", None),
                 "agent_deck_session_id": None,
                 "agent_deck_session_title": getattr(session_record, "agent_deck_session_title", None),
                 "agent_deck_tool": getattr(session_record, "agent_deck_tool", None),
@@ -1854,6 +1983,10 @@ async def get_project_chat_item_activity(
 
     return {
         "thread_id": normalized_thread_id,
+        "provider_id": "agent-deck",
+        "provider_session_id": activity.session_id,
+        "provider_session_title": activity.session_title,
+        "provider_agent_id": activity.tool,
         "agent_deck_session_id": activity.session_id,
         "agent_deck_session_title": activity.session_title,
         "agent_deck_tool": activity.tool,

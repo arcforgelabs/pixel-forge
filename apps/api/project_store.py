@@ -3009,7 +3009,11 @@ def update_session_title(
             """
             UPDATE sessions
             SET provider_session_title = ?,
-                agent_deck_session_title = ?,
+                agent_deck_session_title = CASE
+                    WHEN COALESCE(provider_id, 'agent-deck') = 'agent-deck'
+                    THEN ?
+                    ELSE agent_deck_session_title
+                END,
                 last_active = CURRENT_TIMESTAMP
             WHERE project_path = ?
               AND profile_id = ?
@@ -3027,7 +3031,11 @@ def update_session_title(
             """
             UPDATE chat_session_bindings
             SET provider_session_title = ?,
-                agent_deck_session_title = ?,
+                agent_deck_session_title = CASE
+                    WHEN COALESCE(provider_id, 'agent-deck') = 'agent-deck'
+                    THEN ?
+                    ELSE agent_deck_session_title
+                END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE project_path = ?
               AND profile_id = ?
