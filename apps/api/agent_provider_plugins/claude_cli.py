@@ -43,10 +43,6 @@ class ClaudeCliSessionInfo:
     gemini_session_id: str | None = None
     jsonl_path: object | None = None
 
-    def __post_init__(self) -> None:
-        self.agent_deck_session_id = self.provider_session_id
-        self.agent_deck_session_title = self.title
-
 
 def _resolve_claude_executable() -> str:
     try:

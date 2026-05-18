@@ -98,10 +98,6 @@ class CodexCliSessionInfo:
     claude_session_id: str | None = None
     gemini_session_id: str | None = None
 
-    def __post_init__(self) -> None:
-        self.agent_deck_session_id = self.provider_session_id
-        self.agent_deck_session_title = self.title
-
 
 class _CodexAppServerClient:
     def __init__(self, cwd: str) -> None:
@@ -305,8 +301,6 @@ async def _run_codex_turn(
             session_info.provider_session_id = thread_id
             session_info.codex_session_id = thread_id
             session_info.title = str(thread.get("name") or "").strip() or f"codex:{thread_id[:8]}"
-            session_info.agent_deck_session_id = thread_id
-            session_info.agent_deck_session_title = session_info.title
         input_items: list[dict[str, object]] = [{"type": "text", "text": prompt}]
         for path in image_paths or []:
             if path.strip():

@@ -11,6 +11,7 @@ from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionTarget
 from agent_provider_plugins import codex_cli as codex_cli_plugin
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
+from agent_providers.claude_cli import ClaudeCliSessionInfo
 from agent_providers.codex_cli import CodexCliProvider, CodexCliSessionInfo
 from agent_providers.models import AgentTurnPolicy, AgentTurnRequest
 
@@ -376,6 +377,27 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_direct_provider_session_infos_do_not_populate_agent_deck_fields(self) -> None:
+        codex_session = CodexCliSessionInfo(
+            provider_session_id="codex-thread-a",
+            title="Codex thread",
+            workspace_path="/tmp/project",
+            status="idle",
+            codex_session_id="codex-thread-a",
+        )
+        claude_session = ClaudeCliSessionInfo(
+            provider_session_id="claude-thread-a",
+            title="Claude thread",
+            workspace_path="/tmp/project",
+            status="idle",
+            claude_session_id="claude-thread-a",
+        )
+
+        self.assertIsNone(codex_session.agent_deck_session_id)
+        self.assertIsNone(codex_session.agent_deck_session_title)
+        self.assertIsNone(claude_session.agent_deck_session_id)
+        self.assertIsNone(claude_session.agent_deck_session_title)
+
     async def test_dispatch_turn_uses_codex_app_server_runner(self) -> None:
         session = CodexCliSessionInfo(
             provider_session_id="codex-thread-a",
