@@ -1508,6 +1508,66 @@ def _live_editor_agent_provider_or_error(
     raise HTTPException(status_code=503, detail=status.reason or "Agent provider is unavailable")
 
 
+def _hydrate_live_editor_thread_from_project_session(
+    project_path: str,
+    thread,
+):
+    session = get_project_session(project_path, thread.thread_id)
+    if session is None:
+        return thread
+
+    provider_session_id = (
+        session.provider_session_id.strip()
+        if isinstance(session.provider_session_id, str)
+        and session.provider_session_id.strip()
+        else None
+    )
+    agent_deck_session_id = (
+        session.agent_deck_session_id.strip()
+        if isinstance(session.agent_deck_session_id, str)
+        and session.agent_deck_session_id.strip()
+        else None
+    )
+    provider_id = (
+        session.provider_id.strip()
+        if isinstance(session.provider_id, str)
+        and session.provider_id.strip()
+        else None
+    )
+
+    needs_provider_binding = provider_session_id and not (
+        isinstance(thread.provider_session_id, str)
+        and thread.provider_session_id.strip()
+    )
+    needs_agent_deck_binding = agent_deck_session_id and not (
+        isinstance(thread.agent_deck_session_id, str)
+        and thread.agent_deck_session_id.strip()
+    )
+    needs_title = (
+        isinstance(session.provider_session_title, str)
+        and session.provider_session_title.strip()
+        and not (
+            isinstance(thread.provider_session_title, str)
+            and thread.provider_session_title.strip()
+        )
+    )
+
+    if not (needs_provider_binding or needs_agent_deck_binding or needs_title):
+        return thread
+
+    return update_live_editor_thread(
+        thread.thread_id,
+        backend=session.backend,
+        workspace_path=session.workspace_path,
+        provider_id=provider_id,
+        provider_session_id=provider_session_id,
+        provider_session_title=session.provider_session_title,
+        provider_agent_id=session.provider_agent_id,
+        agent_deck_session_id=agent_deck_session_id,
+        agent_deck_session_title=session.agent_deck_session_title,
+    )
+
+
 @app.get("/api/projects/{project_path:path}/agent-deck-sessions")
 async def get_project_agent_deck_sessions(project_path: str):
     normalized_project_path = normalize_project_path(project_path)
@@ -4492,6 +4552,10 @@ async def live_editor_chat(websocket: WebSocket):
                 thread = get_or_create_live_editor_thread(
                     normalized_project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
+                )
+                thread = _hydrate_live_editor_thread_from_project_session(
+                    normalized_project_path,
+                    thread,
                 )
                 turn_policy = AgentTurnPolicy(
                     autonomy="no-approval",

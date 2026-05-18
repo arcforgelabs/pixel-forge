@@ -256,6 +256,20 @@ def _is_missing_session_error(error: BaseException | str) -> bool:
     )
 
 
+def _is_already_exists_session_error(error: BaseException | str) -> bool:
+    message = str(error).lower()
+    return "already_exists" in message or "session already exists" in message
+
+
+def _existing_session_id_from_already_exists_error(error: BaseException | str) -> str | None:
+    message = str(error)
+    match = re.search(r"session already exists:\s+.*\(([^()]+)\)", message, re.IGNORECASE)
+    if not match:
+        return None
+    candidate = match.group(1).strip()
+    return candidate or None
+
+
 def _project_slug(project_path: str) -> str:
     project_name = Path(project_path).resolve().name or "project"
     slug = re.sub(r"[^a-z0-9-]+", "-", project_name.lower()).strip("-")
@@ -842,6 +856,28 @@ async def _list_project_session_targets(
         sessions.append(_payload_to_session_target(entry))
 
     return sessions
+
+
+async def _find_live_editor_session_id_by_title(
+    project_path: str,
+    *,
+    session_title: str,
+    requested_agent_type: str,
+) -> str | None:
+    normalized_title = _normalized_text(session_title)
+    if not normalized_title:
+        return None
+    normalized_agent_type = requested_agent_type.strip().lower()
+    for session in await _list_project_session_targets(
+        project_path,
+        include_acpx_backed=True,
+    ):
+        if session.title != normalized_title:
+            continue
+        if normalized_agent_type and session.tool and session.tool != normalized_agent_type:
+            continue
+        return session.id
+    return None
 
 
 async def list_project_agent_deck_sessions(project_path: str) -> list[AgentDeckSessionTarget]:
@@ -1555,7 +1591,24 @@ async def ensure_agent_deck_session(
         launcher = launch_session or _launch_new_session
         if turn_request is not None:
             kwargs["turn_request"] = turn_request
-        return await launcher(project_path, **kwargs)
+        session_title = str(kwargs.get("session_title") or "").strip()
+        requested_agent_type = str(kwargs.get("agent_type") or agent_type or "").strip()
+        try:
+            return await launcher(project_path, **kwargs)
+        except AgentDeckBridgeError as exc:
+            if not _is_already_exists_session_error(exc):
+                raise
+            existing_session_id = (
+                _existing_session_id_from_already_exists_error(exc)
+                or await _find_live_editor_session_id_by_title(
+                    project_path,
+                    session_title=session_title,
+                    requested_agent_type=requested_agent_type,
+                )
+            )
+            if not existing_session_id:
+                raise
+            return await _load_existing_session(project_path, existing_session_id)
 
     if explicit_target_id:
         try:
@@ -1600,14 +1653,28 @@ async def ensure_agent_deck_session(
                 agent_thinking=agent_thinking,
             )
     else:
-        payload = await launch_agent_deck_session(
+        existing_session_id = await _find_live_editor_session_id_by_title(
+            project_path,
             session_title=preferred_session_title,
-            agent_type=agent_type,
-            workspace_mode=launch_workspace_mode,
-            workspace_path=rebind_workspace_path,
-            agent_model=agent_model,
-            agent_thinking=agent_thinking,
+            requested_agent_type=agent_type,
         )
+        if existing_session_id:
+            payload = await _load_existing_session(project_path, existing_session_id)
+            payload = await _migrate_legacy_session_payload(
+                project_path,
+                thread,
+                payload,
+                requested_agent_type=agent_type,
+            )
+        else:
+            payload = await launch_agent_deck_session(
+                session_title=preferred_session_title,
+                agent_type=agent_type,
+                workspace_mode=launch_workspace_mode,
+                workspace_path=rebind_workspace_path,
+                agent_model=agent_model,
+                agent_thinking=agent_thinking,
+            )
 
     rename_target: str | None = None
     if persisted_thread_title:

@@ -418,6 +418,132 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 agent_thinking=None,
             )
 
+    async def test_unbound_chat_adopts_existing_same_title_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+            thread = LiveEditorThreadRecord(
+                thread_id="chat-abcd1234",
+                profile_id="default",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id=None,
+                agent_deck_session_title="Chat chat-abc",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id=None,
+                last_live_preview_hash=None,
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+            )
+            existing_target = agent_deck_bridge.AgentDeckSessionTarget(
+                id="deck-existing",
+                title="Chat chat-abc",
+                path=str(project_path.resolve()),
+                group="pixel-forge/project",
+                tool="codex",
+                command=None,
+                status="waiting",
+                created_at=None,
+                memory_rss_bytes=None,
+                memory_swap_bytes=None,
+                process_count=None,
+            )
+            load_mock = AsyncMock(
+                return_value={
+                    "id": "deck-existing",
+                    "title": "Chat chat-abc",
+                    "path": str(project_path.resolve()),
+                    "tool": "codex",
+                }
+            )
+            launch_mock = AsyncMock()
+            build_mock = AsyncMock(return_value=_session_info(tool="codex"))
+
+            with (
+                patch.object(
+                    agent_deck_bridge,
+                    "_list_project_session_targets",
+                    AsyncMock(return_value=[existing_target]),
+                ),
+                patch.object(agent_deck_bridge, "_load_existing_session", load_mock),
+                patch.object(
+                    agent_deck_bridge,
+                    "_migrate_legacy_session_payload",
+                    AsyncMock(side_effect=lambda _project_path, _thread, payload, requested_agent_type: payload),
+                ),
+                patch.object(agent_deck_bridge, "_build_session_info", build_mock),
+            ):
+                await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="codex",
+                    launch_session=launch_mock,
+                )
+
+            launch_mock.assert_not_awaited()
+            load_mock.assert_awaited_once_with(str(project_path.resolve()), "deck-existing")
+
+    async def test_launch_already_exists_adopts_reported_session_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+            thread = LiveEditorThreadRecord(
+                thread_id="chat-abcd1234",
+                profile_id="default",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id=None,
+                agent_deck_session_title="Chat chat-abc",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id=None,
+                last_live_preview_hash=None,
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+            )
+            launch_mock = AsyncMock(
+                side_effect=agent_deck_bridge.AgentDeckBridgeError(
+                    '{"code":"ALREADY_EXISTS","error":"session already exists: Chat chat-abc (deck-existing)","success":false}'
+                )
+            )
+            load_mock = AsyncMock(
+                return_value={
+                    "id": "deck-existing",
+                    "title": "Chat chat-abc",
+                    "path": str(project_path.resolve()),
+                    "tool": "codex",
+                }
+            )
+            build_mock = AsyncMock(return_value=_session_info(tool="codex"))
+
+            with (
+                patch.object(
+                    agent_deck_bridge,
+                    "_list_project_session_targets",
+                    AsyncMock(return_value=[]),
+                ),
+                patch.object(agent_deck_bridge, "_load_existing_session", load_mock),
+                patch.object(agent_deck_bridge, "_build_session_info", build_mock),
+            ):
+                await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="codex",
+                    launch_session=launch_mock,
+                )
+
+            launch_mock.assert_awaited_once()
+            load_mock.assert_awaited_once_with(str(project_path.resolve()), "deck-existing")
+
     async def test_fresh_lane_still_creates_clone_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             project_path = Path(tempdir) / "project"

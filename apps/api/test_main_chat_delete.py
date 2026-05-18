@@ -1129,5 +1129,48 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(create_task_calls), 2)
 
 
+class LiveEditorThreadHydrationTest(unittest.TestCase):
+    def test_hydrates_missing_live_thread_binding_from_project_session(self) -> None:
+        thread = SimpleNamespace(
+            thread_id="chat-stale",
+            provider_session_id=None,
+            provider_session_title=None,
+            agent_deck_session_id=None,
+        )
+        session = SimpleNamespace(
+            backend="agent-deck",
+            workspace_path="/tmp/project",
+            provider_id="agent-deck",
+            provider_session_id="deck-stale",
+            provider_session_title="Chat chat-stale",
+            provider_agent_id="codex",
+            agent_deck_session_id="deck-stale",
+            agent_deck_session_title="Chat chat-stale",
+        )
+        updated = SimpleNamespace(thread_id="chat-stale", provider_session_id="deck-stale")
+
+        with (
+            patch.object(main, "get_project_session", Mock(return_value=session)),
+            patch.object(main, "update_live_editor_thread", Mock(return_value=updated)) as update_thread,
+        ):
+            result = main._hydrate_live_editor_thread_from_project_session(
+                "/tmp/project",
+                thread,
+            )
+
+        self.assertIs(result, updated)
+        update_thread.assert_called_once_with(
+            "chat-stale",
+            backend="agent-deck",
+            workspace_path="/tmp/project",
+            provider_id="agent-deck",
+            provider_session_id="deck-stale",
+            provider_session_title="Chat chat-stale",
+            provider_agent_id="codex",
+            agent_deck_session_id="deck-stale",
+            agent_deck_session_title="Chat chat-stale",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
