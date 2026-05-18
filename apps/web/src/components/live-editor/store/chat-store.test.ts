@@ -1724,6 +1724,47 @@ describe('live editor selection history', () => {
     expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty('workspace_mode')
   })
 
+  it('sends only provider-neutral target fields for direct provider targets', () => {
+    useSessionStore.setState({
+      projectPath: '/tmp/example-project',
+      defaultAgentType: 'claude',
+      selectedAgentTargetId: 'codex-thread-123',
+      agentTargets: [
+        {
+          providerId: 'codex-cli',
+          id: 'codex-thread-123',
+          title: 'codex-direct',
+          path: '/tmp/example-project',
+          group: null,
+          tool: 'codex',
+          command: 'codex app-server',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setTargetAgentSessionId('codex-thread-123')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Use the direct provider target')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      provider_id: 'codex-cli',
+      target_provider_id: 'codex-cli',
+      target_provider_session_id: 'codex-thread-123',
+      agent_type: 'codex',
+    })
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+    expect(payload).not.toHaveProperty('workspace_mode')
+  })
+
   it('matches tool results to the correct running tool by tool call id', () => {
     const now = new Date()
 

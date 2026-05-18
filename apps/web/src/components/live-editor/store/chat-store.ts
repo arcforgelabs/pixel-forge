@@ -2,7 +2,7 @@
  * Live Editor Chat Store
  *
  * Thread state is the source of truth. Each Live Editor thread owns its
- * transport lane, messages, target Agent Deck binding, and selection history.
+ * transport lane, messages, target provider binding, and selection history.
  * The top-level chat/selection fields below are active-thread aliases so the
  * existing UI can render the current thread without drilling through maps.
  */
@@ -335,6 +335,26 @@ interface ActiveThreadViewState {
   urlHistory: string[]
   urlHistoryCursor: number
   lastReplayDraft: ReplayDraftSnapshot | null
+}
+
+type ProviderBindingLike = {
+  providerId?: string | null
+  providerSessionId?: string | null
+  providerAgentId?: string | null
+  agentDeckSessionId?: string | null
+  agentDeckTool?: string | null
+}
+
+function providerBindingProviderId(record: ProviderBindingLike | null | undefined): string | null {
+  return record?.providerId?.trim() || (record?.agentDeckSessionId?.trim() ? 'agent-deck' : null)
+}
+
+function providerBindingSessionId(record: ProviderBindingLike | null | undefined): string | null {
+  return record?.providerSessionId?.trim() || record?.agentDeckSessionId?.trim() || null
+}
+
+function providerBindingAgentId(record: ProviderBindingLike | null | undefined): string | null {
+  return record?.providerAgentId?.trim() || record?.agentDeckTool?.trim() || null
 }
 
 interface SelectionPayload {
@@ -2769,21 +2789,31 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const targetAgentSessionId =
         ignoreTargetProviderSession
           ? null
-          : boundSession?.agentDeckSessionId
+          : providerBindingSessionId(boundSession)
             ?? activeThreadState.targetAgentSessionId
             ?? null
+      const selectedTarget =
+        sessionState.agentTargets.find(
+          (target) => target.id === targetAgentSessionId
+        ) ?? null
+      const targetProviderId =
+        providerBindingProviderId(boundSession)
+        || selectedTarget?.providerId
+        || sessionState.defaultAgentProviderId
+        || 'agent-deck'
       const conflictingThread = targetAgentSessionId
         ? selectActiveProjectSessions(sessionState).find(
             (session) =>
               session.threadId !== activeThreadKey
-              && session.agentDeckSessionId === targetAgentSessionId
+              && providerBindingProviderId(session) === targetProviderId
+              && providerBindingSessionId(session) === targetAgentSessionId
           ) ?? null
         : null
 
       if (conflictingThread) {
         appendSystemError(
           activeThreadKey,
-          `Agent Deck session ${targetAgentSessionId} is already bound to Live Editor thread ${conflictingThread.threadId}. Switch to that thread or choose a different session.`
+          `Provider session ${targetAgentSessionId} is already bound to Live Editor thread ${conflictingThread.threadId}. Switch to that thread or choose a different session.`
         )
         return
       }
@@ -2823,23 +2853,16 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activePreviewTab = activeThreadState.previewTabs.find(
         (tab) => tab.id === activeThreadState.activePreviewTabId
       ) ?? activeThreadState.previewTabs[0] ?? null
-      const selectedTarget =
-        sessionState.agentTargets.find(
-          (target) => target.id === targetAgentSessionId
-        ) ?? null
       const agentType =
         overrideAgentType
-        || boundSession?.agentDeckTool
+        || providerBindingAgentId(boundSession)
         || selectedTarget?.tool
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
       const providerId =
         overrideProviderId
-        || boundSession?.providerId
-        || selectedTarget?.providerId
-        || sessionState.defaultAgentProviderId
-        || 'agent-deck'
+        || targetProviderId
       const workspaceMode = normalizeDraftWorkspaceMode(activeThreadState.draftWorkspaceMode)
       void (async () => {
         let livePreviewPayload: Record<string, unknown> | null = null
@@ -2928,9 +2951,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         }
 
         if (targetAgentSessionId) {
-          payload.target_agent_deck_session_id = targetAgentSessionId
-          payload.target_provider_id = selectedTarget?.providerId || 'agent-deck'
+          payload.target_provider_id = targetProviderId
           payload.target_provider_session_id = targetAgentSessionId
+          if (targetProviderId === 'agent-deck') {
+            payload.target_agent_deck_session_id = targetAgentSessionId
+          }
         }
 
         const latestThreadState = getThreadStateSnapshot(

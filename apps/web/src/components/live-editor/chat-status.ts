@@ -16,15 +16,15 @@ export function summarizeBackendStatus(message: string): string {
     return ''
   }
 
-  if (trimmed.startsWith('Resolving Agent Deck session')) {
-    return 'Resolving Agent Deck session...'
+  if (trimmed.startsWith('Resolving ') && trimmed.endsWith(' session...')) {
+    return trimmed
   }
 
   if (
     trimmed.startsWith('Dispatching request pack ') ||
     trimmed.startsWith('Sending Pixel Forge turn ')
   ) {
-    return 'Sending request to Agent Deck...'
+    return 'Sending request to provider...'
   }
 
   if (trimmed.length <= 120) {

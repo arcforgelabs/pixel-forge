@@ -11,16 +11,19 @@ describe('chat-status helpers', () => {
     expect(summarizeBackendStatus('Resolving Agent Deck session...')).toBe(
       'Resolving Agent Deck session...'
     )
+    expect(summarizeBackendStatus('Resolving Codex CLI session...')).toBe(
+      'Resolving Codex CLI session...'
+    )
     expect(
       summarizeBackendStatus(
         'Dispatching request pack .pixel-forge/requests/abcd-1234 to Agent Deck...'
       )
-    ).toBe('Sending request to Agent Deck...')
+    ).toBe('Sending request to provider...')
     expect(
       summarizeBackendStatus(
-        'Sending Pixel Forge turn to Agent Deck...'
+        'Sending Pixel Forge turn to Codex CLI...'
       )
-    ).toBe('Sending request to Agent Deck...')
+    ).toBe('Sending request to provider...')
   })
 
   it('formats concise tool status', () => {
