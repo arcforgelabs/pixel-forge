@@ -476,7 +476,7 @@ interface AgentDeckSurfaceResponse {
   surface: AgentDeckSurfaceRecord;
 }
 
-interface AgentProviderStatus {
+export interface AgentProviderStatus {
   id: string;
   display_name: string;
   enabled: boolean;
@@ -506,7 +506,7 @@ interface AgentProviderStatus {
   }[];
 }
 
-interface AgentProvidersResponse {
+export interface AgentProvidersResponse {
   providers: AgentProviderStatus[];
 }
 
@@ -532,7 +532,7 @@ function formatProviderCapabilities(capabilities: Record<string, boolean> | null
   return enabledCapabilities.length > 0 ? enabledCapabilities.join(", ") : "none";
 }
 
-function providerDiagnosticRows(provider: AgentProviderStatus): { label: string; value: string }[] {
+export function providerDiagnosticRows(provider: AgentProviderStatus): { label: string; value: string }[] {
   const diagnostics = provider.diagnostics;
   const rows: { label: string; value: string }[] = [];
   const capabilitySummary = formatProviderCapabilities(provider.capabilities);
@@ -574,6 +574,11 @@ function providerDiagnosticRows(provider: AgentProviderStatus): { label: string;
     });
   }
   return rows;
+}
+
+async function fetchAgentProviderStatuses(): Promise<AgentProviderStatus[]> {
+  const payload = await requestSidebarJson<AgentProvidersResponse>("/api/agent-providers");
+  return payload.providers;
 }
 
 interface Props {
@@ -684,6 +689,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
   const [agentProviders, setAgentProviders] = useState<AgentProviderStatus[]>([]);
   const [agentProvidersLoading, setAgentProvidersLoading] = useState(false);
+  const [agentProvidersError, setAgentProvidersError] = useState<string | null>(null);
   const [isOpeningAgentDeckSurface, setIsOpeningAgentDeckSurface] = useState(false);
   const [isOpeningAgentDeckTui, setIsOpeningAgentDeckTui] = useState(false);
   const [isStoppingAgentDeckSurface, setIsStoppingAgentDeckSurface] = useState(false);
@@ -834,14 +840,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
     let cancelled = false;
     setAgentProvidersLoading(true);
-    void requestSidebarJson<AgentProvidersResponse>("/api/agent-providers")
-      .then((payload) => {
+    setAgentProvidersError(null);
+    void fetchAgentProviderStatuses()
+      .then((providers) => {
         if (!cancelled) {
-          setAgentProviders(payload.providers);
+          setAgentProviders(providers);
         }
       })
       .catch((error) => {
         console.error("[settings] Failed to load agent providers:", error);
+        if (!cancelled) {
+          setAgentProvidersError(
+            error instanceof Error ? error.message : "Failed to load agent providers"
+          );
+        }
       })
       .finally(() => {
         if (!cancelled) {
@@ -853,6 +865,25 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       cancelled = true;
     };
   }, [settingsSidebarOpen]);
+
+  async function handleRefreshAgentProviders() {
+    if (agentProvidersLoading) {
+      return;
+    }
+    setAgentProvidersLoading(true);
+    setAgentProvidersError(null);
+    try {
+      const providers = await fetchAgentProviderStatuses();
+      setAgentProviders(providers);
+    } catch (error) {
+      console.error("[settings] Failed to refresh agent providers:", error);
+      setAgentProvidersError(
+        error instanceof Error ? error.message : "Failed to refresh agent providers"
+      );
+    } finally {
+      setAgentProvidersLoading(false);
+    }
+  }
 
   function setStack(stack: Stack) {
     setSettings((prev: Settings) => ({
@@ -2711,24 +2742,37 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 Live Editor sends new chats through this provider unless an existing lane is selected.
                               </p>
                             </div>
-                            <Select
-                              value={defaultAgentProviderId}
-                              onValueChange={(value) => setDefaultAgentProviderId(value)}
-                            >
-                              <SelectTrigger className="h-9 w-[180px] text-xs">
-                                <SelectValue placeholder="Provider" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {agentProviders.length === 0 && (
-                                  <SelectItem value="agent-deck">Agent Deck</SelectItem>
-                                )}
-                                {agentProviders.map((provider) => (
-                                  <SelectItem key={provider.id} value={provider.id}>
-                                    {provider.display_name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="flex items-center gap-2">
+                              <Select
+                                value={defaultAgentProviderId}
+                                onValueChange={(value) => setDefaultAgentProviderId(value)}
+                              >
+                                <SelectTrigger className="h-9 w-[180px] text-xs">
+                                  <SelectValue placeholder="Provider" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {agentProviders.length === 0 && (
+                                    <SelectItem value="agent-deck">Agent Deck</SelectItem>
+                                  )}
+                                  {agentProviders.map((provider) => (
+                                    <SelectItem key={provider.id} value={provider.id}>
+                                      {provider.display_name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                className="h-9 w-9"
+                                onClick={() => void handleRefreshAgentProviders()}
+                                disabled={agentProvidersLoading}
+                                title="Refresh providers"
+                              >
+                                <RefreshCw className={`h-4 w-4 ${agentProvidersLoading ? "animate-spin" : ""}`} />
+                              </Button>
+                            </div>
                           </div>
 
                           <div className="space-y-2">
@@ -2738,76 +2782,83 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 Loading providers
                               </div>
                             ) : (
-                              agentProviders.map((provider) => (
-                                <div
-                                  key={provider.id}
-                                  className="rounded-md border border-border/50 bg-background/60 p-3"
-                                >
-                                  {(() => {
-                                    const diagnosticRows = providerDiagnosticRows(provider);
-                                    return (
-                                      <>
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-medium text-foreground">
-                                        {provider.display_name}
-                                      </p>
-                                      <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                                        {formatCommand(provider.command)}
-                                      </p>
-                                    </div>
-                                    <Badge
-                                      variant="secondary"
-                                      className={
-                                        provider.enabled && provider.available
-                                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                                          : provider.enabled
-                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
-                                            : "border-border/60 bg-muted text-muted-foreground"
-                                      }
-                                    >
-                                      {provider.enabled
-                                        ? provider.available ? "available" : "unavailable"
-                                        : "disabled"}
-                                    </Badge>
+                              <>
+                                {agentProvidersError && (
+                                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                                    {agentProvidersError}
                                   </div>
-                                  {provider.reason && (
-                                    <p className="mt-2 text-xs text-muted-foreground">
-                                      {provider.reason}
-                                    </p>
-                                  )}
-                                  {diagnosticRows.length > 0 && (
-                                    <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-muted/20 p-2">
-                                      {diagnosticRows.map((row) => (
-                                        <div
-                                          key={`${provider.id}:${row.label}`}
-                                          className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-[11px]"
-                                        >
-                                          <span className="text-muted-foreground">{row.label}</span>
-                                          <span className="break-all font-mono text-foreground/80">
-                                            {row.value}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {provider.transports.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                      {provider.transports.map((transport) => (
-                                        <p
-                                          key={`${provider.id}:${transport.agent_id}`}
-                                          className="text-xs text-muted-foreground"
-                                        >
-                                          {transport.display_name}: {transport.current_transport}
-                                        </p>
-                                      ))}
-                                    </div>
-                                  )}
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                              ))
+                                )}
+                                {agentProviders.map((provider) => (
+                                  <div
+                                    key={provider.id}
+                                    className="rounded-md border border-border/50 bg-background/60 p-3"
+                                  >
+                                    {(() => {
+                                      const diagnosticRows = providerDiagnosticRows(provider);
+                                      return (
+                                        <>
+                                          <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                              <p className="text-xs font-medium text-foreground">
+                                                {provider.display_name}
+                                              </p>
+                                              <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                                                {formatCommand(provider.command)}
+                                              </p>
+                                            </div>
+                                            <Badge
+                                              variant="secondary"
+                                              className={
+                                                provider.enabled && provider.available
+                                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                                  : provider.enabled
+                                                    ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                                                    : "border-border/60 bg-muted text-muted-foreground"
+                                              }
+                                            >
+                                              {provider.enabled
+                                                ? provider.available ? "available" : "unavailable"
+                                                : "disabled"}
+                                            </Badge>
+                                          </div>
+                                          {provider.reason && (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                              {provider.reason}
+                                            </p>
+                                          )}
+                                          {diagnosticRows.length > 0 && (
+                                            <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-muted/20 p-2">
+                                              {diagnosticRows.map((row) => (
+                                                <div
+                                                  key={`${provider.id}:${row.label}`}
+                                                  className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-[11px]"
+                                                >
+                                                  <span className="text-muted-foreground">{row.label}</span>
+                                                  <span className="break-all font-mono text-foreground/80">
+                                                    {row.value}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                          {provider.transports.length > 0 && (
+                                            <div className="mt-2 space-y-1">
+                                              {provider.transports.map((transport) => (
+                                                <p
+                                                  key={`${provider.id}:${transport.agent_id}`}
+                                                  className="text-xs text-muted-foreground"
+                                                >
+                                                  {transport.display_name}: {transport.current_transport}
+                                                </p>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
+                                  </div>
+                                ))}
+                              </>
                             )}
                           </div>
                         </div>

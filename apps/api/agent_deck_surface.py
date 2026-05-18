@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -138,8 +140,9 @@ def agent_deck_surface_command() -> list[str]:
         )
     return [
         *command,
-        "web-standalone",
-        f"-listen={agent_deck_surface_host()}:{agent_deck_surface_port()}",
+        "web",
+        "--listen",
+        f"{agent_deck_surface_host()}:{agent_deck_surface_port()}",
     ]
 
 
@@ -150,6 +153,25 @@ def _popen_process_kwargs() -> dict[str, Any]:
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
     return {"creationflags": creationflags} if creationflags else {}
+
+
+def _surface_launch_command(command: list[str], log_path: Path) -> list[str]:
+    if os.name == "nt":
+        return command
+
+    script_command = shutil.which("script")
+    if not script_command:
+        return command
+
+    return [
+        script_command,
+        "-q",
+        "-a",
+        "-f",
+        "-c",
+        shlex.join(command),
+        str(log_path),
+    ]
 
 
 def ensure_agent_deck_surface_started(timeout_seconds: float = 15.0) -> dict[str, Any]:
@@ -172,16 +194,28 @@ def ensure_agent_deck_surface_started(timeout_seconds: float = 15.0) -> dict[str
 
     log_path = agent_deck_surface_log_file()
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = agent_deck_surface_command()
+    launch_command = _surface_launch_command(command, log_path)
 
-    with log_path.open("ab") as handle:
+    if launch_command != command:
         proc = subprocess.Popen(
-            agent_deck_surface_command(),
+            launch_command,
             cwd=str(source_root()),
             env=env,
-            stdout=handle,
-            stderr=handle,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             **_popen_process_kwargs(),
         )
+    else:
+        with log_path.open("ab") as handle:
+            proc = subprocess.Popen(
+                command,
+                cwd=str(source_root()),
+                env=env,
+                stdout=handle,
+                stderr=handle,
+                **_popen_process_kwargs(),
+            )
 
     agent_deck_surface_pid_file().write_text(f"{proc.pid}\n", encoding="utf-8")
 

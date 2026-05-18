@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { PixelForgeControllerReleaseUpdateState } from '@/types/pixel-forge-desktop'
 import {
+  providerDiagnosticRows,
   resolveControllerUpdateStatus,
   resolveReleaseDisplayText,
+  type AgentProviderStatus,
 } from './SettingsSidebar'
 
 function releaseState(
@@ -82,5 +84,85 @@ describe('SettingsSidebar version display helpers', () => {
 
     expect(status.label).toBe('Release available')
     expect(status.detail).toBe('v2026.5.7 is available from GitHub release; stage it below to install.')
+  })
+})
+
+describe('SettingsSidebar provider diagnostics', () => {
+  it('separates Agent Deck surface and launch commands', () => {
+    const rows = providerDiagnosticRows({
+      id: 'agent-deck',
+      display_name: 'Agent Deck',
+      enabled: true,
+      available: true,
+      reason: null,
+      command: ['/home/samuelrodda/.local/bin/agent-deck-standalone'],
+      capabilities: {
+        list: true,
+        launch: true,
+        send: true,
+        observe: true,
+        open_surface: true,
+      },
+      diagnostics: {
+        surface_command: ['/home/samuelrodda/.local/bin/agent-deck-standalone'],
+        launch_command: ['/home/samuelrodda/.local/lib/pixel-forge/foundations/agent-deck/build/agent-deck'],
+        config_home: '/home/samuelrodda/.pixel-forge/agent-deck',
+        surface_runtime_origin: 'external',
+        launch_runtime_origin: 'bundled',
+        launch_capabilities: {
+          no_approval: true,
+          flag: '--yolo',
+          reason: null,
+        },
+      },
+      transports: [],
+    } satisfies AgentProviderStatus)
+
+    expect(rows).toContainEqual({
+      label: 'Surface',
+      value: '/home/samuelrodda/.local/bin/agent-deck-standalone · external',
+    })
+    expect(rows).toContainEqual({
+      label: 'Launch',
+      value: '/home/samuelrodda/.local/lib/pixel-forge/foundations/agent-deck/build/agent-deck · bundled',
+    })
+    expect(rows).toContainEqual({
+      label: 'Config home',
+      value: '/home/samuelrodda/.pixel-forge/agent-deck',
+    })
+    expect(rows).toContainEqual({
+      label: 'No approval',
+      value: 'available via --yolo',
+    })
+  })
+
+  it('summarizes provider capabilities from the provider status payload', () => {
+    const rows = providerDiagnosticRows({
+      id: 'codex-cli',
+      display_name: 'Codex CLI',
+      enabled: true,
+      available: true,
+      reason: null,
+      command: ['codex'],
+      capabilities: {
+        list: true,
+        launch: false,
+        send: true,
+        observe: true,
+      },
+      diagnostics: {
+        config_home: '/home/samuelrodda/.codex',
+      },
+      transports: [],
+    } satisfies AgentProviderStatus)
+
+    expect(rows[0]).toEqual({
+      label: 'Capabilities',
+      value: 'list, observe, send',
+    })
+    expect(rows).toContainEqual({
+      label: 'Config home',
+      value: '/home/samuelrodda/.codex',
+    })
   })
 })

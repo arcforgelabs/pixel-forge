@@ -48,8 +48,9 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
     def test_agent_deck_surface_command_uses_standalone_web_mode(self) -> None:
         command = agent_deck_surface.agent_deck_surface_command()
 
-        self.assertEqual(command[-2], "web-standalone")
-        self.assertEqual(command[-1], "-listen=127.0.0.1:8842")
+        self.assertEqual(command[-3], "web")
+        self.assertEqual(command[-2], "--listen")
+        self.assertEqual(command[-1], "127.0.0.1:8842")
 
     def test_read_agent_deck_surface_status_reports_pixel_forge_paths(self) -> None:
         os.environ["PIXEL_FORGE_EXPOSE_LOCAL_STATUS_PATHS"] = "1"
@@ -89,18 +90,34 @@ class AgentDeckSurfaceRuntimeTest(unittest.TestCase):
                 "_is_pid_running",
                 side_effect=lambda pid: pid == process.pid,
             ),
+            patch.object(agent_deck_surface.shutil, "which", return_value="/usr/bin/script"),
             patch.object(agent_deck_surface.subprocess, "Popen", return_value=process) as popen,
         ):
             status = agent_deck_surface.ensure_agent_deck_surface_started(timeout_seconds=1.0)
 
         launched_command = popen.call_args.args[0]
         launched_env = popen.call_args.kwargs["env"]
-        self.assertEqual(launched_command[-2], "web-standalone")
-        self.assertEqual(launched_command[-1], "-listen=127.0.0.1:8842")
+        self.assertEqual(launched_command[:5], ["/usr/bin/script", "-q", "-a", "-f", "-c"])
+        self.assertIn(" web ", launched_command[5])
+        self.assertIn("--listen 127.0.0.1:8842", launched_command[5])
+        self.assertEqual(launched_command[-1], str(agent_deck_surface.agent_deck_surface_log_file()))
+        self.assertEqual(popen.call_args.kwargs["stdout"], agent_deck_surface.subprocess.DEVNULL)
+        self.assertEqual(popen.call_args.kwargs["stderr"], agent_deck_surface.subprocess.DEVNULL)
         self.assertEqual(launched_env["PIXEL_FORGE_DB_PATH"], str(Path(self.tempdir.name) / "pixel-forge.db"))
         self.assertEqual(launched_env["TMUX_TMPDIR"], str(Path(self.tempdir.name) / "agent-deck" / "tmux"))
         self.assertTrue(status["ready"])
         self.assertEqual(status["pid"], 43210)
+
+    def test_surface_launch_command_falls_back_without_script(self) -> None:
+        command = ["agent-deck", "web", "--listen", "127.0.0.1:8842"]
+
+        with patch.object(agent_deck_surface.shutil, "which", return_value=None):
+            launch_command = agent_deck_surface._surface_launch_command(
+                command,
+                agent_deck_surface.agent_deck_surface_log_file(),
+            )
+
+        self.assertEqual(launch_command, command)
 
     def test_windows_launch_uses_detached_process_group_flags(self) -> None:
         with (
