@@ -29,8 +29,8 @@ import {
 } from "@/components/ui/select";
 import { getDesktopApp, hasDesktopAppMethod } from "@/lib/desktop-app";
 import { getResponseErrorMessage, readResponsePayload } from "@/lib/http-response";
+import { formatAgentToolLabel, formatProviderLabel } from "@/lib/agent-labels";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { capitalize } from "@/lib/utils";
 import { compareCalver, formatVersionLabel } from "@/lib/calver";
 import OutputSettingsSection from "./OutputSettingsSection";
 import ProjectSettingsPane from "./ProjectSettingsPane";
@@ -282,24 +282,6 @@ export function resolveReleaseDisplayText({
   };
 }
 
-function formatAgentDeckTool(tool: string | null | undefined): string {
-  if (!tool || !tool.trim()) {
-    return "Agent";
-  }
-
-  return tool === "claude"
-    ? "Claude Code"
-    : tool === "codex"
-      ? "Codex"
-      : tool === "gemini"
-        ? "Gemini"
-        : tool === "pi"
-          ? "Pi"
-          : tool === "openclaw"
-            ? "OpenClaw"
-            : capitalize(tool);
-}
-
 const DIRECT_AGENT_PROVIDER_BY_AGENT: Record<string, string> = {
   claude: "claude-cli",
   codex: "codex-cli",
@@ -455,6 +437,10 @@ function chatProviderSessionId(chat: ProjectChatRecord | null | undefined): stri
 
 function chatProviderAgentId(chat: ProjectChatRecord | null | undefined): string | null {
   return chat?.providerAgentId?.trim() || chat?.agentDeckTool?.trim() || null;
+}
+
+function chatProviderId(chat: ProjectChatRecord | null | undefined): string | null {
+  return chat?.providerId?.trim() || (chat?.agentDeckSessionId?.trim() ? "agent-deck" : null);
 }
 
 function liveEditorProviderSessionId(
@@ -2063,7 +2049,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       ? ` and ${
                           deleteDialogItem.providerId === "agent-deck"
                             ? "Agent Deck"
-                            : "the provider binding"
+                            : `${formatProviderLabel(deleteDialogItem.providerId, agentProviders)} binding`
                         }`
                       : ""
                   }?`}
@@ -2570,7 +2556,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <div className="space-y-1 text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
-                          {formatAgentDeckTool(chatProviderAgentId(selectedProjectChat))}
+                          {formatProviderLabel(chatProviderId(selectedProjectChat), agentProviders)}
+                        </Badge>
+                        <Badge variant="secondary" className="border-border/60 bg-background/70">
+                          {formatAgentToolLabel(chatProviderAgentId(selectedProjectChat))}
                         </Badge>
                         <Badge variant="secondary" className="border-border/60 bg-background/70">
                           {selectedProjectChat.bindingState === "detached"
@@ -2627,7 +2616,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         </label>
                         <p className="mt-0.5 font-mono text-xs">
                           {liveEditorSession.providerSessionTitle
-                            || liveEditorSession.agentDeckSessionTitle
+                            || (
+                              liveEditorSession.providerId === "agent-deck"
+                                ? liveEditorSession.agentDeckSessionTitle
+                                : null
+                            )
                             || liveEditorProviderSessionId(liveEditorSession)}
                         </p>
                       </div>
@@ -2829,7 +2822,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                               onValueChange={(value) => setDefaultAgentType(value)}
                             >
                               <SelectTrigger className="h-9 w-[160px] text-xs">
-                                {formatAgentDeckTool(defaultAgentType)}
+                                {formatAgentToolLabel(defaultAgentType)}
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="claude">Claude Code</SelectItem>
