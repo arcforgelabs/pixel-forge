@@ -92,7 +92,7 @@ def _has_acpx_bridge(root: Path) -> bool:
     )
 
 
-def read_runtime_install_metadata(root: Path | str | None) -> dict[str, str | None]:
+def read_runtime_install_metadata(root: Path | str | None) -> dict[str, str | bool | None]:
     if root is None:
         resolved_root = runtime_source_root().expanduser().resolve()
     else:
@@ -101,6 +101,11 @@ def read_runtime_install_metadata(root: Path | str | None) -> dict[str, str | No
     payload = _read_json_file(resolved_root / RUNTIME_INSTALL_METADATA_FILE) or {}
     return {
         "installedAt": _normalize_text(payload.get("installedAt")),
+        "sourcePath": _normalize_text(payload.get("sourcePath")),
+        "gitCommit": _normalize_text(payload.get("gitCommit")),
+        "gitDescribe": _normalize_text(payload.get("gitDescribe")),
+        "gitBranch": _normalize_text(payload.get("gitBranch")),
+        "gitDirty": payload.get("gitDirty") is True,
     }
 
 
@@ -113,6 +118,11 @@ def read_runtime_info_for_root(root: Path | str) -> dict[str, str | bool | None]
         "runtimeLayout": _detect_runtime_layout(resolved_root),
         "acpxBridgeAvailable": _has_acpx_bridge(resolved_root),
         "installedAt": install_metadata["installedAt"],
+        "sourcePath": install_metadata["sourcePath"],
+        "gitCommit": install_metadata["gitCommit"],
+        "gitDescribe": install_metadata["gitDescribe"],
+        "gitBranch": install_metadata["gitBranch"],
+        "gitDirty": install_metadata["gitDirty"],
     }
 
 

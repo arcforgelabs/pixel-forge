@@ -623,6 +623,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     controllerRuntimeLayout,
     controllerAcpxBridgeAvailable,
     controllerInstalledAt,
+    controllerSourcePath,
+    controllerGitCommit,
+    controllerGitDescribe,
+    controllerGitBranch,
+    controllerGitDirty,
     recentProjects,
     hydrateProjects,
     setProject,
@@ -777,6 +782,11 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const runningVersionLabel = formatVersionLabel(controllerVersion);
   const installedAtLabel = formatInstalledAt(controllerInstalledAt);
+  const installedBuildLabel = controllerGitDescribe ?? controllerGitCommit ?? null;
+  const installedBuildDetail = [
+    controllerGitBranch ? `branch ${controllerGitBranch}` : null,
+    controllerGitDirty ? "dirty at install" : null,
+  ].filter(Boolean).join(" · ");
   const stagedVersionLabel = formatVersionLabel(stagedVersion);
   const latestReleaseVersion = controllerReleaseUpdate?.latest?.version ?? null;
   const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
@@ -2242,6 +2252,19 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       {installedAtLabel}
                     </span>
                   </div>
+                  {installedBuildLabel && (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted-foreground">Build</span>
+                      <span className="text-right font-mono text-xs text-foreground">
+                        {installedBuildLabel}
+                        {installedBuildDetail && (
+                          <span className="ml-2 font-sans text-muted-foreground">
+                            {installedBuildDetail}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-muted-foreground">Staged</span>
                     <span className="font-mono text-xs text-foreground">
@@ -2275,6 +2298,17 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     </p>
                     <p className="mt-1 break-all font-mono text-xs text-foreground">
                       {controllerRuntimeRoot}
+                    </p>
+                  </div>
+                )}
+
+                {controllerSourcePath && controllerSourcePath !== controllerRuntimeRoot && (
+                  <div className="rounded-lg border border-border/70 bg-card/70 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Installed From
+                    </p>
+                    <p className="mt-1 break-all font-mono text-xs text-foreground">
+                      {controllerSourcePath}
                     </p>
                   </div>
                 )}

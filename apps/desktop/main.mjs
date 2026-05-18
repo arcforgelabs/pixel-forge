@@ -1394,6 +1394,15 @@ async function readRuntimeInfo() {
       acpxBridgeAvailable: payload?.acpxBridgeAvailable === true,
       installedAt:
         typeof payload?.installedAt === 'string' ? payload.installedAt : null,
+      sourcePath:
+        typeof payload?.sourcePath === 'string' ? payload.sourcePath : null,
+      gitCommit:
+        typeof payload?.gitCommit === 'string' ? payload.gitCommit : null,
+      gitDescribe:
+        typeof payload?.gitDescribe === 'string' ? payload.gitDescribe : null,
+      gitBranch:
+        typeof payload?.gitBranch === 'string' ? payload.gitBranch : null,
+      gitDirty: payload?.gitDirty === true,
     }
   } catch (error) {
     console.error('[desktop] Failed to load controller runtime info:', error)
@@ -1403,6 +1412,11 @@ async function readRuntimeInfo() {
       runtimeLayout: null,
       acpxBridgeAvailable: false,
       installedAt: null,
+      sourcePath: null,
+      gitCommit: null,
+      gitDescribe: null,
+      gitBranch: null,
+      gitDirty: false,
     }
   }
 }

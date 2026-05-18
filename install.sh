@@ -1060,12 +1060,33 @@ cleanup_legacy_workstation_v2_install
 clear_stale_controller_updates
 
 INSTALL_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-cat > "$INSTALL_DIR/runtime-install-metadata.json" <<METADATA
-{
-  "installedAt": "$INSTALL_TIMESTAMP",
-  "skillsInstallDir": "$SKILLS_INSTALL_DIR"
+INSTALL_GIT_COMMIT="$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
+INSTALL_GIT_DESCRIBE="$(git -C "$SCRIPT_DIR" describe --tags --always --dirty 2>/dev/null || true)"
+INSTALL_GIT_BRANCH="$(git -C "$SCRIPT_DIR" symbolic-ref --short HEAD 2>/dev/null || git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+INSTALL_GIT_DIRTY="false"
+if [ -n "$(git -C "$SCRIPT_DIR" status --porcelain 2>/dev/null || true)" ]; then
+    INSTALL_GIT_DIRTY="true"
+fi
+export INSTALL_TIMESTAMP SKILLS_INSTALL_DIR SCRIPT_DIR INSTALL_GIT_COMMIT INSTALL_GIT_DESCRIBE INSTALL_GIT_BRANCH INSTALL_GIT_DIRTY
+python3 - <<PY
+import json
+import os
+from pathlib import Path
+
+metadata = {
+    "installedAt": os.environ.get("INSTALL_TIMESTAMP") or None,
+    "skillsInstallDir": os.environ.get("SKILLS_INSTALL_DIR") or None,
+    "sourcePath": os.environ.get("SCRIPT_DIR") or None,
+    "gitCommit": os.environ.get("INSTALL_GIT_COMMIT") or None,
+    "gitDescribe": os.environ.get("INSTALL_GIT_DESCRIBE") or None,
+    "gitBranch": os.environ.get("INSTALL_GIT_BRANCH") or None,
+    "gitDirty": (os.environ.get("INSTALL_GIT_DIRTY") == "true"),
 }
-METADATA
+Path("$INSTALL_DIR/runtime-install-metadata.json").write_text(
+    json.dumps(metadata, indent=2, sort_keys=True) + "\\n",
+    encoding="utf-8",
+)
+PY
 
 echo ""
 echo "Installation complete!"

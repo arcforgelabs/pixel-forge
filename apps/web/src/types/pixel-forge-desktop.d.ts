@@ -357,6 +357,11 @@ export interface PixelForgeDesktopRuntimeInfo {
   runtimeLayout: string | null
   acpxBridgeAvailable: boolean
   installedAt: string | null
+  sourcePath?: string | null
+  gitCommit?: string | null
+  gitDescribe?: string | null
+  gitBranch?: string | null
+  gitDirty?: boolean | null
 }
 
 export interface PixelForgeDesktopAppAPI {

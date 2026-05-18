@@ -455,6 +455,23 @@ function App() {
           typeof runtimeInfo?.installedAt === "string"
             ? runtimeInfo.installedAt.trim() || null
             : null,
+        sourcePath:
+          typeof runtimeInfo?.sourcePath === "string"
+            ? runtimeInfo.sourcePath.trim() || null
+            : null,
+        gitCommit:
+          typeof runtimeInfo?.gitCommit === "string"
+            ? runtimeInfo.gitCommit.trim() || null
+            : null,
+        gitDescribe:
+          typeof runtimeInfo?.gitDescribe === "string"
+            ? runtimeInfo.gitDescribe.trim() || null
+            : null,
+        gitBranch:
+          typeof runtimeInfo?.gitBranch === "string"
+            ? runtimeInfo.gitBranch.trim() || null
+            : null,
+        gitDirty: runtimeInfo?.gitDirty === true,
       });
     };
 

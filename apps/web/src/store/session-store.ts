@@ -180,6 +180,11 @@ export interface ControllerRuntimeInfo {
   runtimeLayout: string | null;
   acpxBridgeAvailable: boolean;
   installedAt: string | null;
+  sourcePath: string | null;
+  gitCommit: string | null;
+  gitDescribe: string | null;
+  gitBranch: string | null;
+  gitDirty: boolean;
 }
 
 interface SessionStore {
@@ -219,6 +224,11 @@ interface SessionStore {
   controllerRuntimeLayout: string | null;
   controllerAcpxBridgeAvailable: boolean;
   controllerInstalledAt: string | null;
+  controllerSourcePath: string | null;
+  controllerGitCommit: string | null;
+  controllerGitDescribe: string | null;
+  controllerGitBranch: string | null;
+  controllerGitDirty: boolean;
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
   pendingPreviewUpdate: PixelForgePendingPreviewUpdate | null;
@@ -1512,6 +1522,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   controllerRuntimeLayout: null,
   controllerAcpxBridgeAvailable: false,
   controllerInstalledAt: null,
+  controllerSourcePath: null,
+  controllerGitCommit: null,
+  controllerGitDescribe: null,
+  controllerGitBranch: null,
+  controllerGitDirty: false,
   pendingControllerUpdate: null,
   controllerReleaseUpdate: null,
   pendingPreviewUpdate: null,
@@ -2483,6 +2498,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       controllerRuntimeLayout: runtimeInfo.runtimeLayout,
       controllerAcpxBridgeAvailable: runtimeInfo.acpxBridgeAvailable,
       controllerInstalledAt: runtimeInfo.installedAt,
+      controllerSourcePath: runtimeInfo.sourcePath,
+      controllerGitCommit: runtimeInfo.gitCommit,
+      controllerGitDescribe: runtimeInfo.gitDescribe,
+      controllerGitBranch: runtimeInfo.gitBranch,
+      controllerGitDirty: runtimeInfo.gitDirty,
     });
   },
 
