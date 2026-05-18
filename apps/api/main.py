@@ -3273,6 +3273,10 @@ def _summarize_live_preview_context(
 def build_live_editor_context_patch(
     *,
     thread_id: str,
+    provider_id: str | None,
+    provider_session_id: str | None,
+    provider_session_title: str | None,
+    provider_agent_id: str | None,
     agent_deck_session_id: str | None,
     agent_deck_session_title: str | None,
     agent_deck_tool: str | None,
@@ -3304,6 +3308,17 @@ def build_live_editor_context_patch(
         patch["workspace_path"] = workspace_path
     if preview_url:
         patch["preview_url"] = preview_url
+    if provider_id or provider_session_id or provider_session_title or provider_agent_id:
+        patch["provider_session"] = {
+            key: value
+            for key, value in {
+                "provider_id": provider_id,
+                "id": provider_session_id,
+                "title": provider_session_title,
+                "agent_id": provider_agent_id,
+            }.items()
+            if value
+        }
     if agent_deck_session_id or agent_deck_session_title or agent_deck_tool:
         patch["agent_session"] = {
             key: value
@@ -3320,6 +3335,29 @@ def build_live_editor_context_patch(
         patch["live_preview"] = live_preview_summary
 
     return patch
+
+
+def _provider_session_id_from_info(session_info) -> str | None:
+    return (
+        getattr(session_info, "provider_session_id", None)
+        or getattr(session_info, "agent_deck_session_id", None)
+    )
+
+
+def _provider_session_title_from_info(session_info) -> str | None:
+    return (
+        getattr(session_info, "title", None)
+        or getattr(session_info, "provider_session_title", None)
+        or getattr(session_info, "agent_deck_session_title", None)
+    )
+
+
+def _provider_agent_id_from_info(session_info) -> str | None:
+    return (
+        getattr(session_info, "agent_id", None)
+        or getattr(session_info, "tool", None)
+        or getattr(session_info, "provider_agent_id", None)
+    )
 
 
 def build_live_editor_dispatch_prompt(
@@ -4296,7 +4334,7 @@ async def live_editor_chat(websocket: WebSocket):
                     })
                     continue
                 previous_request_id = thread.last_request_id
-                previous_agent_deck_session_id = thread.agent_deck_session_id
+                previous_provider_session_id = thread.provider_session_id
                 previous_live_preview_hash = thread.last_live_preview_hash
                 preflight_snapshot_path = _write_live_editor_preflight_snapshot(
                     project_path=normalized_project_path,
@@ -4361,9 +4399,9 @@ async def live_editor_chat(websocket: WebSocket):
                         thread.thread_id,
                         session_info.agent_deck_session_id,
                     )
-                provider_session_id = session_info.agent_deck_session_id
-                provider_session_title = session_info.agent_deck_session_title
-                provider_agent_id = session_info.tool
+                provider_session_id = _provider_session_id_from_info(session_info)
+                provider_session_title = _provider_session_title_from_info(session_info)
+                provider_agent_id = _provider_agent_id_from_info(session_info)
                 agent_deck_session_id = (
                     provider_session_id if agent_provider.provider_id == "agent-deck" else None
                 )
@@ -4419,8 +4457,8 @@ async def live_editor_chat(websocket: WebSocket):
                 if previous_request_id:
                     continuation_mode: Literal["bootstrap", "attached-session", "delta"] = "delta"
                 elif (
-                    previous_agent_deck_session_id
-                    and previous_agent_deck_session_id == session_info.agent_deck_session_id
+                    previous_provider_session_id
+                    and previous_provider_session_id == provider_session_id
                 ):
                     continuation_mode = "attached-session"
                 else:
@@ -4428,9 +4466,13 @@ async def live_editor_chat(websocket: WebSocket):
 
                 context_patch = build_live_editor_context_patch(
                     thread_id=thread.thread_id,
-                    agent_deck_session_id=session_info.agent_deck_session_id,
-                    agent_deck_session_title=session_info.agent_deck_session_title,
-                    agent_deck_tool=session_info.tool,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=provider_session_id,
+                    provider_session_title=provider_session_title,
+                    provider_agent_id=provider_agent_id,
+                    agent_deck_session_id=agent_deck_session_id,
+                    agent_deck_session_title=agent_deck_session_title,
+                    agent_deck_tool=agent_deck_tool,
                     workspace_path=session_info.workspace_path,
                     preview_url=preview_url or None,
                     selection_tunnel=selection_tunnel if isinstance(selection_tunnel, dict) else None,
@@ -4446,8 +4488,12 @@ async def live_editor_chat(websocket: WebSocket):
                     request_message,
                     element_context,
                     attachments,
-                    agent_deck_session_id=session_info.agent_deck_session_id,
-                    agent_deck_session_title=session_info.agent_deck_session_title,
+                    provider_id=agent_provider.provider_id,
+                    provider_session_id=provider_session_id,
+                    provider_session_title=provider_session_title,
+                    provider_agent_id=provider_agent_id,
+                    agent_deck_session_id=agent_deck_session_id,
+                    agent_deck_session_title=agent_deck_session_title,
                     acpx_agent=session_info.acpx_agent,
                     acpx_session_name=session_info.acpx_session_name,
                     acpx_record_id=session_info.acpx_record_id,
@@ -4488,9 +4534,13 @@ async def live_editor_chat(websocket: WebSocket):
                 )
                 turn_event_base = {
                     "request_id": request_pack.request_id,
-                    "agent_deck_session_id": session_info.agent_deck_session_id,
-                    "agent_deck_session_title": session_info.agent_deck_session_title,
-                    "agent_deck_tool": session_info.tool,
+                    "provider_id": agent_provider.provider_id,
+                    "provider_session_id": provider_session_id,
+                    "provider_session_title": provider_session_title,
+                    "provider_agent_id": provider_agent_id,
+                    "agent_deck_session_id": agent_deck_session_id,
+                    "agent_deck_session_title": agent_deck_session_title,
+                    "agent_deck_tool": agent_deck_tool,
                     "workspace_path": session_info.workspace_path,
                     "request_relative_directory": request_pack.relative_directory,
                     "request_relative_file": request_pack.relative_request_file,
@@ -4506,7 +4556,7 @@ async def live_editor_chat(websocket: WebSocket):
                     append_workstation_event(
                         normalized_project_path,
                         thread.thread_id,
-                        agent_deck_session_id=session_info.agent_deck_session_id,
+                        agent_deck_session_id=agent_deck_session_id,
                         event_type=event_type,
                         payload={
                             **turn_event_base,
@@ -4773,9 +4823,9 @@ async def live_editor_chat(websocket: WebSocket):
                         thread.thread_id,
                         refreshed_session.agent_deck_session_id,
                     )
-                refreshed_provider_session_id = refreshed_session.agent_deck_session_id
-                refreshed_provider_session_title = refreshed_session.agent_deck_session_title
-                refreshed_provider_agent_id = refreshed_session.tool
+                refreshed_provider_session_id = _provider_session_id_from_info(refreshed_session)
+                refreshed_provider_session_title = _provider_session_title_from_info(refreshed_session)
+                refreshed_provider_agent_id = _provider_agent_id_from_info(refreshed_session)
                 refreshed_agent_deck_session_id = (
                     refreshed_provider_session_id
                     if agent_provider.provider_id == "agent-deck"
@@ -4833,9 +4883,13 @@ async def live_editor_chat(websocket: WebSocket):
                 await append_turn_event(
                     "turn_completed",
                     {
-                        "agent_deck_session_id": refreshed_session.agent_deck_session_id,
-                        "agent_deck_session_title": refreshed_session.agent_deck_session_title,
-                        "agent_deck_tool": refreshed_session.tool,
+                        "provider_id": agent_provider.provider_id,
+                        "provider_session_id": refreshed_provider_session_id,
+                        "provider_session_title": refreshed_provider_session_title,
+                        "provider_agent_id": refreshed_provider_agent_id,
+                        "agent_deck_session_id": refreshed_agent_deck_session_id,
+                        "agent_deck_session_title": refreshed_agent_deck_session_title,
+                        "agent_deck_tool": refreshed_agent_deck_tool,
                         "workspace_path": refreshed_session.workspace_path,
                         "selection_count": selection_count,
                         "self_edit_safe_mode": self_edit_safe_mode,

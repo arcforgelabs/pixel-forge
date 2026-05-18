@@ -485,6 +485,10 @@ def _write_session_brief(
     project_path: str,
     thread_id: str,
     *,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     session_working_rules: list[str] | None = None,
@@ -501,6 +505,16 @@ def _write_session_brief(
         "- Later request packs should normally be treated as deltas, not as a full session reboot.",
     ]
 
+    if provider_session_id and provider_session_title:
+        brief_sections.append(
+            f"- Provider Session: `{provider_session_title}` (`{provider_session_id}`)"
+        )
+    elif provider_session_id:
+        brief_sections.append(f"- Provider Session ID: `{provider_session_id}`")
+    if provider_id:
+        brief_sections.append(f"- Provider: `{provider_id}`")
+    if provider_agent_id:
+        brief_sections.append(f"- Agent: `{provider_agent_id}`")
     if agent_deck_session_id and agent_deck_session_title:
         brief_sections.append(
             f"- Visible Agent Deck Session: `{agent_deck_session_title}` (`{agent_deck_session_id}`)"
@@ -538,6 +552,10 @@ def create_request_pack(
     element_context: str,
     attachments: list[dict[str, str]],
     *,
+    provider_id: str | None = None,
+    provider_session_id: str | None = None,
+    provider_session_title: str | None = None,
+    provider_agent_id: str | None = None,
     agent_deck_session_id: str | None = None,
     agent_deck_session_title: str | None = None,
     acpx_agent: str | None = None,
@@ -567,6 +585,10 @@ def create_request_pack(
     session_brief_path, relative_session_brief_path = _write_session_brief(
         project_path,
         thread_id,
+        provider_id=provider_id,
+        provider_session_id=provider_session_id,
+        provider_session_title=provider_session_title,
+        provider_agent_id=provider_agent_id,
         agent_deck_session_id=agent_deck_session_id,
         agent_deck_session_title=agent_deck_session_title,
         session_working_rules=session_working_rules,
@@ -684,6 +706,16 @@ def create_request_pack(
         "source": "pixel-forge",
         "request_id": request_id,
         "thread_id": thread_id,
+        "provider": {
+            key: value
+            for key, value in {
+                "id": provider_id,
+                "session_id": provider_session_id,
+                "session_title": provider_session_title,
+                "agent_id": provider_agent_id,
+            }.items()
+            if value
+        },
         "continuation_mode": continuation_mode,
         "informational_only": informational_only,
         "explicit_live_attach_required": explicit_live_attach_required,
@@ -730,6 +762,16 @@ def create_request_pack(
         f"- Mode: `{'inspect' if informational_only else 'edit'}`",
         f"- Selected element count: `{selection_count}`",
     ]
+    if provider_session_id and provider_session_title:
+        request_sections.append(
+            f"- Provider Session: `{provider_session_title}` (`{provider_session_id}`)"
+        )
+    elif provider_session_id:
+        request_sections.append(f"- Provider Session ID: `{provider_session_id}`")
+    if provider_id:
+        request_sections.append(f"- Provider: `{provider_id}`")
+    if provider_agent_id:
+        request_sections.append(f"- Agent: `{provider_agent_id}`")
     if agent_deck_session_id and agent_deck_session_title:
         request_sections.append(
             f"- Agent Deck Session: `{agent_deck_session_title}` (`{agent_deck_session_id}`)"
@@ -887,6 +929,10 @@ def create_request_pack(
             {
                 "request_id": request_id,
                 "thread_id": thread_id,
+                "provider_id": provider_id,
+                "provider_session_id": provider_session_id,
+                "provider_session_title": provider_session_title,
+                "provider_agent_id": provider_agent_id,
                 "agent_deck_session_id": agent_deck_session_id,
                 "agent_deck_session_title": agent_deck_session_title,
                 "acpx_agent": acpx_agent,

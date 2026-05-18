@@ -117,6 +117,46 @@ do not treat /tmp/workspace as a skill.
             self.assertEqual(turn_input_payload["selection"]["items"][0]["id"], "selected-target")
             self.assertEqual(manifest["selection_sources"], [])
 
+    def test_direct_provider_metadata_stays_out_of_agent_deck_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            request_pack = create_request_pack(
+                tmpdir,
+                "thread-1",
+                "Send this through direct Codex.",
+                "<selected-elements />",
+                [],
+                provider_id="codex-cli",
+                provider_session_id="codex-thread-1",
+                provider_session_title="codex:thread",
+                provider_agent_id="codex",
+            )
+
+            request_body = request_pack.request_file.read_text(encoding="utf-8")
+            manifest = json.loads(request_pack.manifest_file.read_text(encoding="utf-8"))
+            turn_input_payload = json.loads(
+                request_pack.turn_input_file.read_text(encoding="utf-8")
+            )
+            session_brief = request_pack.session_brief_file.read_text(encoding="utf-8")
+
+            self.assertIn("- Provider Session: `codex:thread` (`codex-thread-1`)", request_body)
+            self.assertIn("- Provider: `codex-cli`", request_body)
+            self.assertNotIn("Agent Deck Session", request_body)
+            self.assertIn("- Provider Session: `codex:thread` (`codex-thread-1`)", session_brief)
+            self.assertNotIn("Visible Agent Deck Session", session_brief)
+            self.assertEqual(manifest["provider_id"], "codex-cli")
+            self.assertEqual(manifest["provider_session_id"], "codex-thread-1")
+            self.assertEqual(manifest["provider_agent_id"], "codex")
+            self.assertIsNone(manifest["agent_deck_session_id"])
+            self.assertEqual(
+                turn_input_payload["provider"],
+                {
+                    "id": "codex-cli",
+                    "session_id": "codex-thread-1",
+                    "session_title": "codex:thread",
+                    "agent_id": "codex",
+                },
+            )
+
     def test_request_pack_writes_live_preview_context_section_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             request_pack = create_request_pack(
