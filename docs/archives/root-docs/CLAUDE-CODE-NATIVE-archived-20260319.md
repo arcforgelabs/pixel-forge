@@ -245,7 +245,7 @@ if __name__ == "__main__":
   "mcpServers": {
     "visual-to-code": {
       "command": "python",
-      "args": ["/home/samuelrodda/repos/visual-to-code/mcp-server/server.py"],
+      "args": ["~/repos/visual-to-code/mcp-server/server.py"],
       "env": {
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
       }

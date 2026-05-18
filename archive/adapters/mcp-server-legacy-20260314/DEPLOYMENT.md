@@ -29,8 +29,8 @@ The Visual to Code MCP server has been successfully deployed using Lazy-MCP patt
 {
   "visual-to-code": {
     "transportType": "stdio",
-    "command": "/home/samuelrodda/.claude/mcp-servers/visual-to-code/.venv/bin/python",
-    "args": ["/home/samuelrodda/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py"],
+    "command": "~/.claude/mcp-servers/visual-to-code/.venv/bin/python",
+    "args": ["~/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py"],
     "env": {},
     "options": {
       "lazyLoad": true

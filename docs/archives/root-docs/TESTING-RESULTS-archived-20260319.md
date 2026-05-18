@@ -52,8 +52,8 @@
 ### Structure Verified ✅
 
 **Reflex eval scripts found**:
-- `/home/samuelrodda/repos/reflex/src/verification/hash.ts` - Perceptual hashing
-- `/home/samuelrodda/repos/reflex/src/comparison/visual.ts` - Pixel-level diff
+- `~/repos/reflex/src/verification/hash.ts` - Perceptual hashing
+- `~/repos/reflex/src/comparison/visual.ts` - Pixel-level diff
 
 **Integration pattern validated**:
 ```python
@@ -73,7 +73,7 @@ result = subprocess.run(['node', '-e', eval_script],
 ```
 
 **Assumptions**:
-- Reflex dist files exist at `/home/samuelrodda/repos/reflex/dist/`
+- Reflex dist files exist at `~/repos/reflex/dist/`
 - Node.js modules are built and accessible
 - Functions `verifyHash()` and `generateImageDiff()` are exported
 
@@ -167,7 +167,7 @@ From `~/repos/3-resources/pixel-forge/screenshot-to-code/backend/prompts/__init_
 ## Questions for User
 
 1. **API Key**: Should this be configured in environment, or is there a preferred location?
-2. **Reflex Build**: Are the dist files at `/home/samuelrodda/repos/reflex/dist/` already built?
+2. **Reflex Build**: Are the dist files at `~/repos/reflex/dist/` already built?
 3. **Deprecation Warning**: Which build package showed the memory leak warning?
 4. **Priority**: Should we test the full workflow with API key, or document and move to next phase?
 

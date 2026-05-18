@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -94,13 +95,22 @@ def _tail_log_excerpt(max_bytes: int = 4096) -> str | None:
     return excerpt or None
 
 
+def _expose_local_status_paths() -> bool:
+    return (os.environ.get("PIXEL_FORGE_EXPOSE_LOCAL_STATUS_PATHS") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def read_agent_deck_surface_status() -> dict[str, Any]:
     _clear_stale_pid_file()
     pid = _read_pid()
     running = _is_pid_running(pid)
     ready = _is_surface_ready(timeout_seconds=1.0)
     running = running or ready
-    return {
+    status: dict[str, Any] = {
         "running": running,
         "ready": ready,
         "pid": pid if running else None,
@@ -108,12 +118,16 @@ def read_agent_deck_surface_status() -> dict[str, Any]:
         "host": agent_deck_surface_host(),
         "port": agent_deck_surface_port(),
         "profile": agent_deck_profile(),
-        "homeDir": str(agent_deck_home_dir()),
-        "dbPath": str(shared_db_path()),
-        "logFile": str(agent_deck_surface_log_file()),
-        "pidFile": str(agent_deck_surface_pid_file()),
-        "governance": agent_deck_governance_status(agent_deck_home_dir()),
     }
+    if _expose_local_status_paths():
+        status["localPaths"] = {
+            "homeDir": str(agent_deck_home_dir()),
+            "dbPath": str(shared_db_path()),
+            "logFile": str(agent_deck_surface_log_file()),
+            "pidFile": str(agent_deck_surface_pid_file()),
+        }
+        status["governance"] = agent_deck_governance_status(agent_deck_home_dir())
+    return status
 
 
 def agent_deck_surface_command() -> list[str]:
@@ -127,6 +141,15 @@ def agent_deck_surface_command() -> list[str]:
         "web-standalone",
         f"-listen={agent_deck_surface_host()}:{agent_deck_surface_port()}",
     ]
+
+
+def _popen_process_kwargs() -> dict[str, Any]:
+    if os.name != "nt":
+        return {"start_new_session": True}
+
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+    return {"creationflags": creationflags} if creationflags else {}
 
 
 def ensure_agent_deck_surface_started(timeout_seconds: float = 15.0) -> dict[str, Any]:
@@ -157,7 +180,7 @@ def ensure_agent_deck_surface_started(timeout_seconds: float = 15.0) -> dict[str
             env=env,
             stdout=handle,
             stderr=handle,
-            start_new_session=True,
+            **_popen_process_kwargs(),
         )
 
     agent_deck_surface_pid_file().write_text(f"{proc.pid}\n", encoding="utf-8")
@@ -186,9 +209,23 @@ def stop_agent_deck_surface(timeout_seconds: float = 5.0) -> dict[str, Any]:
         return read_agent_deck_surface_status()
 
     try:
-        os.kill(pid, signal.SIGTERM)
+        if os.name == "nt":
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+        else:
+            os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
+    except ValueError:
+        if sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T"],
+                    capture_output=True,
+                    check=False,
+                    timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
 
     deadline = time.time() + max(0.5, timeout_seconds)
     while time.time() < deadline:
@@ -197,10 +234,21 @@ def stop_agent_deck_surface(timeout_seconds: float = 5.0) -> dict[str, Any]:
         time.sleep(0.1)
 
     if _is_pid_running(pid):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True,
+                    check=False,
+                    timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
 
     try:
         agent_deck_surface_pid_file().unlink()

@@ -202,8 +202,8 @@ results/reflex-iterate/test-2-invoice-card/
 ### Structure Verified
 
 **Reflex dist files confirmed at**:
-- `/home/samuelrodda/repos/reflex/dist/verification/hash.js` ✅
-- `/home/samuelrodda/repos/reflex/dist/comparison/visual.js` ✅
+- `~/repos/reflex/dist/verification/hash.js` ✅
+- `~/repos/reflex/dist/comparison/visual.js` ✅
 
 **Exported functions verified**:
 - `export async function verifyHash(...)` at hash.js:60 ✅

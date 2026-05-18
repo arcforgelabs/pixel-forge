@@ -153,7 +153,7 @@ generate_code_from_image(image3)
 ```
 
 **Hierarchy Files Added**:
-- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json`
+- `~/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json`
 - Updated `visual-to-code.json` overview: 2 → 3 tools
 - Updated `root.json`: 115 → 116 total tools
 
@@ -285,19 +285,19 @@ metrics.log_call("generate_code_from_image", response, {
 
 ### Core Server (Both Locations)
 - `~/repos/3-resources/pixel-forge/mcp-server/visual_to_code_mcp.py` ✅
-- `/home/samuelrodda/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py` ✅
+- `~/.claude/mcp-servers/visual-to-code/visual_to_code_mcp.py` ✅
 - Backup saved: `visual_to_code_mcp.py.backup`
 - New version: `visual_to_code_mcp_v2.py` (before deployment)
 
 ### Dependencies
 - `~/repos/3-resources/pixel-forge/mcp-server/requirements.txt` ✅
-- `/home/samuelrodda/.claude/mcp-servers/visual-to-code/requirements.txt` ✅
+- `~/.claude/mcp-servers/visual-to-code/requirements.txt` ✅
 - Added: `tiktoken>=0.5.0`
 
 ### Hierarchy Files (Lazy-MCP)
-- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json` ✅ (NEW)
-- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/visual-to-code/visual-to-code.json` ✅ (UPDATED)
-- `/home/samuelrodda/.claude/lazy-mcp/hierarchy/root.json` ✅ (UPDATED)
+- `~/.claude/lazy-mcp/hierarchy/visual-to-code/ensure_delegation_ready.json` ✅ (NEW)
+- `~/.claude/lazy-mcp/hierarchy/visual-to-code/visual-to-code.json` ✅ (UPDATED)
+- `~/.claude/lazy-mcp/hierarchy/root.json` ✅ (UPDATED)
 
 ### Documentation
 - `~/repos/3-resources/pixel-forge/mcp-server/ASSESSMENT.md` ✅

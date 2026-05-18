@@ -9,13 +9,13 @@
 ### Current truth
 
 - The browser broker can open a local dev server from an agent command:
-  - `pixel-forge browser open http://127.0.0.1:8017/ --project "/home/samuel/repos/2-areas/arc-forge-website" --chat "chat-66dd2bfd1455"`
+  - `pixel-forge browser open http://127.0.0.1:8017/ --project "<project-root>" --chat "<chat-id>"`
 - The command returns a real resident tab that agents can inspect and screenshot:
-  - `tab_id`: `broker-chat-66dd2bfd1455-moup2f8h-a9ade2`
-  - `project_path`: `/home/samuel/repos/2-areas/arc-forge-website`
-  - `chat_id`: `chat-66dd2bfd1455`
+  - `tab_id`: `broker-<chat-id>-<suffix>`
+  - `project_path`: `<project-root>`
+  - `chat_id`: `<chat-id>`
   - `url`: `http://127.0.0.1:8017/`
-  - `title`: `Arc Forge | Websites, Agents, Software`
+  - `title`: `<local preview title>`
 - `pixel-forge browser tabs` shows that tab with `owner_kind: agent`.
 - The operator did not see that tab in the normal Pixel Forge UI, while operator-owned tabs for the same project/chat were visible.
 
@@ -45,8 +45,8 @@
 - Added `--owner-kind` / `--owner` to `apps/api/pixel_forge_cli.py` for `pixel-forge browser open`.
 - Added regression coverage in `apps/api/test_pixel_forge_cli.py`.
 - Validated with the repo-local wrapper:
-  - `/home/samuel/repos/3-resources/pixel-forge/pixel-forge browser open http://127.0.0.1:8017/ --project "/home/samuel/repos/2-areas/arc-forge-website" --chat "chat-66dd2bfd1455" --owner operator --tab-id preview-arcforge-local-8017`
-  - Broker returned `owner_kind: operator`, `active: true`, title `Arc Forge | Websites, Agents, Software`.
+  - `~/repos/pixel-forge/pixel-forge browser open http://127.0.0.1:8017/ --project "<project-root>" --chat "<chat-id>" --owner operator --tab-id preview-local-8017`
+  - Broker returned `owner_kind: operator`, `active: true`, and the local preview title.
 
 ### Acceptance criteria
 

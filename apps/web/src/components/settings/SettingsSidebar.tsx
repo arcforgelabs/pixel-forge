@@ -474,10 +474,6 @@ interface AgentDeckSurfaceRecord {
   host: string;
   port: number;
   profile: string;
-  homeDir: string;
-  dbPath: string;
-  logFile: string;
-  pidFile: string;
 }
 
 interface AgentDeckSurfaceResponse {
@@ -2150,9 +2146,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-foreground">{releaseDisplay.title}</p>
-                        <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                          {releaseDisplay.detail}
-                        </p>
                       </div>
                       <Badge
                         variant="outline"
@@ -2168,12 +2161,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       </Badge>
                     </div>
                     <div className="mt-3 space-y-2 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">Repository</span>
-                        <span className="text-xs text-foreground">
-                          {controllerReleaseUpdate?.repo ?? "IAMSamuelRodda/pixel-forge"}
-                        </span>
-                      </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-muted-foreground">{releaseDisplay.latestLabel}</span>
                         <span className="font-mono text-xs text-foreground">
@@ -2228,9 +2215,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Developer Mode</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Enables developer controls such as the Mirror preview launcher.
-                    </p>
                   </div>
                   <Switch
                     id="advanced-mode-toggle"
@@ -2244,9 +2228,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Early Access Mode</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Enables beta features that are still being shaped, including Screenshot mode.
-                    </p>
                   </div>
                   <Switch
                     id="early-access-mode-toggle"
@@ -2278,19 +2259,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           : "stopped"}
                     </span>
                   </div>
-                  <p className="mt-2 text-sm text-foreground">
-                    Launch the integrated Agent Deck shell against this same control plane and profile.
-                  </p>
-                  {agentDeckSurface?.url && (
-                    <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-                      {agentDeckSurface.url}
-                    </p>
-                  )}
-                  {agentDeckSurface?.homeDir && (
-                    <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                      {agentDeckSurface.homeDir}
-                    </p>
-                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
                       variant="outline"
@@ -2386,12 +2354,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       )}
                     </div>
                   </>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Settings is the durable update control surface. If you ignore the header notice
-                    later, the staged controller build will still be available here.
-                  </p>
-                )}
+                ) : null}
                     </TabsContent>
 
                     <TabsContent

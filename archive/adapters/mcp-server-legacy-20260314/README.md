@@ -62,7 +62,7 @@ Or use Lazy-MCP (recommended):
       "command": "npx",
       "args": ["-y", "lazy-mcp"],
       "env": {
-        "LAZY_MCP_CONFIG": "/home/samuelrodda/.config/lazy-mcp/config.json"
+        "LAZY_MCP_CONFIG": "~/.config/lazy-mcp/config.json"
       }
     }
   }

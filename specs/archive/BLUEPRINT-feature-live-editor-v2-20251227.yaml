@@ -26,7 +26,7 @@ meta:
 
 # Current State Analysis
 current_state:
-  location: /home/samuel/repos/1-projects/pixel-forge/screenshot-to-code/frontend/src/components/live-editor/
+  location: ~/repos/pixel-forge/screenshot-to-code/frontend/src/components/live-editor/
   files:
     - LiveEditorPane.tsx  # Single file, ~314 lines
   capabilities:

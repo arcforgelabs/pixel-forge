@@ -441,7 +441,7 @@ Validated sequence:
   - `--replay-user-messages`
 - The worker stream emitted a local UUID in `/tmp/claude-remote-adopt-probe/bridge-transcript-cse_019eY2BH4jpobGqwRgtgQUpS.jsonl`:
   - `session_id:"b63edbd9-eed2-4ff5-8034-e119408e4a77"`
-- Claude also wrote local registry file `/home/samuelrodda/.claude/sessions/1689311.json`:
+- Claude also wrote a local registry file at `~/.claude/sessions/<pid>.json`:
   - `{"pid":1689311,"sessionId":"b63edbd9-eed2-4ff5-8034-e119408e4a77","cwd":"...","kind":"interactive","entrypoint":"sdk-cli"}`
 - Attach tests:
   - `claude -r session_019eY2BH4jpobGqwRgtgQUpS --print ...` failed because `--resume` only accepts UUID-format ids

@@ -99,7 +99,7 @@
 
 ### Test Outputs
 ```
-/home/samuelrodda/repos/visual-to-code/results/phase1/
+~/repos/visual-to-code/results/phase1/
 ├── sonnet-4.5/
 │   ├── test-2-output.tsx (1,751 chars)
 │   └── test-3-output.tsx (5,131 chars)
@@ -110,7 +110,7 @@
 
 ### Documentation
 ```
-/home/samuelrodda/repos/visual-to-code/
+~/repos/visual-to-code/
 ├── SERVICES-RUNNING.md (service status)
 ├── READY-TO-TEST.md (quick start guide)
 ├── TEST-RUN.md (detailed testing workflow)
@@ -123,7 +123,7 @@
 
 ### Skill Created
 ```
-/home/samuelrodda/.claude/skills/testing-visual-to-code/
+~/.claude/skills/testing-visual-to-code/
 ├── SKILL.md (patterns & workflows)
 ├── scripts/test_template.js (Playwright template)
 └── references/analysis-template.md (results template)
