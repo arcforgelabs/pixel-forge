@@ -70,6 +70,7 @@ from live_editor_threads import (
 from project_store import (
     create_adopted_project_session,
     detach_missing_agent_deck_session_bindings,
+    detach_project_session_binding,
     delete_project,
     ensure_state_store_initialized,
     get_profile_state,
@@ -249,6 +250,7 @@ def _write_live_editor_preflight_snapshot(
     agent_type: object,
     workspace_mode: object,
     target_agent_deck_session_id: object,
+    target_intent: object,
     agent_model: object,
     agent_thinking: object,
     selection_count: int,
@@ -287,6 +289,7 @@ def _write_live_editor_preflight_snapshot(
             if isinstance(target_agent_deck_session_id, str)
             else None
         ),
+        "target_intent": target_intent if isinstance(target_intent, dict) else None,
         "agent_model": agent_model if isinstance(agent_model, str) else None,
         "agent_thinking": agent_thinking if isinstance(agent_thinking, str) else None,
         "selection": {
@@ -299,6 +302,57 @@ def _write_live_editor_preflight_snapshot(
     }
     snapshot_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return snapshot_path
+
+
+def _live_editor_turn_input(data: dict[str, object]) -> dict[str, object]:
+    turn_input = data.get("turn_input")
+    return turn_input if isinstance(turn_input, dict) else {}
+
+
+def _live_editor_target_intent(data: dict[str, object]) -> dict[str, object]:
+    target_intent = data.get("target_intent")
+    return target_intent if isinstance(target_intent, dict) else {}
+
+
+def _turn_input_value(
+    turn_input: dict[str, object],
+    data: dict[str, object],
+    key: str,
+    fallback: object = None,
+) -> object:
+    return turn_input.get(key, data.get(key, fallback))
+
+
+def _target_intent_mode(target_intent: dict[str, object]) -> str | None:
+    mode = target_intent.get("mode")
+    if mode in {"new", "bound", "attach_existing", "direct_replay"}:
+        return str(mode)
+    return None
+
+
+def _live_editor_target_session_id(
+    *,
+    target_intent: dict[str, object],
+    target_intent_mode: str | None,
+    data: dict[str, object],
+) -> str | None:
+    if target_intent_mode in {"new", "direct_replay"}:
+        return None
+    if target_intent_mode in {"bound", "attach_existing"}:
+        target_session_id = target_intent.get("provider_session_id")
+    else:
+        target_session_id = data.get("target_provider_session_id")
+    if not isinstance(target_session_id, str) or not target_session_id.strip():
+        target_session_id = data.get("target_agent_deck_session_id")
+    return target_session_id.strip() if isinstance(target_session_id, str) and target_session_id.strip() else None
+
+
+def _is_missing_provider_session_error(error: BaseException) -> bool:
+    message = str(error).lower()
+    return (
+        "not_found" in message
+        or "not found" in message
+    ) and "session" in message
 
 
 async def _emit_live_editor_wait_heartbeat(
@@ -4468,29 +4522,48 @@ async def live_editor_chat(websocket: WebSocket):
             data = await websocket.receive_json()
             print(f"[live-editor] Received: {list(data.keys())}", flush=True)
 
-            message = data.get("message", "")
-            element_context = data.get("element_context", "")
-            selection_tunnel = data.get("selection_tunnel")
-            attachments = data.get("attachments") or []
+            turn_input = _live_editor_turn_input(data)
+            target_intent = _live_editor_target_intent(data)
+            target_intent_mode = _target_intent_mode(target_intent)
+            message = _turn_input_value(turn_input, data, "prompt", "")
+            if not isinstance(message, str) or not message.strip():
+                message = _turn_input_value(turn_input, data, "message", "")
+            if not isinstance(message, str):
+                message = ""
+            element_context = _turn_input_value(turn_input, data, "element_context", "")
+            selection_tunnel = _turn_input_value(turn_input, data, "selection_tunnel")
+            attachments = _turn_input_value(turn_input, data, "attachments", None) or []
             legacy_images = data.get("images") or []
-            thread_id = data.get("thread_id") or data.get("session_id")
+            thread_id = data.get("chat_id") or data.get("thread_id") or data.get("session_id")
             project_path = data.get("project_path", "")
-            preview_url = data.get("preview_url", "")
-            live_preview = data.get("live_preview")
-            agent_type = data.get("agent_type", "claude")
+            preview_url = _turn_input_value(turn_input, data, "preview_url", "")
+            live_preview = _turn_input_value(turn_input, data, "live_preview")
+            target_intent_agent_id = target_intent.get("agent_id")
+            agent_type = target_intent_agent_id or data.get("agent_type", "claude")
             agent_model = data.get("agent_model")
             agent_thinking = data.get("agent_thinking")
-            workspace_mode = "root"
-            target_provider_id = data.get("target_provider_id") or data.get("provider_id")
+            workspace_mode_value = target_intent.get("workspace_mode") or data.get("workspace_mode")
+            workspace_mode = (
+                workspace_mode_value.strip()
+                if isinstance(workspace_mode_value, str) and workspace_mode_value.strip()
+                else "root"
+            )
+            target_provider_id = (
+                target_intent.get("provider_id")
+                or data.get("target_provider_id")
+                or data.get("provider_id")
+            )
             provider_id = (
                 target_provider_id.strip()
                 if isinstance(target_provider_id, str) and target_provider_id.strip()
                 else "agent-deck"
             )
-            target_provider_session_id = data.get("target_provider_session_id")
             target_agent_deck_session_id = data.get("target_agent_deck_session_id")
-            if not isinstance(target_provider_session_id, str):
-                target_provider_session_id = target_agent_deck_session_id
+            target_provider_session_id = _live_editor_target_session_id(
+                target_intent=target_intent,
+                target_intent_mode=target_intent_mode,
+                data=data,
+            )
 
             if not attachments and legacy_images:
                 attachments = [
@@ -4618,6 +4691,7 @@ async def live_editor_chat(websocket: WebSocket):
                     agent_type=agent_type,
                     workspace_mode=workspace_mode,
                     target_agent_deck_session_id=target_agent_deck_session_id,
+                    target_intent=target_intent,
                     agent_model=agent_model,
                     agent_thinking=agent_thinking,
                     selection_count=selection_count,
@@ -4640,7 +4714,7 @@ async def live_editor_chat(websocket: WebSocket):
                             normalized_project_path,
                             thread,
                             agent_type=agent_type,
-                            workspace_mode="root",
+                            workspace_mode=workspace_mode,
                             target_provider_session_id=(
                                 target_provider_session_id
                                 if isinstance(target_provider_session_id, str)
@@ -4663,6 +4737,28 @@ async def live_editor_chat(websocket: WebSocket):
                         "The request was not sent, but a recovery snapshot was "
                         f"saved at `{preflight_snapshot_relative_path}`."
                     ) from exc
+                except AgentDeckBridgeError as exc:
+                    if target_provider_session_id and _is_missing_provider_session_error(exc):
+                        detach_project_session_binding(
+                            normalized_project_path,
+                            thread.thread_id,
+                        )
+                        thread = update_live_editor_thread(
+                            thread.thread_id,
+                            backend=agent_provider.provider_id,
+                            provider_id="",
+                            provider_session_id="",
+                            provider_session_title="",
+                            provider_agent_id="",
+                            agent_deck_session_id="",
+                            agent_deck_session_title="",
+                        )
+                        raise AgentDeckBridgeError(
+                            f"{agent_provider.display_name} session `{target_provider_session_id}` "
+                            "was missing. Pixel Forge detached that stale binding from this chat. "
+                            "Retry to create a fresh provider lane, or use a direct CLI retry option."
+                        ) from exc
+                    raise
                 if agent_provider.provider_id == "agent-deck":
                     _assert_agent_deck_lane_available(
                         normalized_project_path,
@@ -5083,7 +5179,7 @@ async def live_editor_chat(websocket: WebSocket):
                         normalized_project_path,
                         thread,
                         agent_type=agent_type,
-                        workspace_mode="root",
+                        workspace_mode=workspace_mode,
                     )
                 else:
                     refreshed_session = session_info
@@ -5206,6 +5302,13 @@ async def live_editor_chat(websocket: WebSocket):
                     {
                         "type": "error",
                         "message": str(e),
+                        "failed_provider_id": provider_id,
+                        "failed_agent_type": agent_type,
+                        "retry_options": (
+                            _direct_cli_retry_options_for_agent(agent_type)
+                            if provider_id == "agent-deck"
+                            else []
+                        ),
                     }
                 )
             except Exception as e:

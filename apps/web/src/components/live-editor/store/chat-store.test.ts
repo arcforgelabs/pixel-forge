@@ -114,6 +114,7 @@ function setActiveThreadState(partial: Partial<ThreadChatState>) {
       ws: nextThreadState.ws,
       connected: nextThreadState.connected,
       queuedMessages: nextThreadState.queuedMessages,
+      targetIntent: nextThreadState.targetIntent,
       targetAgentSessionId: nextThreadState.targetAgentSessionId,
       draftAgentType: nextThreadState.draftAgentType,
       draftWorkspaceMode: nextThreadState.draftWorkspaceMode,
@@ -559,7 +560,20 @@ describe('live editor selection history', () => {
       agent_type: 'codex',
       workspace_mode: 'root',
       thread_id: 'chat-root',
+      chat_id: 'chat-root',
+      target_intent: {
+        mode: 'new',
+        provider_id: 'agent-deck',
+        agent_id: 'codex',
+        workspace_mode: 'root',
+      },
+      turn_input: {
+        prompt: 'Use the canonical root',
+      },
     })
+    expect(JSON.parse(send.mock.calls[0][0] as string)).not.toHaveProperty(
+      'target_provider_session_id'
+    )
   })
 
   it('rehydrates stale internal pdf viewer urls back to the source pdf url', () => {
@@ -1707,6 +1721,48 @@ describe('live editor selection history', () => {
     )
   })
 
+  it('does not route a fresh draft send through ambient sidebar target selection', () => {
+    useSessionStore.setState({
+      defaultAgentType: 'claude',
+      selectedAgentTargetId: 'missing-deck-session',
+      agentTargets: [
+        {
+          id: 'missing-deck-session',
+          title: 'stale target',
+          path: '/tmp/example-project',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setDraftAgentType('codex')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Start clean')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      agent_type: 'codex',
+      target_intent: {
+        mode: 'new',
+        provider_id: 'agent-deck',
+        agent_id: 'codex',
+        workspace_mode: 'root',
+      },
+    })
+    expect(payload).not.toHaveProperty('target_provider_session_id')
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+  })
+
   it('uses the draft workspace mode for the first outbound live-edit payload before bind', () => {
     useSessionStore.setState({
       defaultAgentType: 'claude',
@@ -1798,6 +1854,12 @@ describe('live editor selection history', () => {
       target_provider_id: 'codex-cli',
       target_provider_session_id: 'codex-thread-123',
       agent_type: 'codex',
+      target_intent: {
+        mode: 'attach_existing',
+        provider_id: 'codex-cli',
+        provider_session_id: 'codex-thread-123',
+        agent_id: 'codex',
+      },
     })
     expect(payload).not.toHaveProperty('target_agent_deck_session_id')
     expect(payload).not.toHaveProperty('workspace_mode')

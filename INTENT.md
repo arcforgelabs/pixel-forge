@@ -41,15 +41,16 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 
 Next implementation target:
 
-The next actionable goal is to finish the remaining generic persistence and provider-management migration. The Agent Deck launch-policy boundary is now validated, but the architecture is not complete: database records, frontend compatibility payloads, and some Settings surfaces still carry `agent_deck_*` names as more than temporary projections. The next step is to make provider/session bindings generic end to end while keeping Agent Deck as one optional provider and preserving the explicit direct-provider replay behavior.
+The next actionable goal is to finish the chat/workspace routing architecture so Live Editor behaves like a fast IDE chat system rather than a sidebar-selected session launcher. A Pixel Forge chat lane must own the user's draft and target intent, while provider adapters own all launch, attach, resume, stream, and stale-binding reconciliation. Sidebar selections and provider-session lists are materialized projections only; they must not mutate send routing implicitly.
 
 The target architecture for this next improvement is:
 
-1. Provider-neutral DB bindings are the canonical persisted fields, with `agent_deck_session_id`, `agent_deck_session_title`, and `agent_deck_tool` retained only as compatibility projections.
-2. Live Editor events, request-pack metadata, websocket payloads, and frontend stores prefer `provider_id`, `provider_session_id`, `provider_session_title`, and `provider_agent_id`.
-3. Settings exposes provider management from `GET /api/agent-providers`: enabled state, detected command/config home, default provider/agent, model/thinking defaults, and capability diagnostics.
-4. Agent Deck diagnostics remain split by responsibility (`surface_command`, `launch_command`, runtime origins, launch capabilities) and the UI must not imply the external executable is the no-approval launch runtime when the bundled binary is selected.
-5. Direct providers such as `codex-cli` and `claude-cli` remain explicit alternatives, not hidden fallbacks. If Agent Deck is selected and fails, Pixel Forge should show a loud failure plus deliberate direct-provider replay actions.
+1. `selectedAgentTargetId` is UI projection state only and is never ambient send input.
+2. The active chat draft stores its target choice as `target_intent`, including `mode`, `provider_id`, `provider_session_id` when explicitly attached, `agent_id`, and `workspace_mode` for first bind.
+3. `/ws/live-editor` accepts `chat_id`, `target_intent`, and `turn_input` as the canonical send contract. Legacy `thread_id`, `message`, `target_provider_session_id`, and `target_agent_deck_session_id` remain temporary compatibility fields.
+4. Provider adapters own reconciliation: bound provider sessions may be resumed or reported missing by the adapter, and stale/missing bindings detach the chat lane instead of poisoning the next send.
+5. Agent Deck remains one provider adapter, not Pixel Forge's session model. Direct providers such as `codex-cli` and `claude-cli` remain explicit alternatives and are offered as deliberate replay options after loud Agent Deck failures.
+6. The sidebar keeps a fast materialized projection of projects, chats, and provider sessions, but chat identity and send routing come from the active lane plus its persisted binding.
 
 Current source state:
 

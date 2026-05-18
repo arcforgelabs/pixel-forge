@@ -722,6 +722,18 @@ describe("session-store chat creation", () => {
     });
   });
 
+  it("clears a stale selected target when creating a detached fresh draft", async () => {
+    useSessionStore.setState({
+      selectedAgentTargetId: "missing-deck-session",
+    });
+
+    await useSessionStore.getState().createProjectChatSession({
+      agentType: "codex",
+    });
+
+    expect(useSessionStore.getState().selectedAgentTargetId).toBeNull();
+  });
+
   it("can create a fresh draft chat with canonical-root first-bind intent", async () => {
     await useSessionStore.getState().createProjectChatSession({
       agentType: "claude",

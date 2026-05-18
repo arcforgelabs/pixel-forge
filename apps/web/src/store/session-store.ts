@@ -53,6 +53,7 @@ export interface PersistedPreviewTab {
 export interface PersistedThreadEditorState {
   draftAgentType?: string;
   draftWorkspaceMode?: DraftWorkspaceMode;
+  targetIntent?: PersistedLiveEditorTargetIntent | null;
   activePreviewTool: "select" | null;
   targetUrl: string;
   activeTab: PersistedLiveEditorPanelTab;
@@ -62,6 +63,14 @@ export interface PersistedThreadEditorState {
   activePreviewTabId: string | null;
   urlHistory: string[];
   urlHistoryCursor: number;
+}
+
+export interface PersistedLiveEditorTargetIntent {
+  mode?: "new" | "bound" | "attach_existing" | "direct_replay";
+  providerId?: string | null;
+  providerSessionId?: string | null;
+  agentId?: string | null;
+  workspaceMode?: DraftWorkspaceMode | null;
 }
 
 export interface LiveEditorSessionMeta {
@@ -2000,8 +2009,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       normalizedSession?.projectPath?.trim() || get().projectPath?.trim() || null;
     set((state) => ({
       liveEditorSession: normalizedSession,
-      selectedAgentTargetId:
-        getAgentBindingSessionId(normalizedSession) ?? state.selectedAgentTargetId,
+      selectedAgentTargetId: getAgentBindingSessionId(normalizedSession) ?? null,
       projectSessionsByProject: mergeSessionIntoProjectMap(
         state.projectSessionsByProject,
         resolvedProjectPath,
@@ -2296,8 +2304,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
         );
         return {
           agentTargetsLoading: false,
-          selectedAgentTargetId:
-            getAgentBindingSessionId(created) ?? state.selectedAgentTargetId,
+          selectedAgentTargetId: getAgentBindingSessionId(created) ?? null,
           agentTargets: createdTarget
             ? ensureAgentTargetPresent(
                 [

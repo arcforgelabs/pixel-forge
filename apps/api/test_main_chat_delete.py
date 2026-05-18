@@ -134,6 +134,49 @@ class LiveEditorProviderSelectionTest(unittest.TestCase):
         self.assertIs(provider, agent_deck)
 
 
+class LiveEditorTargetIntentContractTest(unittest.TestCase):
+    def test_new_target_intent_ignores_legacy_provider_session_fields(self) -> None:
+        data = {
+            "target_intent": {
+                "mode": "new",
+                "provider_id": "agent-deck",
+                "agent_id": "codex",
+                "workspace_mode": "root",
+            },
+            "target_provider_session_id": "stale-session",
+            "target_agent_deck_session_id": "stale-agent-deck-session",
+        }
+        target_intent = main._live_editor_target_intent(data)
+
+        self.assertIsNone(
+            main._live_editor_target_session_id(
+                target_intent=target_intent,
+                target_intent_mode=main._target_intent_mode(target_intent),
+                data=data,
+            )
+        )
+
+    def test_attach_existing_target_intent_owns_provider_session_field(self) -> None:
+        data = {
+            "target_intent": {
+                "mode": "attach_existing",
+                "provider_id": "codex-cli",
+                "provider_session_id": "codex-thread-a",
+            },
+            "target_provider_session_id": "legacy-thread",
+        }
+        target_intent = main._live_editor_target_intent(data)
+
+        self.assertEqual(
+            main._live_editor_target_session_id(
+                target_intent=target_intent,
+                target_intent_mode=main._target_intent_mode(target_intent),
+                data=data,
+            ),
+            "codex-thread-a",
+        )
+
+
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
     async def test_delete_direct_provider_chat_does_not_call_agent_deck(self) -> None:
         with (
@@ -537,6 +580,11 @@ class LiveEditorPreflightSnapshotTest(unittest.TestCase):
                 agent_type="codex",
                 workspace_mode="root",
                 target_agent_deck_session_id=None,
+                target_intent={
+                    "mode": "attach_existing",
+                    "provider_id": "codex-cli",
+                    "provider_session_id": "codex-thread-a",
+                },
                 agent_model="gpt-5.5",
                 agent_thinking="xhigh",
                 selection_count=1,
@@ -547,6 +595,7 @@ class LiveEditorPreflightSnapshotTest(unittest.TestCase):
         self.assertEqual(payload["kind"], "live-editor-pre-provider-snapshot")
         self.assertEqual(payload["target_provider_id"], "codex-cli")
         self.assertEqual(payload["target_provider_session_id"], "codex-thread-a")
+        self.assertEqual(payload["target_intent"]["mode"], "attach_existing")
         self.assertEqual(payload["thread_id"], "chat-b91d262c1ccc")
         self.assertEqual(payload["prompt_text"], "Fix the selected elements")
         self.assertEqual(payload["selection"]["count"], 1)
