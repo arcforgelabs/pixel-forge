@@ -242,6 +242,8 @@ def _write_live_editor_preflight_snapshot(
     attachments: list[dict[str, object]],
     preview_url: str,
     live_preview: object,
+    target_provider_id: object,
+    target_provider_session_id: object,
     agent_type: object,
     workspace_mode: object,
     target_agent_deck_session_id: object,
@@ -260,12 +262,22 @@ def _write_live_editor_preflight_snapshot(
     snapshot_path = recovery_root / f"{snapshot_id}.json"
     payload = {
         "source": "pixel-forge",
-        "kind": "live-editor-pre-agent-deck-snapshot",
+        "kind": "live-editor-pre-provider-snapshot",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
         "project_path": str(project_root),
         "prompt_text": request_message,
         "preview_url": preview_url or None,
+        "target_provider_id": (
+            target_provider_id
+            if isinstance(target_provider_id, str)
+            else None
+        ),
+        "target_provider_session_id": (
+            target_provider_session_id
+            if isinstance(target_provider_session_id, str)
+            else None
+        ),
         "agent_type": agent_type if isinstance(agent_type, str) else None,
         "workspace_mode": workspace_mode if isinstance(workspace_mode, str) else None,
         "target_agent_deck_session_id": (
@@ -4345,6 +4357,8 @@ async def live_editor_chat(websocket: WebSocket):
                     attachments=attachments,
                     preview_url=preview_url if isinstance(preview_url, str) else "",
                     live_preview=live_preview,
+                    target_provider_id=provider_id,
+                    target_provider_session_id=target_provider_session_id,
                     agent_type=agent_type,
                     workspace_mode=workspace_mode,
                     target_agent_deck_session_id=target_agent_deck_session_id,
@@ -4388,7 +4402,7 @@ async def live_editor_chat(websocket: WebSocket):
                     )
                 except TimeoutError as exc:
                     raise AgentDeckBridgeError(
-                        "Timed out resolving Agent Deck session after "
+                        f"Timed out resolving {agent_provider.display_name} session after "
                         f"{int(LIVE_EDITOR_AGENT_RESOLUTION_TIMEOUT_SECONDS)}s. "
                         "The request was not sent, but a recovery snapshot was "
                         f"saved at `{preflight_snapshot_relative_path}`."
