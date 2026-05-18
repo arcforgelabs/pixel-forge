@@ -17,6 +17,98 @@ from agent_deck_bridge import (
     AgentDeckDeleteAssessment,
     AgentDeckSessionInfo,
 )
+from agent_providers.models import AgentProviderStatus, ProviderCapabilitySet
+
+
+class _FakeProvider:
+    def __init__(
+        self,
+        provider_id: str,
+        *,
+        enabled: bool = True,
+        available: bool = True,
+        reason: str | None = None,
+    ) -> None:
+        self.provider_id = provider_id
+        self.display_name = provider_id
+        self._status = AgentProviderStatus(
+            id=provider_id,
+            display_name=provider_id,
+            enabled=enabled,
+            available=available,
+            reason=reason,
+            command=[provider_id] if available else [],
+            capabilities=ProviderCapabilitySet(launch=True, send=True),
+        )
+
+    def status(self) -> AgentProviderStatus:
+        return self._status
+
+
+class LiveEditorProviderSelectionTest(unittest.TestCase):
+    def test_fresh_codex_handoff_falls_back_to_direct_codex_provider_when_agent_deck_launch_contract_missing(self) -> None:
+        agent_deck = _FakeProvider("agent-deck")
+        codex_cli = _FakeProvider("codex-cli")
+        thread = SimpleNamespace(provider_id=None, provider_session_id=None)
+
+        def fake_get_provider(provider_id: str):
+            return {
+                "agent-deck": agent_deck,
+                "codex-cli": codex_cli,
+            }.get(provider_id)
+
+        with (
+            patch.object(main, "get_agent_provider", side_effect=fake_get_provider),
+            patch.object(
+                main,
+                "agent_deck_available",
+                return_value=(
+                    False,
+                    "Agent Deck executable does not support the required `launch --yolo` contract",
+                ),
+            ),
+        ):
+            provider = main._live_editor_agent_provider_or_error(
+                "agent-deck",
+                agent_type="codex",
+                target_provider_session_id=None,
+                thread=thread,
+            )
+
+        self.assertIs(provider, codex_cli)
+
+    def test_existing_agent_deck_binding_does_not_silently_fallback_to_codex_provider(self) -> None:
+        agent_deck = _FakeProvider("agent-deck")
+        codex_cli = _FakeProvider("codex-cli")
+        thread = SimpleNamespace(provider_id="agent-deck", provider_session_id="deck-a")
+
+        def fake_get_provider(provider_id: str):
+            return {
+                "agent-deck": agent_deck,
+                "codex-cli": codex_cli,
+            }.get(provider_id)
+
+        with (
+            patch.object(main, "get_agent_provider", side_effect=fake_get_provider),
+            patch.object(
+                main,
+                "agent_deck_available",
+                return_value=(
+                    False,
+                    "Agent Deck executable does not support the required `launch --yolo` contract",
+                ),
+            ),
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main._live_editor_agent_provider_or_error(
+                    "agent-deck",
+                    agent_type="codex",
+                    target_provider_session_id=None,
+                    thread=thread,
+                )
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("launch --yolo", str(raised.exception.detail))
 
 
 class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):

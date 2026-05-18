@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 from uuid import uuid4
 
 from acpx_bridge import AcpxSessionInfo, ensure_acpx_session, parse_agent_deck_acpx_command
-from agent_deck_runtime import agent_deck_command, agent_deck_env
+from agent_deck_runtime import agent_deck_available, agent_deck_command, agent_deck_env
 from live_editor_threads import LiveEditorThreadRecord
 from memory_governance import plan_agent_deck_launch_admission
 
@@ -559,10 +559,12 @@ async def _run_command_with_env(
 
 
 def _agent_deck_args(*args: str) -> list[str]:
-    command = agent_deck_command()
+    require_launch_yolo = bool(args and args[0] == "launch" and "--yolo" in args)
+    command = agent_deck_command(require_launch_yolo=require_launch_yolo)
     if not command:
+        _, reason = agent_deck_available(require_launch_yolo=require_launch_yolo)
         raise AgentDeckBridgeError(
-            "Agent Deck provider is disabled or no Agent Deck command is configured"
+            reason or "Agent Deck provider is disabled or no Agent Deck command is configured"
         )
     return [*command, *args]
 

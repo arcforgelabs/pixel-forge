@@ -56,7 +56,15 @@ class AgentProviderRegistryTest(unittest.TestCase):
 
     def test_agent_deck_prefers_explicit_standard_command(self) -> None:
         fake_bin = Path(self.tempdir.name) / "agent-deck-standalone"
-        fake_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_bin.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"launch\" ] && [ \"$2\" = \"--help\" ]; then\n"
+            "  echo 'Usage: agent-deck launch [--yolo]'\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
         fake_bin.chmod(0o755)
 
         with patch.dict(

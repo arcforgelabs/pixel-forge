@@ -41,6 +41,7 @@ from agent_deck_bridge import (
     stream_codex_session_output,
 )
 from agent_deck_event_ingest import AgentDeckNativeEventIngestor
+from agent_deck_runtime import agent_deck_available
 from agent_deck_surface import (
     ensure_agent_deck_surface_started,
     read_agent_deck_surface_status,
@@ -1341,6 +1342,67 @@ def _agent_provider_or_error(provider_id: str):
     if not status.available:
         raise HTTPException(status_code=503, detail=status.reason or "Agent provider is unavailable")
     return provider
+
+
+def _live_editor_agent_provider_or_error(
+    provider_id: str,
+    *,
+    agent_type: str,
+    target_provider_session_id: str | None,
+    thread,
+):
+    normalized_provider_id = provider_id.strip() if isinstance(provider_id, str) else ""
+    selected_provider_id = normalized_provider_id or "agent-deck"
+    provider = get_agent_provider(selected_provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Agent provider not found")
+
+    status = provider.status()
+    normalized_agent_type = agent_type.strip().lower() if isinstance(agent_type, str) else ""
+    requires_agent_deck_yolo = (
+        selected_provider_id == "agent-deck"
+        and normalized_agent_type in {"codex", "gemini"}
+    )
+    yolo_available = True
+    yolo_reason: str | None = None
+    if requires_agent_deck_yolo:
+        yolo_available, yolo_reason = agent_deck_available(require_launch_yolo=True)
+
+    if status.enabled and status.available and not (
+        requires_agent_deck_yolo and not yolo_available
+    ):
+        return provider
+
+    has_explicit_target = bool(
+        isinstance(target_provider_session_id, str)
+        and target_provider_session_id.strip()
+    )
+    has_existing_agent_deck_binding = bool(
+        selected_provider_id == "agent-deck"
+        and getattr(thread, "provider_id", None) == "agent-deck"
+        and getattr(thread, "provider_session_id", None)
+    )
+    if (
+        selected_provider_id == "agent-deck"
+        and normalized_agent_type == "codex"
+        and not yolo_available
+        and not has_explicit_target
+        and not has_existing_agent_deck_binding
+    ):
+        codex_provider = get_agent_provider("codex-cli")
+        if codex_provider is not None:
+            codex_status = codex_provider.status()
+            if codex_status.enabled and codex_status.available:
+                return codex_provider
+
+    if not status.enabled:
+        raise HTTPException(status_code=503, detail=status.reason or "Agent provider is disabled")
+    if requires_agent_deck_yolo and not yolo_available:
+        raise HTTPException(
+            status_code=503,
+            detail=yolo_reason or "Agent Deck provider lacks required launch capability",
+        )
+    raise HTTPException(status_code=503, detail=status.reason or "Agent provider is unavailable")
 
 
 @app.get("/api/projects/{project_path:path}/agent-deck-sessions")
@@ -4164,15 +4226,6 @@ async def live_editor_chat(websocket: WebSocket):
                 })
                 continue
 
-            try:
-                agent_provider = _agent_provider_or_error(provider_id)
-            except HTTPException as exc:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(exc.detail),
-                })
-                continue
-
             turn_wait_task: asyncio.Task[None] | None = None
             status_heartbeat_task: asyncio.Task[None] | None = None
             turn_event_base: dict[str, object] | None = None
@@ -4200,6 +4253,23 @@ async def live_editor_chat(websocket: WebSocket):
                     normalized_project_path,
                     thread_id=thread_id if isinstance(thread_id, str) and thread_id else None,
                 )
+                try:
+                    agent_provider = _live_editor_agent_provider_or_error(
+                        provider_id,
+                        agent_type=agent_type,
+                        target_provider_session_id=(
+                            target_provider_session_id
+                            if isinstance(target_provider_session_id, str)
+                            else None
+                        ),
+                        thread=thread,
+                    )
+                except HTTPException as exc:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(exc.detail),
+                    })
+                    continue
                 previous_request_id = thread.last_request_id
                 previous_agent_deck_session_id = thread.agent_deck_session_id
                 previous_live_preview_hash = thread.last_live_preview_hash

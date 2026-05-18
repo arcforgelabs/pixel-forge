@@ -39,11 +39,24 @@ Everything else is subordinate to improving this loop and making it feel clear, 
 
 `[active]` Finish the full migration from a Pixel Forge-owned integrated Agent Deck module to a provider/plugin architecture, then install and validate that architecture in the live canonical Pixel Forge runtime.
 
+Next implementation target:
+
+The next actionable goal is to fix the observed Pixel Forge-on-Pixel-Forge failure where Live Editor launches an Agent Deck Codex lane with `agent-deck launch --yolo`, but the selected installed Agent Deck binary does not advertise or accept `--yolo`. This is a provider capability mismatch, not a chat/UI problem. Pixel Forge must stop treating "an Agent Deck executable exists" as equivalent to "that executable supports the Pixel Forge launch contract."
+
+The target architecture for this fix is:
+
+1. Pixel Forge core emits one provider-neutral `AgentTurnRequest` plus an autonomy/no-approval policy. Core must not append provider-specific flags such as `--yolo`.
+2. Each provider translates that neutral request into its own launch/send/resume command only after probing and declaring runtime capabilities.
+3. The `agent-deck` provider must probe the selected executable path, version, and `launch --help` surface for required launch features such as no-approval mode, workspace/worktree support, model/effort forwarding, and native TUI opening.
+4. `PIXEL_FORGE_WITH_AGENT_DECK=auto` must not choose an external Agent Deck binary that lacks required Pixel Forge capabilities when a bundled compatible foundation is available. If neither candidate is compatible, the provider should report `unavailable` or `degraded` with a clear diagnostic instead of creating a failed chat card.
+5. Fresh Codex-backed Live Editor handoffs should default to the direct `codex-cli` provider using the official `codex app-server` / remote-TUI protocol path where possible. Agent Deck-hosted Codex remains a compatibility surface, not the primary Codex transport.
+6. The immediate proof case is an installed external Agent Deck like `v1.9.11-local` whose `launch` command lacks `--yolo`: Pixel Forge should either route the selected-preview request through `codex-cli` successfully or select the bundled compatible Agent Deck provider explicitly. It must not send an unsupported Agent Deck flag and surface raw CLI help as the assistant response.
+
 Current source state:
 
-1. `[validated]` The repo is clean at commit `500cd30` (`Migrate Agent Deck behind provider boundary`).
-2. `[validated]` The current cut is ready to install from `~/repos/pixel-forge`.
-3. `[unvalidated]` The live controller has not yet been promoted to this cut; the running controller still comes from `~/.local/lib/pixel-forge` on port `7201` until the installer is run and the live runtime is rechecked.
+1. `[validated]` The public-release cleanup cut was installed and pushed at commit `30c6982` (`Prepare public release settings cleanup`).
+2. `[validated]` The installed controller restarts from the repo-built runtime on port `7201`.
+3. `[active]` The next runtime blocker is provider launch capability negotiation: the installed controller can still choose an external Agent Deck executable that lacks the newer `launch --yolo` contract required by Pixel Forge's current Agent Deck Codex path.
 
 The goal is complete only when all of these are true:
 
@@ -62,13 +75,13 @@ The goal is complete only when all of these are true:
 
 Smallest complete implementation sequence:
 
-1. Install and verify commit `500cd30` in the canonical runtime.
-2. Add and backfill generic provider binding fields in the shared DB.
-3. Extend `AgentProvider`/`AgentDeckProvider` with `ensure_session`, `send_turn`, `observe`, and closeout/delete parity.
-4. Route Live Editor websocket dispatch through the provider registry.
-5. Add the first direct `codex-cli` provider and prove a selected-preview request reaches Codex without Agent Deck.
-6. Rename frontend state and settings to provider-neutral concepts while preserving old response compatibility.
-7. Move Agent Deck-specific UI/config into the Agent Deck provider section.
+1. Add provider capability probing for Agent Deck executable candidates, including `launch --help` feature checks for `--yolo` or equivalent no-approval support.
+2. Change Agent Deck runtime selection so `auto` prefers a compatible candidate, falls back to the bundled foundation when the user's standard install is missing required capabilities, and reports a clear degraded/unavailable provider state when no candidate satisfies the contract.
+3. Move no-approval launch translation out of core Live Editor dispatch and into the selected provider adapter. Core should pass a neutral autonomy policy; `agent-deck`, `codex-cli`, and future providers decide their own concrete flags.
+4. Make fresh Codex Live Editor handoffs prefer the direct `codex-cli` provider and official `codex app-server` / remote-TUI protocol path where available.
+5. Preserve Agent Deck-hosted Codex as a compatibility path by proving the bundled Agent Deck runtime still accepts the needed launch contract.
+6. Add installed-runtime tests or smoke checks for the exact mismatch: an external Agent Deck without `launch --yolo` must not produce a raw Agent Deck usage error in the chat transcript.
+7. Continue the broader provider migration after this blocker: generic DB bindings, Live Editor `ensure/send/observe` through `AgentProvider`, and provider-neutral frontend/settings naming.
 
 # Requirements
 
@@ -212,6 +225,7 @@ Current cut:
 - Pixel Forge exposes `GET /api/agent-providers` with provider capability and transport metadata. The initial registry still contains only `agent-deck`, but that provider is now an explicit wrapper boundary rather than the implicit core runtime.
 - `apps/api/agent_providers/AgentDeckProvider` now owns the list/create/rename/delete/activity wrapper methods for Agent Deck, and Pixel Forge exposes provider-neutral `GET`/`POST /api/projects/{project_path}/agent-sessions` routes. The frontend session store now uses `/agent-sessions`; old `/agent-deck-sessions` routes remain compatibility shims during the wider naming/persistence migration.
 - Codex currently uses `codex exec resume --json` for warm turns when Pixel Forge has a native Codex session id. This is the right short-term bridge because it avoids tmux key stuffing and supports images, but the preferred architecture is a dedicated Codex provider around `codex app-server` / remote TUI protocol schemas.
+- Next implementation detail: Agent Deck auto-selection must become capability-gated. The current runtime can select a standard external Agent Deck whose `launch` command lacks the `--yolo` contract that Pixel Forge expects for fresh Codex/Gemini no-approval sessions. The provider must probe executable capabilities before selection, prefer the bundled compatible foundation when the external command is too old, and otherwise report a clear provider diagnostic. In parallel, Codex should move to the direct `codex-cli` provider as the default fresh Live Editor route so Codex no longer depends on Agent Deck flag compatibility.
 
 1. Stop treating bundled Agent Deck as an install prerequisite for Pixel Forge.
 2. Split installer work into:
@@ -292,6 +306,7 @@ The end state of this phase is not "no Agent Deck." The end state is "no hidden 
 - `REQ-R-010:` Pixel Forge core must be usable without Agent Deck installed. When Agent Deck is absent or disabled, compatible direct native CLI providers must still be able to launch, receive request packs, expose status/output where the underlying CLI supports it, and fail clearly where a capability is unavailable.
 - `REQ-R-011:` Agent Deck integration must be packaged as an optional provider plugin or provider module with explicit configuration. Bundling it for convenience is allowed, but core import paths, DB schema, API names, frontend state, and installer success must not depend on Agent Deck as the only possible runtime.
 - `REQ-R-012:` Provider modules must declare capabilities explicitly: session listing, launch, send, resume, cancel, observe, transcript streaming, skill discovery, native TUI opening, closeout, delete, and platform support. Pixel Forge UI must render controls from those capabilities rather than assuming every provider behaves like Agent Deck.
+- `REQ-R-012A:` Provider availability must be based on capability probes, not executable presence alone. For Agent Deck, Pixel Forge must probe the selected command's version/help surface for the concrete launch contract it intends to use, including no-approval/autonomy support such as `launch --yolo` or a documented equivalent. If the user's standard Agent Deck install lacks the required contract, `auto` selection must fall back to a compatible bundled provider when available or mark `agent-deck` unavailable/degraded with an actionable diagnostic.
 - `REQ-R-013:` Native CLI/TUI providers must prefer the user's existing installations and standard config locations before Pixel Forge-owned copies. Pixel Forge may offer managed installs later, but it must not silently shadow or mutate a user's Claude Code, Codex, Gemini, Pi, OpenClaw, or Agent Deck configuration.
 - `REQ-R-014:` Platform-specific process control must stay outside the shared core. Linux tmux/systemd/cgroup behavior, macOS Terminal/iTerm launch behavior, and Windows Terminal/PowerShell/ConPTY behavior belong in provider launch adapters with capability flags and clear fallback behavior.
 
@@ -455,12 +470,13 @@ The end state of this phase is not "no Agent Deck." The end state is "no hidden 
 # Current Limiting Factor
 
 - `[active]` The provider/plugin migration is now the current limiting factor. Pixel Forge has a working first cut of the provider registry, optional Agent Deck install gate, provider-neutral session endpoints, and an `AgentDeckProvider` wrapper, but Live Editor dispatch, persistence, and most frontend state still assume Agent Deck-shaped bindings.
-- Why it is the limiter: the primary operator loop cannot honestly support "bring your existing agent runtime" until the persistent chat/session binding model and send/observe path are provider-neutral. Universal context ingress and browser attach still matter, but they must land through a selected provider boundary instead of growing another Agent Deck-shaped transport branch.
-- Smallest complete unit to attack it: promote provider-neutral DB bindings, route Live Editor websocket session ensure/send/observe through `AgentProvider`, and prove one installed selected-preview Codex handoff through a direct `codex-cli` provider without Agent Deck enabled.
-- Immediate proof target: the installed Pixel Forge runtime can run with `PIXEL_FORGE_WITH_AGENT_DECK=0`, show provider diagnostics, bind a Live Editor thread to a non-Agent-Deck provider session, send the request pack and selected preview context to that provider, and keep Agent Deck available as an optional provider when enabled.
+- Why it is the limiter: the primary operator loop cannot honestly support "bring your existing agent runtime" until the persistent chat/session binding model and send/observe path are provider-neutral. The current `agent-deck launch --yolo` failure proves the specific risk: Pixel Forge is still allowing core-shaped launch assumptions to leak into a provider executable that may not support them.
+- Smallest complete unit to attack it: add capability-gated provider selection, move no-approval flag translation into provider adapters, prefer direct `codex-cli` for fresh Codex Live Editor handoffs, and keep Agent Deck as an optional compatible provider rather than the hidden Codex transport.
+- Immediate proof target: with an installed external Agent Deck whose `launch` command lacks `--yolo`, Pixel Forge must not create a failed chat card containing raw Agent Deck help text. It must either route the selected-preview request through `codex-cli`, explicitly choose the bundled compatible Agent Deck foundation, or surface a clear provider diagnostic before dispatch. The broader proof remains that the installed runtime can run with `PIXEL_FORGE_WITH_AGENT_DECK=0`, show provider diagnostics, bind a Live Editor thread to a non-Agent-Deck provider session, send the request pack and selected preview context to that provider, and keep Agent Deck available as an optional provider when enabled.
 
 # Current Proof Status
 
+- `[implemented]` Agent Deck launch selection is now capability-gated for the fresh Codex/Gemini no-approval launch contract instead of trusting executable presence. Basis: `agent_deck_runtime.agent_deck_command(require_launch_yolo=True)` probes `launch --help` for `--yolo`, skips incompatible external `agent-deck-standalone` / `agent-deck` commands, uses a compatible bundled runner only when it actually answers the probe, and reports a clear unavailable/degraded diagnostic when no candidate satisfies the contract. Generic Agent Deck availability stays separate so Claude/listing paths are not blocked by a Codex/Gemini-specific launch gap. The Live Editor provider resolver now falls back to direct `codex-cli` for fresh Codex handoffs when Agent Deck lacks that contract, while refusing to silently move an already-bound Agent Deck thread. Targeted backend tests cover compatible external commands, incompatible external plus bundled fallback, incompatible external without fallback, bridge launch diagnostics, and fresh-vs-bound Codex fallback behavior. Live repo proof on May 18, 2026 shows the installed external Agent Deck lacks `launch --yolo`, the source runner cannot currently build without `go`, `agent-deck` generic availability still points at the installed command, the required launch contract reports unavailable with an actionable diagnostic, `codex-cli` is available at the user's installed `codex` command, and the direct Codex app-server transport initializes over stdio without spending a model turn.
 - `[validated]` Pixel Forge now uses one canonical CalVer runtime/install identity instead of a side-by-side semantic-version alpha lane. Basis: version surfaces are locked to `2026.5.9-1` and future CalVer tags per REQ-S-014 / REQ-S-015, installed launchers and desktop entries resolve to `pixel-forge`, and the runtime/shared state root resolves through the canonical `~/.pixel-forge` lane while legacy alpha artifacts are treated only as migration sources.
 - `[validated]` Contaminated shell env with retired-lane overrides (`PIXEL_FORGE_INSTALL_NAME=pixel-forge-alpha` / `pixel-forge-workstation-v2` and their associated `PIXEL_FORGE_*` / `AGENTDECK_*` siblings) no longer misroutes install or runtime. Basis: `install.sh` and every generated launcher (`pixel-forge`, `pixel-forge-shell`, `pixel-forge-agent-deck`) share one `RETIRED_LANE_ENV_STRIP_SNIPPET` preamble that unsets retired-lane env when `PIXEL_FORGE_INSTALL_NAME` is a retired slug, honors `PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1` for deliberate legacy reproduction, and leaves non-retired custom install names alone; `scripts/test-retired-lane-env.sh` (wired into `pnpm verify`) locks in the install-header and generated-launcher behavior as regression coverage.
 - `[validated]` `master` is now the source branch of record for the canonical Pixel Forge lane. Basis: the rebranded line and public install docs resolve through `master`, the legacy pre-cutover line was preserved on `legacy-v1`, and the retired `dev/pixel-forge-alpha` branch remains history rather than current operating truth.

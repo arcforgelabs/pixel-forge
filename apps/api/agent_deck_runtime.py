@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import subprocess
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from memory_governance import agent_deck_governance_env
@@ -17,6 +20,13 @@ from state_root_migration import default_agent_deck_profile
 
 
 DEFAULT_AGENT_DECK_PROFILE = default_agent_deck_profile()
+AGENT_DECK_HELP_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass(frozen=True, slots=True)
+class _AgentDeckResolution:
+    command: list[str]
+    reason: str | None = None
 
 
 def agent_deck_profile() -> str:
@@ -28,43 +38,118 @@ def agent_deck_profile() -> str:
     return explicit or DEFAULT_AGENT_DECK_PROFILE
 
 
-def agent_deck_command() -> list[str]:
-    if agent_deck_provider_mode() == "0":
-        return []
+def _configured_command_exists(command: list[str], *, allow_missing: bool = False) -> bool:
+    executable = command[0] if command else ""
+    if not executable:
+        return False
+    return bool(
+        shutil.which(executable)
+        or Path(executable).expanduser().is_file()
+        or allow_missing
+    )
 
+
+def _bundled_agent_deck_runner() -> Path:
+    return source_root() / "scripts" / "agent-deck.sh"
+
+
+@lru_cache(maxsize=32)
+def _agent_deck_launch_help_supports_yolo(command: tuple[str, ...]) -> bool:
+    env = dict(os.environ)
+    for key in ("TMUX", "TMUX_PANE"):
+        env.pop(key, None)
+    try:
+        result = subprocess.run(
+            [*command, "launch", "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=AGENT_DECK_HELP_TIMEOUT_SECONDS,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    output = f"{result.stdout}\n{result.stderr}"
+    return "--yolo" in output
+
+
+def _resolve_agent_deck_command(*, require_launch_yolo: bool = False) -> _AgentDeckResolution:
+    if agent_deck_provider_mode() == "0":
+        return _AgentDeckResolution([])
+
+    mode = agent_deck_provider_mode()
     explicit = (os.environ.get("PIXEL_FORGE_AGENT_DECK_CMD") or "").strip()
+    skipped_incompatible: list[str] = []
+    missing_explicit: str | None = None
+    candidates: list[list[str]] = []
     if explicit:
         explicit_args = shlex.split(explicit)
-        executable = explicit_args[0] if explicit_args else ""
-        if executable and (
-            shutil.which(executable)
-            or Path(executable).expanduser().is_file()
-            or agent_deck_provider_mode() == "1"
-        ):
-            return explicit_args
+        if _configured_command_exists(explicit_args, allow_missing=mode == "1"):
+            candidates.append(explicit_args)
+        elif explicit_args:
+            missing_explicit = explicit_args[0]
 
     standalone = shutil.which("agent-deck-standalone")
     if standalone:
-        return [standalone]
+        candidates.append([standalone])
 
     installed = shutil.which("agent-deck")
     if installed:
-        return [installed]
+        candidates.append([installed])
 
-    runner = source_root() / "scripts" / "agent-deck.sh"
+    runner = _bundled_agent_deck_runner()
     if runner.is_file():
-        return [str(runner)]
+        candidates.append([str(runner)])
 
-    return ["agent-deck"]
+    for candidate in candidates:
+        if require_launch_yolo and not _agent_deck_launch_help_supports_yolo(
+            tuple(candidate)
+        ):
+            skipped_incompatible.append(" ".join(shlex.quote(part) for part in candidate))
+            continue
+        return _AgentDeckResolution(candidate)
+
+    if skipped_incompatible:
+        return _AgentDeckResolution(
+            [],
+            (
+                "Agent Deck executable does not support the required "
+                "`launch --yolo` contract: "
+                + "; ".join(skipped_incompatible)
+                + ". Update Agent Deck, use Pixel Forge's bundled Agent Deck runtime, "
+                "or choose a direct provider such as codex-cli."
+            ),
+        )
+
+    if missing_explicit:
+        return _AgentDeckResolution(
+            [],
+            f"Agent Deck executable is missing: {missing_explicit}",
+        )
+
+    if require_launch_yolo:
+        return _AgentDeckResolution(
+            [],
+            "No Agent Deck command with required `launch --yolo` support is configured",
+        )
+
+    return _AgentDeckResolution(["agent-deck"])
 
 
-def agent_deck_available() -> tuple[bool, str | None]:
+def agent_deck_command(*, require_launch_yolo: bool = False) -> list[str]:
+    return _resolve_agent_deck_command(
+        require_launch_yolo=require_launch_yolo
+    ).command
+
+
+def agent_deck_available(*, require_launch_yolo: bool = False) -> tuple[bool, str | None]:
     if not agent_deck_provider_enabled():
         return False, "Agent Deck provider is disabled by PIXEL_FORGE_WITH_AGENT_DECK=0"
-    command = agent_deck_command()
+    resolution = _resolve_agent_deck_command(require_launch_yolo=require_launch_yolo)
+    command = resolution.command
     executable = command[0] if command else ""
     if not executable:
-        return False, "Agent Deck command is not configured"
+        return False, resolution.reason or "Agent Deck command is not configured"
     if Path(executable).is_absolute() or "/" in executable:
         if Path(executable).expanduser().is_file():
             return True, None
