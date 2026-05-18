@@ -1052,7 +1052,9 @@ function normalizeAgentType(agentType: string | null | undefined): string {
 
 function normalizeAgentProviderId(providerId: string | null | undefined): string {
   const normalized = providerId?.trim() || "";
-  return normalized === "codex-cli" ? "codex-cli" : "agent-deck";
+  return ["agent-deck", "claude-cli", "codex-cli"].includes(normalized)
+    ? normalized
+    : "agent-deck";
 }
 
 function normalizeWorkspaceMode(mode: string | null | undefined): DraftWorkspaceMode {

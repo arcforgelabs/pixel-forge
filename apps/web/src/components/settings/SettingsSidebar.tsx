@@ -1807,7 +1807,6 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 }}
                                 disabled={isUpdatingChatTargets}
                                 className="flex items-center gap-1.5 rounded-md pl-4 pr-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-                                title="Start a fresh chat. The real Agent Deck lane is created on first send."
                               >
                                 <Plus className="h-3 w-3 flex-shrink-0" />
                                 <span className="truncate flex-1 text-left">New chat</span>
@@ -2486,7 +2485,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Fresh chat starts a new Pixel Forge draft. The real Agent Deck lane is created on first send.
+                      Fresh chat starts a new Pixel Forge draft. The selected provider creates the real lane on first send.
                     </p>
                   )}
                 </div>

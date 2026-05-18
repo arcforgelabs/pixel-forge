@@ -369,6 +369,7 @@ export function ChatMessages({
 }: ChatMessagesProps) {
   const replayMessageIntoNewChat = useLiveEditorStore((state) => state.replayMessageIntoNewChat)
   const retryMessageInCurrentChat = useLiveEditorStore((state) => state.retryMessageInCurrentChat)
+  const retryMessageWithProvider = useLiveEditorStore((state) => state.retryMessageWithProvider)
   const messages = useLiveEditorStore((state) => state.messages)
   const isStreaming = useLiveEditorStore((state) => state.isStreaming)
   const activeThreadKey = useLiveEditorStore((state) => state.activeThreadKey)
@@ -473,6 +474,20 @@ export function ChatMessages({
       )
     }
   }, [retryMessageInCurrentChat])
+
+  const retryWithProvider = useCallback(async (
+    messageId: string,
+    providerId: string,
+    agentType?: string | null,
+  ) => {
+    try {
+      await retryMessageWithProvider(messageId, providerId, agentType)
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to retry this request'
+      )
+    }
+  }, [retryMessageWithProvider])
 
   const jumpToPrompt = useCallback((messageId: string) => {
     const container = scrollContainerRef.current
@@ -798,7 +813,7 @@ export function ChatMessages({
                     </div>
                   )}
                   {msg.systemTone === 'error' && msg.replayDraft && (
-                    <div className="mt-2 flex items-center gap-1.5">
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
                         disabled={isStreaming}
@@ -824,6 +839,26 @@ export function ChatMessages({
                         <RefreshCw className="h-3 w-3" />
                         Replay in new chat
                       </button>
+                      {msg.retryOptions?.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={isStreaming || option.available === false}
+                          onClick={() => {
+                            void retryWithProvider(
+                              msg.id,
+                              option.providerId,
+                              option.agentType,
+                            )
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-destructive/50 bg-destructive/15 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/70 hover:bg-destructive/25 disabled:cursor-not-allowed disabled:opacity-50"
+                          title={option.reason || option.label}
+                          aria-label={option.label}
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

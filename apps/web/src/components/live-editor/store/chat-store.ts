@@ -85,10 +85,20 @@ export interface ChatMessage {
   canLoadPreviewUpdate?: boolean
   observedSessionId?: string | null
   replayDraft?: ReplayDraftSnapshot
+  retryOptions?: ChatRetryOption[]
 }
 
 export interface SelectedElement extends SelectionRecord {
   timestamp: Date
+}
+
+export interface ChatRetryOption {
+  id: string
+  label: string
+  providerId: string
+  agentType?: string | null
+  available?: boolean
+  reason?: string | null
 }
 
 interface PendingOutboundMessage {
@@ -106,6 +116,12 @@ interface ReplayDraftSnapshot {
   selectedElements: SelectedElement[]
   content: string
   attachments: ChatAttachment[]
+}
+
+interface SendMessageOptions {
+  providerId?: string | null
+  agentType?: string | null
+  ignoreTargetProviderSession?: boolean
 }
 
 interface ObservedAgentDeckActivity {
@@ -354,9 +370,15 @@ interface LiveEditorChatStore extends ActiveThreadViewState {
     attachments?: ChatAttachment[],
     agentModel?: string | null,
     agentThinking?: string | null,
+    options?: SendMessageOptions,
   ) => void
   replayMessageIntoNewChat: (messageId: string) => Promise<void>
   retryMessageInCurrentChat: (messageId: string) => Promise<void>
+  retryMessageWithProvider: (
+    messageId: string,
+    providerId: string,
+    agentType?: string | null,
+  ) => Promise<void>
   consumePendingComposerSeed: (threadKey?: string | null) => ComposerSeed | null
   clearMessages: () => void
   newSession: (targetAgentSessionId?: string | null) => void
@@ -753,6 +775,41 @@ function findLastUserReplayDraft(
     }
   }
   return undefined
+}
+
+function parseRetryOptions(value: unknown): ChatRetryOption[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+    const option = entry as Record<string, unknown>
+    const providerId = typeof option.provider_id === 'string'
+      ? option.provider_id.trim()
+      : ''
+    if (!providerId) {
+      return []
+    }
+    const label = typeof option.label === 'string' && option.label.trim()
+      ? option.label.trim()
+      : `Retry with ${providerId}`
+    return [{
+      id: typeof option.id === 'string' && option.id.trim()
+        ? option.id.trim()
+        : `retry-${providerId}-${index}`,
+      label,
+      providerId,
+      agentType: typeof option.agent_type === 'string' && option.agent_type.trim()
+        ? option.agent_type.trim()
+        : null,
+      available: typeof option.available === 'boolean' ? option.available : true,
+      reason: typeof option.reason === 'string' && option.reason.trim()
+        ? option.reason.trim()
+        : null,
+    }]
+  })
 }
 
 function createThreadStateFromSession(
@@ -1990,7 +2047,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
     )
   }
 
-  const appendSystemError = (threadKey: string, message: string) => {
+  const appendSystemError = (
+    threadKey: string,
+    message: string,
+    retryOptions: ChatRetryOption[] = []
+  ) => {
     updateThreadState(threadKey, (threadState) => {
       const replayDraft = cloneReplayDraftSnapshot(
         findLastUserReplayDraft(threadState.messages)
@@ -2008,6 +2069,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             timestamp: new Date(),
             systemTone: 'error',
             replayDraft,
+            retryOptions,
           },
         ],
         isStreaming: false,
@@ -2217,8 +2279,10 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 ? Number(data.selection_count)
                 : threadState.currentSelectionCount,
             targetAgentSessionId:
-              typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
-                ? data.agent_deck_session_id
+              typeof data.provider_session_id === 'string' && data.provider_session_id
+                ? data.provider_session_id
+                : typeof data.agent_deck_session_id === 'string' && data.agent_deck_session_id
+                  ? data.agent_deck_session_id
                 : threadState.targetAgentSessionId,
           }))
 
@@ -2262,6 +2326,23 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
                 threadId: nextThreadId,
                 backend: data.backend || 'agent-deck',
                 workspacePath: resolvedWorkspacePath,
+                providerId: data.provider_id ?? knownSession?.providerId ?? null,
+                providerSessionId:
+                  data.provider_session_id
+                  ?? knownSession?.providerSessionId
+                  ?? resolvedAgentDeckSessionId,
+                providerSessionTitle:
+                  data.provider_session_title
+                  ?? knownSession?.providerSessionTitle
+                  ?? data.agent_deck_session_title
+                  ?? knownSession?.agentDeckSessionTitle
+                  ?? null,
+                providerAgentId:
+                  data.provider_agent_id
+                  ?? knownSession?.providerAgentId
+                  ?? data.agent_deck_tool
+                  ?? knownSession?.agentDeckTool
+                  ?? null,
                 agentDeckSessionId: resolvedAgentDeckSessionId,
                 agentDeckSessionTitle:
                   data.agent_deck_session_title
@@ -2392,7 +2473,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
             typeof data.message === 'string' && data.message.trim()
               ? data.message
               : 'Live Editor request failed.'
-          appendSystemError(threadKeyRef, errorMessage)
+          appendSystemError(
+            threadKeyRef,
+            errorMessage,
+            parseRetryOptions(data.retry_options)
+          )
           break
         }
 
@@ -2615,6 +2700,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       attachments = [],
       agentModel: string | null = null,
       agentThinking: string | null = null,
+      options: SendMessageOptions = {},
     ) => {
       const activeThreadKey = get().activeThreadKey
       const activeThreadState = getThreadStateSnapshot(
@@ -2654,7 +2740,19 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         trimmedContent
         || buildAttachmentSummary(attachments)
       const sessionState = useSessionStore.getState()
-      const boundSession = resolveThreadSession(activeThreadKey)
+      const overrideProviderId =
+        typeof options.providerId === 'string' && options.providerId.trim()
+          ? options.providerId.trim()
+          : null
+      const overrideAgentType =
+        typeof options.agentType === 'string' && options.agentType.trim()
+          ? options.agentType.trim()
+          : null
+      const ignoreTargetProviderSession =
+        Boolean(overrideProviderId) || Boolean(options.ignoreTargetProviderSession)
+      const boundSession = ignoreTargetProviderSession
+        ? null
+        : resolveThreadSession(activeThreadKey)
       const projectPath =
         activeThreadState.projectPath?.trim() || sessionProjectPath
       if (
@@ -2669,9 +2767,11 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
         return
       }
       const targetAgentSessionId =
-        boundSession?.agentDeckSessionId
-        ?? activeThreadState.targetAgentSessionId
-        ?? null
+        ignoreTargetProviderSession
+          ? null
+          : boundSession?.agentDeckSessionId
+            ?? activeThreadState.targetAgentSessionId
+            ?? null
       const conflictingThread = targetAgentSessionId
         ? selectActiveProjectSessions(sessionState).find(
             (session) =>
@@ -2728,13 +2828,15 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
           (target) => target.id === targetAgentSessionId
         ) ?? null
       const agentType =
-        boundSession?.agentDeckTool
+        overrideAgentType
+        || boundSession?.agentDeckTool
         || selectedTarget?.tool
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
       const providerId =
-        boundSession?.providerId
+        overrideProviderId
+        || boundSession?.providerId
         || selectedTarget?.providerId
         || sessionState.defaultAgentProviderId
         || 'agent-deck'
@@ -2942,6 +3044,59 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       get().sendMessage(
         replayDraft.content,
         cloneChatAttachments(replayDraft.attachments),
+      )
+    },
+
+    retryMessageWithProvider: async (messageId, providerId, agentType = null) => {
+      const activeThreadKey = get().activeThreadKey
+      const sourceThreadState = getThreadStateSnapshot(get().threadStates, activeThreadKey)
+      const sourceMessage = sourceThreadState.messages.find((message) => message.id === messageId)
+      if (!sourceMessage || !sourceMessage.replayDraft) {
+        throw new Error('That request can no longer be retried.')
+      }
+
+      if (sourceThreadState.isStreaming) {
+        throw new Error('Live Editor is still processing the previous request.')
+      }
+
+      const normalizedProviderId = providerId.trim()
+      if (!normalizedProviderId) {
+        throw new Error('A direct provider is required for this retry.')
+      }
+
+      const replayDraft = sourceMessage.replayDraft
+      const restoredEditorState = createThreadEditorStateFromPersisted(replayDraft.editorState)
+      const normalizedAgentType =
+        typeof agentType === 'string' && agentType.trim()
+          ? agentType.trim()
+          : restoredEditorState.draftAgentType
+
+      updateThreadState(activeThreadKey, (threadState) => ({
+        ...threadState,
+        targetAgentSessionId: null,
+        selectedElements: cloneSelectionState(replayDraft.selectedElements),
+        selectionUndoStack: pushUndoSnapshot(
+          threadState.selectionUndoStack,
+          threadState.selectedElements
+        ),
+        selectionRedoStack: [],
+        draftAgentType: normalizedAgentType,
+        draftWorkspaceMode: restoredEditorState.draftWorkspaceMode,
+      }))
+
+      useSessionStore.getState().setSelectedAgentTargetId(null)
+      scheduleThreadPersistence(activeThreadKey, 0)
+
+      get().sendMessage(
+        replayDraft.content,
+        cloneChatAttachments(replayDraft.attachments),
+        null,
+        null,
+        {
+          providerId: normalizedProviderId,
+          agentType: normalizedAgentType,
+          ignoreTargetProviderSession: true,
+        },
       )
     },
 

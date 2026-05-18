@@ -46,7 +46,7 @@ class _FakeProvider:
 
 
 class LiveEditorProviderSelectionTest(unittest.TestCase):
-    def test_fresh_codex_handoff_falls_back_to_direct_codex_provider_when_agent_deck_launch_contract_missing(self) -> None:
+    def test_agent_deck_selected_codex_handoff_requires_agent_deck_launch_contract(self) -> None:
         agent_deck = _FakeProvider("agent-deck")
         codex_cli = _FakeProvider("codex-cli")
         thread = SimpleNamespace(provider_id=None, provider_session_id=None)
@@ -68,14 +68,58 @@ class LiveEditorProviderSelectionTest(unittest.TestCase):
                 ),
             ),
         ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main._live_editor_agent_provider_or_error(
+                    "agent-deck",
+                    agent_type="codex",
+                    target_provider_session_id=None,
+                    thread=thread,
+                )
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertIn("launch --yolo", str(raised.exception.detail))
+
+    def test_codex_cli_selected_handoff_uses_direct_codex_provider(self) -> None:
+        agent_deck = _FakeProvider("agent-deck")
+        codex_cli = _FakeProvider("codex-cli")
+        thread = SimpleNamespace(provider_id=None, provider_session_id=None)
+
+        def fake_get_provider(provider_id: str):
+            return {
+                "agent-deck": agent_deck,
+                "codex-cli": codex_cli,
+            }.get(provider_id)
+
+        with patch.object(main, "get_agent_provider", side_effect=fake_get_provider):
             provider = main._live_editor_agent_provider_or_error(
-                "agent-deck",
+                "codex-cli",
                 agent_type="codex",
                 target_provider_session_id=None,
                 thread=thread,
             )
 
         self.assertIs(provider, codex_cli)
+
+    def test_agent_deck_failure_retry_options_offer_matching_direct_cli_provider(self) -> None:
+        codex_cli = _FakeProvider("codex-cli")
+        claude_cli = _FakeProvider("claude-cli")
+
+        def fake_get_provider(provider_id: str):
+            return {
+                "codex-cli": codex_cli,
+                "claude-cli": claude_cli,
+            }.get(provider_id)
+
+        with patch.object(main, "get_agent_provider", side_effect=fake_get_provider):
+            codex_options = main._direct_cli_retry_options_for_agent("codex")
+            claude_options = main._direct_cli_retry_options_for_agent("claude")
+
+        self.assertEqual(codex_options[0]["provider_id"], "codex-cli")
+        self.assertEqual(codex_options[0]["agent_type"], "codex")
+        self.assertTrue(codex_options[0]["available"])
+        self.assertEqual(claude_options[0]["provider_id"], "claude-cli")
+        self.assertEqual(claude_options[0]["agent_type"], "claude")
+        self.assertTrue(claude_options[0]["available"])
 
     def test_existing_agent_deck_binding_does_not_silently_fallback_to_codex_provider(self) -> None:
         agent_deck = _FakeProvider("agent-deck")

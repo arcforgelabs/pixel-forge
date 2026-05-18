@@ -492,6 +492,7 @@ def update_live_editor_thread(
     thread_id: str,
     *,
     profile_id: str = "default",
+    backend: str | None = None,
     workspace_path: str | None = None,
     provider_id: str | None = None,
     provider_session_id: str | None = None,
@@ -540,6 +541,9 @@ def update_live_editor_thread(
     if workspace_path is not None:
         assignments.append("workspace_path = ?")
         values.append(str(Path(workspace_path).resolve()))
+    if backend is not None:
+        assignments.append("backend = ?")
+        values.append(backend.strip() or "agent-deck")
     if provider_session_title is not None or agent_deck_session_title is not None:
         assignments.append("agent_deck_session_title = ?")
         values.append(normalized_agent_deck_session_title)

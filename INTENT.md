@@ -51,12 +51,14 @@ The target architecture for this fix is:
 4. `PIXEL_FORGE_WITH_AGENT_DECK=auto` must not choose an external Agent Deck binary that lacks required Pixel Forge capabilities when a bundled compatible foundation is available. If neither candidate is compatible, the provider should report `unavailable` or `degraded` with a clear diagnostic instead of creating a failed chat card.
 5. Fresh Codex-backed Live Editor handoffs should default to the direct `codex-cli` provider using the official `codex app-server` / remote-TUI protocol path where possible. Agent Deck-hosted Codex remains a compatibility surface, not the primary Codex transport.
 6. The immediate proof case is an installed external Agent Deck like `v1.9.11-local` whose `launch` command lacks `--yolo`: Pixel Forge should either route the selected-preview request through `codex-cli` successfully or select the bundled compatible Agent Deck provider explicitly. It must not send an unsupported Agent Deck flag and surface raw CLI help as the assistant response.
+7. If the user explicitly selects Agent Deck, Pixel Forge must not silently fall back to a direct CLI provider when Agent Deck launch or dispatch fails. The failure should be loud in the chat transcript, carry the failed provider/agent metadata, and offer deliberate replay actions for the matching direct CLI provider (`codex-cli` for Codex, `claude-cli` for Claude Code) when that provider is available.
 
 Current source state:
 
 1. `[validated]` The public-release cleanup cut was installed and pushed at commit `30c6982` (`Prepare public release settings cleanup`).
 2. `[validated]` The installed controller restarts from the repo-built runtime on port `7201`.
-3. `[active]` The next runtime blocker is provider launch capability negotiation: the installed controller can still choose an external Agent Deck executable that lacks the newer `launch --yolo` contract required by Pixel Forge's current Agent Deck Codex path.
+3. `[validated]` The installed controller no longer silently routes a selected Agent Deck Codex request to direct Codex when the external Agent Deck executable lacks the newer `launch --yolo` contract. Basis: commit `5bea58d` gates the Agent Deck launch contract and commit `6fb0549` validates direct Codex CLI resolution in the service runtime.
+4. `[active]` The next runtime blocker is intentional failure and replay UX: Agent Deck-selected requests should fail loudly when Agent Deck is unavailable or incompatible, then expose an explicit user-triggered direct CLI retry option for the matching agent instead of performing an automatic hidden fallback.
 
 The goal is complete only when all of these are true:
 
@@ -80,8 +82,9 @@ Smallest complete implementation sequence:
 3. Move no-approval launch translation out of core Live Editor dispatch and into the selected provider adapter. Core should pass a neutral autonomy policy; `agent-deck`, `codex-cli`, and future providers decide their own concrete flags.
 4. Make fresh Codex Live Editor handoffs prefer the direct `codex-cli` provider and official `codex app-server` / remote-TUI protocol path where available.
 5. Preserve Agent Deck-hosted Codex as a compatibility path by proving the bundled Agent Deck runtime still accepts the needed launch contract.
-6. Add installed-runtime tests or smoke checks for the exact mismatch: an external Agent Deck without `launch --yolo` must not produce a raw Agent Deck usage error in the chat transcript.
-7. Continue the broader provider migration after this blocker: generic DB bindings, Live Editor `ensure/send/observe` through `AgentProvider`, and provider-neutral frontend/settings naming.
+6. Add direct CLI retry metadata to loud Agent Deck failures, with front-end replay actions that dispatch through the selected direct provider and clear the failed Agent Deck binding for that retry.
+7. Add installed-runtime tests or smoke checks for the exact mismatch: an external Agent Deck without `launch --yolo` must not produce a raw Agent Deck usage error in the chat transcript and must present the explicit direct-CLI replay action.
+8. Continue the broader provider migration after this blocker: generic DB bindings, Live Editor `ensure/send/observe` through `AgentProvider`, and provider-neutral frontend/settings naming.
 
 # Requirements
 

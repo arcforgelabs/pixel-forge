@@ -23,6 +23,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         os.environ["PIXEL_FORGE_DB_PATH"] = str(Path(self.tempdir.name) / "pixel-forge.db")
         project_store._DB_INITIALIZED = False
         live_editor_threads._DB_INITIALIZED = False
+        workstation_events._DB_INITIALIZED = False
 
     def tearDown(self) -> None:
         if self.original_shared_state_dir is None:
@@ -35,6 +36,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             os.environ["PIXEL_FORGE_DB_PATH"] = self.original_db_path
         project_store._DB_INITIALIZED = False
         live_editor_threads._DB_INITIALIZED = False
+        workstation_events._DB_INITIALIZED = False
 
     def test_upsert_session_persists_sanitized_editor_state(self) -> None:
         project_path = Path(self.tempdir.name) / "project"

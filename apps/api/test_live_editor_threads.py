@@ -95,6 +95,30 @@ class LiveEditorThreadStoreTest(unittest.TestCase):
         self.assertEqual(updated.provider_agent_id, "codex")
         self.assertIsNone(updated.agent_deck_session_id)
 
+    def test_update_live_editor_thread_can_switch_backend_to_direct_provider(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+
+        thread = live_editor_threads.get_or_create_live_editor_thread(
+            str(project_path),
+            thread_id="thread-direct",
+        )
+        updated = live_editor_threads.update_live_editor_thread(
+            thread.thread_id,
+            backend="codex-cli",
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            provider_session_title="Codex thread",
+            provider_agent_id="codex",
+            agent_deck_session_id=None,
+            agent_deck_session_title=None,
+        )
+
+        self.assertEqual(updated.backend, "codex-cli")
+        self.assertEqual(updated.provider_id, "codex-cli")
+        self.assertEqual(updated.provider_session_id, "codex-thread-a")
+        self.assertIsNone(updated.agent_deck_session_id)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -495,7 +495,11 @@ async def serve_test_harness():
 
 
 # Mount test-app as static files - MUST be registered before catch-all proxy router
-app.mount("/test-app", StaticFiles(directory="test-app", html=True), name="test-app")
+app.mount(
+    "/test-app",
+    StaticFiles(directory=Path(__file__).resolve().parent / "test-app", html=True),
+    name="test-app",
+)
 
 
 # Import app proxy router and session helpers
@@ -571,7 +575,7 @@ class ProfileStateRequest(BaseModel):
     last_workspace_browse_directory: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
-    default_agent_provider_id: Literal["agent-deck", "codex-cli"] = "agent-deck"
+    default_agent_provider_id: Literal["agent-deck", "claude-cli", "codex-cli"] = "agent-deck"
     default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "claude"
     default_workspace_mode: Literal["root"] = "root"
     claude_default_model: str | None = None
@@ -885,10 +889,10 @@ def _project_chat_from_session_record(session_record) -> ProjectChatRecord:
         thread_id=thread_id,
         workspace_path=normalized_workspace_path,
         backend=session_record.backend,
-        provider_id=session_record.provider_id,
-        provider_session_id=session_record.provider_session_id,
-        provider_session_title=session_record.provider_session_title,
-        provider_agent_id=session_record.provider_agent_id,
+        provider_id=getattr(session_record, "provider_id", None),
+        provider_session_id=getattr(session_record, "provider_session_id", None),
+        provider_session_title=getattr(session_record, "provider_session_title", None),
+        provider_agent_id=getattr(session_record, "provider_agent_id", None),
         agent_deck_session_id=session_record.agent_deck_session_id,
         agent_deck_session_title=session_record.agent_deck_session_title,
         agent_deck_tool=session_record.agent_deck_tool,
@@ -1344,6 +1348,35 @@ def _agent_provider_or_error(provider_id: str):
     return provider
 
 
+DIRECT_CLI_RETRY_PROVIDER_BY_AGENT = {
+    "claude": "claude-cli",
+    "claude-code": "claude-cli",
+    "codex": "codex-cli",
+}
+
+
+def _direct_cli_retry_options_for_agent(agent_type: object) -> list[dict[str, object]]:
+    normalized_agent_type = agent_type.strip().lower() if isinstance(agent_type, str) else ""
+    retry_provider_id = DIRECT_CLI_RETRY_PROVIDER_BY_AGENT.get(normalized_agent_type)
+    if not retry_provider_id:
+        return []
+    retry_provider = get_agent_provider(retry_provider_id)
+    if retry_provider is None:
+        return []
+    status = retry_provider.status()
+    available = bool(status.enabled and status.available)
+    return [
+        {
+            "id": f"retry-{retry_provider_id}",
+            "label": f"Retry with {retry_provider.display_name}",
+            "provider_id": retry_provider_id,
+            "agent_type": "claude" if retry_provider_id == "claude-cli" else normalized_agent_type,
+            "available": available,
+            "reason": None if available else status.reason or "Direct CLI provider is unavailable",
+        }
+    ]
+
+
 def _live_editor_agent_provider_or_error(
     provider_id: str,
     *,
@@ -1372,28 +1405,6 @@ def _live_editor_agent_provider_or_error(
         requires_agent_deck_yolo and not yolo_available
     ):
         return provider
-
-    has_explicit_target = bool(
-        isinstance(target_provider_session_id, str)
-        and target_provider_session_id.strip()
-    )
-    has_existing_agent_deck_binding = bool(
-        selected_provider_id == "agent-deck"
-        and getattr(thread, "provider_id", None) == "agent-deck"
-        and getattr(thread, "provider_session_id", None)
-    )
-    if (
-        selected_provider_id == "agent-deck"
-        and normalized_agent_type == "codex"
-        and not yolo_available
-        and not has_explicit_target
-        and not has_existing_agent_deck_binding
-    ):
-        codex_provider = get_agent_provider("codex-cli")
-        if codex_provider is not None:
-            codex_status = codex_provider.status()
-            if codex_status.enabled and codex_status.available:
-                return codex_provider
 
     if not status.enabled:
         raise HTTPException(status_code=503, detail=status.reason or "Agent provider is disabled")
@@ -4268,6 +4279,13 @@ async def live_editor_chat(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "error",
                         "message": str(exc.detail),
+                        "failed_provider_id": provider_id,
+                        "failed_agent_type": agent_type,
+                        "retry_options": (
+                            _direct_cli_retry_options_for_agent(agent_type)
+                            if provider_id == "agent-deck"
+                            else []
+                        ),
                     })
                     continue
                 previous_request_id = thread.last_request_id
@@ -4335,15 +4353,28 @@ async def live_editor_chat(websocket: WebSocket):
                         thread.thread_id,
                         session_info.agent_deck_session_id,
                     )
+                provider_session_id = session_info.agent_deck_session_id
+                provider_session_title = session_info.agent_deck_session_title
+                provider_agent_id = session_info.tool
+                agent_deck_session_id = (
+                    provider_session_id if agent_provider.provider_id == "agent-deck" else None
+                )
+                agent_deck_session_title = (
+                    provider_session_title if agent_provider.provider_id == "agent-deck" else None
+                )
+                agent_deck_tool = (
+                    provider_agent_id if agent_provider.provider_id == "agent-deck" else None
+                )
                 thread = update_live_editor_thread(
                     thread.thread_id,
+                    backend=agent_provider.provider_id,
                     workspace_path=session_info.workspace_path,
                     provider_id=agent_provider.provider_id,
-                    provider_session_id=session_info.agent_deck_session_id,
-                    provider_session_title=session_info.agent_deck_session_title,
-                    provider_agent_id=session_info.tool,
-                    agent_deck_session_id=session_info.agent_deck_session_id,
-                    agent_deck_session_title=session_info.agent_deck_session_title,
+                    provider_session_id=provider_session_id,
+                    provider_session_title=provider_session_title,
+                    provider_agent_id=provider_agent_id,
+                    agent_deck_session_id=agent_deck_session_id,
+                    agent_deck_session_title=agent_deck_session_title,
                     acpx_agent=session_info.acpx_agent or "",
                     acpx_session_name=session_info.acpx_session_name or "",
                     acpx_record_id=session_info.acpx_record_id or "",
@@ -4353,15 +4384,15 @@ async def live_editor_chat(websocket: WebSocket):
                 upsert_session(
                     normalized_project_path,
                     thread_id=thread.thread_id,
-                    backend=thread.backend,
+                    backend=agent_provider.provider_id,
                     workspace_path=session_info.workspace_path,
                     provider_id=agent_provider.provider_id,
-                    provider_session_id=session_info.agent_deck_session_id,
-                    provider_session_title=session_info.agent_deck_session_title,
-                    provider_agent_id=session_info.tool,
-                    agent_deck_session_id=session_info.agent_deck_session_id,
-                    agent_deck_session_title=session_info.agent_deck_session_title,
-                    agent_deck_tool=session_info.tool,
+                    provider_session_id=provider_session_id,
+                    provider_session_title=provider_session_title,
+                    provider_agent_id=provider_agent_id,
+                    agent_deck_session_id=agent_deck_session_id,
+                    agent_deck_session_title=agent_deck_session_title,
+                    agent_deck_tool=agent_deck_tool,
                 )
                 self_edit_scope = (
                     _resolve_self_edit_scope(
@@ -4515,15 +4546,15 @@ async def live_editor_chat(websocket: WebSocket):
                     {
                         "type": "session",
                         "session_id": thread.thread_id,
-                        "backend": thread.backend,
+                        "backend": agent_provider.provider_id,
                         "workspace_path": session_info.workspace_path,
                         "provider_id": agent_provider.provider_id,
-                        "provider_session_id": session_info.agent_deck_session_id,
-                        "provider_session_title": session_info.agent_deck_session_title,
-                        "provider_agent_id": session_info.tool,
-                        "agent_deck_session_id": session_info.agent_deck_session_id,
-                        "agent_deck_session_title": session_info.agent_deck_session_title,
-                        "agent_deck_tool": session_info.tool,
+                        "provider_session_id": provider_session_id,
+                        "provider_session_title": provider_session_title,
+                        "provider_agent_id": provider_agent_id,
+                        "agent_deck_session_id": agent_deck_session_id,
+                        "agent_deck_session_title": agent_deck_session_title,
+                        "agent_deck_tool": agent_deck_tool,
                         "acpx_agent": session_info.acpx_agent,
                         "acpx_session_name": session_info.acpx_session_name,
                         "acpx_record_id": session_info.acpx_record_id,
@@ -4716,13 +4747,34 @@ async def live_editor_chat(websocket: WebSocket):
                         thread.thread_id,
                         refreshed_session.agent_deck_session_id,
                     )
+                refreshed_provider_session_id = refreshed_session.agent_deck_session_id
+                refreshed_provider_session_title = refreshed_session.agent_deck_session_title
+                refreshed_provider_agent_id = refreshed_session.tool
+                refreshed_agent_deck_session_id = (
+                    refreshed_provider_session_id
+                    if agent_provider.provider_id == "agent-deck"
+                    else None
+                )
+                refreshed_agent_deck_session_title = (
+                    refreshed_provider_session_title
+                    if agent_provider.provider_id == "agent-deck"
+                    else None
+                )
+                refreshed_agent_deck_tool = (
+                    refreshed_provider_agent_id
+                    if agent_provider.provider_id == "agent-deck"
+                    else None
+                )
                 update_live_editor_thread(
                     thread.thread_id,
+                    backend=agent_provider.provider_id,
                     workspace_path=refreshed_session.workspace_path,
                     provider_id=agent_provider.provider_id,
-                    provider_session_id=refreshed_session.agent_deck_session_id,
-                    provider_session_title=refreshed_session.agent_deck_session_title,
-                    provider_agent_id=refreshed_session.tool,
+                    provider_session_id=refreshed_provider_session_id,
+                    provider_session_title=refreshed_provider_session_title,
+                    provider_agent_id=refreshed_provider_agent_id,
+                    agent_deck_session_id=refreshed_agent_deck_session_id,
+                    agent_deck_session_title=refreshed_agent_deck_session_title,
                     acpx_agent=refreshed_session.acpx_agent or "",
                     acpx_session_name=refreshed_session.acpx_session_name or "",
                     acpx_record_id=refreshed_session.acpx_record_id or "",
@@ -4732,15 +4784,15 @@ async def live_editor_chat(websocket: WebSocket):
                 upsert_session(
                     normalized_project_path,
                     thread_id=thread.thread_id,
-                    backend=thread.backend,
+                    backend=agent_provider.provider_id,
                     workspace_path=refreshed_session.workspace_path,
                     provider_id=agent_provider.provider_id,
-                    provider_session_id=refreshed_session.agent_deck_session_id,
-                    provider_session_title=refreshed_session.agent_deck_session_title,
-                    provider_agent_id=refreshed_session.tool,
-                    agent_deck_session_id=refreshed_session.agent_deck_session_id,
-                    agent_deck_session_title=refreshed_session.agent_deck_session_title,
-                    agent_deck_tool=refreshed_session.tool,
+                    provider_session_id=refreshed_provider_session_id,
+                    provider_session_title=refreshed_provider_session_title,
+                    provider_agent_id=refreshed_provider_agent_id,
+                    agent_deck_session_id=refreshed_agent_deck_session_id,
+                    agent_deck_session_title=refreshed_agent_deck_session_title,
+                    agent_deck_tool=refreshed_agent_deck_tool,
                 )
                 refreshed_self_edit_scope = (
                     _resolve_self_edit_scope(
@@ -4771,15 +4823,15 @@ async def live_editor_chat(websocket: WebSocket):
                     {
                         "type": "complete",
                         "session_id": thread.thread_id,
-                        "backend": thread.backend,
+                        "backend": agent_provider.provider_id,
                         "workspace_path": refreshed_session.workspace_path,
                         "provider_id": agent_provider.provider_id,
-                        "provider_session_id": refreshed_session.agent_deck_session_id,
-                        "provider_session_title": refreshed_session.agent_deck_session_title,
-                        "provider_agent_id": refreshed_session.tool,
-                        "agent_deck_session_id": refreshed_session.agent_deck_session_id,
-                        "agent_deck_session_title": refreshed_session.agent_deck_session_title,
-                        "agent_deck_tool": refreshed_session.tool,
+                        "provider_session_id": refreshed_provider_session_id,
+                        "provider_session_title": refreshed_provider_session_title,
+                        "provider_agent_id": refreshed_provider_agent_id,
+                        "agent_deck_session_id": refreshed_agent_deck_session_id,
+                        "agent_deck_session_title": refreshed_agent_deck_session_title,
+                        "agent_deck_tool": refreshed_agent_deck_tool,
                         "acpx_agent": refreshed_session.acpx_agent,
                         "acpx_session_name": refreshed_session.acpx_session_name,
                         "acpx_record_id": refreshed_session.acpx_record_id,

@@ -114,6 +114,17 @@ class AgentProviderRegistryTest(unittest.TestCase):
         self.assertIn("codex", transports)
         self.assertIn("app-server", transports["codex"]["current_transport"])
 
+    def test_claude_cli_provider_is_registered_as_direct_retry_transport(self) -> None:
+        statuses = [status.to_dict() for status in list_agent_providers()]
+        matches = [status for status in statuses if status["id"] == "claude-cli"]
+        self.assertEqual(len(matches), 1)
+        transports = {
+            transport["agent_id"]: transport
+            for transport in matches[0]["transports"]  # type: ignore[index]
+        }
+        self.assertIn("claude", transports)
+        self.assertIn("direct-CLI replay", transports["claude"]["architecture_note"])
+
     def test_codex_cli_provider_resolves_user_npm_global_bin_without_service_path(self) -> None:
         codex_bin = Path(self.tempdir.name) / ".npm-global" / "bin" / "codex"
         codex_bin.parent.mkdir(parents=True)

@@ -1366,7 +1366,7 @@ def _normalize_agent_type(value: object | None) -> str:
 
 def _normalize_agent_provider_id(value: object | None) -> str:
     normalized = str(value or "").strip()
-    return normalized if normalized in {"agent-deck", "codex-cli"} else "agent-deck"
+    return normalized if normalized in {"agent-deck", "claude-cli", "codex-cli"} else "agent-deck"
 
 
 def _normalize_workspace_mode(value: object | None) -> str:

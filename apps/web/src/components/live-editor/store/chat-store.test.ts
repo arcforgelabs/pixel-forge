@@ -803,6 +803,135 @@ describe('live editor selection history', () => {
     expect(useLiveEditorStore.getState().threadStates[sourceThreadKey]).toBeTruthy()
   })
 
+  it('keeps Agent Deck failures loud and retries explicitly through the selected direct provider', async () => {
+    const sourceSelection = {
+      ...createSelection('one'),
+      timestamp: new Date(),
+    }
+    const replayDraft = {
+      projectPath: '/tmp/example-project',
+      editorState: {
+        draftAgentType: 'codex',
+        draftWorkspaceMode: 'root' as const,
+        activePreviewTool: null,
+        targetUrl: 'http://example.localhost:3000',
+        activeTab: 'chat' as const,
+        viewportMode: 'desktop' as const,
+        showUrlHistory: false,
+        previewTabs: [],
+        activePreviewTabId: null,
+        urlHistory: [],
+        urlHistoryCursor: -1,
+      },
+      selectedElements: [sourceSelection],
+      content: 'Retry this',
+      attachments: [],
+    }
+
+    useSessionStore.setState({
+      liveEditorSession: {
+        threadId: useLiveEditorStore.getState().activeThreadKey,
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project/.agents/bound-codex',
+        providerId: 'agent-deck',
+        providerSessionId: 'deck-session-456',
+        providerSessionTitle: 'bound-codex',
+        providerAgentId: 'codex',
+        agentDeckSessionId: 'deck-session-456',
+        agentDeckSessionTitle: 'bound-codex',
+        agentDeckTool: 'codex',
+        requestId: null,
+      },
+      selectedAgentTargetId: 'deck-session-456',
+      agentTargets: [
+        {
+          id: 'deck-session-456',
+          title: 'bound-codex',
+          path: '/tmp/example-project/.agents/bound-codex',
+          group: 'pixel-forge',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+          providerId: 'agent-deck',
+        },
+      ],
+      defaultAgentProviderId: 'agent-deck',
+    })
+    setActiveThreadState({
+      projectPath: '/tmp/example-project',
+      targetAgentSessionId: 'deck-session-456',
+      targetUrl: 'http://example.localhost:3000',
+      messages: [
+        {
+          id: 'msg-user',
+          role: 'user',
+          content: 'Retry this',
+          timestamp: new Date(),
+          replayDraft,
+        },
+      ],
+      lastReplayDraft: replayDraft,
+      isStreaming: true,
+    })
+
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    ws?.onmessage?.(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'error',
+          message: 'Agent Deck executable does not support the required `launch --yolo` contract',
+          failed_provider_id: 'agent-deck',
+          failed_agent_type: 'codex',
+          retry_options: [
+            {
+              id: 'retry-codex-cli',
+              label: 'Retry with Codex CLI',
+              provider_id: 'codex-cli',
+              agent_type: 'codex',
+              available: true,
+            },
+          ],
+        }),
+      })
+    )
+
+    const errorMessage = useLiveEditorStore.getState().messages.at(-1)
+    expect(errorMessage).toMatchObject({
+      role: 'system',
+      systemTone: 'error',
+      content: expect.stringContaining('launch --yolo'),
+      retryOptions: [
+        {
+          id: 'retry-codex-cli',
+          label: 'Retry with Codex CLI',
+          providerId: 'codex-cli',
+          agentType: 'codex',
+          available: true,
+        },
+      ],
+    })
+
+    const send = vi.fn()
+    ws!.send = send
+    await useLiveEditorStore
+      .getState()
+      .retryMessageWithProvider(errorMessage!.id, 'codex-cli', 'codex')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      message: 'Retry this',
+      provider_id: 'codex-cli',
+      agent_type: 'codex',
+      workspace_mode: 'root',
+    })
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+    expect(useLiveEditorStore.getState().targetAgentSessionId).toBeNull()
+  })
+
   it('hydrates attached Agent Deck snapshot output into an otherwise blank adopted chat lane', async () => {
     setActiveThreadState({
       targetAgentSessionId: 'deck-session-a',
@@ -1717,6 +1846,44 @@ describe('live editor selection history', () => {
       kind: 'image',
       name: 'selection-01-form-panel.jpg',
       dataUrl: 'data:image/jpeg;base64,AAA=',
+    })
+  })
+
+  it('keeps direct provider completion fields separate from Agent Deck fields', () => {
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+
+    ws?.onmessage?.(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'complete',
+          request_id: 'request-direct',
+          selection_count: 0,
+          backend: 'codex-cli',
+          session_id: 'thread-direct',
+          workspace_path: '/tmp/example-project',
+          provider_id: 'codex-cli',
+          provider_session_id: 'codex-thread-a',
+          provider_session_title: 'Codex direct',
+          provider_agent_id: 'codex',
+          agent_deck_session_id: null,
+          agent_deck_session_title: null,
+          agent_deck_tool: null,
+        }),
+      })
+    )
+
+    const liveSession = useSessionStore.getState().liveEditorSession
+    expect(liveSession).toMatchObject({
+      backend: 'codex-cli',
+      providerId: 'codex-cli',
+      providerSessionId: 'codex-thread-a',
+      providerSessionTitle: 'Codex direct',
+      providerAgentId: 'codex',
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
     })
   })
 

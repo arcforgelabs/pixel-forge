@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agent_provider_plugins.agent_deck import AgentDeckProvider
+from agent_provider_plugins.claude_cli import ClaudeCliProvider
 from agent_provider_plugins.codex_cli import CodexCliProvider
 
 from .base import AgentProvider
@@ -11,6 +12,7 @@ class AgentProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, AgentProvider] = {
             AgentDeckProvider.provider_id: AgentDeckProvider(),
+            ClaudeCliProvider.provider_id: ClaudeCliProvider(),
             CodexCliProvider.provider_id: CodexCliProvider(),
         }
 
