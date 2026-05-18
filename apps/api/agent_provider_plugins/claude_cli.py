@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from agent_deck_bridge import AgentDeckBridgeError, _resolve_runtime_executable
@@ -51,6 +53,10 @@ def _resolve_claude_executable() -> str:
         return _resolve_runtime_executable("claude")
     except AgentDeckBridgeError as exc:
         raise ClaudeCliProviderError(str(exc)) from exc
+
+
+def _claude_config_home() -> str:
+    return str(Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser())
 
 
 async def _run_claude_turn(
@@ -156,6 +162,9 @@ class ClaudeCliProvider:
             command=[command] if command else [],
             capabilities=self.capabilities,
             transports=self.transports,
+            diagnostics={
+                "config_home": _claude_config_home(),
+            },
         )
 
     async def list_sessions(

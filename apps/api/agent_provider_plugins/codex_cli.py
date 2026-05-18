@@ -75,6 +75,10 @@ def _resolve_codex_executable() -> str:
     )
 
 
+def _codex_config_home() -> str:
+    return str(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser())
+
+
 @dataclass(slots=True)
 class CodexCliSessionInfo:
     provider_session_id: str
@@ -367,6 +371,9 @@ class CodexCliProvider:
             command=[command] if command else [],
             capabilities=self.capabilities,
             transports=self.transports,
+            diagnostics={
+                "config_home": _codex_config_home(),
+            },
         )
 
     async def list_sessions(

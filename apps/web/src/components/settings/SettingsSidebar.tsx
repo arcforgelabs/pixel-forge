@@ -491,6 +491,7 @@ interface AgentProviderStatus {
   diagnostics?: {
     surface_command?: string[];
     launch_command?: string[];
+    config_home?: string;
     runtime_origin?: string;
     surface_runtime_origin?: string;
     launch_runtime_origin?: string;
@@ -541,6 +542,12 @@ function providerDiagnosticRows(provider: AgentProviderStatus): { label: string;
     rows.push({
       label: "Launch",
       value: `${formatCommand(diagnostics.launch_command)} · ${formatRuntimeOrigin(diagnostics.launch_runtime_origin)}`,
+    });
+  }
+  if (diagnostics.config_home?.trim()) {
+    rows.push({
+      label: "Config home",
+      value: diagnostics.config_home.trim(),
     });
   }
   if (diagnostics.launch_capabilities) {

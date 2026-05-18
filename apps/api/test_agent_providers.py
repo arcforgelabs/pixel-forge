@@ -129,6 +129,7 @@ class AgentProviderRegistryTest(unittest.TestCase):
         diagnostics = status["diagnostics"]  # type: ignore[index]
         self.assertEqual(diagnostics["surface_command"], [str(external)])
         self.assertEqual(diagnostics["launch_command"], [str(bundled)])
+        self.assertIn("config_home", diagnostics)
         self.assertEqual(diagnostics["surface_runtime_origin"], "external")
         self.assertEqual(diagnostics["launch_runtime_origin"], "bundled")
         self.assertTrue(diagnostics["launch_capabilities"]["no_approval"])
@@ -153,6 +154,7 @@ class AgentProviderRegistryTest(unittest.TestCase):
         statuses = [status.to_dict() for status in list_agent_providers()]
         matches = [status for status in statuses if status["id"] == "codex-cli"]
         self.assertEqual(len(matches), 1)
+        self.assertIn("config_home", matches[0]["diagnostics"])
         transports = {
             transport["agent_id"]: transport
             for transport in matches[0]["transports"]  # type: ignore[index]
@@ -164,6 +166,7 @@ class AgentProviderRegistryTest(unittest.TestCase):
         statuses = [status.to_dict() for status in list_agent_providers()]
         matches = [status for status in statuses if status["id"] == "claude-cli"]
         self.assertEqual(len(matches), 1)
+        self.assertIn("config_home", matches[0]["diagnostics"])
         transports = {
             transport["agent_id"]: transport
             for transport in matches[0]["transports"]  # type: ignore[index]

@@ -12,7 +12,7 @@ from agent_deck_runtime import (
     agent_deck_command,
 )
 import agent_deck_bridge
-from runtime_config import agent_deck_provider_enabled
+from runtime_config import agent_deck_home_dir, agent_deck_provider_enabled
 
 from agent_providers.models import (
     AgentTurnPolicy,
@@ -121,6 +121,7 @@ class AgentDeckProvider:
             diagnostics={
                 "surface_command": surface_command,
                 "launch_command": launch_command,
+                "config_home": str(agent_deck_home_dir()),
                 "runtime_origin": agent_deck_runtime_origin(launch_command or surface_command),
                 "surface_runtime_origin": agent_deck_runtime_origin(surface_command),
                 "launch_runtime_origin": agent_deck_runtime_origin(launch_command),
