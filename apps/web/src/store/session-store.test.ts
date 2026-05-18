@@ -878,6 +878,44 @@ describe("session-store project chat visibility", () => {
     });
   });
 
+  it("treats stale Agent Deck fields as non-canonical on direct provider sessions", () => {
+    useSessionStore.getState().upsertProjectSession({
+      threadId: "thread-codex",
+      backend: "agent-provider",
+      workspacePath: "/tmp/example-project",
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      providerSessionTitle: "Codex direct",
+      providerAgentId: "codex",
+      agentDeckSessionId: "stale-deck-thread",
+      agentDeckSessionTitle: "Stale deck title",
+      agentDeckTool: "claude",
+      requestId: "request-codex",
+    });
+
+    expect(getActiveProjectSessions()[0]).toMatchObject({
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      providerAgentId: "codex",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+    });
+    expect(getActiveProjectChats()[0]).toMatchObject({
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+    });
+    expect(useSessionStore.getState().agentTargets[0]).toMatchObject({
+      providerId: "codex-cli",
+      id: "codex-thread-a",
+      title: "Codex direct",
+      tool: "codex",
+    });
+  });
+
   it("does not surface an unbound local draft as a visible project chat", () => {
     useSessionStore.getState().upsertProjectSession({
       threadId: "draft-hidden",
@@ -1077,6 +1115,81 @@ describe("session-store project chat visibility", () => {
     expect(getActiveProjectChats().map((chat) => chat.threadId)).toEqual([
       "chat-promoted",
     ]);
+  });
+
+  it("persists direct provider identity without leaking stale Agent Deck fields", async () => {
+    let postedBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url.includes("/api/projects/")
+          && url.includes("/sessions")
+          && init?.method === "POST"
+        ) {
+          postedBody = JSON.parse(String(init.body || "{}"));
+          return new Response(
+            JSON.stringify({
+              id: 10,
+              project_path: "/tmp/example-project",
+              workspace_path: "/tmp/example-project",
+              thread_id: "thread-codex",
+              backend: "agent-provider",
+              provider_id: "codex-cli",
+              provider_session_id: "codex-thread-a",
+              provider_session_title: "Codex direct",
+              provider_agent_id: "codex",
+              agent_deck_session_id: "stale-deck-thread",
+              agent_deck_session_title: "Stale deck title",
+              agent_deck_tool: "claude",
+              editor_state: null,
+              created_at: "2026-03-21T00:00:00Z",
+              last_active: "2026-03-21T00:05:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      liveEditorSession: null,
+      projectSessionsByProject: {},
+      projectChatsByProject: {},
+    });
+
+    const saved = await useSessionStore.getState().persistProjectSession({
+      threadId: "thread-codex",
+      backend: "agent-provider",
+      workspacePath: "/tmp/example-project",
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      providerSessionTitle: "Codex direct",
+      providerAgentId: "codex",
+      agentDeckSessionId: "stale-deck-thread",
+      agentDeckSessionTitle: "Stale deck title",
+      agentDeckTool: "claude",
+      requestId: null,
+    });
+
+    expect(postedBody).toMatchObject({
+      provider_id: "codex-cli",
+      provider_session_id: "codex-thread-a",
+      provider_agent_id: "codex",
+      agent_deck_session_id: null,
+      agent_deck_session_title: null,
+      agent_deck_tool: null,
+    });
+    expect(saved).toMatchObject({
+      providerId: "codex-cli",
+      providerSessionId: "codex-thread-a",
+      agentDeckSessionId: null,
+      agentDeckSessionTitle: null,
+      agentDeckTool: null,
+    });
   });
 });
 
