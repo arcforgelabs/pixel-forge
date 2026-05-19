@@ -1,6 +1,6 @@
 {
   "name": "@arcforgelabs/pixel-forge",
-  "version": "2026.5.19",
+  "version": "2026.5.19-1",
   "description": "Public installer entrypoint for Pixel Forge.",
   "type": "module",
   "bin": {

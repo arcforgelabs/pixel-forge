@@ -12,7 +12,7 @@ class RuntimeVersionTest(unittest.TestCase):
     def test_runtime_info_includes_install_git_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            (root / "VERSION").write_text("2026.5.19\n", encoding="utf-8")
+            (root / "VERSION").write_text("2026.5.19-1\n", encoding="utf-8")
             (root / "main.py").write_text("# app\n", encoding="utf-8")
             (root / "requirements.txt").write_text("", encoding="utf-8")
             (root / "frontend").mkdir()
@@ -23,7 +23,7 @@ class RuntimeVersionTest(unittest.TestCase):
                         "installedAt": "2026-05-18T13:19:20Z",
                         "sourcePath": "/home/samuelrodda/repos/pixel-forge",
                         "gitCommit": "22c1c13abcde",
-                        "gitDescribe": "v2026.5.19-49-g22c1c13",
+                        "gitDescribe": "v2026.5.19-1-49-g22c1c13",
                         "gitBranch": "master",
                         "gitDirty": True,
                     }
@@ -33,11 +33,11 @@ class RuntimeVersionTest(unittest.TestCase):
 
             info = runtime_version.read_runtime_info_for_root(root)
 
-        self.assertEqual(info["controllerVersion"], "2026.5.19")
+        self.assertEqual(info["controllerVersion"], "2026.5.19-1")
         self.assertEqual(info["installedAt"], "2026-05-18T13:19:20Z")
         self.assertEqual(info["sourcePath"], "/home/samuelrodda/repos/pixel-forge")
         self.assertEqual(info["gitCommit"], "22c1c13abcde")
-        self.assertEqual(info["gitDescribe"], "v2026.5.19-49-g22c1c13")
+        self.assertEqual(info["gitDescribe"], "v2026.5.19-1-49-g22c1c13")
         self.assertEqual(info["gitBranch"], "master")
         self.assertIs(info["gitDirty"], True)
 

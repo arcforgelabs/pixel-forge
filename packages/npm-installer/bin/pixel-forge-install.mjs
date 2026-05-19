@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import process from 'node:process'
 
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+)
 const repoUrl = process.env.PIXEL_FORGE_REPO_URL || 'https://github.com/arcforgelabs/pixel-forge.git'
-const ref = process.env.PIXEL_FORGE_REF || 'master'
+const ref = process.env.PIXEL_FORGE_REF || `v${packageJson.version}`
 
 function run(command, args) {
   const result = spawnSync(command, args, {

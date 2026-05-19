@@ -3,7 +3,7 @@
   "productName": "Pixel Forge",
   "desktopName": "pixel-forge.desktop",
   "private": true,
-  "version": "2026.5.19",
+  "version": "2026.5.19-1",
   "type": "module",
   "main": "main.mjs",
   "scripts": {

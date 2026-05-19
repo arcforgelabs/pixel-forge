@@ -1,6 +1,6 @@
 {
   "name": "@arcforgelabs/pixel-forge-sdk",
-  "version": "2026.5.19",
+  "version": "2026.5.19-1",
   "description": "SDK for Pixel Forge screenshot bootstrap workflows",
   "type": "module",
   "main": "index.js",
