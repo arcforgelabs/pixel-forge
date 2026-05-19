@@ -131,6 +131,23 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
             [str(bundled)],
         )
 
+    def test_bridge_provider_actions_share_launch_capable_runtime(self) -> None:
+        import agent_deck_bridge
+
+        fake_bin = Path(self.tempdir.name) / "agent-deck-standalone"
+        self._write_agent_deck_bin(fake_bin, supports_yolo=False)
+        repo = Path(self.tempdir.name) / "repo"
+        bundled = repo / "foundations" / "agent-deck" / "agent-deck"
+        bundled.parent.mkdir(parents=True)
+        self._write_agent_deck_bin(bundled, supports_yolo=True)
+        os.environ["PATH"] = self.tempdir.name
+        os.environ["PIXEL_FORGE_RUNTIME_SOURCE_ROOT"] = str(repo)
+
+        self.assertEqual(
+            agent_deck_bridge._agent_deck_args("session", "send", "deck-a", "hello"),
+            [str(bundled), "session", "send", "deck-a", "hello"],
+        )
+
     def test_agent_deck_available_when_only_bundled_binary_exists(self) -> None:
         os.environ["PATH"] = str(Path(self.tempdir.name) / "empty-bin")
         repo = Path(self.tempdir.name) / "repo"

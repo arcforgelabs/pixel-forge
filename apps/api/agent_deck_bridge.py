@@ -464,7 +464,10 @@ async def _run_command_with_env(
 
 def _agent_deck_args(*args: str) -> list[str]:
     require_launch_yolo = bool(args and args[0] == "launch" and "--yolo" in args)
-    command = agent_deck_command(require_launch_yolo=require_launch_yolo)
+    command = (
+        agent_deck_command(require_launch_yolo=True)
+        or agent_deck_command(require_launch_yolo=require_launch_yolo)
+    )
     if not command:
         _, reason = agent_deck_available(require_launch_yolo=require_launch_yolo)
         raise AgentDeckBridgeError(

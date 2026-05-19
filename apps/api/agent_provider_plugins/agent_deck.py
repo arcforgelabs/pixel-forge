@@ -111,6 +111,7 @@ class AgentDeckProvider:
         available, reason = agent_deck_available()
         surface_command = agent_deck_command() if enabled else []
         launch_command = agent_deck_command(require_launch_yolo=True) if enabled else []
+        provider_command = launch_command or surface_command
         launch_available, launch_reason = (
             agent_deck_available(require_launch_yolo=True)
             if enabled
@@ -122,14 +123,16 @@ class AgentDeckProvider:
             enabled=enabled,
             available=available,
             reason=reason,
-            command=surface_command,
+            command=provider_command,
             capabilities=self.capabilities,
             transports=self.transports,
             diagnostics={
+                "provider_command": provider_command,
                 "surface_command": surface_command,
                 "launch_command": launch_command,
                 "config_home": str(agent_deck_home_dir()),
-                "runtime_origin": agent_deck_runtime_origin(launch_command or surface_command),
+                "runtime_origin": agent_deck_runtime_origin(provider_command),
+                "provider_runtime_origin": agent_deck_runtime_origin(provider_command),
                 "surface_runtime_origin": agent_deck_runtime_origin(surface_command),
                 "launch_runtime_origin": agent_deck_runtime_origin(launch_command),
                 "launch_capabilities": {

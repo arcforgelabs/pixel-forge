@@ -128,9 +128,12 @@ class AgentProviderRegistryTest(unittest.TestCase):
             status = self._agent_deck_status()
 
         diagnostics = status["diagnostics"]  # type: ignore[index]
+        self.assertEqual(status["command"], [str(bundled)])
+        self.assertEqual(diagnostics["provider_command"], [str(bundled)])
         self.assertEqual(diagnostics["surface_command"], [str(external)])
         self.assertEqual(diagnostics["launch_command"], [str(bundled)])
         self.assertIn("config_home", diagnostics)
+        self.assertEqual(diagnostics["provider_runtime_origin"], "bundled")
         self.assertEqual(diagnostics["surface_runtime_origin"], "external")
         self.assertEqual(diagnostics["launch_runtime_origin"], "bundled")
         self.assertTrue(diagnostics["launch_capabilities"]["no_approval"])
