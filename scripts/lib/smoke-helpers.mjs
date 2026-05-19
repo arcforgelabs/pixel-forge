@@ -74,6 +74,7 @@ export async function createSmokeContext(name) {
 
   const env = {
     ...process.env,
+    CI: 'true',
     PATH: pathEntries.join(path.delimiter),
     PIXEL_FORGE_INSTALL_NAME: installName,
     PIXEL_FORGE_CLI_NAME: installName,

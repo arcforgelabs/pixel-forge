@@ -31,10 +31,11 @@
     "test:web": "pnpm --dir apps/web test",
     "test:retired-lane-env": "bash scripts/test-retired-lane-env.sh",
     "smoke:install": "node scripts/smoke-install.mjs",
+    "smoke:gui": "node scripts/smoke-gui-integration.mjs",
     "smoke:direct-provider": "node scripts/smoke-direct-provider-reload.mjs",
     "smoke:direct-provider:turn": "PIXEL_FORGE_SMOKE_DIRECT_TURN=1 node scripts/smoke-direct-provider-reload.mjs",
     "smoke:update": "node scripts/smoke-controller-update.mjs",
-    "verify": "pnpm check:version && pnpm check:shell && pnpm check:api && pnpm check:desktop && pnpm lint:web && pnpm test:web && pnpm check:web && pnpm test:retired-lane-env && pnpm smoke:install && pnpm smoke:direct-provider && pnpm smoke:update"
+    "verify": "pnpm check:version && pnpm check:shell && pnpm check:api && pnpm check:desktop && pnpm lint:web && pnpm test:web && pnpm check:web && pnpm test:retired-lane-env && pnpm smoke:install && pnpm smoke:gui && pnpm smoke:direct-provider && pnpm smoke:update"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
