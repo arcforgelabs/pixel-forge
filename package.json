@@ -33,6 +33,7 @@
     "smoke:install": "node scripts/smoke-install.mjs",
     "smoke:gui": "node scripts/smoke-gui-integration.mjs",
     "smoke:installed-gui-provider-matrix": "node scripts/smoke-installed-gui-provider-matrix.mjs",
+    "smoke:installed-gui-direct-provider:turn": "node scripts/smoke-installed-gui-direct-provider-live.mjs",
     "smoke:agent-deck-provider": "node scripts/smoke-agent-deck-provider.mjs",
     "smoke:direct-provider": "node scripts/smoke-direct-provider-reload.mjs",
     "smoke:direct-provider:turn": "PIXEL_FORGE_SMOKE_DIRECT_TURN=1 node scripts/smoke-direct-provider-reload.mjs",
