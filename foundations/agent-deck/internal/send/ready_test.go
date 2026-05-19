@@ -149,4 +149,24 @@ func TestCodexInterstitialDetectors(t *testing.T) {
 	if isCodexTrustInterstitial(fmt.Sprint("normal output")) {
 		t.Fatal("did not expect normal output to look like a codex trust prompt")
 	}
+
+	readyWithStaleInterstitials := `Do you trust the contents of this directory?
+Working with untrusted contents comes with higher risk of prompt injection.
+Press enter to continue
+
+╭─────────────────────────────────────────────────╮
+│ ✨ Update available! 0.130.0 -> 0.131.0         │
+╰─────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.130.0)                             │
+╰────────────────────────────────────────────────────────╯
+
+› Explain this codebase`
+	if isCodexTrustInterstitial(readyWithStaleInterstitials) {
+		t.Fatal("stale trust prompt should not block once the Codex composer is visible")
+	}
+	if isCodexUpdateInterstitial(readyWithStaleInterstitials) {
+		t.Fatal("stale update notice should not block once the Codex composer is visible")
+	}
 }

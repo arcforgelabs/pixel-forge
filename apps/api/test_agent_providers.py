@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionTarget
+from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionInfo, AgentDeckSessionTarget
 from agent_provider_plugins import codex_cli as codex_cli_plugin
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
@@ -387,6 +387,62 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(serialized["provider_session_id"], "s3")
         self.assertEqual(serialized["agent_id"], "pi")
         self.assertEqual(serialized["output"], "done")
+
+    async def test_dispatch_turn_waits_for_starting_codex_session_readiness(self) -> None:
+        session = AgentDeckSessionInfo(
+            agent_deck_session_id="deck-starting",
+            agent_deck_session_title="Starting Codex",
+            workspace_path="/tmp/project",
+            tmux_session="tmux-a",
+            tool="codex",
+            status="starting",
+            acpx_agent=None,
+            acpx_session_name=None,
+            acpx_record_id=None,
+            acp_session_id=None,
+            claude_session_id=None,
+            codex_session_id=None,
+            gemini_session_id=None,
+            jsonl_path=None,
+        )
+        send_mock = AsyncMock(return_value=None)
+        wait_mock = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "agent_provider_plugins.agent_deck.agent_deck_bridge.get_last_output",
+                AsyncMock(return_value=""),
+            ),
+            patch(
+                "agent_provider_plugins.agent_deck.agent_deck_bridge.send_agent_deck_prompt_reliably",
+                send_mock,
+            ),
+            patch(
+                "agent_provider_plugins.agent_deck.agent_deck_bridge.wait_for_agent_deck_turn_completion",
+                wait_mock,
+            ),
+        ):
+            dispatch = await AgentDeckProvider().dispatch_turn(
+                session,
+                project_path="/tmp/project",
+                prompt="hello",
+                image_paths=[],
+                startup_timeout_seconds=1.0,
+                completion_timeout_seconds=2.0,
+            )
+            await dispatch.wait_task
+
+        send_mock.assert_awaited_once_with(
+            session,
+            project_path="/tmp/project",
+            prompt="hello",
+            no_wait=False,
+        )
+        wait_mock.assert_awaited_once_with(
+            session,
+            startup_timeout_seconds=1.0,
+            completion_timeout_seconds=2.0,
+        )
 
 
 class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):

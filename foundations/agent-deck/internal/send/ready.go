@@ -123,6 +123,9 @@ func waitForCodexReady(target readyTarget, opts waitForReadyOptions) error {
 }
 
 func isCodexUpdateInterstitial(content string) bool {
+	if hasCodexMainComposer(content) {
+		return false
+	}
 	lower := strings.ToLower(content)
 	if !strings.Contains(lower, "update available") {
 		return false
@@ -133,9 +136,18 @@ func isCodexUpdateInterstitial(content string) bool {
 }
 
 func isCodexTrustInterstitial(content string) bool {
+	if hasCodexMainComposer(content) {
+		return false
+	}
 	lower := strings.ToLower(content)
 	return strings.Contains(lower, "do you trust the contents of this directory?") &&
 		strings.Contains(lower, "prompt injection")
+}
+
+func hasCodexMainComposer(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "openai codex") &&
+		(strings.Contains(content, "\n› ") || strings.Contains(content, "\n❯ "))
 }
 
 func dismissCodexUpdateInterstitial(target readyTarget) error {

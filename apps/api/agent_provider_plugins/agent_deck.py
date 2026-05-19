@@ -317,6 +317,7 @@ class AgentDeckProvider:
         normalized_session_status = (session_info.status or "").strip().lower()
         queue_onto_busy_session = normalized_session_status not in {
             "",
+            "starting",
             "waiting",
             "idle",
         }

@@ -190,6 +190,6 @@ def agent_deck_env() -> dict[str, str]:
         env.setdefault("AGENTDECK_DIR", home_dir)
         env.setdefault("AGENT_DECK_DIR", home_dir)
     env.update(agent_deck_governance_env(Path(home_dir)))
-    for key in ("TMUX", "TMUX_PANE"):
+    for key in ("TMUX", "TMUX_PANE", "npm_config_prefix", "NPM_CONFIG_PREFIX"):
         env.pop(key, None)
     return env

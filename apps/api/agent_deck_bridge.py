@@ -33,6 +33,7 @@ STREAM_POLL_INTERVAL_SECONDS = 0.2
 CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
+AGENT_DECK_LAUNCH_RECOVERY_TIMEOUT_SECONDS = 45.0
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 AgentDeckLaunchSession = Callable[..., Awaitable[dict[str, object]]]
 def _pi_agent_dir() -> Path:
@@ -1520,7 +1521,7 @@ async def _wait_for_claude_session_id(
 async def _wait_for_codex_session_id(
     agent_deck_session_id: str,
     *,
-    timeout_seconds: float = 20.0,
+    timeout_seconds: float = 3.0,
 ) -> tuple[str | None, Path | None, dict[str, object]]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_payload: dict[str, object] = {}
@@ -1597,7 +1598,22 @@ async def ensure_agent_deck_session(
         session_title = str(kwargs.get("session_title") or "").strip()
         requested_agent_type = str(kwargs.get("agent_type") or agent_type or "").strip()
         try:
-            return await launcher(project_path, **kwargs)
+            return await asyncio.wait_for(
+                launcher(project_path, **kwargs),
+                timeout=AGENT_DECK_LAUNCH_RECOVERY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            existing_session_id = await _find_live_editor_session_id_by_title(
+                project_path,
+                session_title=session_title,
+                requested_agent_type=requested_agent_type,
+            )
+            if existing_session_id:
+                return await _load_existing_session(project_path, existing_session_id)
+            raise AgentDeckBridgeError(
+                f"Timed out launching Agent Deck session `{session_title or requested_agent_type}`. "
+                "The provider did not return a session id; retry or choose a direct provider."
+            ) from exc
         except AgentDeckBridgeError as exc:
             if not _is_already_exists_session_error(exc):
                 raise

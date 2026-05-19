@@ -193,6 +193,9 @@ func handleSessionStart(profile string, args []string) {
 	// Capture session ID from tmux env before saving to JSON
 	// Claude: UUID is set by bash capture-resume pattern before exec
 	inst.PostStartSync(3 * time.Second)
+	if initialMessage != "" {
+		primeCodexHeadlessStartup(inst)
+	}
 
 	// Save updated state
 	if err := saveSessionData(storage, instances); err != nil {
@@ -662,7 +665,7 @@ func handleSessionShow(profile string, args []string) {
 	out := NewCLIOutput(*jsonOutput, quietMode)
 
 	// Load sessions
-	_, instances, _, err := loadSessionData(profile)
+	storage, instances, _, err := loadSessionData(profile)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeNotFound)
 		os.Exit(1)
@@ -701,6 +704,10 @@ func handleSessionShow(profile string, args []string) {
 
 	// Update status
 	_ = inst.UpdateStatus()
+	if inst.Tool == "codex" && inst.Exists() {
+		inst.UpdateCodexSession(nil)
+		_ = saveSessionData(storage, instances)
+	}
 
 	// Get MCP info if Claude session
 	var mcpInfo *session.MCPInfo
@@ -1385,7 +1392,7 @@ func handleSessionSend(profile string, args []string) {
 	message := strings.Join(remaining[1:], " ")
 
 	// Load sessions
-	_, instances, _, err := loadSessionData(profile)
+	storage, instances, _, err := loadSessionData(profile)
 	if err != nil {
 		out.Error(err.Error(), ErrCodeNotFound)
 		os.Exit(1)
@@ -1438,6 +1445,14 @@ func handleSessionSend(profile string, args []string) {
 	} else {
 		if err := sendWithRetry(tmuxSess, message, false); err != nil {
 			out.Error(fmt.Sprintf("failed to send message: %v", err), ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
+	}
+
+	if inst.Tool == "codex" {
+		inst.UpdateCodexSession(nil)
+		if err := saveSessionData(storage, instances); err != nil {
+			out.Error(fmt.Sprintf("failed to save session state: %v", err), ErrCodeInvalidOperation)
 			os.Exit(1)
 		}
 	}
@@ -1605,6 +1620,21 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 // Uses status detection: waits for "active" → "waiting" transition
 func waitForAgentReady(tmuxSess *tmux.Session, tool string) error {
 	return send.WaitForAgentReady(tmuxSess, tool)
+}
+
+func primeCodexHeadlessStartup(inst *session.Instance) {
+	if inst == nil || inst.Tool != "codex" {
+		return
+	}
+	tmuxSess := inst.GetTmuxSession()
+	if tmuxSess == nil {
+		return
+	}
+	if err := waitForAgentReady(tmuxSess, inst.Tool); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Codex did not become ready during startup priming: %v\n", err)
+		return
+	}
+	inst.UpdateCodexSession(nil)
 }
 
 // statusChecker abstracts tmux status polling so waitForCompletion is testable.

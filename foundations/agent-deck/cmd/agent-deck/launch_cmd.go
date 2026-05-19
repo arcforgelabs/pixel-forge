@@ -464,6 +464,9 @@ func handleLaunch(profile string, args []string) {
 
 	// Capture session ID from tmux
 	newInstance.PostStartSync(3 * time.Second)
+	if initialMessage != "" && !*noWait {
+		primeCodexHeadlessStartup(newInstance)
+	}
 
 	// Save again with updated state (session ID, tmux name)
 	if err := saveSessionData(storage, instances); err != nil {

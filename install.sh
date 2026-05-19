@@ -169,12 +169,17 @@ AGENT_DECK_FALLBACK_BUNDLED_BINARY_PATH="$AGENT_DECK_FOUNDATION_INSTALL_DIR/agen
 AGENT_DECK_RUNNER_INSTALL_PATH="$INSTALL_DIR/scripts/agent-deck.sh"
 AGENT_DECK_PROVIDER_ENABLED="0"
 AGENT_DECK_SHOULD_BUNDLE="0"
+AGENT_DECK_SHOULD_INSTALL_FOUNDATION="0"
 if [ "$WITH_AGENT_DECK_MODE" != "0" ]; then
     if [ -n "$STANDARD_AGENT_DECK_CMD" ]; then
         AGENT_DECK_PROVIDER_ENABLED="1"
+        if [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
+            AGENT_DECK_SHOULD_INSTALL_FOUNDATION="1"
+        fi
     elif [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
         AGENT_DECK_PROVIDER_ENABLED="1"
         AGENT_DECK_SHOULD_BUNDLE="1"
+        AGENT_DECK_SHOULD_INSTALL_FOUNDATION="1"
     elif [ "$WITH_AGENT_DECK_MODE" = "1" ]; then
         echo "Error: PIXEL_FORGE_WITH_AGENT_DECK=1 but no external agent-deck command or bundled foundation is available." >&2
         exit 1
@@ -491,7 +496,7 @@ if [ -f "$SCRIPT_DIR/VERSION" ]; then
 fi
 
 # --- Optional Agent Deck provider foundation (with hash skip) ---
-if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
+if [ "$AGENT_DECK_SHOULD_INSTALL_FOUNDATION" = "1" ] && [ -d "$AGENT_DECK_FOUNDATION_SOURCE_DIR" ]; then
     AGENT_DECK_FOUNDATION_HASH=$(sha_of_paths "$AGENT_DECK_FOUNDATION_SOURCE_DIR")
     if cache_matches agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH" \
         && [ -d "$AGENT_DECK_FOUNDATION_INSTALL_DIR" ] \
@@ -505,13 +510,22 @@ if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -d "$AGENT_DECK_FOUNDATION_SOURCE_
         install_agent_deck_foundation_binary
         cache_write agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH"
     fi
+elif [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ]; then
+    echo "Error: bundled Agent Deck provider requested but foundation source is missing." >&2
+    exit 1
+fi
+
+if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ]; then
+    :
+elif [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ] && [ "$AGENT_DECK_SHOULD_INSTALL_FOUNDATION" = "1" ]; then
+    echo "Agent Deck provider: external runtime/surface detected: $AGENT_DECK_CMD_DEFAULT; bundled launch runtime staged."
 elif [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
     echo "Agent Deck provider: external runtime/surface detected: $AGENT_DECK_CMD_DEFAULT"
 else
     echo "Agent Deck provider: disabled/unavailable; core Pixel Forge install will continue."
 fi
 
-if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
+if [ "$AGENT_DECK_SHOULD_INSTALL_FOUNDATION" = "1" ] && [ -f "$AGENT_DECK_RUNNER_SOURCE" ]; then
     mkdir -p "$INSTALL_DIR/scripts"
     cp "$AGENT_DECK_RUNNER_SOURCE" "$AGENT_DECK_RUNNER_INSTALL_PATH"
     chmod +x "$AGENT_DECK_RUNNER_INSTALL_PATH"
