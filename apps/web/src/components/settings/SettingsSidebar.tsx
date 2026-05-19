@@ -681,6 +681,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [loadingProjectPaths, setLoadingProjectPaths] = useState<string[]>([]);
   const [isApplyingControllerUpdate, setIsApplyingControllerUpdate] = useState(false);
   const [isRefreshingChatTargets, setIsRefreshingChatTargets] = useState(false);
+  const [isCreatingProjectChat, setIsCreatingProjectChat] = useState(false);
   const [chatActionMenuOpenId, setChatActionMenuOpenId] = useState<string | null>(null);
   const [projectActionMenuOpenPath, setProjectActionMenuOpenPath] = useState<string | null>(null);
   const [renameDialogItem, setRenameDialogItem] = useState<ChatSidebarActionItem | null>(null);
@@ -1342,54 +1343,55 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   }
 
   async function handleCreateProjectChat(startFreshThread = false) {
-    const currentProjectPath = projectPath;
-    const activeDraftState = useLiveEditorStore.getState().getActiveThreadState();
-    const activeLiveEditorSession = useSessionStore.getState().liveEditorSession;
-    const shouldCarryDraftIntent =
-      !liveEditorProviderSessionId(activeLiveEditorSession)
-      && !activeDraftState.targetAgentSessionId;
-    let emptyThreadKey: string | null = null;
-    if (startFreshThread) {
-      emptyThreadKey = Object.entries(threadStates).find(
-        ([threadKey, ts]) => {
-          if (ts.messages.length > 0) {
-            return false;
-          }
-          if (ts.targetAgentSessionId) {
-            return false;
-          }
-          return !projectSessions.some((session) => session.threadId === threadKey);
-        }
-      )?.[0] ?? null;
-      if (emptyThreadKey) {
-        if (currentProjectPath) {
-          await reloadProjectChatState(currentProjectPath);
-        }
+    if (isCreatingProjectChat) {
+      return;
+    }
 
-        const refreshedSessionStore = useSessionStore.getState();
-        const visibleDraftSession = selectActiveProjectSessions(refreshedSessionStore).find(
-          (session) => session.threadId === emptyThreadKey
-        ) ?? null;
-        const visibleDraftChat = selectActiveProjectChats(refreshedSessionStore).find(
-          (chat) => chat.threadId === emptyThreadKey
-        ) ?? null;
-
-        if (visibleDraftSession || visibleDraftChat) {
-          if (visibleDraftSession) {
-            switchToThread(visibleDraftSession);
+    setIsCreatingProjectChat(true);
+    try {
+      const activeDraftState = useLiveEditorStore.getState().getActiveThreadState();
+      const activeLiveEditorSession = useSessionStore.getState().liveEditorSession;
+      const shouldCarryDraftIntent =
+        !liveEditorProviderSessionId(activeLiveEditorSession)
+        && !activeDraftState.targetAgentSessionId;
+      let emptyThreadKey: string | null = null;
+      if (startFreshThread) {
+        emptyThreadKey = Object.entries(threadStates).find(
+          ([threadKey, ts]) => {
+            if (ts.messages.length > 0) {
+              return false;
+            }
+            if (ts.targetAgentSessionId) {
+              return false;
+            }
+            return !projectSessions.some((session) => session.threadId === threadKey);
           }
-          activateThread(emptyThreadKey);
-          toast('An empty chat already exists — reopened it instead of creating another.');
-          return;
+        )?.[0] ?? null;
+        if (emptyThreadKey) {
+          const currentSessionStore = useSessionStore.getState();
+          const visibleDraftSession = selectActiveProjectSessions(currentSessionStore).find(
+            (session) => session.threadId === emptyThreadKey
+          ) ?? null;
+          const visibleDraftChat = selectActiveProjectChats(currentSessionStore).find(
+            (chat) => chat.threadId === emptyThreadKey
+          ) ?? null;
+
+          if (visibleDraftSession || visibleDraftChat) {
+            if (visibleDraftSession) {
+              switchToThread(visibleDraftSession);
+            }
+            activateThread(emptyThreadKey);
+            toast('An empty chat already exists — reopened it instead of creating another.');
+            return;
+          }
         }
       }
-    }
-    try {
       const created = await createProjectChatSession({
         agentType: shouldCarryDraftIntent
           ? activeDraftState.draftAgentType
           : defaultAgentType,
         workspaceMode: "root",
+        reuseEmptyDraft: startFreshThread ? false : undefined,
       });
       if (
         startFreshThread
@@ -1421,6 +1423,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           ? error.message
           : "Failed to create chat";
       toast.error(message);
+    } finally {
+      setIsCreatingProjectChat(false);
     }
   }
 
@@ -1946,7 +1950,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                     await handleCreateProjectChat(true);
                                   })();
                                 }}
-                                disabled={isUpdatingChatTargets}
+                                disabled={isCreatingProjectChat}
                                 className="flex items-center gap-1.5 rounded-md pl-4 pr-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors duration-100 mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 <Plus className="h-3 w-3 flex-shrink-0" />
