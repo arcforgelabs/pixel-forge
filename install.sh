@@ -79,7 +79,7 @@ normalize_agent_deck_mode() {
     esac
 }
 
-find_standard_agent_deck_command() {
+find_external_agent_deck_command() {
     if command -v agent-deck-standalone >/dev/null 2>&1; then
         command -v agent-deck-standalone
         return 0
@@ -125,11 +125,11 @@ if [ -n "$EXPLICIT_AGENT_DECK_CMD" ]; then
         || [ "$WITH_AGENT_DECK_MODE" = "1" ]; then
         STANDARD_AGENT_DECK_CMD="$EXPLICIT_AGENT_DECK_CMD"
     else
-        echo "Agent Deck provider: ignoring stale PIXEL_FORGE_AGENT_DECK_CMD=$EXPLICIT_AGENT_DECK_CMD" >&2
+        echo "Agent Deck provider: ignoring stale external PIXEL_FORGE_AGENT_DECK_CMD=$EXPLICIT_AGENT_DECK_CMD" >&2
     fi
 fi
 if [ -z "$STANDARD_AGENT_DECK_CMD" ]; then
-    STANDARD_AGENT_DECK_CMD="$(find_standard_agent_deck_command || true)"
+    STANDARD_AGENT_DECK_CMD="$(find_external_agent_deck_command || true)"
 fi
 
 INSTALL_NAME="${PIXEL_FORGE_INSTALL_NAME:-pixel-forge}"
@@ -176,7 +176,7 @@ if [ "$WITH_AGENT_DECK_MODE" != "0" ]; then
         AGENT_DECK_PROVIDER_ENABLED="1"
         AGENT_DECK_SHOULD_BUNDLE="1"
     elif [ "$WITH_AGENT_DECK_MODE" = "1" ]; then
-        echo "Error: PIXEL_FORGE_WITH_AGENT_DECK=1 but no standard agent-deck command or bundled foundation is available." >&2
+        echo "Error: PIXEL_FORGE_WITH_AGENT_DECK=1 but no external agent-deck command or bundled foundation is available." >&2
         exit 1
     fi
 fi
@@ -506,7 +506,7 @@ if [ "$AGENT_DECK_SHOULD_BUNDLE" = "1" ] && [ -d "$AGENT_DECK_FOUNDATION_SOURCE_
         cache_write agent_deck_foundation "$AGENT_DECK_FOUNDATION_HASH"
     fi
 elif [ "$AGENT_DECK_PROVIDER_ENABLED" = "1" ]; then
-    echo "Agent Deck provider: using standard command: $AGENT_DECK_CMD_DEFAULT"
+    echo "Agent Deck provider: external runtime/surface detected: $AGENT_DECK_CMD_DEFAULT"
 else
     echo "Agent Deck provider: disabled/unavailable; core Pixel Forge install will continue."
 fi
