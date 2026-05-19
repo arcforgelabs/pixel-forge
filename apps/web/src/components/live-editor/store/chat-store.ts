@@ -389,6 +389,10 @@ function providerBindingAgentId(record: ProviderBindingLike | null | undefined):
   return record?.providerAgentId?.trim() || record?.agentDeckTool?.trim() || null
 }
 
+function boundProviderAgentId(record: ProviderBindingLike | null | undefined): string | null {
+  return providerBindingSessionId(record) ? providerBindingAgentId(record) : null
+}
+
 function normalizeLiveEditorTargetIntent(
   intent: PersistedLiveEditorTargetIntent | LiveEditorTargetIntent | null | undefined
 ): LiveEditorTargetIntent | null {
@@ -2173,20 +2177,25 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       return
     }
 
+    const boundProviderSessionId = providerBindingSessionId(boundSession)
+    const targetIntent = normalizeLiveEditorTargetIntent(threadState.targetIntent)
     const targetProviderSessionId =
-      providerBindingSessionId(boundSession)
+      boundProviderSessionId
       ?? threadState.targetAgentSessionId
       ?? null
     const selectedTarget = targetProviderSessionId
       ? sessionStore.agentTargets.find((target) => target.id === targetProviderSessionId) ?? null
       : null
     const targetProviderId =
-      providerBindingProviderId(boundSession)
+      (boundProviderSessionId ? providerBindingProviderId(boundSession) : null)
+      ?? targetIntent?.providerId
       ?? selectedTarget?.providerId
       ?? (targetProviderSessionId ? 'agent-deck' : null)
     const targetProviderAgentId =
-      providerBindingAgentId(boundSession)
+      boundProviderAgentId(boundSession)
+      ?? targetIntent?.agentId
       ?? selectedTarget?.tool
+      ?? threadState.draftAgentType
       ?? null
     const targetProviderSessionTitle =
       boundSession?.providerSessionTitle
@@ -3077,7 +3086,7 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       ) ?? activeThreadState.previewTabs[0] ?? null
       const agentType =
         overrideAgentType
-        || providerBindingAgentId(boundSession)
+        || boundProviderAgentId(boundSession)
         || explicitTargetIntent?.agentId
         || selectedTarget?.tool
         || activeThreadState.draftAgentType

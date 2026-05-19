@@ -394,17 +394,24 @@ export function ChatInput() {
     liveEditorSession?.threadId === activeThreadKey
       ? liveEditorSession
       : null
+  const activeProviderSessionId =
+    activeLiveEditorSession?.providerSessionId
+    || activeLiveEditorSession?.agentDeckSessionId
+    || null
+  const activeBoundAgentType = activeProviderSessionId
+    ? activeLiveEditorSession?.providerAgentId
+      || activeLiveEditorSession?.agentDeckTool
+      || null
+    : null
   const targetIntentUsesExistingSession =
     targetIntent?.mode === 'bound' || targetIntent?.mode === 'attach_existing'
   const effectiveAgentType =
-    activeLiveEditorSession?.providerAgentId
-    || activeLiveEditorSession?.agentDeckTool
+    activeBoundAgentType
     || (targetIntentUsesExistingSession ? selectedAgentTarget?.tool : null)
     || draftAgentType
     || defaultAgentType
   const agentSelectionLocked = Boolean(
-    activeLiveEditorSession?.providerSessionId
-    || activeLiveEditorSession?.agentDeckSessionId
+    activeProviderSessionId
     || (targetIntentUsesExistingSession && targetAgentSessionId)
   )
   const agentModelOptions = getAgentModelOptions(effectiveAgentType)

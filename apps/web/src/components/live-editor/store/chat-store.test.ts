@@ -1721,6 +1721,61 @@ describe('live editor selection history', () => {
     )
   })
 
+  it('does not let unbound live-editor session metadata override a fresh draft agent', () => {
+    const activeThreadKey = useLiveEditorStore.getState().activeThreadKey
+    useSessionStore.setState({
+      defaultAgentProviderId: 'agent-deck',
+      defaultAgentType: 'claude',
+      liveEditorSession: {
+        projectPath: '/tmp/example-project',
+        threadId: activeThreadKey,
+        backend: 'agent-deck',
+        workspacePath: '/tmp/example-project',
+        providerId: 'agent-deck',
+        providerSessionId: null,
+        providerSessionTitle: null,
+        providerAgentId: 'claude',
+        agentDeckSessionId: null,
+        agentDeckSessionTitle: null,
+        agentDeckTool: null,
+        requestId: null,
+      },
+    })
+    setActiveThreadState({
+      draftAgentType: 'codex',
+      targetIntent: {
+        mode: 'new',
+        providerId: 'agent-deck',
+        providerSessionId: null,
+        agentId: 'codex',
+        workspaceMode: 'root',
+      },
+    })
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Use the selected draft agent')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      provider_id: 'agent-deck',
+      agent_type: 'codex',
+      target_intent: {
+        mode: 'new',
+        provider_id: 'agent-deck',
+        agent_id: 'codex',
+        workspace_mode: 'root',
+      },
+    })
+    expect(payload).not.toHaveProperty('target_provider_session_id')
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+  })
+
   it('lets a fresh target-intent draft change agent even if stale target state remains', () => {
     setActiveThreadState({
       draftAgentType: 'claude',
