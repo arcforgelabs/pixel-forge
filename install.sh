@@ -253,6 +253,10 @@ backup_install_dir() {
 }
 
 find_go_binary() {
+    if [ -n "${PIXEL_FORGE_GO_BIN:-}" ] && [ -x "$PIXEL_FORGE_GO_BIN" ]; then
+        echo "$PIXEL_FORGE_GO_BIN"
+        return 0
+    fi
     if command -v go >/dev/null 2>&1; then
         command -v go
         return 0

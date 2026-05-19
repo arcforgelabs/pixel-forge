@@ -13,6 +13,7 @@ import {
   repoRoot,
   reportSmokeFailure,
   reservePort,
+  runProcess,
   runPixelForge,
   waitForCondition,
   waitForHttpOk,
@@ -20,6 +21,54 @@ import {
 
 const require = createRequire(import.meta.url)
 const puppeteer = require(path.join(repoRoot, 'apps/web/node_modules/puppeteer'))
+
+const providerMode = process.env.PIXEL_FORGE_SMOKE_PROVIDER_MODE === 'agent-deck'
+  ? 'agent-deck'
+  : 'codex-cli'
+const smokeName = providerMode === 'agent-deck'
+  ? 'installed-gui-agent-deck-provider-live'
+  : 'installed-gui-direct-provider-live'
+const providerLabel = providerMode === 'agent-deck' ? 'Agent Deck' : 'direct-provider'
+const threadTitle = providerMode === 'agent-deck'
+  ? 'installed-gui-agent-deck-live-smoke'
+  : 'installed-gui-direct-live-smoke'
+const expectedFirstToken = providerMode === 'agent-deck'
+  ? 'GUI_AGENT_DECK_PROVIDER_LIVE_OK'
+  : 'GUI_DIRECT_PROVIDER_LIVE_OK'
+const expectedSecondToken = 'GUI_DIRECT_PROVIDER_RELOAD_OK'
+
+async function findHostGoBinary() {
+  if (process.env.PIXEL_FORGE_GO_BIN) {
+    try {
+      await fs.access(process.env.PIXEL_FORGE_GO_BIN)
+      return process.env.PIXEL_FORGE_GO_BIN
+    } catch {}
+  }
+  const home = os.homedir()
+  const candidateDirs = []
+  try {
+    const entries = await fs.readdir(home, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.isDirectory() && /^go-\d/.test(entry.name)) {
+        candidateDirs.push(path.join(home, entry.name, 'bin', 'go'))
+      }
+    }
+  } catch {}
+  candidateDirs.sort().reverse()
+  candidateDirs.push(
+    path.join(home, 'go', 'bin', 'go'),
+    '/usr/local/go/bin/go',
+    '/opt/go/bin/go',
+    '/snap/bin/go',
+  )
+  for (const candidate of candidateDirs) {
+    try {
+      await fs.access(candidate)
+      return candidate
+    } catch {}
+  }
+  return null
+}
 
 function projectUrl(context, projectPath, suffix) {
   return `${context.baseUrl}/api/projects/${encodeURIComponent(projectPath)}${suffix}`
@@ -50,12 +99,29 @@ function assertNoAgentDeckBinding(record, label) {
   }
 }
 
-function assertDirectProviderRecord(record, label, expectedThreadId) {
+function assertProviderRecord(record, label, expectedThreadId, expectedProviderSessionId = null) {
   assert(record, `Missing ${label}`)
   assert(record.thread_id === expectedThreadId, `Expected ${label} thread ${expectedThreadId}: ${JSON.stringify(record)}`)
-  assert(record.provider_id === 'codex-cli', `Expected ${label} provider_id codex-cli: ${JSON.stringify(record)}`)
+  assert(record.provider_id === providerMode, `Expected ${label} provider_id ${providerMode}: ${JSON.stringify(record)}`)
   assert(record.provider_agent_id === 'codex', `Expected ${label} provider_agent_id codex: ${JSON.stringify(record)}`)
-  assertNoAgentDeckBinding(record, label)
+  if (expectedProviderSessionId) {
+    assert(
+      record.provider_session_id === expectedProviderSessionId,
+      `Expected ${label} provider session ${expectedProviderSessionId}: ${JSON.stringify(record)}`,
+    )
+  }
+  if (providerMode === 'agent-deck') {
+    assert(
+      record.agent_deck_session_id === record.provider_session_id,
+      `Expected ${label} Agent Deck compatibility id to mirror provider session: ${JSON.stringify(record)}`,
+    )
+    assert(
+      record.agent_deck_tool === 'codex',
+      `Expected ${label} Agent Deck tool codex: ${JSON.stringify(record)}`,
+    )
+  } else {
+    assertNoAgentDeckBinding(record, label)
+  }
 }
 
 async function fetchThreadRecords(context, projectPath, threadId) {
@@ -234,33 +300,81 @@ async function sendPromptAndWait(page, prompt, expectedText) {
       cause: error,
     })
   }
-  await textareaHandle.focus()
-  await page.keyboard.press('Enter')
+  const submitButtonHandle = await page.waitForFunction(() => {
+    return document.querySelector('button[aria-label="Send message"]:not(:disabled)') ?? null
+  }, { timeout: 15000 })
+  const submitButton = submitButtonHandle.asElement()
+  assert(submitButton, 'Visible enabled submit button not found.')
+  await submitButton.click()
   await page.waitForFunction((needle) => {
     return document.body.textContent?.includes(needle)
   }, { timeout: 300000 }, expectedText)
 }
 
-function assertDirectManifest(entry, label, threadId) {
+function assertProviderManifest(entry, label, threadId) {
   const manifest = entry.manifest
   assert(manifest.thread_id === threadId, `${label} request pack used wrong thread: ${JSON.stringify(manifest)}`)
-  assert(manifest.provider_id === 'codex-cli', `${label} request pack provider wrong: ${JSON.stringify(manifest)}`)
+  assert(manifest.provider_id === providerMode, `${label} request pack provider wrong: ${JSON.stringify(manifest)}`)
   assert(manifest.provider_agent_id === 'codex', `${label} request pack agent wrong: ${JSON.stringify(manifest)}`)
-  assert(
-    manifest.agent_deck_session_id == null || manifest.agent_deck_session_id === '',
-    `${label} request pack leaked Agent Deck session: ${JSON.stringify(manifest)}`,
+  if (providerMode === 'agent-deck') {
+    assert(
+      typeof manifest.agent_deck_session_id === 'string' && manifest.agent_deck_session_id.trim(),
+      `${label} request pack missing Agent Deck session: ${JSON.stringify(manifest)}`,
+    )
+    assert(manifest.agent_deck_tool === 'codex', `${label} request pack used non-Codex Agent Deck tool: ${JSON.stringify(manifest)}`)
+  } else {
+    assert(
+      manifest.agent_deck_session_id == null || manifest.agent_deck_session_id === '',
+      `${label} request pack leaked Agent Deck session: ${JSON.stringify(manifest)}`,
+    )
+  }
+}
+
+async function stopSmokeAgentDeckSessions(context, projectPath) {
+  if (providerMode !== 'agent-deck') {
+    return
+  }
+  const runner = path.join(context.paths.installDir, 'scripts', 'agent-deck.sh')
+  try {
+    await fs.access(runner)
+  } catch {
+    return
+  }
+
+  let sessions = []
+  try {
+    const { stdout } = await runProcess(runner, ['ls', '-json'], {
+      cwd: projectPath,
+      env: context.env,
+      label: 'agent-deck ls -json',
+    })
+    const parsed = JSON.parse(stdout)
+    sessions = Array.isArray(parsed) ? parsed : []
+  } catch {
+    return
+  }
+
+  await Promise.all(
+    sessions
+      .filter((session) => session?.path === projectPath && session?.title === threadTitle)
+      .map((session) => runProcess(runner, ['session', 'stop', session.id, '-q'], {
+        cwd: projectPath,
+        env: context.env,
+        label: `agent-deck session stop ${session.id}`,
+      }).catch(() => {})),
   )
 }
 
-const context = await createSmokeContext('installed-gui-direct-provider-live')
+const context = await createSmokeContext(smokeName)
 const homeDir = path.join(context.root, 'home')
+const hostGoBin = await findHostGoBinary()
 context.env = {
   ...context.env,
   HOME: homeDir,
   XDG_DATA_HOME: path.join(homeDir, '.local', 'share'),
   XDG_CONFIG_HOME: path.join(homeDir, '.config'),
   XDG_CACHE_HOME: path.join(homeDir, '.cache'),
-  PIXEL_FORGE_WITH_AGENT_DECK: '0',
+  PIXEL_FORGE_WITH_AGENT_DECK: providerMode === 'agent-deck' ? '1' : '0',
   PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION: '0',
   PIXEL_FORGE_INSTALL_SKIP_SYSTEMD: '1',
   PIXEL_FORGE_INSTALL_CACHE_DIR: path.join(
@@ -270,6 +384,7 @@ context.env = {
     'install-cache',
     context.env.PIXEL_FORGE_INSTALL_NAME,
   ),
+  ...(hostGoBin ? { PIXEL_FORGE_GO_BIN: hostGoBin } : {}),
 }
 
 let openedUi = null
@@ -280,7 +395,7 @@ try {
   await fs.mkdir(projectPath, { recursive: true })
   await fs.writeFile(
     path.join(projectPath, 'README.md'),
-    '# Pixel Forge installed GUI direct-provider live smoke workspace\n',
+    `# Pixel Forge installed GUI ${providerLabel} live smoke workspace\n`,
     'utf-8',
   )
   await fs.mkdir(homeDir, { recursive: true })
@@ -288,26 +403,31 @@ try {
   await installPixelForge(repoRoot, context)
   await runPixelForge(context, ['start'])
   await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
-    description: 'installed GUI direct-provider live runtime',
+    description: `installed GUI ${providerLabel} live runtime`,
   })
 
   const providersPayload = await fetchJson(`${context.baseUrl}/api/agent-providers`)
   const agentDeck = providersPayload.providers.find((provider) => provider.id === 'agent-deck')
   const codexProvider = providersPayload.providers.find((provider) => provider.id === 'codex-cli')
-  assert(agentDeck?.enabled === false, `Expected Agent Deck disabled: ${JSON.stringify(agentDeck)}`)
   assert(codexProvider?.available === true, `Expected codex-cli available: ${JSON.stringify(codexProvider)}`)
+  if (providerMode === 'agent-deck') {
+    assert(agentDeck?.enabled === true, `Expected Agent Deck enabled: ${JSON.stringify(agentDeck)}`)
+    assert(agentDeck?.available === true, `Expected Agent Deck available: ${JSON.stringify(agentDeck)}`)
+  } else {
+    assert(agentDeck?.enabled === false, `Expected Agent Deck disabled: ${JSON.stringify(agentDeck)}`)
+  }
 
   await postJson(`${context.baseUrl}/api/profile-state`, {
     active_project_path: projectPath,
     active_mode: 'live-editor',
-    default_agent_provider_id: 'codex-cli',
+    default_agent_provider_id: providerMode,
     default_agent_type: 'codex',
   })
 
   const created = await postJson(projectUrl(context, projectPath, '/chats'), {
-    provider_id: 'codex-cli',
+    provider_id: providerMode,
     agent_type: 'codex',
-    title: 'installed-gui-direct-live-smoke',
+    title: threadTitle,
     workspace_mode: 'root',
     reuse_empty_draft: false,
   })
@@ -316,7 +436,7 @@ try {
     active_project_path: projectPath,
     active_live_editor_thread_id: created.thread_id,
     active_mode: 'live-editor',
-    default_agent_provider_id: 'codex-cli',
+    default_agent_provider_id: providerMode,
     default_agent_type: 'codex',
   })
 
@@ -324,64 +444,74 @@ try {
   openedUi = await openInstalledUi(context)
   await sendPromptAndWait(
     openedUi.page,
-    'Pixel Forge installed GUI direct-provider live smoke. Reply with GUI_DIRECT_PROVIDER_LIVE_OK only. Do not edit files.',
-    'GUI_DIRECT_PROVIDER_LIVE_OK',
+    `Pixel Forge installed GUI ${providerLabel} live smoke. Reply with ${expectedFirstToken} only. Do not edit files.`,
+    expectedFirstToken,
   )
-  const firstManifest = await waitForNewRequestManifest(projectPath, initialManifestCount)
-  assertDirectManifest(firstManifest, 'first GUI direct turn', created.thread_id)
+  if (providerMode !== 'agent-deck') {
+    const firstManifest = await waitForNewRequestManifest(projectPath, initialManifestCount)
+    assertProviderManifest(firstManifest, `first GUI ${providerLabel} turn`, created.thread_id)
+  }
 
   let records = await fetchThreadRecords(context, projectPath, created.thread_id)
-  assertDirectProviderRecord(records.session, 'first-turn session', created.thread_id)
-  assertDirectProviderRecord(records.chat, 'first-turn chat', created.thread_id)
+  assertProviderRecord(records.session, 'first-turn session', created.thread_id)
+  assertProviderRecord(records.chat, 'first-turn chat', created.thread_id)
   const providerSessionId = records.session.provider_session_id
   assert(
     typeof providerSessionId === 'string' && providerSessionId.trim(),
-    `First GUI direct turn did not bind a provider session: ${JSON.stringify(records.session)}`,
+    `First GUI ${providerLabel} turn did not bind a provider session: ${JSON.stringify(records.session)}`,
   )
   const bodyAfterFirstTurn = await openedUi.page.evaluate(() => document.body.textContent || '')
-  assert(!bodyAfterFirstTurn.includes('Agent Deck'), 'Direct-provider GUI path displayed generic Agent Deck wording.')
-  await closeInstalledUi(openedUi)
-  openedUi = null
+  if (providerMode === 'agent-deck') {
+    assert(bodyAfterFirstTurn.includes(expectedFirstToken), 'Agent Deck GUI path did not render the Codex response token.')
+    console.log(`[smoke:${smokeName}] ${openedUi.mode} sent Agent Deck codex thread ${created.thread_id} through ${providerSessionId}`)
+  } else {
+    assert(!bodyAfterFirstTurn.includes('Agent Deck'), 'Direct-provider GUI path displayed generic Agent Deck wording.')
+    await closeInstalledUi(openedUi)
+    openedUi = null
 
-  await runPixelForge(context, ['stop'])
-  await runPixelForge(context, ['start'])
-  await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
-    description: 'restarted installed GUI direct-provider live runtime',
-  })
+    await runPixelForge(context, ['stop'])
+    await runPixelForge(context, ['start'])
+    await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
+      description: 'restarted installed GUI direct-provider live runtime',
+    })
 
-  records = await fetchThreadRecords(context, projectPath, created.thread_id)
-  assertDirectProviderRecord(records.session, 'post-restart session', created.thread_id)
-  assertDirectProviderRecord(records.chat, 'post-restart chat', created.thread_id)
-  assert(
-    records.session.provider_session_id === providerSessionId,
-    `Provider session changed across restart: ${JSON.stringify(records.session)}`,
-  )
+    records = await fetchThreadRecords(context, projectPath, created.thread_id)
+    assertProviderRecord(records.session, 'post-restart session', created.thread_id, providerSessionId)
+    assertProviderRecord(records.chat, 'post-restart chat', created.thread_id, providerSessionId)
+    assert(
+      records.session.provider_session_id === providerSessionId,
+      `Provider session changed across restart: ${JSON.stringify(records.session)}`,
+    )
 
-  const secondStartManifestCount = (await readRequestManifests(projectPath)).length
-  openedUi = await openInstalledUi(context)
-  await sendPromptAndWait(
-    openedUi.page,
-    'Second installed GUI direct-provider live smoke after restart. Reply with GUI_DIRECT_PROVIDER_RELOAD_OK only. Do not edit files.',
-    'GUI_DIRECT_PROVIDER_RELOAD_OK',
-  )
-  const secondManifest = await waitForNewRequestManifest(projectPath, secondStartManifestCount)
-  assertDirectManifest(secondManifest, 'second GUI direct turn', created.thread_id)
+    const secondStartManifestCount = (await readRequestManifests(projectPath)).length
+    openedUi = await openInstalledUi(context)
+    await sendPromptAndWait(
+      openedUi.page,
+      `Second installed GUI direct-provider live smoke after restart. Reply with ${expectedSecondToken} only. Do not edit files.`,
+      expectedSecondToken,
+    )
+    const secondManifest = await waitForNewRequestManifest(projectPath, secondStartManifestCount)
+    assertProviderManifest(secondManifest, 'second GUI direct turn', created.thread_id)
 
-  records = await fetchThreadRecords(context, projectPath, created.thread_id)
-  assertDirectProviderRecord(records.session, 'second-turn session', created.thread_id)
-  assertDirectProviderRecord(records.chat, 'second-turn chat', created.thread_id)
-  assert(
-    records.session.provider_session_id === providerSessionId,
-    `Second GUI direct turn did not reuse provider session ${providerSessionId}: ${JSON.stringify(records.session)}`,
-  )
-  const bodyAfterSecondTurn = await openedUi.page.evaluate(() => document.body.textContent || '')
-  assert(!bodyAfterSecondTurn.includes('Agent Deck'), 'Reloaded direct-provider GUI path displayed generic Agent Deck wording.')
+    records = await fetchThreadRecords(context, projectPath, created.thread_id)
+    assertProviderRecord(records.session, 'second-turn session', created.thread_id, providerSessionId)
+    assertProviderRecord(records.chat, 'second-turn chat', created.thread_id, providerSessionId)
+    assert(
+      records.session.provider_session_id === providerSessionId,
+      `Second GUI direct turn did not reuse provider session ${providerSessionId}: ${JSON.stringify(records.session)}`,
+    )
+    const bodyAfterSecondTurn = await openedUi.page.evaluate(() => document.body.textContent || '')
+    assert(!bodyAfterSecondTurn.includes('Agent Deck'), 'Reloaded direct-provider GUI path displayed generic Agent Deck wording.')
 
-  console.log(`[smoke:installed-gui-direct-provider-live] ${openedUi.mode} sent and reloaded codex-cli thread ${created.thread_id} through ${providerSessionId}`)
+    console.log(`[smoke:installed-gui-direct-provider-live] ${openedUi.mode} sent and reloaded codex-cli thread ${created.thread_id} through ${providerSessionId}`)
+  }
 } catch (error) {
-  await reportSmokeFailure('installed-gui-direct-provider-live', error, context)
+  await reportSmokeFailure(smokeName, error, context)
   process.exitCode = 1
 } finally {
   await closeInstalledUi(openedUi)
+  if (projectPath) {
+    await stopSmokeAgentDeckSessions(context, projectPath)
+  }
   await cleanupSmokeContext(context)
 }

@@ -549,7 +549,7 @@ export function ChatInput() {
     }
   }, [])
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.SyntheticEvent) => {
     e.preventDefault()
     if ((!input.trim() && attachments.length === 0) || isStreaming) return
 
@@ -1179,6 +1179,8 @@ export function ChatInput() {
               type="submit"
               size="sm"
               disabled={!canSubmit}
+              onClick={handleSubmit}
+              aria-label="Send message"
               className="h-7 w-7 rounded-lg rounded-r-none p-0 transition-all disabled:opacity-30"
             >
               <Send className="h-3.5 w-3.5" />

@@ -353,7 +353,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertIsNone(initial.last_workspace_browse_directory)
         self.assertIsNone(initial.active_live_editor_thread_id)
         self.assertEqual(initial.default_agent_provider_id, "agent-deck")
-        self.assertEqual(initial.default_agent_type, "claude")
+        self.assertEqual(initial.default_agent_type, "codex")
         self.assertEqual(initial.default_workspace_mode, "root")
         self.assertEqual(initial.claude_default_model, "claude-opus-4-7")
         self.assertEqual(initial.claude_default_thinking, "xhigh")

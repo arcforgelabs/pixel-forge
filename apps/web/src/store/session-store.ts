@@ -1562,7 +1562,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
   // Agent selection
   defaultAgentProviderId: "agent-deck",
-  defaultAgentType: "claude",
+  defaultAgentType: "codex",
   defaultAgentModels: { claude: "claude-opus-4-7", codex: null, gemini: null, pi: null },
   defaultAgentThinking: { claude: "xhigh", codex: null, gemini: null, pi: null },
   setDefaultAgentProviderId: (providerId: string) => {

@@ -26,6 +26,8 @@ DEFAULT_PROFILE_ID = "default"
 SAFE_THREAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
 DEFAULT_CLAUDE_THINKING = "xhigh"
+DEFAULT_AGENT_PROVIDER_ID = "agent-deck"
+DEFAULT_AGENT_TYPE = "codex"
 CLAUDE_MODEL_ALIASES = {
     "opus": DEFAULT_CLAUDE_MODEL,
     "sonnet": "claude-sonnet-4-6",
@@ -918,7 +920,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 active_mode TEXT NOT NULL DEFAULT 'screenshot',
                 active_live_editor_thread_id TEXT,
                 default_agent_provider_id TEXT NOT NULL DEFAULT 'agent-deck',
-                default_agent_type TEXT NOT NULL DEFAULT 'claude',
+                default_agent_type TEXT NOT NULL DEFAULT 'codex',
                 default_workspace_mode TEXT NOT NULL DEFAULT 'root',
                 claude_default_model TEXT,
                 claude_default_thinking TEXT,
@@ -1051,7 +1053,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 )
             if "default_agent_type" not in existing_profile_columns:
                 conn.execute(
-                    "ALTER TABLE profile_state ADD COLUMN default_agent_type TEXT NOT NULL DEFAULT 'claude'"
+                    "ALTER TABLE profile_state ADD COLUMN default_agent_type TEXT NOT NULL DEFAULT 'codex'"
                 )
             if "default_agent_provider_id" not in existing_profile_columns:
                 conn.execute(
@@ -1264,9 +1266,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 default_workspace_mode,
                 claude_default_model,
                 claude_default_thinking
-            ) VALUES (?, 'screenshot', 'agent-deck', 'claude', 'root', ?, ?)
+            ) VALUES (?, 'screenshot', ?, ?, 'root', ?, ?)
             """,
-            (DEFAULT_PROFILE_ID, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
+            (
+                DEFAULT_PROFILE_ID,
+                DEFAULT_AGENT_PROVIDER_ID,
+                DEFAULT_AGENT_TYPE,
+                DEFAULT_CLAUDE_MODEL,
+                DEFAULT_CLAUDE_THINKING,
+            ),
         )
         conn.execute(
             """
@@ -2441,9 +2449,15 @@ def get_profile_state(profile_id: str = DEFAULT_PROFILE_ID) -> ProfileStateRecor
                 default_workspace_mode,
                 claude_default_model,
                 claude_default_thinking
-            ) VALUES (?, 'screenshot', 'agent-deck', 'claude', 'root', ?, ?)
+            ) VALUES (?, 'screenshot', ?, ?, 'root', ?, ?)
             """,
-            (normalized_profile_id, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_THINKING),
+            (
+                normalized_profile_id,
+                DEFAULT_AGENT_PROVIDER_ID,
+                DEFAULT_AGENT_TYPE,
+                DEFAULT_CLAUDE_MODEL,
+                DEFAULT_CLAUDE_THINKING,
+            ),
         )
         conn.commit()
         row = conn.execute(
@@ -2509,8 +2523,8 @@ def upsert_profile_state(
     last_workspace_browse_directory: str | None = None,
     active_mode: str = "screenshot",
     active_live_editor_thread_id: str | None = None,
-    default_agent_provider_id: str = "agent-deck",
-    default_agent_type: str = "claude",
+    default_agent_provider_id: str = DEFAULT_AGENT_PROVIDER_ID,
+    default_agent_type: str = DEFAULT_AGENT_TYPE,
     default_workspace_mode: str = "root",
     claude_default_model: str | None = None,
     claude_default_thinking: str | None = None,
