@@ -259,6 +259,7 @@ find_go_binary() {
     fi
     local candidate
     for candidate in \
+        "$HOME"/go-*/bin/go \
         "$HOME/go-1.21/bin/go" \
         "$HOME/go/bin/go" \
         "/usr/local/go/bin/go" \

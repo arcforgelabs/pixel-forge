@@ -324,5 +324,8 @@ export async function cleanupSmokeContext(context) {
     return
   }
 
+  await runProcess('chmod', ['-R', 'u+w', context.root], {
+    label: `chmod smoke temp root ${context.root}`,
+  }).catch(() => {})
   await fs.rm(context.root, { recursive: true, force: true })
 }
