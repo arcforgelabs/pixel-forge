@@ -1425,7 +1425,7 @@ describe('live editor selection history', () => {
     expect(JSON.parse(String(requestInit?.body)).editor_state.previewTabs[0]).not.toHaveProperty('browserTabId')
   })
 
-  it('includes the selected agent target in outbound live-edit payloads', () => {
+  it('includes provider target intent and Agent Deck compatibility only for Agent Deck targets', () => {
     useSessionStore.setState({
       selectedAgentTargetId: 'deck-session-123',
       agentTargets: [
@@ -1434,6 +1434,7 @@ describe('live editor selection history', () => {
           title: 'codex-target',
           path: '/tmp/example-project/.agents/codex-target',
           group: 'pixel-forge',
+          providerId: 'agent-deck',
           tool: 'codex',
           command: 'codex',
           status: 'waiting',
@@ -1452,13 +1453,128 @@ describe('live editor selection history', () => {
     useLiveEditorStore.getState().sendMessage('Retarget this change')
 
     expect(send).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(send.mock.calls[0][0] as string)).toMatchObject({
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
       message: 'Retarget this change',
       project_path: '/tmp/example-project',
       preview_url: 'http://example.localhost:3000',
+      provider_id: 'agent-deck',
       agent_type: 'codex',
+      target_provider_id: 'agent-deck',
+      target_provider_session_id: 'deck-session-123',
       target_agent_deck_session_id: 'deck-session-123',
+      target_intent: {
+        mode: 'attach_existing',
+        provider_id: 'agent-deck',
+        provider_session_id: 'deck-session-123',
+        agent_id: 'codex',
+      },
     })
+  })
+
+  it('does not use sidebar selectedAgentTargetId as ambient send input for a fresh direct provider chat', () => {
+    useSessionStore.setState({
+      selectedAgentTargetId: 'deck-session-stale',
+      defaultAgentProviderId: 'codex-cli',
+      defaultAgentType: 'codex',
+      agentTargets: [
+        {
+          id: 'deck-session-stale',
+          title: 'stale deck target',
+          path: '/tmp/example-project/.agents/stale-deck-target',
+          group: 'pixel-forge',
+          providerId: 'agent-deck',
+          tool: 'claude',
+          command: 'claude',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Start fresh with Codex')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      message: 'Start fresh with Codex',
+      project_path: '/tmp/example-project',
+      provider_id: 'codex-cli',
+      agent_type: 'codex',
+      target_intent: {
+        mode: 'new',
+        provider_id: 'codex-cli',
+        agent_id: 'codex',
+        workspace_mode: 'root',
+      },
+    })
+    expect(payload).not.toHaveProperty('target_provider_session_id')
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
+  })
+
+  it('targets direct provider sessions without emitting Agent Deck compatibility target fields', () => {
+    useSessionStore.setState({
+      selectedAgentTargetId: 'deck-session-stale',
+      defaultAgentProviderId: 'codex-cli',
+      defaultAgentType: 'codex',
+      agentTargets: [
+        {
+          id: 'codex-thread-a',
+          title: 'Codex direct',
+          path: '/tmp/example-project',
+          group: 'pixel-forge',
+          providerId: 'codex-cli',
+          tool: 'codex',
+          command: 'codex',
+          status: 'waiting',
+          createdAt: null,
+        },
+        {
+          id: 'deck-session-stale',
+          title: 'stale deck target',
+          path: '/tmp/example-project/.agents/stale-deck-target',
+          group: 'pixel-forge',
+          providerId: 'agent-deck',
+          tool: 'claude',
+          command: 'claude',
+          status: 'waiting',
+          createdAt: null,
+        },
+      ],
+    })
+    useLiveEditorStore.getState().setTargetAgentSessionId('codex-thread-a')
+    useLiveEditorStore.getState().setTargetUrl('http://example.localhost:3000')
+    useLiveEditorStore.getState().connect('ws://example.test/ws/live-editor')
+    const ws = useLiveEditorStore.getState().ws as MockWebSocket | null
+    expect(ws).not.toBeNull()
+    const send = vi.fn()
+    ws!.send = send
+
+    useLiveEditorStore.getState().sendMessage('Continue direct Codex thread')
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse(send.mock.calls[0][0] as string)
+    expect(payload).toMatchObject({
+      message: 'Continue direct Codex thread',
+      project_path: '/tmp/example-project',
+      provider_id: 'codex-cli',
+      agent_type: 'codex',
+      target_provider_id: 'codex-cli',
+      target_provider_session_id: 'codex-thread-a',
+      target_intent: {
+        mode: 'attach_existing',
+        provider_id: 'codex-cli',
+        provider_session_id: 'codex-thread-a',
+        agent_id: 'codex',
+      },
+    })
+    expect(payload).not.toHaveProperty('target_agent_deck_session_id')
   })
 
   it('includes active live preview identity in outbound live-edit payloads', () => {

@@ -585,6 +585,17 @@ function normalizeDraftAgentType(agentType: string | null | undefined): string {
     : 'claude'
 }
 
+function defaultAgentTypeForProvider(providerId: string | null | undefined): string | null {
+  const normalized = providerId?.trim() || ''
+  if (normalized === 'claude-cli') {
+    return 'claude'
+  }
+  if (normalized === 'codex-cli') {
+    return 'codex'
+  }
+  return null
+}
+
 function normalizeDraftWorkspaceMode(
   workspaceMode: string | null | undefined
 ): DraftWorkspaceMode {
@@ -3084,17 +3095,18 @@ export const useLiveEditorStore = create<LiveEditorChatStore>((set, get) => {
       const activePreviewTab = activeThreadState.previewTabs.find(
         (tab) => tab.id === activeThreadState.activePreviewTabId
       ) ?? activeThreadState.previewTabs[0] ?? null
+      const providerId =
+        overrideProviderId
+        || targetProviderId
       const agentType =
         overrideAgentType
         || boundProviderAgentId(boundSession)
         || explicitTargetIntent?.agentId
         || selectedTarget?.tool
+        || defaultAgentTypeForProvider(providerId)
         || activeThreadState.draftAgentType
         || sessionState.defaultAgentType
         || 'claude'
-      const providerId =
-        overrideProviderId
-        || targetProviderId
       const workspaceMode = normalizeDraftWorkspaceMode(activeThreadState.draftWorkspaceMode)
       const outboundTargetIntent: LiveEditorTargetIntent = {
         mode: overrideProviderId
