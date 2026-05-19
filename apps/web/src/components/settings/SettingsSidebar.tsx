@@ -665,7 +665,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       toast.success(`Purged ${sessionCount} hidden chats and ${threadCount} hidden lane records.`);
       await Promise.all([
         refreshProjectSessions(projectPath),
-        refreshProjectChats(projectPath),
+        refreshProjectChats(projectPath, { reconcile: true }),
       ]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to purge hidden history");
@@ -1088,7 +1088,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   async function reloadProjectChatState(targetProjectPath: string) {
     await Promise.all([
       refreshProjectSessions(targetProjectPath),
-      refreshProjectChats(targetProjectPath),
+      refreshProjectChats(targetProjectPath, { reconcile: true }),
     ]);
     if (targetProjectPath === projectPath) {
       await refreshAgentTargets();

@@ -1156,10 +1156,24 @@ async def _load_reconciled_project_chats(
     project_path: str,
     *,
     extra_visible_targets: list[AgentProviderSessionTarget] | None = None,
+    reconcile_live_providers: bool = False,
 ) -> tuple[str, list[object]]:
     normalized_project_path = normalize_project_path(project_path)
     if not os.path.isdir(normalized_project_path):
         raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    if not reconcile_live_providers:
+        sessions = list_project_sessions(normalized_project_path)
+        cached_targets = _cached_project_chat_targets(sessions)
+        chats = reconcile_project_chats(
+            normalized_project_path,
+            sessions=sessions,
+            visible_targets=[
+                *cached_targets,
+                *(extra_visible_targets or []),
+            ],
+        )
+        return normalized_project_path, chats
 
     live_sessions: list[AgentProviderSessionTarget] = []
     visible_sessions: list[AgentProviderSessionTarget] = []
@@ -1231,6 +1245,64 @@ async def _load_reconciled_project_chats(
             visible_targets=list(visible_sessions_by_id.values()),
         )
     return normalized_project_path, chats
+
+
+def _cached_project_chat_targets(sessions: list[object]) -> list[AgentProviderSessionTarget]:
+    targets: list[AgentProviderSessionTarget] = []
+    seen: set[tuple[str, str]] = set()
+    for session in sessions:
+        provider_id = getattr(session, "provider_id", None)
+        provider_session_id = getattr(session, "provider_session_id", None)
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            if getattr(session, "agent_deck_session_id", None):
+                provider_id = "agent-deck"
+            else:
+                continue
+        if not isinstance(provider_session_id, str) or not provider_session_id.strip():
+            agent_deck_session_id = getattr(session, "agent_deck_session_id", None)
+            if provider_id == "agent-deck" and isinstance(agent_deck_session_id, str):
+                provider_session_id = agent_deck_session_id
+            else:
+                continue
+
+        normalized_provider_id = provider_id.strip()
+        normalized_session_id = provider_session_id.strip()
+        key = (normalized_provider_id, normalized_session_id)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        title = getattr(session, "provider_session_title", None)
+        if not isinstance(title, str) or not title.strip():
+            title = getattr(session, "agent_deck_session_title", None)
+        if not isinstance(title, str) or not title.strip():
+            thread_id = getattr(session, "thread_id", None)
+            title = f"Chat {thread_id[:8]}" if isinstance(thread_id, str) else normalized_session_id
+
+        agent_id = getattr(session, "provider_agent_id", None)
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            agent_id = getattr(session, "agent_deck_tool", None)
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            agent_id = None
+
+        workspace_path = getattr(session, "workspace_path", None)
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            workspace_path = getattr(session, "project_path", "")
+
+        targets.append(
+            AgentProviderSessionTarget(
+                provider_id=normalized_provider_id,
+                id=normalized_session_id,
+                title=title.strip(),
+                workspace_path=workspace_path,
+                group=None,
+                agent_id=agent_id,
+                command=None,
+                status="cached",
+                created_at=getattr(session, "created_at", None),
+            )
+        )
+    return targets
 
 
 def serialize_skill_registry_location(location: object) -> dict[str, object]:
@@ -1436,8 +1508,11 @@ async def get_project_sessions(project_path: str):
 
 
 @app.get("/api/projects/{project_path:path}/chats")
-async def get_project_chats(project_path: str):
-    _, chats = await _load_reconciled_project_chats(project_path)
+async def get_project_chats(project_path: str, reconcile: bool = False):
+    _, chats = await _load_reconciled_project_chats(
+        project_path,
+        reconcile_live_providers=reconcile,
+    )
 
     return {
         "chats": [serialize_project_chat(chat) for chat in chats]

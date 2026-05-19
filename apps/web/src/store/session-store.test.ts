@@ -1302,6 +1302,44 @@ describe("session-store project ordering", () => {
   });
 });
 
+describe("session-store project chat projection", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps normal chat refresh cached and uses live reconciliation only when requested", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/projects/") && url.includes("/chats")) {
+          return new Response(
+            JSON.stringify({ chats: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      projectChatsByProject: {},
+    });
+
+    await useSessionStore.getState().refreshProjectChats();
+    await useSessionStore.getState().refreshProjectChats("/tmp/example-project", {
+      reconcile: true,
+    });
+
+    const calls = vi.mocked(globalThis.fetch).mock.calls.map((call) => String(call[0]));
+    expect(calls[0]).toContain("/api/projects/%2Ftmp%2Fexample-project/chats");
+    expect(calls[0]).not.toContain("reconcile=1");
+    expect(calls[1]).toContain("/api/projects/%2Ftmp%2Fexample-project/chats?reconcile=1");
+  });
+});
+
 describe("createAgentTargetSession", () => {
   beforeEach(() => {
     vi.stubGlobal(

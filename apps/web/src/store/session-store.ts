@@ -280,7 +280,10 @@ interface SessionStore {
   clearLiveEditorSession: () => void;
   switchToThread: (session: ProjectSessionRecord | null) => void;
   refreshProjectSessions: (projectPath?: string | null) => Promise<ProjectSessionRecord[]>;
-  refreshProjectChats: (projectPath?: string | null) => Promise<ProjectChatRecord[]>;
+  refreshProjectChats: (
+    projectPath?: string | null,
+    options?: { reconcile?: boolean }
+  ) => Promise<ProjectChatRecord[]>;
   refreshAgentTargets: () => Promise<void>;
   refreshSkills: () => Promise<void>;
   createProjectChatSession: (options?: {
@@ -1242,9 +1245,17 @@ async function fetchProjectSessions(projectPath: string): Promise<ProjectSession
   return payload.sessions.map(normalizeSession);
 }
 
-async function fetchProjectChats(projectPath: string): Promise<ProjectChatRecord[]> {
+async function fetchProjectChats(
+  projectPath: string,
+  options?: { reconcile?: boolean }
+): Promise<ProjectChatRecord[]> {
+  const query = new URLSearchParams();
+  if (options?.reconcile) {
+    query.set("reconcile", "1");
+  }
+  const suffix = query.toString();
   const payload = await requestJson<{ chats: ApiProjectChat[] }>(
-    `/api/projects/${encodeURIComponent(projectPath)}/chats`
+    `/api/projects/${encodeURIComponent(projectPath)}/chats${suffix ? `?${suffix}` : ""}`
   );
   return payload.chats.map(normalizeProjectChat);
 }
@@ -2162,7 +2173,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
     return sessions;
   },
 
-  refreshProjectChats: async (requestedProjectPath) => {
+  refreshProjectChats: async (requestedProjectPath, options) => {
     const normalizedRequestedProjectPath = requestedProjectPath?.trim() || null;
     const { projectPath } = get();
     const targetProjectPath = normalizedRequestedProjectPath ?? projectPath;
@@ -2171,7 +2182,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
       return [];
     }
 
-    const chats = await fetchProjectChats(targetProjectPath);
+    const chats = await fetchProjectChats(targetProjectPath, options);
     if (targetProjectPath !== projectPath) {
       set((state) => ({
         projectChatsByProject: setProjectChatsForPath(
