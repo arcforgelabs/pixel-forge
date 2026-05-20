@@ -121,14 +121,50 @@ function releaseSourceLabel(source: string | null | undefined): string {
   return source === "tags" ? "GitHub tag" : "GitHub release";
 }
 
+function normalizedReleaseTag(version: string | null | undefined): string | null {
+  if (!version || !version.trim()) {
+    return null;
+  }
+  return version.trim().startsWith("v") ? version.trim() : `v${version.trim()}`;
+}
+
+function isLocalRuntimeBuild({
+  latestReleaseVersion,
+  controllerVersion,
+  controllerGitDescribe,
+  controllerGitDirty,
+}: {
+  latestReleaseVersion: string | null;
+  controllerVersion: string | null;
+  controllerGitDescribe?: string | null;
+  controllerGitDirty?: boolean | null;
+}): boolean {
+  if (controllerGitDirty) {
+    return true;
+  }
+
+  const latestVsRunning = compareCalver(latestReleaseVersion, controllerVersion);
+  if (latestVsRunning !== 0) {
+    return false;
+  }
+
+  const expectedTag = normalizedReleaseTag(latestReleaseVersion);
+  const installedDescribe = controllerGitDescribe?.trim() || null;
+  return Boolean(expectedTag && installedDescribe && installedDescribe !== expectedTag);
+}
+
 export function resolveControllerUpdateStatus({
   pendingControllerUpdate,
   controllerVersion,
   controllerReleaseUpdate,
+  controllerGitDescribe,
+  controllerGitDirty,
 }: {
   pendingControllerUpdate: PixelForgeDesktopPendingControllerUpdate | null;
   controllerVersion: string | null;
   controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
+  controllerGitDescribe?: string | null;
+  controllerGitDirty?: boolean | null;
 }): ControllerUpdateStatus {
   const stagedVersion = pendingControllerUpdate?.version ?? null;
   const versionComparison = compareCalver(stagedVersion, controllerVersion);
@@ -138,6 +174,12 @@ export function resolveControllerUpdateStatus({
   const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
   const latestVsRunning = compareCalver(latestReleaseVersion, controllerVersion);
   const sourceLabel = releaseSourceLabel(controllerReleaseUpdate?.source);
+  const installedBuildLabel = controllerGitDescribe?.trim() || null;
+  const localBuildDetail = installedBuildLabel
+    ? ` Installed build identity: ${installedBuildLabel}${controllerGitDirty ? " (dirty at install)" : ""}.`
+    : controllerGitDirty
+      ? " Installed source was dirty at install."
+      : "";
 
   if (!pendingControllerUpdate) {
     if (controllerReleaseUpdate?.updateAvailable) {
@@ -167,6 +209,20 @@ export function resolveControllerUpdateStatus({
         label: "Local build",
         className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
         detail: `Running installed build ${runningVersionLabel}, which is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}. No staged controller update is available.`,
+        buttonLabel: "Load Controller Update",
+      };
+    }
+
+    if (isLocalRuntimeBuild({
+      latestReleaseVersion,
+      controllerVersion,
+      controllerGitDescribe,
+      controllerGitDirty,
+    })) {
+      return {
+        label: "Local build",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        detail: `Running ${runningVersionLabel}, but the installed build does not exactly match the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.${localBuildDetail} No staged controller update is available.`,
         buttonLabel: "Load Controller Update",
       };
     }
@@ -226,9 +282,13 @@ export function resolveControllerUpdateStatus({
 export function resolveReleaseDisplayText({
   controllerVersion,
   controllerReleaseUpdate,
+  controllerGitDescribe,
+  controllerGitDirty,
 }: {
   controllerVersion: string | null;
   controllerReleaseUpdate: PixelForgeControllerReleaseUpdateState | null;
+  controllerGitDescribe?: string | null;
+  controllerGitDirty?: boolean | null;
 }): ReleaseDisplayText {
   const latestReleaseVersion = controllerReleaseUpdate?.latest?.version ?? null;
   const latestReleaseVersionLabel = formatVersionLabel(latestReleaseVersion);
@@ -237,6 +297,7 @@ export function resolveReleaseDisplayText({
   const sourceLabel = releaseSourceLabel(controllerReleaseUpdate?.source);
   const title = controllerReleaseUpdate?.source === "tags" ? "GitHub Tags" : "GitHub Releases";
   const latestLabel = controllerReleaseUpdate?.source === "tags" ? "Latest Tag" : "Latest Release";
+  const installedBuildLabel = controllerGitDescribe?.trim() || null;
 
   if (controllerReleaseUpdate?.error) {
     return {
@@ -262,6 +323,22 @@ export function resolveReleaseDisplayText({
       latestLabel,
       badgeLabel: "Local build",
       detail: `Installed build ${runningVersionLabel} is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}; this can happen when master is installed before a new stable tag is pushed.`,
+    };
+  }
+
+  if (isLocalRuntimeBuild({
+    latestReleaseVersion,
+    controllerVersion,
+    controllerGitDescribe,
+    controllerGitDirty,
+  })) {
+    return {
+      title,
+      latestLabel,
+      badgeLabel: "Local build",
+      detail: installedBuildLabel
+        ? `Installed build ${installedBuildLabel}${controllerGitDirty ? " (dirty at install)" : ""} does not exactly match the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.`
+        : `Installed source was dirty at install and does not exactly match the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.`,
     };
   }
 
@@ -797,6 +874,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const releaseDisplay = resolveReleaseDisplayText({
     controllerVersion,
     controllerReleaseUpdate,
+    controllerGitDescribe,
+    controllerGitDirty,
   });
   const runtimeLayoutLabel = formatRuntimeLayout(controllerRuntimeLayout);
   const desktopApp = getDesktopApp();
@@ -811,6 +890,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     pendingControllerUpdate,
     controllerVersion,
     controllerReleaseUpdate,
+    controllerGitDescribe,
+    controllerGitDirty,
   });
 
   useEffect(() => {

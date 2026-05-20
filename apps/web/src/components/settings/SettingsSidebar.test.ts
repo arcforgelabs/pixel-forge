@@ -85,6 +85,63 @@ describe('SettingsSidebar version display helpers', () => {
     expect(status.label).toBe('Release available')
     expect(status.detail).toBe('v2026.5.7 is available from GitHub release; stage it below to install.')
   })
+
+  it('does not call a dirty same-version install current stable', () => {
+    const state = releaseState({
+      latest: {
+        ...releaseState().latest!,
+        tagName: 'v2026.5.19-1',
+        version: '2026.5.19-1',
+      },
+    })
+    const status = resolveControllerUpdateStatus({
+      pendingControllerUpdate: null,
+      controllerVersion: '2026.5.19-1',
+      controllerReleaseUpdate: state,
+      controllerGitDescribe: 'v2026.5.19-1-dirty',
+      controllerGitDirty: true,
+    })
+    const display = resolveReleaseDisplayText({
+      controllerVersion: '2026.5.19-1',
+      controllerReleaseUpdate: state,
+      controllerGitDescribe: 'v2026.5.19-1-dirty',
+      controllerGitDirty: true,
+    })
+
+    expect(status.label).toBe('Local build')
+    expect(status.detail).toContain('does not exactly match the latest stable GitHub tag v2026.5.19-1')
+    expect(status.detail).toContain('v2026.5.19-1-dirty')
+    expect(display.badgeLabel).toBe('Local build')
+    expect(display.detail).toContain('dirty at install')
+  })
+
+  it('does not call an off-tag same-version install current stable', () => {
+    const state = releaseState({
+      latest: {
+        ...releaseState().latest!,
+        tagName: 'v2026.5.19-1',
+        version: '2026.5.19-1',
+      },
+    })
+    const status = resolveControllerUpdateStatus({
+      pendingControllerUpdate: null,
+      controllerVersion: '2026.5.19-1',
+      controllerReleaseUpdate: state,
+      controllerGitDescribe: 'v2026.5.19-1-2-gabcdef123456',
+      controllerGitDirty: false,
+    })
+    const display = resolveReleaseDisplayText({
+      controllerVersion: '2026.5.19-1',
+      controllerReleaseUpdate: state,
+      controllerGitDescribe: 'v2026.5.19-1-2-gabcdef123456',
+      controllerGitDirty: false,
+    })
+
+    expect(status.label).toBe('Local build')
+    expect(status.detail).toContain('v2026.5.19-1-2-gabcdef123456')
+    expect(display.badgeLabel).toBe('Local build')
+    expect(display.detail).toContain('v2026.5.19-1-2-gabcdef123456')
+  })
 })
 
 describe('SettingsSidebar provider diagnostics', () => {
