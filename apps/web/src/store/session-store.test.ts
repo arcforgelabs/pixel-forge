@@ -466,6 +466,146 @@ describe("session-store thread switching", () => {
     expect(useSessionStore.getState().defaultAgentType).toBe("claude");
   });
 
+  it("preserves a newly selected chat when deferred project metadata resolves", async () => {
+    const resolvers: {
+      chats?: (response: Response) => void;
+      targets?: (response: Response) => void;
+    } = {};
+    const sessionA = {
+      id: 1,
+      project_path: "/tmp/example-project",
+      workspace_path: "/tmp/example-project/.agents/thread-a",
+      thread_id: "thread-a",
+      backend: "agent-deck",
+      provider_id: "agent-deck",
+      provider_session_id: "deck-session-a",
+      provider_session_title: "pixel-forge-thread-a",
+      provider_agent_id: "codex",
+      agent_deck_session_id: "deck-session-a",
+      agent_deck_session_title: "pixel-forge-thread-a",
+      agent_deck_tool: "codex",
+      editor_state: null,
+      created_at: "2026-03-20T00:00:00Z",
+      last_active: "2026-03-20T00:00:00Z",
+    };
+    const sessionB = {
+      ...sessionA,
+      id: 2,
+      workspace_path: "/tmp/example-project/.agents/thread-b",
+      thread_id: "thread-b",
+      provider_session_id: "deck-session-b",
+      provider_session_title: "pixel-forge-thread-b",
+      agent_deck_session_id: "deck-session-b",
+      agent_deck_session_title: "pixel-forge-thread-b",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.endsWith("/api/projects") && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({
+              path: "/tmp/example-project",
+              name: "example-project",
+              output_mode: "scratch",
+              custom_output_path: null,
+              created_at: "2026-03-20T00:00:00Z",
+              last_opened: "2026-03-20T00:00:00Z",
+              urls: [],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/sessions")) {
+          return new Response(
+            JSON.stringify({ sessions: [sessionA, sessionB] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/projects/") && url.includes("/chats")) {
+          return await new Promise<Response>((resolve) => {
+            resolvers.chats = resolve;
+          });
+        }
+        if (url.includes("/api/projects/") && url.includes("/agent-sessions")) {
+          return await new Promise<Response>((resolve) => {
+            resolvers.targets = resolve;
+          });
+        }
+        if (url.includes("/api/projects/") && url.includes("/urls")) {
+          return new Response(
+            JSON.stringify({ urls: [] }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.includes("/api/profile-state") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body || "{}"));
+          return new Response(
+            JSON.stringify({
+              profile_id: body.profile_id ?? "default",
+              active_project_path: body.active_project_path ?? null,
+              last_workspace_browse_directory:
+                body.last_workspace_browse_directory ?? null,
+              active_mode: body.active_mode ?? "live-editor",
+              active_live_editor_thread_id:
+                body.active_live_editor_thread_id ?? null,
+              default_agent_type: body.default_agent_type ?? "codex",
+              default_workspace_mode: body.default_workspace_mode ?? "root",
+              default_agent_provider_id:
+                body.default_agent_provider_id ?? "agent-deck",
+              claude_default_model: body.claude_default_model ?? null,
+              claude_default_thinking: body.claude_default_thinking ?? null,
+              codex_default_model: body.codex_default_model ?? null,
+              codex_default_thinking: body.codex_default_thinking ?? null,
+              updated_at: "2026-03-20T00:00:00Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        throw new Error(`Unhandled fetch in session-store test: ${url}`);
+      })
+    );
+
+    await useSessionStore.getState().setProject({
+      path: "/tmp/example-project",
+      persistProfile: false,
+    });
+    expect(useSessionStore.getState().liveEditorSession?.threadId).toBe("thread-a");
+
+    useSessionStore.getState().switchToThread(
+      createProjectSession({
+        id: 2,
+        threadId: "thread-b",
+        workspacePath: "/tmp/example-project/.agents/thread-b",
+        providerId: "agent-deck",
+        providerSessionId: "deck-session-b",
+        providerSessionTitle: "pixel-forge-thread-b",
+        agentDeckSessionId: "deck-session-b",
+        agentDeckSessionTitle: "pixel-forge-thread-b",
+      })
+    );
+    expect(useSessionStore.getState().liveEditorSession?.threadId).toBe("thread-b");
+
+    resolvers.chats?.(
+      new Response(
+        JSON.stringify({ chats: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    resolvers.targets?.(
+      new Response(
+        JSON.stringify({ sessions: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().agentTargetsLoading).toBe(false);
+    });
+    expect(useSessionStore.getState().liveEditorSession?.threadId).toBe("thread-b");
+  });
+
   it("caches chats for inactive projects without replacing the active project session list", async () => {
     vi.stubGlobal(
       "fetch",

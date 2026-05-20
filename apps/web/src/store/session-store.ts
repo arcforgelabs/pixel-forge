@@ -1847,14 +1847,23 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
           if (currentState.projectPath !== savedProject.path) {
             return {}
           }
-          const nextCurrentSessionTargetId = getAgentBindingSessionId(nextCurrentSession);
+          const currentLiveEditorThreadId =
+            currentState.liveEditorSession?.threadId?.trim() || null;
+          const preservedLiveEditorSession =
+            currentLiveEditorThreadId
+              ? nextHydratedSessions.find(
+                  (session) => session.threadId === currentLiveEditorThreadId
+                ) ?? null
+              : null;
+          const resolvedCurrentSession = preservedLiveEditorSession ?? nextCurrentSession;
+          const nextCurrentSessionTargetId = getAgentBindingSessionId(resolvedCurrentSession);
           const nextSelectedTargetId = nextCurrentSessionTargetId
             ?? (currentState.selectedAgentTargetId
               && agentTargets.some((target) => target.id === currentState.selectedAgentTargetId)
               ? currentState.selectedAgentTargetId
               : null);
           return {
-            liveEditorSession: nextCurrentSession,
+            liveEditorSession: resolvedCurrentSession,
             selectedAgentTargetId:
               nextSelectedTargetId,
             projectSessionsByProject: setProjectSessionsForPath(

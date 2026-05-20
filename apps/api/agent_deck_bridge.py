@@ -37,6 +37,7 @@ CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 AGENT_DECK_LAUNCH_RECOVERY_TIMEOUT_SECONDS = 45.0
 AGENT_DECK_COMMAND_TIMEOUT_SECONDS = 3.0
+AGENT_DECK_SEND_COMMAND_TIMEOUT_SECONDS = 45.0
 AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS = 25.0
 AGENT_DECK_CLEANUP_COMMAND_TIMEOUT_SECONDS = 90.0
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
@@ -544,6 +545,11 @@ def _agent_deck_command_timeout_seconds(args: list[str]) -> float:
         return _env_float(
             "PIXEL_FORGE_AGENT_DECK_LAUNCH_TIMEOUT_SECONDS",
             AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS,
+        )
+    if len(args) >= 2 and args[0] == "session" and args[1] == "send":
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_SEND_TIMEOUT_SECONDS",
+            AGENT_DECK_SEND_COMMAND_TIMEOUT_SECONDS,
         )
     if args and args[0] in {"clone", "rm"}:
         return _env_float(

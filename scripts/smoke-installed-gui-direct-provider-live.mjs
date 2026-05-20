@@ -357,11 +357,21 @@ async function sendPromptAndWait(page, prompt, expectedText) {
   }, { timeout: 45000 })
   const textareaHandle = handle.asElement()
   assert(textareaHandle, 'Visible composer textarea not found.')
-  await textareaHandle.click()
-  await page.keyboard.down('Control')
-  await page.keyboard.press('KeyA')
-  await page.keyboard.up('Control')
-  await page.keyboard.type(prompt, { delay: 1 })
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await textareaHandle.click()
+    await textareaHandle.focus()
+    await page.waitForFunction((textarea) => document.activeElement === textarea, { timeout: 5000 }, textareaHandle)
+    await page.keyboard.down('Control')
+    await page.keyboard.press('KeyA')
+    await page.keyboard.up('Control')
+    await page.keyboard.press('Backspace')
+    await page.waitForFunction((textarea) => textarea.value === '', { timeout: 5000 }, textareaHandle).catch(() => {})
+    await textareaHandle.type(prompt, { delay: 1 })
+    const typedExactly = await page.evaluate((textarea, expected) => textarea.value === expected, textareaHandle, prompt)
+    if (typedExactly) break
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
   try {
     await page.waitForFunction((expected) => {
       const textarea = [...document.querySelectorAll('textarea[placeholder="Type here..."]')]

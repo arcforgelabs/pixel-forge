@@ -314,10 +314,73 @@ export async function reportSmokeFailure(name, error, context) {
   console.error(`[smoke:${name}] temp root: ${context.root}`)
 }
 
+async function removeSmokeRoot(root) {
+  const retryCodes = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM'])
+  let lastError = null
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      await fs.rm(root, { recursive: true, force: true })
+      return
+    } catch (error) {
+      lastError = error
+      if (!retryCodes.has(error?.code)) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
+    }
+  }
+
+  throw lastError
+}
+
+async function terminateSmokeRootProcesses(context) {
+  const smokeRoot = path.resolve(context.root)
+  let output = ''
+  try {
+    const result = await runProcess('ps', ['-eo', 'pid=,cmd='], {
+      label: 'ps smoke cleanup',
+    })
+    output = result.stdout
+  } catch {
+    return
+  }
+
+  const pids = output
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.includes(smokeRoot)) {
+        return null
+      }
+      const [pidText] = trimmed.split(/\s+/, 1)
+      const pid = Number.parseInt(pidText, 10)
+      return Number.isFinite(pid) && pid > 0 && pid !== process.pid ? pid : null
+    })
+    .filter((pid) => pid !== null)
+
+  if (pids.length === 0) {
+    return
+  }
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {}
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750))
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {}
+  }
+}
+
 export async function cleanupSmokeContext(context) {
   if (await pathExists(path.join(context.paths.binDir, cliNameForContext(context)))) {
     await runPixelForge(context, ['stop']).catch(() => {})
   }
+  await terminateSmokeRootProcesses(context)
 
   if (isTruthy(process.env.PIXEL_FORGE_SMOKE_KEEP_TEMP)) {
     console.log(`[smoke:${context.name}] kept temp root at ${context.root}`)
@@ -327,5 +390,5 @@ export async function cleanupSmokeContext(context) {
   await runProcess('chmod', ['-R', 'u+w', context.root], {
     label: `chmod smoke temp root ${context.root}`,
   }).catch(() => {})
-  await fs.rm(context.root, { recursive: true, force: true })
+  await removeSmokeRoot(context.root)
 }

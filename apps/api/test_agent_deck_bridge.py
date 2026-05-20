@@ -794,7 +794,47 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             )
 
 
-class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
+class AgentDeckBridgePromptSendCommandTest(unittest.IsolatedAsyncioTestCase):
+    def test_session_send_uses_dedicated_timeout_budget(self) -> None:
+        with patch.dict(
+            agent_deck_bridge.os.environ,
+            {
+                "PIXEL_FORGE_AGENT_DECK_SEND_TIMEOUT_SECONDS": "",
+                "PIXEL_FORGE_AGENT_DECK_COMMAND_TIMEOUT_SECONDS": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "send", "deck-a", "Fix", "-q"]
+                ),
+                agent_deck_bridge.AGENT_DECK_SEND_COMMAND_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(["ls", "-json"]),
+                agent_deck_bridge.AGENT_DECK_COMMAND_TIMEOUT_SECONDS,
+            )
+
+    def test_session_send_timeout_can_be_overridden_separately(self) -> None:
+        with patch.dict(
+            agent_deck_bridge.os.environ,
+            {
+                "PIXEL_FORGE_AGENT_DECK_SEND_TIMEOUT_SECONDS": "12",
+                "PIXEL_FORGE_AGENT_DECK_COMMAND_TIMEOUT_SECONDS": "3",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "send", "deck-a", "Fix", "-q"]
+                ),
+                12.0,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(["ls", "-json"]),
+                3.0,
+            )
+
     async def test_send_agent_deck_prompt_reliably_waits_for_ready_without_cli_wait_flag(self) -> None:
         run_command = AsyncMock(return_value=(0, "", ""))
 
