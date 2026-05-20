@@ -484,6 +484,7 @@ interface ChatSidebarActionItem {
   providerId: string | null;
   providerSessionId: string | null;
   agentDeckSessionId: string | null;
+  bindingState: ProjectChatRecord["bindingState"] | null;
 }
 
 interface ChatSidebarRow extends ChatSidebarActionItem {
@@ -511,6 +512,35 @@ interface ChatDeleteAssessment {
 
 function chatProviderSessionId(chat: ProjectChatRecord | null | undefined): string | null {
   return chat?.providerSessionId?.trim() || chat?.agentDeckSessionId?.trim() || null;
+}
+
+export function resolveChatTuiActionState(item: {
+  providerId?: string | null;
+  providerSessionId?: string | null;
+  agentDeckSessionId?: string | null;
+  bindingState?: ProjectChatRecord["bindingState"] | null;
+}): { canOpen: boolean; disabledReason: string | null } {
+  const providerId = item.providerId?.trim() || null;
+  const boundSessionId = item.providerSessionId?.trim() || item.agentDeckSessionId?.trim() || null;
+
+  if (!boundSessionId || item.bindingState === "detached") {
+    return {
+      canOpen: false,
+      disabledReason: "Open TUI is available after this chat has started.",
+    };
+  }
+
+  if (providerId !== "agent-deck") {
+    return {
+      canOpen: false,
+      disabledReason: "Direct provider TUI is not available yet.",
+    };
+  }
+
+  return {
+    canOpen: true,
+    disabledReason: null,
+  };
 }
 
 function chatProviderAgentId(chat: ProjectChatRecord | null | undefined): string | null {
@@ -1581,6 +1611,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   }
 
   function renderChatRow(item: ChatSidebarRow) {
+    const tuiActionState = resolveChatTuiActionState(item);
+    const isOpeningTui = openingChatTuiKey === item.key;
+
     return (
       <div
         key={item.key}
@@ -1634,14 +1667,21 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
           >
             <button
               type="button"
-              disabled={openingChatTuiKey === item.key}
+              disabled={isOpeningTui || !tuiActionState.canOpen}
+              title={tuiActionState.disabledReason ?? "Open Agent Deck TUI for this chat."}
               onClick={() => {
+                if (!tuiActionState.canOpen) {
+                  return;
+                }
                 setChatActionMenuOpenId(null);
                 void handleOpenChatTui(item);
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-wait disabled:opacity-60"
+              className={`
+                flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60 disabled:opacity-60
+                ${isOpeningTui ? "disabled:cursor-wait" : "disabled:cursor-not-allowed"}
+              `}
             >
-              {openingChatTuiKey === item.key ? (
+              {isOpeningTui ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Terminal className="h-4 w-4" />
@@ -2041,6 +2081,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   ),
                                   providerSessionId,
                                   agentDeckSessionId: chat.agentDeckSessionId,
+                                  bindingState: chat.bindingState,
                                   isActive: isActiveChat,
                                   isReady: (claimedThread !== null || draftThreadKey !== null) && !threadStatus?.isStreaming && !threadStatus?.isObservedStreaming,
                                   isStreaming: Boolean(threadStatus?.isStreaming) || Boolean(threadStatus?.isObservedStreaming),

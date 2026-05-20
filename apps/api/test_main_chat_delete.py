@@ -380,6 +380,64 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Codex bound-chat TUI launch is not wired yet", context.exception.detail)
         open_tui.assert_not_called()
 
+    async def test_open_detached_agent_deck_chat_tui_reports_not_bound(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-a",
+                    object(),
+                    object(),
+                    "agent-deck",
+                    None,
+                    None,
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_agent_provider_or_error", Mock()) as provider_or_error,
+            patch.object(main, "_open_agent_deck_tui_terminal", Mock()) as open_tui,
+        ):
+            with self.assertRaises(main.HTTPException) as context:
+                await main.open_project_chat_item_tui(
+                    "/tmp/project",
+                    main.ChatItemOpenTuiRequest(thread_id="thread-a", provider_id="agent-deck"),
+                )
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertEqual(context.exception.detail, "This chat is not bound to a provider TUI yet.")
+        provider_or_error.assert_not_called()
+        open_tui.assert_not_called()
+
+    async def test_open_unbound_direct_codex_chat_tui_reports_not_bound(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-direct",
+                    object(),
+                    object(),
+                    "codex-cli",
+                    None,
+                    None,
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_open_agent_deck_tui_terminal", Mock()) as open_tui,
+        ):
+            with self.assertRaises(main.HTTPException) as context:
+                await main.open_project_chat_item_tui(
+                    "/tmp/project",
+                    main.ChatItemOpenTuiRequest(thread_id="thread-direct", provider_id="codex-cli"),
+                )
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertEqual(context.exception.detail, "This chat is not bound to a provider TUI yet.")
+        open_tui.assert_not_called()
+
 
 class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
     async def test_create_project_chat_reuses_empty_draft_by_default(self) -> None:

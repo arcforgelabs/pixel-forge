@@ -2113,7 +2113,14 @@ async def open_project_chat_item_tui(
     ):
         raise HTTPException(status_code=404, detail="Chat item not found")
 
+    bound_provider_session_id = resolved_agent_deck_session_id or resolved_provider_session_id
+
     if resolved_provider_id == "agent-deck":
+        if not bound_provider_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This chat is not bound to a provider TUI yet.",
+            )
         _agent_provider_or_error("agent-deck")
         raw_title = (
             getattr(session_record, "provider_session_title", None)
@@ -2130,12 +2137,17 @@ async def open_project_chat_item_tui(
             return await asyncio.to_thread(
                 _open_agent_deck_tui_terminal,
                 title=terminal_title,
-                session_id=resolved_agent_deck_session_id or resolved_provider_session_id,
+                session_id=bound_provider_session_id,
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if resolved_provider_id in {"codex-cli", "claude-cli"}:
+        if not bound_provider_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This chat is not bound to a provider TUI yet.",
+            )
         label = "Codex" if resolved_provider_id == "codex-cli" else "Claude Code"
         raise HTTPException(
             status_code=501,

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { PixelForgeControllerReleaseUpdateState } from '@/types/pixel-forge-desktop'
 import {
   providerDiagnosticRows,
+  resolveChatTuiActionState,
   resolveControllerUpdateStatus,
   resolveReleaseDisplayText,
   type AgentProviderStatus,
@@ -141,6 +142,44 @@ describe('SettingsSidebar version display helpers', () => {
     expect(status.detail).toContain('v2026.5.19-1-2-gabcdef123456')
     expect(display.badgeLabel).toBe('Local build')
     expect(display.detail).toContain('v2026.5.19-1-2-gabcdef123456')
+  })
+})
+
+describe('SettingsSidebar chat TUI action state', () => {
+  it('allows Agent Deck chats that are attached to a bound session', () => {
+    expect(resolveChatTuiActionState({
+      providerId: 'agent-deck',
+      providerSessionId: 'deck-session-a',
+      agentDeckSessionId: 'deck-session-a',
+      bindingState: 'attached',
+    })).toEqual({
+      canOpen: true,
+      disabledReason: null,
+    })
+  })
+
+  it('disables detached drafts even when their provider is Agent Deck', () => {
+    expect(resolveChatTuiActionState({
+      providerId: 'agent-deck',
+      providerSessionId: null,
+      agentDeckSessionId: null,
+      bindingState: 'detached',
+    })).toEqual({
+      canOpen: false,
+      disabledReason: 'Open TUI is available after this chat has started.',
+    })
+  })
+
+  it('keeps direct provider sessions disabled until their TUI harness exists', () => {
+    expect(resolveChatTuiActionState({
+      providerId: 'codex-cli',
+      providerSessionId: 'codex-session-a',
+      agentDeckSessionId: null,
+      bindingState: 'attached',
+    })).toEqual({
+      canOpen: false,
+      disabledReason: 'Direct provider TUI is not available yet.',
+    })
   })
 })
 
