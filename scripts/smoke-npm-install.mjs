@@ -153,6 +153,7 @@ function npmInstallEnv() {
     PIXEL_FORGE_UNATTENDED: '1',
     PIXEL_FORGE_INSTALL_CACHE_DIR: paths.installCacheDir,
     PIXEL_FORGE_WITH_AGENT_DECK: '0',
+    PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION: '0',
     PIXEL_FORGE_INSTALL_CLAUDE_CHANNEL_SPIKE: '0',
     PIXEL_FORGE_INSTALL_CODEX_CHANNEL: '0',
     PIXEL_FORGE_RELEASE_CHECK_INTERVAL_SECONDS: '300',
@@ -179,6 +180,59 @@ async function prepareReleaseArchive() {
     env: smokeContext.env,
     label: `tar release archive ${stagedVersion}`,
   })
+}
+
+async function commandExists(command, env) {
+  try {
+    await runProcess('bash', ['-lc', `command -v ${command}`], {
+      env,
+      label: `command -v ${command}`,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function launchDesktopEntryIfRequested({
+  cliName,
+  desktopFilePath,
+  env,
+}) {
+  if (
+    !isTruthy(process.env.PIXEL_FORGE_SMOKE_GUI_LAUNCH)
+    || (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY)
+  ) {
+    return 'desktop artifacts verified'
+  }
+
+  if (await commandExists('gtk-launch', env)) {
+    await runProcess('timeout', [
+      '20',
+      'bash',
+      '-lc',
+      `gtk-launch ${JSON.stringify(cliName)} >/dev/null 2>&1`,
+    ], {
+      env,
+      label: `gtk-launch ${cliName}`,
+    })
+    return 'desktop artifacts verified and gtk-launch exited successfully'
+  }
+
+  if (await commandExists('gio', env)) {
+    await runProcess('timeout', [
+      '20',
+      'bash',
+      '-lc',
+      `gio launch ${JSON.stringify(desktopFilePath)} >/dev/null 2>&1`,
+    ], {
+      env,
+      label: `gio launch ${desktopFilePath}`,
+    })
+    return 'desktop artifacts verified and gio launch exited successfully'
+  }
+
+  return 'desktop artifacts verified; no gtk-launch or gio command available'
 }
 
 async function gitOutput(args) {
@@ -254,16 +308,71 @@ try {
 
   const cliName = env.PIXEL_FORGE_CLI_NAME || env.PIXEL_FORGE_INSTALL_NAME || 'pixel-forge'
   const shellName = env.PIXEL_FORGE_SHELL_NAME || `${cliName}-shell`
+  const desktopFileName = `${cliName}.desktop`
+  const desktopFilePath = path.join(
+    paths.homeDir,
+    '.local',
+    'share',
+    'applications',
+    desktopFileName,
+  )
+  const iconPath = path.join(
+    paths.homeDir,
+    '.local',
+    'share',
+    'icons',
+    'hicolor',
+    '256x256',
+    'apps',
+    `${cliName}.png`,
+  )
+  const installedPackagePath = path.join(paths.installDir, 'desktop', 'package.json')
+  const shellLauncherPath = path.join(paths.binDir, shellName)
   for (const requiredPath of [
     path.join(paths.installDir, 'VERSION'),
     path.join(paths.installDir, 'runtime-install-metadata.json'),
     path.join(paths.installDir, 'frontend', 'index.html'),
     path.join(paths.installDir, '.venv', 'bin', 'uvicorn'),
+    desktopFilePath,
+    iconPath,
+    installedPackagePath,
     path.join(paths.binDir, cliName),
-    path.join(paths.binDir, shellName),
+    shellLauncherPath,
   ]) {
     assert(await pathExists(requiredPath), `Missing install artifact: ${requiredPath}`)
   }
+
+  const desktopFile = await fs.readFile(desktopFilePath, 'utf-8')
+  assert(desktopFile.includes('Name=Pixel Forge'), `Desktop file missing app name:\n${desktopFile}`)
+  assert(
+    desktopFile.includes(`Exec=bash -lc "exec ${shellName}"`),
+    `Desktop file does not launch ${shellName}:\n${desktopFile}`,
+  )
+  assert(desktopFile.includes(`Icon=${cliName}`), `Desktop file missing icon name:\n${desktopFile}`)
+  assert(
+    desktopFile.includes(`StartupWMClass=${cliName}-desktop`),
+    `Desktop file missing StartupWMClass ${cliName}-desktop:\n${desktopFile}`,
+  )
+
+  const packageJson = JSON.parse(await fs.readFile(installedPackagePath, 'utf-8'))
+  assert(
+    packageJson.productName === 'Pixel Forge',
+    `Installed desktop package has wrong productName: ${packageJson.productName}`,
+  )
+  assert(
+    packageJson.desktopName === desktopFileName,
+    `Installed desktop package has wrong desktopName: ${packageJson.desktopName}`,
+  )
+
+  const shellLauncher = await fs.readFile(shellLauncherPath, 'utf-8')
+  assert(
+    shellLauncher.includes('PIXEL_FORGE_DESKTOP_ICON_PATH'),
+    'Shell launcher does not export PIXEL_FORGE_DESKTOP_ICON_PATH.',
+  )
+  assert(
+    shellLauncher.includes('"--class=$PIXEL_FORGE_DESKTOP_WM_CLASS"'),
+    'Shell launcher does not pass the desktop WM class to Electron.',
+  )
 
   await runPixelForge(smokeContext, ['start'], { cwd: paths.sourceDir })
   await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
@@ -307,6 +416,12 @@ try {
     runtimeInfo.gitDirty === false,
     `Expected runtime-info gitDirty false, got ${runtimeInfo.gitDirty}`,
   )
+
+  const desktopLaunchProof = await launchDesktopEntryIfRequested({
+    cliName,
+    desktopFilePath,
+    env,
+  })
 
   const checkedRelease = await postJson(
     `${context.baseUrl}/api/controller-release-update/check`,
@@ -388,8 +503,8 @@ try {
 
   console.log(
     applyReleaseUpdate
-      ? `[smoke:npm-install] ${packageName}@${expectedVersion} installed ${runtimeInfo.runtimeLayout} runtime from ${runtimeInfo.gitDescribe}, then applied ${stagedTag} through release update`
-      : `[smoke:npm-install] ${packageName}@${expectedVersion} installed ${runtimeInfo.runtimeLayout} runtime from ${runtimeInfo.gitDescribe}, then staged ${stagedTag} through release update`,
+      ? `[smoke:npm-install] ${packageName}@${expectedVersion} installed ${runtimeInfo.runtimeLayout} runtime from ${runtimeInfo.gitDescribe}, ${desktopLaunchProof}, then applied ${stagedTag} through release update`
+      : `[smoke:npm-install] ${packageName}@${expectedVersion} installed ${runtimeInfo.runtimeLayout} runtime from ${runtimeInfo.gitDescribe}, ${desktopLaunchProof}, then staged ${stagedTag} through release update`,
   )
 } catch (error) {
   await reportSmokeFailure('npm-install', error, smokeContext)
