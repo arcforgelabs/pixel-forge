@@ -274,7 +274,7 @@ async function resolveUpdateStartedAt(fallback) {
 
 function runShellCommand(command, cwd, options = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('bash', ['-lc', command], {
+    const proc = spawn('bash', ['-c', command], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
