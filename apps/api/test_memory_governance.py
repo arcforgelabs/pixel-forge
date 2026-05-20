@@ -75,6 +75,53 @@ class MemoryGovernanceTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("memory budget", decision.reason or "")
 
+    def test_measured_waiting_sessions_do_not_hit_fixed_count_cap(self) -> None:
+        os.environ["PIXEL_FORGE_AGENT_DECK_MAX_WARM_SESSIONS"] = "2"
+        budget = memory_governance.derive_agent_deck_memory_budget(64 * memory_governance.GIB)
+
+        decision = memory_governance.plan_agent_deck_launch_admission(
+            [
+                {
+                    "id": f"waiting-{index}",
+                    "status": "waiting",
+                    "created_at": f"2026-01-01T00:00:{index:02d}Z",
+                    "memory_rss_bytes": 128 * memory_governance.MIB,
+                    "memory_swap_bytes": 32 * memory_governance.MIB,
+                }
+                for index in range(12)
+            ],
+            budget=budget,
+        )
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.stop_idle_session_ids, ())
+
+    def test_measured_pressure_parks_largest_waiting_sessions_first(self) -> None:
+        budget = memory_governance.derive_agent_deck_memory_budget(8 * memory_governance.GIB)
+
+        decision = memory_governance.plan_agent_deck_launch_admission(
+            [
+                {
+                    "id": "small-waiting",
+                    "status": "waiting",
+                    "created_at": "2026-01-01T00:00:01Z",
+                    "memory_rss_bytes": 256 * memory_governance.MIB,
+                    "memory_swap_bytes": 0,
+                },
+                {
+                    "id": "large-waiting",
+                    "status": "waiting",
+                    "created_at": "2026-01-01T00:00:02Z",
+                    "memory_rss_bytes": 5 * memory_governance.GIB,
+                    "memory_swap_bytes": 0,
+                },
+            ],
+            budget=budget,
+        )
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.stop_idle_session_ids, ("large-waiting",))
+
 
 if __name__ == "__main__":
     unittest.main()

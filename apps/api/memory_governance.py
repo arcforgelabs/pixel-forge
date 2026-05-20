@@ -208,6 +208,31 @@ def _session_text(session: Mapping[str, object], key: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _session_int(session: Mapping[str, object], key: str) -> int | None:
+    value = session.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value >= 0 else None
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed >= 0 else None
+    return None
+
+
+def _session_memory_bytes(session: Mapping[str, object]) -> int | None:
+    rss = _session_int(session, "memory_rss_bytes")
+    swap = _session_int(session, "memory_swap_bytes")
+    if rss is None and swap is None:
+        return None
+    return (rss or 0) + (swap or 0)
+
+
 def plan_agent_deck_launch_admission(
     sessions: Sequence[Mapping[str, object]],
     *,
@@ -217,42 +242,92 @@ def plan_agent_deck_launch_admission(
     if _falsy(os.environ.get("PIXEL_FORGE_AGENT_DECK_ADMISSION_CONTROL")):
         return AdmissionDecision(True, None, (), budget)
 
-    active_statuses = {"running", "waiting", "starting"}
+    busy_statuses = {"running", "starting"}
+    reclaimable_statuses = {"idle", "waiting"}
     inactive_statuses = {"stopped", "error"}
     warm_sessions: list[Mapping[str, object]] = []
-    active_sessions: list[Mapping[str, object]] = []
-    idle_sessions: list[Mapping[str, object]] = []
+    busy_sessions: list[Mapping[str, object]] = []
+    reclaimable_sessions: list[Mapping[str, object]] = []
 
     for session in sessions:
         status = _session_text(session, "status").lower()
         if status in inactive_statuses:
             continue
         warm_sessions.append(session)
-        if status in active_statuses or not status:
-            active_sessions.append(session)
-        elif status == "idle":
-            idle_sessions.append(session)
+        if status in busy_statuses:
+            busy_sessions.append(session)
+        elif status in reclaimable_statuses:
+            reclaimable_sessions.append(session)
+
+    measured_memory = [
+        (session, memory_bytes)
+        for session in warm_sessions
+        if (memory_bytes := _session_memory_bytes(session)) is not None
+    ]
+    if measured_memory:
+        # Prefer measured pressure over a fixed session-count cap. Agent Deck
+        # reports per-session RSS/swap for local launches, so a dozen tiny idle
+        # sessions should not block a workstation with ample memory.
+        current_memory = sum(memory_bytes for _, memory_bytes in measured_memory)
+        average_memory = max(
+            MIB,
+            current_memory // max(1, len(measured_memory)),
+        )
+        projected_memory = current_memory + average_memory
+        stop_ids: list[str] = []
+        if projected_memory > budget.agent_pool_bytes:
+            reclaimable_by_pressure = sorted(
+                reclaimable_sessions,
+                key=lambda entry: (
+                    -(_session_memory_bytes(entry) or 0),
+                    _session_text(entry, "created_at"),
+                    _session_text(entry, "id"),
+                ),
+            )
+            for entry in reclaimable_by_pressure:
+                session_id = _session_text(entry, "id")
+                if not session_id:
+                    continue
+                stop_ids.append(session_id)
+                projected_memory -= _session_memory_bytes(entry) or 0
+                if projected_memory <= budget.memory_high_bytes:
+                    break
+
+        if projected_memory > budget.agent_pool_bytes and not stop_ids:
+            return AdmissionDecision(
+                False,
+                (
+                    "Agent Deck is at the Pixel Forge memory budget "
+                    f"({projected_memory // MIB} MiB projected, "
+                    f"{budget.agent_pool_bytes // MIB} MiB pool). "
+                    "Park an idle or waiting session before launching another."
+                ),
+                (),
+                budget,
+            )
+
+        return AdmissionDecision(True, None, tuple(stop_ids), budget)
 
     max_warm = max(1, budget.max_warm_sessions)
     needed_slots = len(warm_sessions) + 1 - max_warm
     stop_ids: list[str] = []
     if needed_slots > 0:
-        idle_sessions = sorted(
-            idle_sessions,
+        reclaimable_sessions = sorted(
+            reclaimable_sessions,
             key=lambda entry: (_session_text(entry, "created_at"), _session_text(entry, "id")),
         )
-        for entry in idle_sessions[:needed_slots]:
+        for entry in reclaimable_sessions[:needed_slots]:
             session_id = _session_text(entry, "id")
             if session_id:
                 stop_ids.append(session_id)
 
     remaining_warm = len(warm_sessions) - len(stop_ids) + 1
-    if remaining_warm > max_warm and len(active_sessions) >= max_warm:
+    if remaining_warm > max_warm and len(busy_sessions) >= max_warm:
         return AdmissionDecision(
             False,
             (
                 "Agent Deck is at the Pixel Forge memory budget "
-                f"({len(active_sessions)} active sessions, max {max_warm}). "
+                f"({len(busy_sessions)} busy sessions, max {max_warm}). "
                 "Stop or park an idle session before launching another."
             ),
             tuple(stop_ids),
