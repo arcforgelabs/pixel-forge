@@ -163,6 +163,23 @@ class ClaudeCliProvider:
             },
         )
 
+    def is_missing_session_error(self, error: BaseException) -> bool:
+        message = str(error).lower()
+        if not any(token in message for token in ("session", "conversation")):
+            return False
+        return any(
+            token in message
+            for token in (
+                "not_found",
+                "not found",
+                "could not find",
+                "does not exist",
+                "no conversation",
+                "unknown session",
+                "invalid session",
+            )
+        )
+
     async def list_sessions(
         self,
         project_path: str,

@@ -375,6 +375,15 @@ class CodexCliProvider:
             },
         )
 
+    def is_missing_session_error(self, error: BaseException) -> bool:
+        message = str(error).lower()
+        if "no rollout found" in message:
+            return True
+        return (
+            ("not_found" in message or "not found" in message)
+            and any(token in message for token in ("thread", "session", "rollout"))
+        )
+
     async def list_sessions(
         self,
         project_path: str,

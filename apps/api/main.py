@@ -355,6 +355,56 @@ def _is_missing_provider_session_error(error: BaseException) -> bool:
     ) and "session" in message
 
 
+def _provider_reports_missing_session(agent_provider, error: BaseException) -> bool:
+    provider_missing_session_error = getattr(
+        agent_provider,
+        "is_missing_session_error",
+        None,
+    )
+    if callable(provider_missing_session_error):
+        return bool(provider_missing_session_error(error))
+    return _is_missing_provider_session_error(error)
+
+
+def _detach_missing_provider_session_binding(
+    *,
+    project_path: str,
+    thread,
+    agent_provider,
+    target_provider_session_id: str | None,
+    error: BaseException,
+):
+    session_id = (
+        target_provider_session_id.strip()
+        if isinstance(target_provider_session_id, str)
+        else ""
+    )
+    if not session_id or not _provider_reports_missing_session(agent_provider, error):
+        return None, None
+
+    detach_project_session_binding(project_path, thread.thread_id)
+    updated_thread = update_live_editor_thread(
+        thread.thread_id,
+        backend=agent_provider.provider_id,
+        provider_id="",
+        provider_session_id="",
+        provider_session_title="",
+        provider_agent_id="",
+        agent_deck_session_id="",
+        agent_deck_session_title="",
+    )
+    retry_hint = (
+        "Retry to create a fresh provider lane, or use a direct CLI retry option."
+        if agent_provider.provider_id == "agent-deck"
+        else "Retry to create a fresh provider lane."
+    )
+    message = (
+        f"{agent_provider.display_name} session `{session_id}` was missing. "
+        f"Pixel Forge detached that stale binding from this chat. {retry_hint}"
+    )
+    return updated_thread, message
+
+
 async def _emit_live_editor_wait_heartbeat(
     websocket: WebSocket,
     *,
@@ -4813,36 +4863,16 @@ async def live_editor_chat(websocket: WebSocket):
                         f"saved at `{preflight_snapshot_relative_path}`."
                     ) from exc
                 except AgentDeckBridgeError as exc:
-                    provider_missing_session_error = getattr(
-                        agent_provider,
-                        "is_missing_session_error",
-                        None,
+                    detached_thread, detached_message = _detach_missing_provider_session_binding(
+                        project_path=normalized_project_path,
+                        thread=thread,
+                        agent_provider=agent_provider,
+                        target_provider_session_id=target_provider_session_id,
+                        error=exc,
                     )
-                    missing_provider_session = (
-                        provider_missing_session_error(exc)
-                        if callable(provider_missing_session_error)
-                        else _is_missing_provider_session_error(exc)
-                    )
-                    if target_provider_session_id and missing_provider_session:
-                        detach_project_session_binding(
-                            normalized_project_path,
-                            thread.thread_id,
-                        )
-                        thread = update_live_editor_thread(
-                            thread.thread_id,
-                            backend=agent_provider.provider_id,
-                            provider_id="",
-                            provider_session_id="",
-                            provider_session_title="",
-                            provider_agent_id="",
-                            agent_deck_session_id="",
-                            agent_deck_session_title="",
-                        )
-                        raise AgentDeckBridgeError(
-                            f"{agent_provider.display_name} session `{target_provider_session_id}` "
-                            "was missing. Pixel Forge detached that stale binding from this chat. "
-                            "Retry to create a fresh provider lane, or use a direct CLI retry option."
-                        ) from exc
+                    if detached_message:
+                        thread = detached_thread
+                        raise AgentDeckBridgeError(detached_message) from exc
                     raise
                 if agent_provider.provider_id == "agent-deck":
                     _assert_agent_deck_lane_available(
@@ -5376,17 +5406,27 @@ async def live_editor_chat(websocket: WebSocket):
                 )
 
             except (AgentDeckBridgeError, AcpxBridgeError, ValueError) as e:
+                detached_thread, detached_message = _detach_missing_provider_session_binding(
+                    project_path=normalized_project_path,
+                    thread=thread,
+                    agent_provider=agent_provider,
+                    target_provider_session_id=target_provider_session_id,
+                    error=e,
+                )
+                if detached_message:
+                    thread = detached_thread
+                error_message = detached_message or str(e)
                 if turn_event_base is not None and not turn_terminal_event_written:
                     await append_turn_event(
                         "turn_failed",
                         {
-                            "message": str(e),
+                            "message": error_message,
                         },
                     )
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "message": str(e),
+                        "message": error_message,
                         "failed_provider_id": provider_id,
                         "failed_agent_type": agent_type,
                         "retry_options": (
@@ -5397,6 +5437,16 @@ async def live_editor_chat(websocket: WebSocket):
                     }
                 )
             except Exception as e:
+                detached_thread, detached_message = _detach_missing_provider_session_binding(
+                    project_path=normalized_project_path,
+                    thread=thread,
+                    agent_provider=agent_provider,
+                    target_provider_session_id=target_provider_session_id,
+                    error=e,
+                )
+                if detached_message:
+                    thread = detached_thread
+                error_message = detached_message or str(e)
                 if turn_wait_task and not turn_wait_task.done():
                     turn_wait_task.cancel()
                 if status_heartbeat_task and not status_heartbeat_task.done():
@@ -5405,13 +5455,15 @@ async def live_editor_chat(websocket: WebSocket):
                     await append_turn_event(
                         "turn_failed",
                         {
-                            "message": str(e),
+                            "message": error_message,
                         },
                     )
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "message": str(e),
+                        "message": error_message,
+                        "failed_provider_id": provider_id,
+                        "failed_agent_type": agent_type,
                     }
                 )
 

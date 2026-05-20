@@ -1179,6 +1179,66 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
 
 
 class LiveEditorThreadHydrationTest(unittest.TestCase):
+    def test_detaches_missing_direct_provider_binding(self) -> None:
+        thread = SimpleNamespace(thread_id="chat-stale")
+        provider = SimpleNamespace(
+            provider_id="claude-cli",
+            display_name="Claude Code CLI",
+            is_missing_session_error=Mock(return_value=True),
+        )
+        updated = SimpleNamespace(thread_id="chat-stale", provider_session_id=None)
+
+        with (
+            patch.object(main, "detach_project_session_binding", Mock()) as detach_binding,
+            patch.object(main, "update_live_editor_thread", Mock(return_value=updated)) as update_thread,
+        ):
+            result, message = main._detach_missing_provider_session_binding(
+                project_path="/tmp/project",
+                thread=thread,
+                agent_provider=provider,
+                target_provider_session_id="claude-thread-a",
+                error=RuntimeError("No conversation found for session claude-thread-a"),
+            )
+
+        self.assertIs(result, updated)
+        self.assertIn("Claude Code CLI session `claude-thread-a` was missing", message)
+        detach_binding.assert_called_once_with("/tmp/project", "chat-stale")
+        update_thread.assert_called_once_with(
+            "chat-stale",
+            backend="claude-cli",
+            provider_id="",
+            provider_session_id="",
+            provider_session_title="",
+            provider_agent_id="",
+            agent_deck_session_id="",
+            agent_deck_session_title="",
+        )
+
+    def test_missing_provider_detach_ignores_non_missing_errors(self) -> None:
+        thread = SimpleNamespace(thread_id="chat-active")
+        provider = SimpleNamespace(
+            provider_id="codex-cli",
+            display_name="Codex CLI",
+            is_missing_session_error=Mock(return_value=False),
+        )
+
+        with (
+            patch.object(main, "detach_project_session_binding", Mock()) as detach_binding,
+            patch.object(main, "update_live_editor_thread", Mock()) as update_thread,
+        ):
+            result, message = main._detach_missing_provider_session_binding(
+                project_path="/tmp/project",
+                thread=thread,
+                agent_provider=provider,
+                target_provider_session_id="codex-thread-a",
+                error=RuntimeError("Codex authentication failed"),
+            )
+
+        self.assertIsNone(result)
+        self.assertIsNone(message)
+        detach_binding.assert_not_called()
+        update_thread.assert_not_called()
+
     def test_hydrates_missing_live_thread_binding_from_project_session(self) -> None:
         thread = SimpleNamespace(
             thread_id="chat-stale",

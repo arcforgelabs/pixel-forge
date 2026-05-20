@@ -12,7 +12,7 @@ from agent_deck_bridge import AgentDeckSessionActivity, AgentDeckSessionInfo, Ag
 from agent_provider_plugins import codex_cli as codex_cli_plugin
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
-from agent_providers.claude_cli import ClaudeCliSessionInfo
+from agent_providers.claude_cli import ClaudeCliProvider, ClaudeCliSessionInfo
 from agent_providers.codex_cli import CodexCliProvider, CodexCliSessionInfo
 from agent_providers.models import AgentTurnPolicy, AgentTurnRequest
 
@@ -447,6 +447,27 @@ class AgentDeckProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_direct_providers_report_missing_session_errors(self) -> None:
+        codex_provider = CodexCliProvider()
+        claude_provider = ClaudeCliProvider()
+
+        self.assertTrue(
+            codex_provider.is_missing_session_error(
+                Exception("No rollout found for thread codex-thread-a")
+            )
+        )
+        self.assertTrue(
+            claude_provider.is_missing_session_error(
+                Exception("No conversation found for session claude-thread-a")
+            )
+        )
+        self.assertFalse(
+            codex_provider.is_missing_session_error(Exception("Codex authentication failed"))
+        )
+        self.assertFalse(
+            claude_provider.is_missing_session_error(Exception("Claude CLI timed out"))
+        )
+
     def test_direct_provider_session_infos_do_not_populate_agent_deck_fields(self) -> None:
         codex_session = CodexCliSessionInfo(
             provider_session_id="codex-thread-a",
