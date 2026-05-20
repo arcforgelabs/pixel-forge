@@ -573,7 +573,7 @@ export function LiveEditorPane({
   const previewTabsRef = useRef<PreviewTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
   const lastProjectPathRef = useRef<string | null | undefined>(undefined)
-  const lastLiveEditorProjectPathRef = useRef<string | null | undefined>(undefined)
+  const lastLiveEditorProjectThreadKeyRef = useRef<string | null>(null)
   const internalPreviewUrlRef = useRef<string | null>(null)
   const externalPreviewUrlRef = useRef<string | null>(previewUrl?.trim() || null)
   const iframeRefs = useRef<Record<string, HTMLIFrameElement | null>>({})
@@ -939,10 +939,11 @@ export function LiveEditorPane({
   }, [persistThreadState])
 
   useEffect(() => {
-    if (lastLiveEditorProjectPathRef.current === projectPath) {
+    const hydrationKey = `${projectPath ?? ''}::${liveEditorSession?.threadId ?? ''}`
+    if (lastLiveEditorProjectThreadKeyRef.current === hydrationKey) {
       return
     }
-    lastLiveEditorProjectPathRef.current = projectPath
+    lastLiveEditorProjectThreadKeyRef.current = hydrationKey
     hydrateProjectThreads({
       projectSessions,
       activeThreadKey: liveEditorSession?.threadId ?? null,

@@ -20,6 +20,14 @@ import {
 
 const require = createRequire(import.meta.url)
 const puppeteer = require(path.join(repoRoot, 'apps/web/node_modules/puppeteer'))
+const uiWaitTimeoutMs = Number.parseInt(
+  process.env.PIXEL_FORGE_SMOKE_UI_WAIT_MS || '45000',
+  10,
+)
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 function projectUrl(context, projectPath, suffix) {
   return `${context.baseUrl}/api/projects/${encodeURIComponent(projectPath)}${suffix}`
@@ -61,6 +69,7 @@ async function createDraftChat(context, projectPath, options) {
     default_agent_type: options.agentType,
   })
 
+  chat.title = chat.title || options.title
   return chat
 }
 
@@ -186,7 +195,22 @@ async function findShellPage(browser, baseUrl) {
   })
 }
 
-async function openInstalledUi(context) {
+async function writeDesktopBootstrapState(context, active) {
+  if (!active?.projectPath) {
+    return
+  }
+  await fs.mkdir(context.paths.stateDir, { recursive: true })
+  await fs.writeFile(
+    path.join(context.paths.stateDir, 'controller-bootstrap-state.json'),
+    `${JSON.stringify({
+      projectPath: active.projectPath,
+      activeMode: 'live-editor',
+    })}\n`,
+    'utf-8',
+  )
+}
+
+async function openInstalledUi(context, active = null) {
   const canLaunchShell = (
     !process.env.PIXEL_FORGE_SMOKE_GUI_MATRIX_BROWSER_ONLY
     && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY)
@@ -201,6 +225,7 @@ async function openInstalledUi(context) {
     return { browser, page, mode: 'headless-browser', shellProcess: null }
   }
 
+  await writeDesktopBootstrapState(context, active)
   const cdpPort = await reservePort()
   const electronBin = path.join(
     context.paths.installDir,
@@ -255,7 +280,138 @@ async function closeInstalledUi(opened) {
   }
 }
 
-async function preparePage(page, context) {
+async function activateChat(context, active) {
+  await postJson(`${context.baseUrl}/api/profile-state`, {
+    active_project_path: active.projectPath,
+    active_live_editor_thread_id: active.threadId,
+    active_mode: 'live-editor',
+    default_agent_provider_id: active.providerId,
+    default_agent_type: active.agentType,
+  })
+}
+
+async function findElementByText(page, options) {
+  let handle = null
+  try {
+    handle = await page.waitForFunction(({ selector, exact, includes, title }) => {
+      const normalizedExact = typeof exact === 'string' ? exact.trim() : null
+      const normalizedIncludes = typeof includes === 'string' ? includes.trim() : null
+      return [...document.querySelectorAll(selector)]
+        .find((element) => {
+          const text = element.textContent?.trim() || ''
+          const elementTitle = element.getAttribute('title')?.trim() || ''
+          if (title && elementTitle === title) {
+            return true
+          }
+          if (normalizedExact && text === normalizedExact) {
+            return true
+          }
+          return Boolean(normalizedIncludes && text.includes(normalizedIncludes))
+        }) ?? null
+    }, { timeout: uiWaitTimeoutMs }, options)
+  } catch (error) {
+    const candidates = await page.evaluate((selector) => {
+      return [...document.querySelectorAll(selector)]
+        .map((element) => ({
+          tag: element.tagName.toLowerCase(),
+          text: (element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120),
+          title: element.getAttribute('title') || '',
+          aria: element.getAttribute('aria-label') || '',
+          disabled: Boolean(element.disabled),
+        }))
+        .filter((entry) => entry.text || entry.title || entry.aria)
+        .slice(0, 80)
+    }, options.selector)
+    throw new Error(
+      `Timed out waiting for ${JSON.stringify(options)}. Candidates: ${JSON.stringify(candidates)}. Cause: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+  }
+  const element = handle.asElement()
+  assert(element, `Could not find element matching ${JSON.stringify(options)}`)
+  return element
+}
+
+async function clickElement(element) {
+  await element.evaluate((target) => {
+    target.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    }))
+  })
+}
+
+async function waitForComposer(page, label) {
+  try {
+    await page.waitForSelector('textarea[placeholder="Type here..."]', { timeout: uiWaitTimeoutMs })
+  } catch (error) {
+    const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 2000) || '')
+    throw new Error(`Timed out waiting for composer after ${label}. Body: ${bodyText}. Cause: ${
+      error instanceof Error ? error.message : String(error)
+    }`)
+  }
+}
+
+async function openProjectFromSidebar(page, projectPath) {
+  const projectName = path.basename(projectPath)
+  const projectVisible = await page.evaluate((targetPath) => {
+    return [...document.querySelectorAll('button')]
+      .some((button) => button.getAttribute('title') === targetPath)
+  }, projectPath)
+  if (!projectVisible) {
+    await clickButtonByText(page, 'Projects')
+  }
+  const projectButton = await findElementByText(page, {
+    selector: 'button',
+    title: projectPath,
+    exact: projectName,
+  })
+  await clickElement(projectButton)
+}
+
+async function expandProjectChats(page, projectPath) {
+  const expanded = await page.evaluate((targetPath) => {
+    const projectButton = [...document.querySelectorAll('button')]
+      .find((button) => button.getAttribute('title') === targetPath)
+    const row = projectButton?.closest('.group\\/project-row')
+    const expandButton = row
+      ? [...row.querySelectorAll('button')].find((button) => {
+          const label = button.getAttribute('aria-label') || ''
+          const title = button.getAttribute('title') || ''
+          return label.startsWith('Expand ') || title === 'Expand chats'
+        })
+      : null
+    if (!expandButton) {
+      return false
+    }
+    expandButton.click()
+    return true
+  }, projectPath)
+  if (expanded) {
+    await sleep(250)
+  }
+}
+
+async function selectChatFromSidebar(page, active) {
+  const chatButton = await findElementByText(page, {
+    selector: 'button',
+    title: active.title,
+    exact: active.title,
+  })
+  await clickElement(chatButton)
+}
+
+async function openActiveChat(page, active) {
+  await openProjectFromSidebar(page, active.projectPath)
+  await waitForComposer(page, `opening project ${active.projectPath}`)
+  await expandProjectChats(page, active.projectPath)
+  await selectChatFromSidebar(page, active)
+  await waitForComposer(page, `selecting chat ${active.title}`)
+}
+
+async function preparePage(page, context, active) {
   page.on('console', (message) => {
     if (message.type() === 'error') {
       console.error(`[smoke:installed-gui-provider-matrix:console] ${message.text()}`)
@@ -263,7 +419,9 @@ async function preparePage(page, context) {
   })
   await page.evaluateOnNewDocument(installWebSocketCapture)
   await page.goto(context.baseUrl, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('textarea[placeholder="Type here..."]', { timeout: 45000 })
+  await activateChat(context, active)
+  await page.goto(context.baseUrl, { waitUntil: 'domcontentloaded' })
+  await openActiveChat(page, active)
   await page.evaluate(() => window.__pixelForgeSmoke.reset())
 }
 
@@ -275,21 +433,23 @@ async function waitForAgent(page, label) {
   await page.waitForFunction((expected) => {
     const button = document.querySelector('button[aria-label^="Agent:"]')
     return button?.getAttribute('aria-label') === `Agent: ${expected}`
-  }, { timeout: 15000 }, label)
+  }, { timeout: uiWaitTimeoutMs }, label)
 }
 
 async function clickButtonByText(page, text) {
   const handle = await page.waitForFunction((expected) => {
     return [...document.querySelectorAll('button')]
       .find((button) => button.textContent?.trim() === expected) ?? null
-  }, { timeout: 15000 }, text)
+  }, { timeout: uiWaitTimeoutMs }, text)
   const element = handle.asElement()
   assert(element, `Could not find button with text ${text}`)
-  await element.click()
+  await clickElement(element)
 }
 
 async function switchAgent(page, label) {
-  await page.click('button[aria-label^="Agent:"]')
+  const agentButton = await page.$('button[aria-label^="Agent:"]')
+  assert(agentButton, 'Could not find agent selector button')
+  await clickElement(agentButton)
   await clickButtonByText(page, label)
   await waitForAgent(page, label)
 }
@@ -303,12 +463,14 @@ async function sendPrompt(page, prompt) {
   await page.waitForFunction(() => {
     const button = document.querySelector('button[type="submit"]')
     return button && !button.disabled
-  }, { timeout: 15000 })
-  await page.click('button[type="submit"]')
+  }, { timeout: uiWaitTimeoutMs })
+  const submitButton = await page.$('button[type="submit"]')
+  assert(submitButton, 'Could not find submit button')
+  await clickElement(submitButton)
   return await page.waitForFunction(() => {
     const smoke = window.__pixelForgeSmoke
     return smoke?.payloads?.length ? smoke.payloads[smoke.payloads.length - 1] : null
-  }, { timeout: 15000 })
+  }, { timeout: uiWaitTimeoutMs })
 }
 
 async function assertFreshDirectCodexRoute(page, chat) {
@@ -340,13 +502,27 @@ async function assertFreshDirectCodexRoute(page, chat) {
   )
 }
 
-async function assertFreshAgentDeckRoute(page, context, chat) {
+async function assertFreshAgentDeckRoute(page, context, projectPath, chat) {
   await page.evaluate(() => {
     window.localStorage.clear()
     window.sessionStorage.clear()
   })
   await page.goto(context.baseUrl, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('textarea[placeholder="Type here..."]', { timeout: 45000 })
+  await activateChat(context, {
+    projectPath,
+    threadId: chat.thread_id,
+    providerId: 'agent-deck',
+    agentType: 'codex',
+    title: chat.title,
+  })
+  await page.goto(context.baseUrl, { waitUntil: 'domcontentloaded' })
+  await openActiveChat(page, {
+    projectPath,
+    threadId: chat.thread_id,
+    providerId: 'agent-deck',
+    agentType: 'codex',
+    title: chat.title,
+  })
   await page.evaluate(() => window.__pixelForgeSmoke.reset())
   await waitForAgent(page, 'Codex')
 
@@ -381,6 +557,8 @@ context.env = {
   PIXEL_FORGE_WITH_AGENT_DECK: '1',
   PIXEL_FORGE_INSTALL_SKIP_DESKTOP_INTEGRATION: '0',
   PIXEL_FORGE_INSTALL_SKIP_SYSTEMD: '1',
+  PUPPETEER_SKIP_DOWNLOAD: 'true',
+  PUPPETEER_SKIP_CHROME_DOWNLOAD: 'true',
   PIXEL_FORGE_INSTALL_CACHE_DIR: path.join(
     os.homedir(),
     '.cache',
@@ -420,8 +598,15 @@ try {
     title: 'installed-ui-direct-codex-smoke',
   })
 
-  openedUi = await openInstalledUi(context)
-  await preparePage(openedUi.page, context)
+  const directActive = {
+    projectPath,
+    threadId: directChat.thread_id,
+    providerId: 'codex-cli',
+    agentType: 'codex',
+    title: directChat.title,
+  }
+  openedUi = await openInstalledUi(context, directActive)
+  await preparePage(openedUi.page, context, directActive)
   await assertFreshDirectCodexRoute(openedUi.page, directChat)
   const firstUiMode = openedUi.mode
   await closeInstalledUi(openedUi)
@@ -432,9 +617,16 @@ try {
     agentType: 'codex',
     title: 'installed-ui-agent-deck-smoke',
   })
-  openedUi = await openInstalledUi(context)
-  await preparePage(openedUi.page, context)
-  await assertFreshAgentDeckRoute(openedUi.page, context, agentDeckChat)
+  const agentDeckActive = {
+    projectPath,
+    threadId: agentDeckChat.thread_id,
+    providerId: 'agent-deck',
+    agentType: 'codex',
+    title: agentDeckChat.title,
+  }
+  openedUi = await openInstalledUi(context, agentDeckActive)
+  await preparePage(openedUi.page, context, agentDeckActive)
+  await assertFreshAgentDeckRoute(openedUi.page, context, projectPath, agentDeckChat)
 
   console.log(`[smoke:installed-gui-provider-matrix] ${firstUiMode}/${openedUi.mode} routed fresh codex-cli and Agent Deck chats without stale Agent Deck target metadata`)
 } catch (error) {

@@ -1458,7 +1458,7 @@ function buildNextProfileState(
     activeProjectPath:
       overrides?.activeProjectPath !== undefined
         ? overrides.activeProjectPath
-        : currentState.projectPath,
+        : currentState.projectPath ?? currentState.profileState?.activeProjectPath ?? null,
     lastWorkspaceBrowseDirectory:
       overrides?.lastWorkspaceBrowseDirectory !== undefined
         ? overrides.lastWorkspaceBrowseDirectory
@@ -1470,7 +1470,9 @@ function buildNextProfileState(
     activeLiveEditorThreadId:
       overrides?.activeLiveEditorThreadId !== undefined
         ? overrides.activeLiveEditorThreadId
-        : currentState.liveEditorSession?.threadId ?? null,
+        : currentState.liveEditorSession?.threadId
+          ?? currentState.profileState?.activeLiveEditorThreadId
+          ?? null,
     defaultAgentProviderId:
       overrides?.defaultAgentProviderId !== undefined
         ? normalizeAgentProviderId(overrides.defaultAgentProviderId)
@@ -1706,6 +1708,22 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   persistProfileState: async (nextState) => {
+    if (!get().profileLoaded && !get().profileState) {
+      try {
+        const profileState = await fetchProfileState();
+        set({
+          profileState,
+          profileLoaded: true,
+          defaultAgentProviderId: normalizeAgentProviderId(profileState.defaultAgentProviderId),
+          defaultAgentType: normalizeAgentType(profileState.defaultAgentType),
+          defaultWorkspaceMode: normalizeWorkspaceMode(profileState.defaultWorkspaceMode),
+          defaultAgentModels: normalizeAgentProfileDefaults(profileState.defaultAgentModels),
+          defaultAgentThinking: normalizeAgentProfileDefaults(profileState.defaultAgentThinking),
+        });
+      } catch (error) {
+        console.error("[session-store] Failed to preflight profile state before persist:", error);
+      }
+    }
     const payload = buildNextProfileState(get(), nextState);
     const savedProfileState = await upsertProfileStateToApi(payload);
     set({ profileState: savedProfileState, profileLoaded: true });

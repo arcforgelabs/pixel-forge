@@ -975,10 +975,21 @@ function createThreadStateFromSession(
 ): ThreadChatState {
   const bindingTargetIntent = providerBindingTargetIntent(session)
   const persistedTargetIntent = normalizeLiveEditorTargetIntent(session.editorState?.targetIntent)
+  const draftProviderId = providerBindingProviderId(session)
+  const draftProviderAgentId = providerBindingAgentId(session)
+  const draftTargetIntent = draftProviderId
+    ? {
+        mode: 'new' as const,
+        providerId: draftProviderId,
+        providerSessionId: null,
+        agentId: draftProviderAgentId,
+        workspaceMode: 'root' as const,
+      }
+    : null
   return {
     ...createEmptyThreadState(session.projectPath?.trim() || null),
     targetAgentSessionId: providerBindingSessionId(session) ?? null,
-    targetIntent: bindingTargetIntent ?? persistedTargetIntent,
+    targetIntent: bindingTargetIntent ?? persistedTargetIntent ?? draftTargetIntent,
     ...createThreadEditorStateFromPersisted(session.editorState, fallbackUrl),
   }
 }

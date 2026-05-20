@@ -231,6 +231,36 @@ describe("session-store thread switching", () => {
     expect(useSessionStore.getState().selectedAgentTargetId).toBeNull();
   });
 
+  it("preserves the saved project lane when defaults persist before profile restore", async () => {
+    const fetchMock = vi.mocked(fetch);
+    useSessionStore.setState({
+      projectPath: null,
+      liveEditorSession: null,
+      profileLoaded: false,
+      profileState: null,
+    });
+
+    useSessionStore.getState().setDefaultAgentProviderId("codex-cli");
+
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => (
+          String(url).includes("/api/profile-state")
+          && init?.method === "POST"
+        ))
+      ).toBe(true);
+    });
+
+    const profilePost = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).includes("/api/profile-state") && init?.method === "POST")
+      .at(-1);
+    const body = JSON.parse(String(profilePost?.[1]?.body || "{}"));
+
+    expect(body.active_project_path).toBe("/tmp/example-project");
+    expect(body.active_live_editor_thread_id).toBe("thread-a");
+    expect(body.default_agent_provider_id).toBe("codex-cli");
+  });
+
   it("switches the active live editor lane to the chosen project thread", () => {
     const session = createProjectSession({
       threadId: "thread-b",
