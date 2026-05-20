@@ -35,6 +35,7 @@
     "smoke:gui": "node scripts/smoke-gui-integration.mjs",
     "smoke:installed-gui-provider-matrix": "node scripts/smoke-installed-gui-provider-matrix.mjs",
     "smoke:installed-gui-direct-provider:turn": "node scripts/smoke-installed-gui-direct-provider-live.mjs",
+    "smoke:installed-gui-claude-provider:turn": "PIXEL_FORGE_SMOKE_PROVIDER_MODE=claude-cli node scripts/smoke-installed-gui-direct-provider-live.mjs",
     "smoke:installed-gui-agent-deck-provider:turn": "PIXEL_FORGE_SMOKE_PROVIDER_MODE=agent-deck node scripts/smoke-installed-gui-direct-provider-live.mjs",
     "smoke:linux-ui-vm": "bash scripts/vm/linux-ui-vm-smoke.sh",
     "smoke:agent-deck-provider": "node scripts/smoke-agent-deck-provider.mjs",

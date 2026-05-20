@@ -22,20 +22,36 @@ import {
 const require = createRequire(import.meta.url)
 const puppeteer = require(path.join(repoRoot, 'apps/web/node_modules/puppeteer'))
 
-const providerMode = process.env.PIXEL_FORGE_SMOKE_PROVIDER_MODE === 'agent-deck'
+const requestedProviderMode = process.env.PIXEL_FORGE_SMOKE_PROVIDER_MODE
+const providerMode = requestedProviderMode === 'agent-deck'
   ? 'agent-deck'
-  : 'codex-cli'
+  : requestedProviderMode === 'claude-cli'
+    ? 'claude-cli'
+    : 'codex-cli'
 const smokeName = providerMode === 'agent-deck'
   ? 'installed-gui-agent-deck-provider-live'
-  : 'installed-gui-direct-provider-live'
-const providerLabel = providerMode === 'agent-deck' ? 'Agent Deck' : 'direct-provider'
+  : providerMode === 'claude-cli'
+    ? 'installed-gui-claude-provider-live'
+    : 'installed-gui-direct-provider-live'
+const providerLabel = providerMode === 'agent-deck'
+  ? 'Agent Deck'
+  : providerMode === 'claude-cli'
+    ? 'Claude direct-provider'
+    : 'direct-provider'
+const agentId = providerMode === 'claude-cli' ? 'claude' : 'codex'
 const threadTitle = providerMode === 'agent-deck'
   ? 'installed-gui-agent-deck-live-smoke'
-  : 'installed-gui-direct-live-smoke'
+  : providerMode === 'claude-cli'
+    ? 'installed-gui-claude-live-smoke'
+    : 'installed-gui-direct-live-smoke'
 const expectedFirstToken = providerMode === 'agent-deck'
   ? 'GUI_AGENT_DECK_PROVIDER_LIVE_OK'
-  : 'GUI_DIRECT_PROVIDER_LIVE_OK'
-const expectedSecondToken = 'GUI_DIRECT_PROVIDER_RELOAD_OK'
+  : providerMode === 'claude-cli'
+    ? 'GUI_CLAUDE_PROVIDER_LIVE_OK'
+    : 'GUI_DIRECT_PROVIDER_LIVE_OK'
+const expectedSecondToken = providerMode === 'claude-cli'
+  ? 'GUI_CLAUDE_PROVIDER_RELOAD_OK'
+  : 'GUI_DIRECT_PROVIDER_RELOAD_OK'
 
 function tokenInstruction(token) {
   return `Reply with these underscore-joined words only: ${token.replaceAll('_', ' ')}.`
@@ -100,6 +116,32 @@ async function configureCodexHome(homeDir, env) {
   }
 }
 
+async function configureClaudeHome(homeDir, env) {
+  const configuredClaudeHome = process.env.CLAUDE_CONFIG_DIR?.trim()
+  const sourceClaudeHome = configuredClaudeHome || path.join(os.homedir(), '.claude')
+  try {
+    const stat = await fs.stat(sourceClaudeHome)
+    if (!stat.isDirectory()) {
+      return env
+    }
+  } catch {
+    return env
+  }
+
+  const targetClaudeHome = path.join(homeDir, '.claude')
+  try {
+    await fs.symlink(sourceClaudeHome, targetClaudeHome, 'dir')
+  } catch (error) {
+    if (error?.code !== 'EEXIST') {
+      throw error
+    }
+  }
+  return {
+    ...env,
+    CLAUDE_CONFIG_DIR: sourceClaudeHome,
+  }
+}
+
 function projectUrl(context, projectPath, suffix) {
   return `${context.baseUrl}/api/projects/${encodeURIComponent(projectPath)}${suffix}`
 }
@@ -133,7 +175,7 @@ function assertProviderRecord(record, label, expectedThreadId, expectedProviderS
   assert(record, `Missing ${label}`)
   assert(record.thread_id === expectedThreadId, `Expected ${label} thread ${expectedThreadId}: ${JSON.stringify(record)}`)
   assert(record.provider_id === providerMode, `Expected ${label} provider_id ${providerMode}: ${JSON.stringify(record)}`)
-  assert(record.provider_agent_id === 'codex', `Expected ${label} provider_agent_id codex: ${JSON.stringify(record)}`)
+  assert(record.provider_agent_id === agentId, `Expected ${label} provider_agent_id ${agentId}: ${JSON.stringify(record)}`)
   if (expectedProviderSessionId) {
     assert(
       record.provider_session_id === expectedProviderSessionId,
@@ -146,8 +188,8 @@ function assertProviderRecord(record, label, expectedThreadId, expectedProviderS
       `Expected ${label} Agent Deck compatibility id to mirror provider session: ${JSON.stringify(record)}`,
     )
     assert(
-      record.agent_deck_tool === 'codex',
-      `Expected ${label} Agent Deck tool codex: ${JSON.stringify(record)}`,
+      record.agent_deck_tool === agentId,
+      `Expected ${label} Agent Deck tool ${agentId}: ${JSON.stringify(record)}`,
     )
   } else {
     assertNoAgentDeckBinding(record, label)
@@ -364,13 +406,13 @@ function assertProviderManifest(entry, label, threadId) {
   const manifest = entry.manifest
   assert(manifest.thread_id === threadId, `${label} request pack used wrong thread: ${JSON.stringify(manifest)}`)
   assert(manifest.provider_id === providerMode, `${label} request pack provider wrong: ${JSON.stringify(manifest)}`)
-  assert(manifest.provider_agent_id === 'codex', `${label} request pack agent wrong: ${JSON.stringify(manifest)}`)
+  assert(manifest.provider_agent_id === agentId, `${label} request pack agent wrong: ${JSON.stringify(manifest)}`)
   if (providerMode === 'agent-deck') {
     assert(
       typeof manifest.agent_deck_session_id === 'string' && manifest.agent_deck_session_id.trim(),
       `${label} request pack missing Agent Deck session: ${JSON.stringify(manifest)}`,
     )
-    assert(manifest.agent_deck_tool === 'codex', `${label} request pack used non-Codex Agent Deck tool: ${JSON.stringify(manifest)}`)
+    assert(manifest.agent_deck_tool === agentId, `${label} request pack used wrong Agent Deck tool: ${JSON.stringify(manifest)}`)
   } else {
     assert(
       manifest.agent_deck_session_id == null || manifest.agent_deck_session_id === '',
@@ -449,6 +491,7 @@ try {
   )
   await fs.mkdir(homeDir, { recursive: true })
   context.env = await configureCodexHome(homeDir, context.env)
+  context.env = await configureClaudeHome(homeDir, context.env)
 
   await installPixelForge(repoRoot, context)
   await runPixelForge(context, ['start'])
@@ -459,7 +502,12 @@ try {
   const providersPayload = await fetchJson(`${context.baseUrl}/api/agent-providers`)
   const agentDeck = providersPayload.providers.find((provider) => provider.id === 'agent-deck')
   const codexProvider = providersPayload.providers.find((provider) => provider.id === 'codex-cli')
-  assert(codexProvider?.available === true, `Expected codex-cli available: ${JSON.stringify(codexProvider)}`)
+  const claudeProvider = providersPayload.providers.find((provider) => provider.id === 'claude-cli')
+  if (providerMode === 'claude-cli') {
+    assert(claudeProvider?.available === true, `Expected claude-cli available: ${JSON.stringify(claudeProvider)}`)
+  } else {
+    assert(codexProvider?.available === true, `Expected codex-cli available: ${JSON.stringify(codexProvider)}`)
+  }
   if (providerMode === 'agent-deck') {
     assert(agentDeck?.enabled === true, `Expected Agent Deck enabled: ${JSON.stringify(agentDeck)}`)
     assert(agentDeck?.available === true, `Expected Agent Deck available: ${JSON.stringify(agentDeck)}`)
@@ -471,12 +519,12 @@ try {
     active_project_path: projectPath,
     active_mode: 'live-editor',
     default_agent_provider_id: providerMode,
-    default_agent_type: 'codex',
+    default_agent_type: agentId,
   })
 
   const created = await postJson(projectUrl(context, projectPath, '/chats'), {
     provider_id: providerMode,
-    agent_type: 'codex',
+    agent_type: agentId,
     title: threadTitle,
     workspace_mode: 'root',
     reuse_empty_draft: false,
@@ -487,7 +535,7 @@ try {
     active_live_editor_thread_id: created.thread_id,
     active_mode: 'live-editor',
     default_agent_provider_id: providerMode,
-    default_agent_type: 'codex',
+    default_agent_type: agentId,
   })
 
   const initialManifestCount = (await readRequestManifests(projectPath)).length
@@ -527,7 +575,7 @@ try {
     await runPixelForge(context, ['stop'])
     await runPixelForge(context, ['start'])
     await waitForHttpOk(`${context.baseUrl}/api/runtime-info`, {
-      description: 'restarted installed GUI direct-provider live runtime',
+      description: `restarted installed GUI ${providerLabel} live runtime`,
     })
 
     records = await fetchThreadRecords(context, projectPath, created.thread_id)
@@ -542,7 +590,7 @@ try {
     openedUi = await openInstalledUi(context)
     await sendPromptAndWait(
       openedUi.page,
-      `Second installed GUI direct-provider live smoke after restart. ${tokenInstruction(expectedSecondToken)} Do not edit files.`,
+      `Second installed GUI ${providerLabel} live smoke after restart. ${tokenInstruction(expectedSecondToken)} Do not edit files.`,
       expectedSecondToken,
     )
     const secondManifest = await waitForNewRequestManifest(projectPath, secondStartManifestCount)
@@ -558,7 +606,7 @@ try {
     const bodyAfterSecondTurn = await openedUi.page.evaluate(() => document.body.textContent || '')
     assert(!bodyAfterSecondTurn.includes('Agent Deck'), 'Reloaded direct-provider GUI path displayed generic Agent Deck wording.')
 
-    console.log(`[smoke:installed-gui-direct-provider-live] ${openedUi.mode} sent and reloaded codex-cli thread ${created.thread_id} through ${providerSessionId}`)
+    console.log(`[smoke:${smokeName}] ${openedUi.mode} sent and reloaded ${providerMode} thread ${created.thread_id} through ${providerSessionId}`)
   }
 } catch (error) {
   await reportSmokeFailure(smokeName, error, context)
