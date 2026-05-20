@@ -338,6 +338,36 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
+    def test_open_agent_deck_tui_terminal_selects_bound_session(self) -> None:
+        with (
+            patch.object(main._pf_cli, "agent_deck_command", Mock(return_value=["agent-deck"])),
+            patch.object(main._pf_cli, "agent_deck_tui_wm_class", Mock(return_value="pixel-forge-agent-deck")),
+            patch.object(
+                main._pf_cli,
+                "_agent_deck_tui_exec_env",
+                Mock(return_value={"PIXEL_FORGE_AGENT_DECK_HOME": "/tmp/deck"}),
+            ),
+            patch.object(
+                main._pf_cli,
+                "_agent_deck_tui_terminal_command",
+                Mock(return_value=["ghostty", "-e", "agent-deck", "--select", "deck-a"]),
+            ) as terminal_command,
+            patch("subprocess.Popen", Mock()) as popen,
+        ):
+            payload = main._open_agent_deck_tui_terminal(
+                title="Agent Deck · Chat chat-a",
+                session_id="deck-a",
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["provider_session_id"], "deck-a")
+        terminal_command.assert_called_once_with(
+            ["agent-deck", "--select", "deck-a"],
+            "Agent Deck · Chat chat-a",
+            "pixel-forge-agent-deck",
+        )
+        popen.assert_called_once()
+
     async def test_open_agent_deck_chat_tui_uses_agent_deck_terminal(self) -> None:
         session_record = SimpleNamespace(
             provider_session_title="Agent Deck Chat",

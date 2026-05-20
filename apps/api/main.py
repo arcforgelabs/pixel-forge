@@ -1321,8 +1321,11 @@ def _open_agent_deck_tui_terminal(
         _pf_cli.agent_deck_tui_title(),
     )
     env["PIXEL_FORGE_AGENT_DECK_TUI_TITLE"] = terminal_title
+    agent_deck_command = _pf_cli.agent_deck_command()
+    if session_id:
+        agent_deck_command = [*agent_deck_command, "--select", session_id]
     command = _pf_cli._agent_deck_tui_terminal_command(
-        _pf_cli.agent_deck_command(),
+        agent_deck_command,
         terminal_title,
         _pf_cli.agent_deck_tui_wm_class(),
     )

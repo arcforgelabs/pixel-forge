@@ -1482,7 +1482,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         const message = error instanceof Error
           ? error.message
           : "Failed to refresh project chats after delete";
-        toast.error(message);
+        console.warn("[settings] Failed to refresh project chats after delete:", message);
       });
     } catch (error) {
       toast.error(
