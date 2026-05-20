@@ -6,8 +6,16 @@ Status: early public-release groundwork. Linux is the primary install path today
 
 ## Install
 
+One-line Linux install from npm:
+
 ```bash
-npx @arcforgelabs/pixel-forge
+npx --yes @arcforgelabs/pixel-forge
+```
+
+One-line unattended Linux install:
+
+```bash
+PIXEL_FORGE_UNATTENDED=1 npx --yes @arcforgelabs/pixel-forge
 ```
 
 Linux source installer:
