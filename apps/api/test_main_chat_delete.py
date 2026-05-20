@@ -306,6 +306,81 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         delete_thread.assert_called_once_with("thread-a")
 
 
+class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_open_agent_deck_chat_tui_uses_agent_deck_terminal(self) -> None:
+        session_record = SimpleNamespace(
+            provider_session_title="Agent Deck Chat",
+            agent_deck_session_title="Agent Deck Chat",
+        )
+
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-a",
+                    session_record,
+                    None,
+                    "agent-deck",
+                    "deck-a",
+                    "deck-a",
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_agent_provider_or_error", Mock()) as provider_or_error,
+            patch.object(
+                main,
+                "_open_agent_deck_tui_terminal",
+                Mock(return_value={"ok": True, "provider_id": "agent-deck"}),
+            ) as open_tui,
+        ):
+            payload = await main.open_project_chat_item_tui(
+                "/tmp/project",
+                main.ChatItemOpenTuiRequest(thread_id="thread-a", agent_deck_session_id="deck-a"),
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["provider_id"], "agent-deck")
+        provider_or_error.assert_called_once_with("agent-deck")
+        open_tui.assert_called_once()
+        _, kwargs = open_tui.call_args
+        self.assertEqual(kwargs["session_id"], "deck-a")
+        self.assertIn("Agent Deck Chat", kwargs["title"])
+
+    async def test_open_direct_codex_chat_tui_reports_future_harness(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-direct",
+                    object(),
+                    object(),
+                    "codex-cli",
+                    "codex-thread-a",
+                    None,
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_open_agent_deck_tui_terminal", Mock()) as open_tui,
+        ):
+            with self.assertRaises(main.HTTPException) as context:
+                await main.open_project_chat_item_tui(
+                    "/tmp/project",
+                    main.ChatItemOpenTuiRequest(
+                        thread_id="thread-direct",
+                        provider_id="codex-cli",
+                        provider_session_id="codex-thread-a",
+                    ),
+                )
+
+        self.assertEqual(context.exception.status_code, 501)
+        self.assertIn("Codex bound-chat TUI launch is not wired yet", context.exception.detail)
+        open_tui.assert_not_called()
+
+
 class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
     async def test_create_project_chat_reuses_empty_draft_by_default(self) -> None:
         existing_session = SimpleNamespace(

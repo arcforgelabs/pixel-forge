@@ -738,6 +738,13 @@ class ChatItemDeleteRequest(BaseModel):
     force_clone_remove: bool = False
 
 
+class ChatItemOpenTuiRequest(BaseModel):
+    thread_id: str | None = None
+    provider_id: str | None = None
+    provider_session_id: str | None = None
+    agent_deck_session_id: str | None = None
+
+
 class ChatItemCloseoutRequest(BaseModel):
     thread_id: str | None = None
     provider_id: str | None = None
@@ -1199,6 +1206,46 @@ def _serialize_delete_assessment(
         "requires_closeout": assessment.requires_closeout,
         "can_force_delete": assessment.can_force_delete,
         "detail": assessment.detail,
+    }
+
+
+def _open_agent_deck_tui_terminal(
+    *,
+    title: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    env = _pf_cli._agent_deck_tui_exec_env(for_external_terminal=True)
+    terminal_title = title or env.get(
+        "PIXEL_FORGE_AGENT_DECK_TUI_TITLE",
+        _pf_cli.agent_deck_tui_title(),
+    )
+    env["PIXEL_FORGE_AGENT_DECK_TUI_TITLE"] = terminal_title
+    command = _pf_cli._agent_deck_tui_terminal_command(
+        _pf_cli.agent_deck_command(),
+        terminal_title,
+        _pf_cli.agent_deck_tui_wm_class(),
+    )
+    if command is None:
+        raise RuntimeError(
+            "No supported terminal emulator found for Agent Deck TUI. "
+            "Install ghostty, gnome-terminal, or x-terminal-emulator."
+        )
+    import subprocess as _subprocess
+    _subprocess.Popen(
+        command,
+        env=env,
+        stdout=_subprocess.DEVNULL,
+        stderr=_subprocess.DEVNULL,
+        stdin=_subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {
+        "ok": True,
+        "provider_id": "agent-deck",
+        "provider_session_id": session_id,
+        "agent_deck_session_id": session_id,
+        "home": env.get("PIXEL_FORGE_AGENT_DECK_HOME"),
+        "title": terminal_title,
     }
 
 
@@ -2034,6 +2081,76 @@ async def rename_project_chat_item(
     }
 
 
+@app.post("/api/projects/{project_path:path}/chat-items/open-tui")
+async def open_project_chat_item_tui(
+    project_path: str,
+    request: ChatItemOpenTuiRequest,
+):
+    (
+        normalized_project_path,
+        normalized_thread_id,
+        session_record,
+        thread_record,
+        resolved_provider_id,
+        resolved_provider_session_id,
+        resolved_agent_deck_session_id,
+    ) = (
+        _resolve_chat_item_context(
+            project_path,
+            thread_id=request.thread_id,
+            provider_id=request.provider_id,
+            provider_session_id=request.provider_session_id,
+            agent_deck_session_id=request.agent_deck_session_id,
+        )
+    )
+    if not os.path.isdir(normalized_project_path):
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    if (
+        normalized_thread_id is None
+        and session_record is None
+        and thread_record is None
+        and resolved_provider_session_id is None
+    ):
+        raise HTTPException(status_code=404, detail="Chat item not found")
+
+    if resolved_provider_id == "agent-deck":
+        _agent_provider_or_error("agent-deck")
+        raw_title = (
+            getattr(session_record, "provider_session_title", None)
+            or getattr(session_record, "agent_deck_session_title", None)
+            or getattr(thread_record, "provider_session_title", None)
+            or getattr(thread_record, "agent_deck_session_title", None)
+            or normalized_thread_id
+            or resolved_agent_deck_session_id
+            or "chat"
+        )
+        chat_title = str(raw_title).strip() or "chat"
+        terminal_title = f"{_pf_cli.agent_deck_tui_title()} · {chat_title[:48]}"
+        try:
+            return await asyncio.to_thread(
+                _open_agent_deck_tui_terminal,
+                title=terminal_title,
+                session_id=resolved_agent_deck_session_id or resolved_provider_session_id,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if resolved_provider_id in {"codex-cli", "claude-cli"}:
+        label = "Codex" if resolved_provider_id == "codex-cli" else "Claude Code"
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                f"{label} bound-chat TUI launch is not wired yet. "
+                "Use Agent Deck-backed chats for Open TUI until the direct CLI harness is available."
+            ),
+        )
+
+    raise HTTPException(
+        status_code=409,
+        detail="This chat is not bound to a provider TUI yet.",
+    )
+
+
 @app.post("/api/projects/{project_path:path}/chat-items/delete")
 async def delete_project_chat_item(
     project_path: str,
@@ -2768,35 +2885,8 @@ async def delete_agent_deck_surface():
 async def open_agent_deck_tui():
     _agent_provider_or_error("agent-deck")
 
-    def _spawn() -> dict[str, Any]:
-        env = _pf_cli._agent_deck_tui_exec_env(for_external_terminal=True)
-        command = _pf_cli._agent_deck_tui_terminal_command(
-            _pf_cli.agent_deck_command(),
-            env.get("PIXEL_FORGE_AGENT_DECK_TUI_TITLE", _pf_cli.agent_deck_tui_title()),
-            _pf_cli.agent_deck_tui_wm_class(),
-        )
-        if command is None:
-            raise RuntimeError(
-                "No supported terminal emulator found for Agent Deck TUI. "
-                "Install ghostty, gnome-terminal, or x-terminal-emulator."
-            )
-        import subprocess as _subprocess
-        _subprocess.Popen(
-            command,
-            env=env,
-            stdout=_subprocess.DEVNULL,
-            stderr=_subprocess.DEVNULL,
-            stdin=_subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return {
-            "ok": True,
-            "home": env.get("PIXEL_FORGE_AGENT_DECK_HOME"),
-            "title": env.get("PIXEL_FORGE_AGENT_DECK_TUI_TITLE"),
-        }
-
     try:
-        return await asyncio.to_thread(_spawn)
+        return await asyncio.to_thread(_open_agent_deck_tui_terminal)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

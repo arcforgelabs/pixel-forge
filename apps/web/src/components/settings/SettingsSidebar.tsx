@@ -69,6 +69,7 @@ import {
   MoreVertical,
   PencilLine,
   Trash2,
+  Terminal,
   X,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -767,6 +768,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
   const [deleteDialogItem, setDeleteDialogItem] = useState<ChatSidebarActionItem | null>(null);
   const [deleteAssessment, setDeleteAssessment] = useState<ChatDeleteAssessment | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
+  const [openingChatTuiKey, setOpeningChatTuiKey] = useState<string | null>(null);
   const [isStartingCloseout, setIsStartingCloseout] = useState(false);
   const [closingProjectPath, setClosingProjectPath] = useState<string | null>(null);
   const [agentDeckSurface, setAgentDeckSurface] = useState<AgentDeckSurfaceRecord | null>(null);
@@ -1136,6 +1138,37 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
       toast.error(message);
     } finally {
       setIsOpeningAgentDeckTui(false);
+    }
+  }
+
+  async function handleOpenChatTui(item: ChatSidebarActionItem) {
+    try {
+      setOpeningChatTuiKey(item.key);
+      const payload = await requestSidebarJson<{
+        ok: true;
+        provider_id?: string | null;
+        provider_session_id?: string | null;
+        agent_deck_session_id?: string | null;
+        title?: string | null;
+      }>(
+        `/api/projects/${encodeURIComponent(item.projectPath)}/chat-items/open-tui`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            thread_id: item.threadId,
+            provider_id: item.providerId,
+            provider_session_id: item.providerSessionId,
+            agent_deck_session_id: item.agentDeckSessionId,
+          }),
+        }
+      );
+      const label = payload.provider_id === "agent-deck" ? "Agent Deck TUI" : "Chat TUI";
+      toast.success(`${label} opening in a terminal window.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to open chat TUI";
+      toast.error(message);
+    } finally {
+      setOpeningChatTuiKey(null);
     }
   }
 
@@ -1599,6 +1632,22 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
             className="w-48 p-1"
             onOpenAutoFocus={(event) => event.preventDefault()}
           >
+            <button
+              type="button"
+              disabled={openingChatTuiKey === item.key}
+              onClick={() => {
+                setChatActionMenuOpenId(null);
+                void handleOpenChatTui(item);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted/60 disabled:cursor-wait disabled:opacity-60"
+            >
+              {openingChatTuiKey === item.key ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Terminal className="h-4 w-4" />
+              )}
+              <span>Open TUI</span>
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -2484,7 +2533,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-card/70 p-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">Early Access Mode</p>
+                    <p className="text-sm font-medium text-foreground">Experimental Mode</p>
                   </div>
                   <Switch
                     id="early-access-mode-toggle"
@@ -2854,156 +2903,162 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                             />
                           </div>
 
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <Label className="text-sm font-medium">Provider</Label>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Live Editor sends new chats through this provider unless an existing lane is selected.
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Select
-                                value={defaultAgentProviderId}
-                                onValueChange={(value) => setDefaultAgentProviderId(value)}
-                              >
-                                <SelectTrigger className="h-9 w-[180px] text-xs">
-                                  <SelectValue placeholder="Provider" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {agentProviders.length === 0 && (
-                                    <SelectItem value="agent-deck">Agent Deck</SelectItem>
-                                  )}
-                                  {agentProviders.map((provider) => (
-                                    <SelectItem key={provider.id} value={provider.id}>
-                                      {provider.display_name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                className="h-9 w-9"
-                                onClick={() => void handleRefreshAgentProviders()}
-                                disabled={agentProvidersLoading}
-                                title="Refresh providers"
-                              >
-                                <RefreshCw className={`h-4 w-4 ${agentProvidersLoading ? "animate-spin" : ""}`} />
-                              </Button>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            {agentProvidersLoading ? (
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Loading providers
-                              </div>
-                            ) : (
-                              <>
-                                {agentProvidersError && (
-                                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                                    {agentProvidersError}
-                                  </div>
-                                )}
-                                {agentProviders.map((provider) => (
-                                  <div
-                                    key={provider.id}
-                                    className="rounded-md border border-border/50 bg-background/60 p-3"
+                          {settings.earlyAccessMode && (
+                            <>
+                              <div className="flex items-center justify-between gap-4">
+                                <div>
+                                  <Label className="text-sm font-medium">Provider</Label>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Live Editor sends new chats through this provider unless an existing lane is selected.
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Select
+                                    value={defaultAgentProviderId}
+                                    onValueChange={(value) => setDefaultAgentProviderId(value)}
                                   >
-                                    {(() => {
-                                      const diagnosticRows = providerDiagnosticRows(provider);
-                                      return (
-                                        <>
-                                          <div className="flex items-center justify-between gap-3">
-                                            <div className="min-w-0">
-                                              <p className="text-xs font-medium text-foreground">
-                                                {provider.display_name}
-                                              </p>
-                                              <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
-                                                {formatCommand(provider.command)}
-                                              </p>
-                                            </div>
-                                            <Badge
-                                              variant="secondary"
-                                              className={
-                                                provider.enabled && provider.available
-                                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100"
-                                                  : provider.enabled
-                                                    ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100"
-                                                    : "border-border/60 bg-muted text-muted-foreground"
-                                              }
-                                            >
-                                              {provider.enabled
-                                                ? provider.available ? "available" : "unavailable"
-                                                : "disabled"}
-                                            </Badge>
-                                          </div>
-                                          {provider.reason && (
-                                            <p className="mt-2 text-xs text-muted-foreground">
-                                              {provider.reason}
-                                            </p>
-                                          )}
-                                          {diagnosticRows.length > 0 && (
-                                            <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-muted/20 p-2">
-                                              {diagnosticRows.map((row) => (
-                                                <div
-                                                  key={`${provider.id}:${row.label}`}
-                                                  className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-[11px]"
-                                                >
-                                                  <span className="text-muted-foreground">{row.label}</span>
-                                                  <span className="break-all font-mono text-foreground/80">
-                                                    {row.value}
-                                                  </span>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
-                                          {provider.transports.length > 0 && (
-                                            <div className="mt-2 space-y-1">
-                                              {provider.transports.map((transport) => (
-                                                <p
-                                                  key={`${provider.id}:${transport.agent_id}`}
-                                                  className="text-xs text-muted-foreground"
-                                                >
-                                                  {transport.display_name}: {transport.current_transport}
-                                                </p>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </>
-                                      );
-                                    })()}
+                                    <SelectTrigger className="h-9 w-[180px] text-xs">
+                                      <SelectValue placeholder="Provider" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {agentProviders.length === 0 && (
+                                        <SelectItem value="agent-deck">Agent Deck</SelectItem>
+                                      )}
+                                      {agentProviders.map((provider) => (
+                                        <SelectItem key={provider.id} value={provider.id}>
+                                          {provider.display_name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-9 w-9"
+                                    onClick={() => void handleRefreshAgentProviders()}
+                                    disabled={agentProvidersLoading}
+                                    title="Refresh providers"
+                                  >
+                                    <RefreshCw className={`h-4 w-4 ${agentProvidersLoading ? "animate-spin" : ""}`} />
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                {agentProvidersLoading ? (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Loading providers
                                   </div>
-                                ))}
-                              </>
-                            )}
-                          </div>
+                                ) : (
+                                  <>
+                                    {agentProvidersError && (
+                                      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                                        {agentProvidersError}
+                                      </div>
+                                    )}
+                                    {agentProviders.map((provider) => (
+                                      <div
+                                        key={provider.id}
+                                        className="rounded-md border border-border/50 bg-background/60 p-3"
+                                      >
+                                        {(() => {
+                                          const diagnosticRows = providerDiagnosticRows(provider);
+                                          return (
+                                            <>
+                                              <div className="flex items-center justify-between gap-3">
+                                                <div className="min-w-0">
+                                                  <p className="text-xs font-medium text-foreground">
+                                                    {provider.display_name}
+                                                  </p>
+                                                  <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                                                    {formatCommand(provider.command)}
+                                                  </p>
+                                                </div>
+                                                <Badge
+                                                  variant="secondary"
+                                                  className={
+                                                    provider.enabled && provider.available
+                                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100"
+                                                      : provider.enabled
+                                                        ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100"
+                                                        : "border-border/60 bg-muted text-muted-foreground"
+                                                  }
+                                                >
+                                                  {provider.enabled
+                                                    ? provider.available ? "available" : "unavailable"
+                                                    : "disabled"}
+                                                </Badge>
+                                              </div>
+                                              {provider.reason && (
+                                                <p className="mt-2 text-xs text-muted-foreground">
+                                                  {provider.reason}
+                                                </p>
+                                              )}
+                                              {diagnosticRows.length > 0 && (
+                                                <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-muted/20 p-2">
+                                                  {diagnosticRows.map((row) => (
+                                                    <div
+                                                      key={`${provider.id}:${row.label}`}
+                                                      className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-[11px]"
+                                                    >
+                                                      <span className="text-muted-foreground">{row.label}</span>
+                                                      <span className="break-all font-mono text-foreground/80">
+                                                        {row.value}
+                                                      </span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              {provider.transports.length > 0 && (
+                                                <div className="mt-2 space-y-1">
+                                                  {provider.transports.map((transport) => (
+                                                    <p
+                                                      key={`${provider.id}:${transport.agent_id}`}
+                                                      className="text-xs text-muted-foreground"
+                                                    >
+                                                      {transport.display_name}: {transport.current_transport}
+                                                    </p>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    ))}
+                                  </>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
 
-                        <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <Label className="text-sm font-medium">Default</Label>
+                        {settings.earlyAccessMode && (
+                          <>
+                            <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
+                              <div className="flex items-center justify-between gap-4">
+                                <div>
+                                  <Label className="text-sm font-medium">Default</Label>
+                                </div>
+                                <Select
+                                  value={defaultAgentType}
+                                  onValueChange={(value) => setDefaultAgentType(value)}
+                                >
+                                  <SelectTrigger className="h-9 w-[160px] text-xs">
+                                    {formatAgentToolLabel(defaultAgentType)}
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="claude">Claude Code</SelectItem>
+                                    <SelectItem value="codex">Codex</SelectItem>
+                                    <SelectItem value="gemini">Gemini</SelectItem>
+                                    <SelectItem value="pi">Pi</SelectItem>
+                                    <SelectItem value="openclaw">OpenClaw</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </div>
-                            <Select
-                              value={defaultAgentType}
-                              onValueChange={(value) => setDefaultAgentType(value)}
-                            >
-                              <SelectTrigger className="h-9 w-[160px] text-xs">
-                                {formatAgentToolLabel(defaultAgentType)}
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="claude">Claude Code</SelectItem>
-                                <SelectItem value="codex">Codex</SelectItem>
-                                <SelectItem value="gemini">Gemini</SelectItem>
-                                <SelectItem value="pi">Pi</SelectItem>
-                                <SelectItem value="openclaw">OpenClaw</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
 
                         <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-4">
                           <div>
@@ -3175,6 +3230,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                             </Select>
                           </div>
                         </div>
+                          </>
+                        )}
                       </div>
                     </TabsContent>
 
