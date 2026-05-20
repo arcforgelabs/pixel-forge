@@ -110,7 +110,7 @@ class ProjectChatsRouteTest(unittest.IsolatedAsyncioTestCase):
             )
             provider = _ExplodingProvider()
             provider.list_sessions = AsyncMock(
-                side_effect=AgentDeckBridgeError("agent-deck ls -json timed out after 12.0s")
+                side_effect=AgentDeckBridgeError("agent-deck ls -json timed out after 3.0s")
             )
             with (
                 patch.object(main, "get_agent_provider", Mock(return_value=provider)),

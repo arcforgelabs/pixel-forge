@@ -946,7 +946,7 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             agent_deck_bridge,
             "_run_agent_deck_command",
-            AsyncMock(return_value=(124, "", "agent-deck ls -json timed out after 12.0s")),
+            AsyncMock(return_value=(124, "", "agent-deck ls -json timed out after 3.0s")),
         ) as run_mock:
             await agent_deck_bridge._enforce_agent_deck_launch_admission()
 
