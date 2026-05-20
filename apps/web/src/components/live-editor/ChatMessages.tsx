@@ -747,7 +747,7 @@ export function ChatMessages({
                 <div
                   className={`max-w-[calc(100%-1.5rem)] rounded-2xl px-3 py-2 text-xs ${
                     msg.systemTone === 'error'
-                      ? 'border border-destructive/25 bg-destructive/10 text-destructive-foreground'
+                      ? 'border border-destructive/25 bg-destructive/10 text-destructive dark:text-destructive-foreground'
                       : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100'
                   }`}
                 >
@@ -820,7 +820,7 @@ export function ChatMessages({
                         onClick={() => {
                           void retryMessage(msg.id)
                         }}
-                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/60 hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:border-destructive/60 hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-destructive-foreground"
                         title="Retry in this chat with the same selections"
                         aria-label="Retry in this chat"
                       >
@@ -832,7 +832,7 @@ export function ChatMessages({
                         onClick={() => {
                           void replayMessage(msg.id)
                         }}
-                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/60 hover:bg-destructive/20"
+                        className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:border-destructive/60 hover:bg-destructive/20 dark:text-destructive-foreground"
                         title="Replay into a fresh chat"
                         aria-label="Replay into a fresh chat"
                       >
@@ -851,7 +851,7 @@ export function ChatMessages({
                               option.agentType,
                             )
                           }}
-                          className="inline-flex items-center gap-1 rounded-md border border-destructive/50 bg-destructive/15 px-2 py-1 text-[11px] font-medium text-destructive-foreground transition-colors hover:border-destructive/70 hover:bg-destructive/25 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-md border border-destructive/50 bg-destructive/15 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:border-destructive/70 hover:bg-destructive/25 disabled:cursor-not-allowed disabled:opacity-50 dark:text-destructive-foreground"
                           title={option.reason || option.label}
                           aria-label={option.label}
                         >

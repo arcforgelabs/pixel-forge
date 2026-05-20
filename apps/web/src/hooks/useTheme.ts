@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 type Theme = 'light' | 'dark' | 'system'
 
 const STORAGE_KEY = 'pixel-forge-theme'
+const DEFAULT_THEME: Theme = 'dark'
 
 function getSystemTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light'
@@ -33,7 +34,7 @@ export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window === 'undefined') return 'system'
     const stored = localStorage.getItem(STORAGE_KEY) as Theme | null
-    return stored || 'system'
+    return stored || DEFAULT_THEME
   })
 
   // Apply theme on mount and when changed
@@ -78,7 +79,7 @@ export function useTheme() {
 // Initialize theme immediately (before React hydrates) to prevent flash
 export function initializeTheme() {
   const stored = localStorage.getItem(STORAGE_KEY) as Theme | null
-  const theme = stored || 'system'
+  const theme = stored || DEFAULT_THEME
   const effectiveTheme = theme === 'system' ? getSystemTheme() : theme
   applyTheme(effectiveTheme)
 }

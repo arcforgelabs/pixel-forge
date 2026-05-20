@@ -140,7 +140,7 @@ function SettingsDialog({ settings, setSettings }: Props) {
                   <Label htmlFor="app-theme">
                     <div>App Theme</div>
                     <div className="font-light mt-1 text-xs">
-                      System follows your OS preference
+                      Fresh installs default to dark; System follows your OS preference
                     </div>
                   </Label>
                   <div>
