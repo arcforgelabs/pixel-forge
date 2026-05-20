@@ -1836,10 +1836,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                       );
 
                       return (
-                        <div key={project.path}>
+                        <div key={project.path} className="min-w-0">
                           <div
                             className={`
-                              group/project-row flex items-center gap-1 rounded-md transition-colors duration-100
+                              group/project-row flex min-w-0 items-center gap-1 rounded-md transition-colors duration-100
                               ${isActive
                                 ? "bg-primary/10 text-primary"
                                 : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
@@ -1853,10 +1853,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                 }
                                 void setProject({ path: project.path });
                               }}
-                              className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium"
+                              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium"
                               title={project.path}
                             >
-                              <span className="truncate flex-1 text-left">{project.name}</span>
+                              <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
                               {isActive && !isExpanded && (
                                 <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
                               )}
