@@ -1126,7 +1126,7 @@ export function ChatInput() {
                         variant="outline"
                         className={
                           installedForActiveAgent
-                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100'
                             : 'border-border/60 bg-background/70 text-muted-foreground'
                         }
                       >

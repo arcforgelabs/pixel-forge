@@ -35,11 +35,11 @@ export function ControllerUpdateApplyOverlay() {
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/72 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl border border-emerald-500/30 bg-card/95 p-5 shadow-2xl">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-300">
               Updating Pixel Forge
             </p>
             <p className="mt-1 text-sm font-medium text-foreground">

@@ -185,7 +185,7 @@ export function resolveControllerUpdateStatus({
     if (controllerReleaseUpdate?.updateAvailable) {
       return {
         label: "Release available",
-        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+        className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
         detail: `${latestReleaseVersionLabel} is available from ${sourceLabel}; stage it below to install.`,
         buttonLabel: "Load Controller Update",
       };
@@ -198,7 +198,7 @@ export function resolveControllerUpdateStatus({
     ) {
       return {
         label: "Release skipped",
-        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100",
         detail: `${latestReleaseVersionLabel} is newer than ${runningVersionLabel}, but that release is skipped.`,
         buttonLabel: "Load Controller Update",
       };
@@ -207,7 +207,7 @@ export function resolveControllerUpdateStatus({
     if (latestVsRunning !== null && latestVsRunning < 0) {
       return {
         label: "Local build",
-        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100",
         detail: `Running installed build ${runningVersionLabel}, which is newer than the latest stable ${sourceLabel} ${latestReleaseVersionLabel}. No staged controller update is available.`,
         buttonLabel: "Load Controller Update",
       };
@@ -221,7 +221,7 @@ export function resolveControllerUpdateStatus({
     })) {
       return {
         label: "Local build",
-        className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+        className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100",
         detail: `Running ${runningVersionLabel}, but the installed build does not exactly match the latest stable ${sourceLabel} ${latestReleaseVersionLabel}.${localBuildDetail} No staged controller update is available.`,
         buttonLabel: "Load Controller Update",
       };
@@ -247,7 +247,7 @@ export function resolveControllerUpdateStatus({
   if (versionComparison === null) {
     return {
       label: "Staged build",
-      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
       detail: `${stagedVersionLabel} is staged for this controller and can be loaded from Settings.`,
       buttonLabel: "Load Controller Update",
     };
@@ -256,7 +256,7 @@ export function resolveControllerUpdateStatus({
   if (versionComparison > 0) {
     return {
       label: "Update available",
-      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100",
       detail: `${stagedVersionLabel} is staged and ready to apply over ${runningVersionLabel}.`,
       buttonLabel: `Update to ${stagedVersionLabel}`,
     };
@@ -273,7 +273,7 @@ export function resolveControllerUpdateStatus({
 
   return {
     label: "Older staged build",
-    className: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+    className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100",
     detail: `${stagedVersionLabel} is staged, but it is older than the running ${runningVersionLabel}.`,
     buttonLabel: `Load ${stagedVersionLabel}`,
   };
@@ -2365,8 +2365,8 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <span
                       className={
                         controllerAcpxBridgeAvailable
-                          ? "text-xs text-emerald-200"
-                          : "text-xs text-amber-200"
+                          ? "text-xs text-emerald-700 dark:text-emerald-200"
+                          : "text-xs text-amber-700 dark:text-amber-200"
                       }
                     >
                       {controllerAcpxBridgeAvailable
@@ -2408,9 +2408,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         variant="outline"
                         className={
                           controllerReleaseUpdate?.updateAvailable
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100"
                             : controllerReleaseUpdate?.error
-                              ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                              ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100"
                               : "border-transparent bg-muted text-foreground"
                         }
                       >
@@ -2449,7 +2449,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                           || isCheckingReleaseUpdate
                           || isStagingReleaseUpdate
                         }
-                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
                       >
                         <Loader2 className={`h-3.5 w-3.5 ${isStagingReleaseUpdate ? "animate-spin" : "hidden"}`} />
                         Stage Release
@@ -2503,9 +2503,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                     <span
                       className={
                         agentDeckSurface?.ready
-                          ? "text-xs text-emerald-200"
+                          ? "text-xs text-emerald-700 dark:text-emerald-200"
                           : agentDeckSurface?.running
-                            ? "text-xs text-amber-200"
+                            ? "text-xs text-amber-700 dark:text-amber-200"
                             : "text-xs text-muted-foreground"
                       }
                     >
@@ -2555,10 +2555,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
 
                 {!controllerAcpxBridgeAvailable && (
                   <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
-                    <p className="text-sm text-amber-100">
+                    <p className="text-sm text-amber-700 dark:text-amber-100">
                       This running controller does not include the ACPX bridge layer.
                     </p>
-                    <p className="mt-1 text-xs text-amber-100/80">
+                    <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-100/80">
                       If the repo has newer ACPX-backed code, you still need to stage or install that
                       controller build before this app is actually using it.
                     </p>
@@ -2587,7 +2587,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                         size="sm"
                         onClick={() => void handleLoadControllerUpdate()}
                         disabled={!canLoadControllerUpdate || isApplyingControllerUpdate}
-                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                        className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${isApplyingControllerUpdate ? "animate-spin" : ""}`} />
                         {updateStatus.buttonLabel}
@@ -2929,9 +2929,9 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                               variant="secondary"
                                               className={
                                                 provider.enabled && provider.available
-                                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100"
                                                   : provider.enabled
-                                                    ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                                                    ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-100"
                                                     : "border-border/60 bg-muted text-muted-foreground"
                                               }
                                             >

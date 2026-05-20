@@ -3507,7 +3507,7 @@ export function LiveEditorPane({
                 variant="outline"
                 size="sm"
                 onClick={() => void loadUpdatedPixelForgePreview()}
-                className="h-7 gap-1 border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs text-emerald-100 hover:bg-emerald-500/20"
+                className="h-7 gap-1 border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
                 title="Load the updated clone preview into this chat's primary mirror"
               >
                 <RefreshCw className="h-3 w-3" />
@@ -3565,18 +3565,18 @@ export function LiveEditorPane({
 
         <div className="pf-live-editor-surface flex-1 min-h-0 overflow-auto p-3">
           {authIssue && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-              <AlertTriangle className="h-4 w-4 text-amber-300" />
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-100">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-300" />
               <span className="min-w-0 flex-1">
                 Upstream auth required: {authIssue.status} on{' '}
-                <code className="break-all rounded bg-black/20 px-1 py-0.5 text-xs">
+                <code className="break-all rounded bg-background/70 px-1 py-0.5 text-xs ring-1 ring-border/40 dark:bg-black/20 dark:ring-transparent">
                   {authIssue.url || targetUrl}
                 </code>
               </span>
               <Button
                 variant="outline"
                 size="sm"
-                className="border-amber-400/50 bg-transparent text-amber-100 hover:bg-amber-500/10"
+                className="border-amber-400/50 bg-transparent text-amber-700 hover:bg-amber-500/10 dark:text-amber-100"
                 onClick={() => {
                   if (!targetUrl) return
                   const loginUrl = new URL('/login', targetUrl).toString()
@@ -3712,7 +3712,7 @@ export function LiveEditorPane({
                                 {candidate.title}
                               </div>
                               {candidate.recommended && (
-                                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
+                                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
                                   Recommended
                                 </span>
                               )}

@@ -339,13 +339,10 @@ def _base_env() -> dict[str, str]:
     env.setdefault("PIXEL_FORGE_SHARED_STATE_DIR", str(shared_state_dir()))
     env.setdefault("PIXEL_FORGE_RUNTIME_DIR", str(runtime_dir()))
     env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
-    env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", str(agent_deck_home_dir()))
-    if _normalize_text(os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME")):
-        env["AGENTDECK_DIR"] = env["PIXEL_FORGE_AGENT_DECK_HOME"]
-        env["AGENT_DECK_DIR"] = env["PIXEL_FORGE_AGENT_DECK_HOME"]
-    else:
-        env.setdefault("AGENTDECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
-        env.setdefault("AGENT_DECK_DIR", env["PIXEL_FORGE_AGENT_DECK_HOME"])
+    agent_deck_home = str(agent_deck_home_dir())
+    env["PIXEL_FORGE_AGENT_DECK_HOME"] = agent_deck_home
+    env["AGENTDECK_DIR"] = agent_deck_home
+    env["AGENT_DECK_DIR"] = agent_deck_home
     return env
 
 

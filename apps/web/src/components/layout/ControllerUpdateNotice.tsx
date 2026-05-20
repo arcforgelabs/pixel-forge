@@ -161,7 +161,7 @@ export function ControllerUpdateNotice() {
       <div className="pointer-events-none absolute right-3 top-2 z-30">
         <div className="pointer-events-auto flex max-w-[34rem] items-center gap-3 rounded-xl border border-emerald-500/35 bg-card/95 px-3 py-2 shadow-2xl backdrop-blur-md">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-300">
               Update Available
             </p>
             <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]">
@@ -175,7 +175,7 @@ export function ControllerUpdateNotice() {
             <Button
               size="sm"
               variant="outline"
-              className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+              className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
               onClick={() => void onStageRelease()}
               disabled={isStagingRelease}
             >
@@ -202,7 +202,7 @@ export function ControllerUpdateNotice() {
     <div className="pointer-events-none absolute right-3 top-2 z-30">
       <div className="pointer-events-auto flex max-w-[34rem] items-center gap-3 rounded-xl border border-emerald-500/35 bg-card/95 px-3 py-2 shadow-2xl backdrop-blur-md">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-300">
             Update Ready
           </p>
           <p className="mt-0.5 text-sm text-foreground [overflow-wrap:anywhere]">
@@ -218,7 +218,7 @@ export function ControllerUpdateNotice() {
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+            className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
             onClick={() => void onApply()}
             disabled={isApplying || isDismissing}
           >

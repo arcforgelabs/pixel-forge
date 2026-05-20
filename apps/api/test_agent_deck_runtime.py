@@ -63,6 +63,21 @@ class AgentDeckRuntimeIsolationTest(unittest.TestCase):
         self.assertNotIn("TMUX", env)
         self.assertNotIn("TMUX_PANE", env)
 
+    def test_agent_deck_env_overrides_inherited_standalone_profile_and_home(self) -> None:
+        os.environ["AGENTDECK_PROFILE"] = "default"
+        os.environ["AGENTDECK_DIR"] = str(Path(self.tempdir.name) / "standalone-agent-deck")
+        os.environ["AGENT_DECK_DIR"] = str(Path(self.tempdir.name) / "legacy-standalone-agent-deck")
+
+        env = agent_deck_runtime.agent_deck_env()
+        expected = str(Path(self.tempdir.name) / "agent-deck")
+
+        self.assertEqual(agent_deck_runtime.agent_deck_profile(), "pixel-forge")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["AGENTDECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], expected)
+        self.assertEqual(env["AGENTDECK_DIR"], expected)
+        self.assertEqual(env["AGENT_DECK_DIR"], expected)
+
     def _write_agent_deck_bin(self, path: Path, *, supports_yolo: bool) -> None:
         help_output = "Usage: agent-deck launch [--yolo]" if supports_yolo else "Usage: agent-deck launch"
         path.write_text(

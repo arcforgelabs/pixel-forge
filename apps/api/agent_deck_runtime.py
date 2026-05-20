@@ -30,11 +30,7 @@ class _AgentDeckResolution:
 
 
 def agent_deck_profile() -> str:
-    explicit = (
-        os.environ.get("PIXEL_FORGE_AGENT_DECK_PROFILE")
-        or os.environ.get("AGENTDECK_PROFILE")
-        or ""
-    ).strip()
+    explicit = (os.environ.get("PIXEL_FORGE_AGENT_DECK_PROFILE") or "").strip()
     return explicit or DEFAULT_AGENT_DECK_PROFILE
 
 
@@ -178,17 +174,14 @@ def agent_deck_available(*, require_launch_yolo: bool = False) -> tuple[bool, st
 
 def agent_deck_env() -> dict[str, str]:
     env = dict(os.environ)
-    env.setdefault("PIXEL_FORGE_AGENT_DECK_PROFILE", agent_deck_profile())
-    env.setdefault("AGENTDECK_PROFILE", env["PIXEL_FORGE_AGENT_DECK_PROFILE"])
-    env.setdefault("PIXEL_FORGE_DB_PATH", str(shared_db_path()))
+    profile = agent_deck_profile()
+    env["PIXEL_FORGE_AGENT_DECK_PROFILE"] = profile
+    env["AGENTDECK_PROFILE"] = profile
+    env["PIXEL_FORGE_DB_PATH"] = str(shared_db_path())
     home_dir = str(agent_deck_home_dir())
-    env.setdefault("PIXEL_FORGE_AGENT_DECK_HOME", home_dir)
-    if (os.environ.get("PIXEL_FORGE_AGENT_DECK_HOME") or "").strip():
-        env["AGENTDECK_DIR"] = home_dir
-        env["AGENT_DECK_DIR"] = home_dir
-    else:
-        env.setdefault("AGENTDECK_DIR", home_dir)
-        env.setdefault("AGENT_DECK_DIR", home_dir)
+    env["PIXEL_FORGE_AGENT_DECK_HOME"] = home_dir
+    env["AGENTDECK_DIR"] = home_dir
+    env["AGENT_DECK_DIR"] = home_dir
     env.update(agent_deck_governance_env(Path(home_dir)))
     for key in ("TMUX", "TMUX_PANE", "npm_config_prefix", "NPM_CONFIG_PREFIX"):
         env.pop(key, None)

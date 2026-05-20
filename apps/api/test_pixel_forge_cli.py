@@ -183,6 +183,27 @@ class AgentDeckTuiTerminalCommandTest(unittest.TestCase):
         self.assertEqual(env["AGENTDECK_DIR"], "/tmp/deck-home")
         self.assertEqual(env["AGENT_DECK_DIR"], "/tmp/deck-home")
 
+    def test_external_terminal_env_overrides_inherited_standalone_agent_deck_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(
+                "os.environ",
+                {
+                    "PIXEL_FORGE_SHARED_STATE_DIR": tmpdir,
+                    "AGENTDECK_PROFILE": "default",
+                    "AGENTDECK_DIR": "/tmp/standalone-agent-deck",
+                    "AGENT_DECK_DIR": "/tmp/legacy-standalone-agent-deck",
+                },
+                clear=True,
+            ):
+                env = pixel_forge_cli._agent_deck_tui_exec_env(for_external_terminal=True)
+
+        expected = str(Path(tmpdir) / "agent-deck")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["AGENTDECK_PROFILE"], "pixel-forge")
+        self.assertEqual(env["PIXEL_FORGE_AGENT_DECK_HOME"], expected)
+        self.assertEqual(env["AGENTDECK_DIR"], expected)
+        self.assertEqual(env["AGENT_DECK_DIR"], expected)
+
     def test_mirror_flag_points_agent_deck_env_at_instance_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             instance_slug = "pixel-forge-mirror-target-abc123"

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   assert,
@@ -446,6 +447,80 @@ async function clickButtonByText(page, text) {
   await clickElement(element)
 }
 
+async function loadPreviewUrl(page, browser, previewUrl) {
+  console.log(`[smoke:installed-gui-provider-matrix] loading selected-region preview ${previewUrl}`)
+  const input = await page.waitForSelector('input[placeholder="Enter preview URL..."]', {
+    timeout: uiWaitTimeoutMs,
+  })
+  assert(input, 'Could not find preview URL input.')
+  await input.click({ clickCount: 3 })
+  await page.keyboard.type(previewUrl)
+  await clickButtonByText(page, 'Load')
+
+  return await waitForCondition(async () => {
+    const pages = await browser.pages()
+    return pages.find((candidate) => candidate.url() === previewUrl)
+      ?? pages.find((candidate) => candidate.url().startsWith(previewUrl))
+      ?? null
+  }, {
+    timeoutMs: 45000,
+    intervalMs: 500,
+    description: `preview BrowserView page for ${previewUrl}`,
+  })
+}
+
+async function waitForSelectionCount(page, expectedCount) {
+  try {
+    await page.waitForFunction((count) => {
+      const bodyText = document.body?.innerText?.replace(/\s+/g, ' ').trim() || ''
+      if (bodyText.includes(`${count} element selected`)) {
+        return true
+      }
+      return [...document.querySelectorAll('button, [role="tab"]')]
+        .some((element) => {
+          const text = element.textContent?.replace(/\s+/g, ' ').trim() || ''
+          return text === `Elements ${count}` || text.endsWith(`Elements ${count}`)
+        })
+    }, { timeout: uiWaitTimeoutMs }, expectedCount)
+  } catch (error) {
+    const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0, 2000) || '')
+    throw new Error(`Timed out waiting for Elements ${expectedCount}. Body: ${bodyText}. Cause: ${
+      error instanceof Error ? error.message : String(error)
+    }`)
+  }
+}
+
+async function selectCanvasRegionFromPreview(shellPage, browser, previewUrl) {
+  const previewPage = await loadPreviewUrl(shellPage, browser, previewUrl)
+  console.log(`[smoke:installed-gui-provider-matrix] preview BrowserView attached`)
+  await previewPage.waitForSelector('#pixel-forge-region-smoke-canvas', {
+    timeout: uiWaitTimeoutMs,
+  })
+  await clickButtonByText(shellPage, 'Select')
+  try {
+    await shellPage.waitForFunction(() => {
+      return [...document.querySelectorAll('button')]
+        .some((button) => button.textContent?.trim() === 'Selecting' && !button.disabled)
+    }, { timeout: uiWaitTimeoutMs })
+  } catch (error) {
+    const bodyText = await shellPage.evaluate(() => document.body?.innerText?.slice(0, 2000) || '')
+    throw new Error(`Timed out waiting for selection mode. Body: ${bodyText}. Cause: ${
+      error instanceof Error ? error.message : String(error)
+    }`)
+  }
+  console.log(`[smoke:installed-gui-provider-matrix] selection mode active`)
+
+  const canvas = await previewPage.$('#pixel-forge-region-smoke-canvas')
+  assert(canvas, 'Could not find preview canvas for region selection.')
+  const box = await canvas.boundingBox()
+  assert(box && box.width > 0 && box.height > 0, `Canvas was not visible in preview: ${JSON.stringify(box)}`)
+  console.log(`[smoke:installed-gui-provider-matrix] clicking canvas at ${JSON.stringify(box)}`)
+  await previewPage.mouse.move(box.x + box.width * 0.48, box.y + box.height * 0.52)
+  await previewPage.mouse.click(box.x + box.width * 0.48, box.y + box.height * 0.52)
+  await waitForSelectionCount(shellPage, 1)
+  console.log(`[smoke:installed-gui-provider-matrix] selected canvas region`)
+}
+
 async function switchAgent(page, label) {
   const agentButton = await page.$('button[aria-label^="Agent:"]')
   assert(agentButton, 'Could not find agent selector button')
@@ -455,16 +530,27 @@ async function switchAgent(page, label) {
 }
 
 async function sendPrompt(page, prompt) {
-  await page.focus('textarea[placeholder="Type here..."]')
+  const textareaHandle = await page.waitForFunction(() => {
+    return [...document.querySelectorAll('textarea[placeholder="Type here..."]')]
+      .find((textarea) => !textarea.disabled && textarea.offsetParent !== null) ?? null
+  }, { timeout: uiWaitTimeoutMs })
+  const textarea = textareaHandle.asElement()
+  assert(textarea, 'Visible composer textarea not found.')
+  await textarea.click()
   await page.keyboard.down('Control')
   await page.keyboard.press('KeyA')
   await page.keyboard.up('Control')
   await page.keyboard.type(prompt)
-  await page.waitForFunction(() => {
-    const button = document.querySelector('button[type="submit"]')
-    return button && !button.disabled
-  }, { timeout: uiWaitTimeoutMs })
-  const submitButton = await page.$('button[type="submit"]')
+  const submitHandle = await page.waitForFunction((expectedPrompt) => {
+    const textarea = [...document.querySelectorAll('textarea[placeholder="Type here..."]')]
+      .find((candidate) => !candidate.disabled && candidate.offsetParent !== null)
+    const form = textarea?.closest('form')
+    const button = form?.querySelector('button[type="submit"]')
+    return textarea?.value === expectedPrompt && button && !button.disabled
+      ? button
+      : null
+  }, { timeout: uiWaitTimeoutMs }, prompt)
+  const submitButton = submitHandle.asElement()
   assert(submitButton, 'Could not find submit button')
   await clickElement(submitButton)
   return await page.waitForFunction(() => {
@@ -499,6 +585,60 @@ async function assertFreshDirectCodexRoute(page, chat) {
   assert(
     !('target_agent_deck_session_id' in payload),
     `Direct payload carried Agent Deck compatibility metadata: ${JSON.stringify(payload)}`,
+  )
+}
+
+async function assertDirectCodexRegionSelectionRoute(openedUi, chat, previewUrl) {
+  const page = openedUi.page
+  await page.evaluate(() => window.__pixelForgeSmoke.reset())
+  await waitForAgent(page, 'Codex')
+  await selectCanvasRegionFromPreview(page, openedUi.browser, previewUrl)
+
+  console.log(`[smoke:installed-gui-provider-matrix] sending selected-region direct Codex prompt`)
+  const payloadHandle = await sendPrompt(page, 'UI provider matrix direct codex selected canvas region smoke')
+  const payload = await payloadHandle.jsonValue()
+  const selections = payload.selection_tunnel?.selections || []
+  const turnSelections = payload.turn_input?.selection_tunnel?.selections || []
+  const regionSelection = selections[0]
+  const livePreview = payload.live_preview || {}
+  const inspection = livePreview.inspection || {}
+  const selectionMatch = inspection.selection_matches?.[0]
+
+  assert(payload.chat_id === chat.thread_id, `Selected-region payload used wrong chat id: ${JSON.stringify(payload)}`)
+  assert(payload.provider_id === 'codex-cli', `Selected-region payload provider wrong: ${JSON.stringify(payload)}`)
+  assert(payload.target_intent?.mode === 'bound', `Selected-region payload was not bound to the direct provider: ${JSON.stringify(payload)}`)
+  assert(
+    payload.target_intent?.provider_id === 'codex-cli',
+    `Selected-region payload target provider wrong: ${JSON.stringify(payload)}`,
+  )
+  assert(
+    payload.target_intent?.provider_session_id === payload.target_provider_session_id,
+    `Selected-region payload target session mismatch: ${JSON.stringify(payload)}`,
+  )
+  assert(
+    !('target_agent_deck_session_id' in payload),
+    `Selected-region direct-provider payload carried Agent Deck compatibility metadata: ${JSON.stringify(payload)}`,
+  )
+  assert(selections.length === 1, `Selected-region payload missing selection tunnel: ${JSON.stringify(payload)}`)
+  assert(turnSelections.length === 1, `Selected-region turn_input missing selection tunnel: ${JSON.stringify(payload.turn_input)}`)
+  assert(regionSelection.selectorKind === 'region', `Expected region selection: ${JSON.stringify(regionSelection)}`)
+  assert(regionSelection.surfaceKind === 'canvas', `Expected canvas region selection: ${JSON.stringify(regionSelection)}`)
+  assert(regionSelection.rootXPath, `Region selection missing root XPath: ${JSON.stringify(regionSelection)}`)
+  assert(regionSelection.previewAttachmentName, `Region selection missing preview attachment: ${JSON.stringify(regionSelection)}`)
+  assert(regionSelection.region?.normalizedWidth > 0, `Region selection missing normalized geometry: ${JSON.stringify(regionSelection)}`)
+  assert(
+    payload.attachments?.some((attachment) => attachment.name === regionSelection.previewAttachmentName && attachment.kind === 'image'),
+    `Region preview attachment missing from payload: ${JSON.stringify(payload.attachments)}`,
+  )
+  assert(livePreview.mode === 'browser', `Selected-region payload missing browser preview: ${JSON.stringify(livePreview)}`)
+  assert(livePreview.url === previewUrl, `Selected-region payload used wrong preview URL: ${JSON.stringify(livePreview)}`)
+  assert(
+    inspection.live_inspection_available === true,
+    `Selected-region payload missing live inspection: ${JSON.stringify(inspection)}`,
+  )
+  assert(
+    selectionMatch?.found === true && selectionMatch?.selector_kind === 'region',
+    `Selected-region inspection did not resolve selection: ${JSON.stringify(inspection.selection_matches)}`,
   )
 }
 
@@ -579,6 +719,41 @@ try {
     '# Pixel Forge installed UI provider matrix smoke workspace\n',
     'utf-8',
   )
+  const previewPath = path.join(projectPath, 'region-preview.html')
+  await fs.writeFile(
+    previewPath,
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Pixel Forge Region Smoke</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      main { min-height: 100vh; display: grid; place-items: center; }
+      canvas { width: 640px; height: 360px; border: 1px solid #4b5563; background: #0f172a; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas id="pixel-forge-region-smoke-canvas" width="640" height="360" aria-label="Pixel Forge selectable canvas region"></canvas>
+    </main>
+    <script>
+      const canvas = document.getElementById('pixel-forge-region-smoke-canvas');
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#0f172a';
+      context.fillRect(0, 0, 640, 360);
+      context.fillStyle = '#22c55e';
+      context.fillRect(190, 96, 260, 150);
+      context.fillStyle = '#f8fafc';
+      context.font = '28px system-ui';
+      context.fillText('Selectable canvas region', 150, 295);
+    </script>
+  </body>
+</html>
+`,
+    'utf-8',
+  )
+  const previewUrl = pathToFileURL(previewPath).href
   await fs.mkdir(homeDir, { recursive: true })
 
   await installPixelForge(repoRoot, context)
@@ -608,6 +783,7 @@ try {
   openedUi = await openInstalledUi(context, directActive)
   await preparePage(openedUi.page, context, directActive)
   await assertFreshDirectCodexRoute(openedUi.page, directChat)
+  await assertDirectCodexRegionSelectionRoute(openedUi, directChat, previewUrl)
   const firstUiMode = openedUi.mode
   await closeInstalledUi(openedUi)
   openedUi = null

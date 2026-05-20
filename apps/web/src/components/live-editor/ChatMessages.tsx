@@ -573,10 +573,10 @@ export function ChatMessages({
           const attachmentIndex = attachments.findIndex((entry) => entry.id === attachment.id)
           const label = attachmentLabel(attachment, attachmentIndex >= 0 ? attachmentIndex : index)
           const toneClassName = attachment.kind === 'paste'
-            ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
+            ? 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-100'
             : attachment.kind === 'image'
-              ? 'border-sky-500/35 bg-sky-500/10 text-sky-100'
-              : 'border-white/10 bg-black/15 text-foreground'
+              ? 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-100'
+              : 'border-border/50 bg-background/60 text-foreground'
 
           return (
             <span
@@ -602,10 +602,10 @@ export function ChatMessages({
         const pasteText = attachment.kind === 'paste' ? resolvePasteText(attachment) : ''
         const baseClassName = tone === 'assistant'
           ? 'border-border/40 bg-background/50 text-foreground'
-          : 'border-white/10 bg-black/15 text-foreground'
+          : 'border-border/50 bg-background/60 text-foreground'
         const pasteSurfaceClassName = tone === 'assistant'
-          ? 'bg-black/10 text-foreground/90 ring-1 ring-black/10'
-          : 'bg-black/25 text-foreground/95 ring-1 ring-white/5'
+          ? 'bg-black/10 text-foreground/90 ring-1 ring-black/10 dark:ring-white/5'
+          : 'bg-background/70 text-foreground/95 ring-1 ring-border/40'
 
         if (attachment.kind === 'image') {
           const imageClassName = tone === 'assistant'
@@ -748,14 +748,14 @@ export function ChatMessages({
                   className={`max-w-[calc(100%-1.5rem)] rounded-2xl px-3 py-2 text-xs ${
                     msg.systemTone === 'error'
                       ? 'border border-destructive/25 bg-destructive/10 text-destructive-foreground'
-                      : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-100'
+                      : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     {msg.systemTone === 'error' ? (
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
                     ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
                     )}
                     <span className="break-words [overflow-wrap:anywhere]">{msg.content}</span>
                   </div>
@@ -771,7 +771,7 @@ export function ChatMessages({
                         <Button
                           variant="outline"
                           size="sm"
-                          className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
+                          className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-700 hover:bg-blue-500/20 dark:text-blue-200"
                           onClick={onRefreshPreview}
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
@@ -782,7 +782,7 @@ export function ChatMessages({
                         <Button
                           variant="outline"
                           size="sm"
-                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
                           onClick={onLoadPreviewUpdate}
                         >
                           Load Updated Preview
@@ -792,7 +792,7 @@ export function ChatMessages({
                         <Button
                           variant="outline"
                           size="sm"
-                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                          className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-100"
                           onClick={onApplyControllerUpdate}
                         >
                           Load Updated Pixel Forge
@@ -936,7 +936,7 @@ export function ChatMessages({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20"
+                      className="gap-1.5 border-blue-500/40 bg-blue-500/10 text-blue-700 hover:bg-blue-500/20 dark:text-blue-200"
                       onClick={onRefreshPreview}
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
