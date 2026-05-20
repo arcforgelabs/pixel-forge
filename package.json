@@ -31,6 +31,7 @@
     "test:web": "pnpm --dir apps/web test",
     "test:retired-lane-env": "bash scripts/test-retired-lane-env.sh",
     "smoke:install": "node scripts/smoke-install.mjs",
+    "smoke:npm-install": "node scripts/smoke-npm-install.mjs",
     "smoke:gui": "node scripts/smoke-gui-integration.mjs",
     "smoke:installed-gui-provider-matrix": "node scripts/smoke-installed-gui-provider-matrix.mjs",
     "smoke:installed-gui-direct-provider:turn": "node scripts/smoke-installed-gui-direct-provider-live.mjs",
