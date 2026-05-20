@@ -957,10 +957,17 @@ async def _find_live_editor_session_id_by_title(
     if not normalized_title:
         return None
     normalized_agent_type = requested_agent_type.strip().lower()
-    for session in await _list_project_session_targets(
-        project_path,
-        include_acpx_backed=True,
-    ):
+    try:
+        sessions = await _list_project_session_targets(
+            project_path,
+            include_acpx_backed=True,
+        )
+    except AgentDeckBridgeError as exc:
+        if _is_agent_deck_timeout_error(exc):
+            return None
+        raise
+
+    for session in sessions:
         if session.title != normalized_title:
             continue
         if normalized_agent_type and session.tool and session.tool != normalized_agent_type:
