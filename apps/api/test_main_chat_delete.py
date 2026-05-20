@@ -206,6 +206,7 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
                     provider_id="codex-cli",
                     provider_session_id="codex-thread-a",
                 ),
+                background_tasks=main.BackgroundTasks(),
             )
 
         self.assertEqual(payload["status"], "deleted")
@@ -217,7 +218,9 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         delete_session.assert_called_once_with("/tmp/project", "thread-direct")
         delete_thread.assert_called_once_with("thread-direct")
 
-    async def test_delete_chat_allows_local_cleanup_when_agent_deck_session_is_already_missing(self) -> None:
+    async def test_delete_agent_deck_chat_hides_locally_and_queues_provider_cleanup(self) -> None:
+        background_tasks = main.BackgroundTasks()
+
         with (
             patch.object(
                 main,
@@ -233,11 +236,7 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch.object(main.os.path, "isdir", return_value=True),
-            patch.object(
-                main,
-                "assess_agent_deck_delete_state",
-                AsyncMock(side_effect=AgentDeckBridgeError("session 'deck-a' not found")),
-            ),
+            patch.object(main, "assess_agent_deck_delete_state", AsyncMock()) as assess_delete,
             patch.object(main, "delete_agent_deck_session_target", AsyncMock()) as delete_target,
             patch.object(main, "delete_session", Mock(return_value=True)) as delete_session,
             patch.object(main, "delete_live_editor_thread", Mock(return_value=True)) as delete_thread,
@@ -245,14 +244,18 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
             payload = await main.delete_project_chat_item(
                 "/tmp/project",
                 main.ChatItemDeleteRequest(thread_id="thread-a", agent_deck_session_id="deck-a"),
+                background_tasks=background_tasks,
             )
 
         self.assertEqual(payload["status"], "deleted")
+        self.assertEqual(payload["cleanup_status"], "queued")
+        assess_delete.assert_not_awaited()
         delete_target.assert_not_awaited()
         delete_session.assert_called_once_with("/tmp/project", "thread-a")
         delete_thread.assert_called_once_with("thread-a")
+        self.assertEqual(len(background_tasks.tasks), 1)
 
-    async def test_delete_chat_allows_local_cleanup_when_agent_deck_session_disappears_after_assessment(self) -> None:
+    async def test_deleted_agent_deck_cleanup_treats_missing_session_as_complete(self) -> None:
         assessment = AgentDeckDeleteAssessment(
             session_id="deck-a",
             session_title="error-clean-up",
@@ -270,20 +273,6 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 main,
-                "_resolve_chat_item_context",
-                return_value=(
-                    "/tmp/project",
-                    "thread-a",
-                    object(),
-                    object(),
-                    "agent-deck",
-                    "deck-a",
-                    "deck-a",
-                ),
-            ),
-            patch.object(main.os.path, "isdir", return_value=True),
-            patch.object(
-                main,
                 "assess_agent_deck_delete_state",
                 AsyncMock(return_value=assessment),
             ),
@@ -292,18 +281,60 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
                 "delete_agent_deck_session_target",
                 AsyncMock(side_effect=AgentDeckBridgeError("session 'deck-a' not found")),
             ) as delete_target,
-            patch.object(main, "delete_session", Mock(return_value=True)) as delete_session,
-            patch.object(main, "delete_live_editor_thread", Mock(return_value=True)) as delete_thread,
+            patch.object(main, "append_workstation_event", Mock()) as append_event,
         ):
-            payload = await main.delete_project_chat_item(
+            await main._cleanup_deleted_agent_deck_chat(
                 "/tmp/project",
-                main.ChatItemDeleteRequest(thread_id="thread-a", agent_deck_session_id="deck-a"),
+                "thread-a",
+                "deck-a",
+                thread_has_activity=False,
+                force_clone_remove=False,
             )
 
-        self.assertEqual(payload["status"], "deleted")
         delete_target.assert_awaited_once()
-        delete_session.assert_called_once_with("/tmp/project", "thread-a")
-        delete_thread.assert_called_once_with("thread-a")
+        append_event.assert_called_once()
+        _, args, kwargs = append_event.mock_calls[0]
+        self.assertEqual(args[:2], ("/tmp/project", "thread-a"))
+        self.assertEqual(kwargs["event_type"], "provider_cleanup_completed")
+        self.assertTrue(kwargs["payload"]["already_missing"])
+
+    async def test_deleted_agent_deck_cleanup_records_closeout_required(self) -> None:
+        assessment = AgentDeckDeleteAssessment(
+            session_id="deck-a",
+            session_title="needs-closeout",
+            workspace_path="/tmp/project/.agents/needs-closeout",
+            repo_root="/tmp/project",
+            target_branch="master",
+            is_clone=True,
+            is_worktree=False,
+            has_activity=True,
+            requires_closeout=True,
+            can_force_delete=True,
+            detail="needs closeout first",
+        )
+
+        with (
+            patch.object(
+                main,
+                "assess_agent_deck_delete_state",
+                AsyncMock(return_value=assessment),
+            ),
+            patch.object(main, "delete_agent_deck_session_target", AsyncMock()) as delete_target,
+            patch.object(main, "append_workstation_event", Mock()) as append_event,
+        ):
+            await main._cleanup_deleted_agent_deck_chat(
+                "/tmp/project",
+                "thread-a",
+                "deck-a",
+                thread_has_activity=True,
+                force_clone_remove=False,
+            )
+
+        delete_target.assert_not_awaited()
+        append_event.assert_called_once()
+        _, args, kwargs = append_event.mock_calls[0]
+        self.assertEqual(args[:2], ("/tmp/project", "thread-a"))
+        self.assertEqual(kwargs["event_type"], "provider_cleanup_requires_closeout")
 
 
 class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):

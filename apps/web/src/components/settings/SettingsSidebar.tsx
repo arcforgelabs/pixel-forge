@@ -560,6 +560,7 @@ function liveEditorProviderSessionId(
 interface ChatDeleteResponse {
   status: "deleted" | "requires_closeout";
   assessment?: ChatDeleteAssessment;
+  cleanup_status?: "queued" | null;
 }
 
 interface ChatCloseoutResponse {
@@ -1366,6 +1367,36 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
     resetLiveEditorThread(null);
   }
 
+  function removeDeletedChatProjection(item: ChatSidebarActionItem) {
+    const deletedProviderSessionId = item.providerSessionId || item.agentDeckSessionId;
+    useSessionStore.setState((state) => {
+      const chats = state.projectChatsByProject[item.projectPath] ?? [];
+      const nextChats = chats.filter((chat) => {
+        if (chat.id === item.key) {
+          return false;
+        }
+        if (item.threadId && chat.threadId === item.threadId) {
+          return false;
+        }
+        if (deletedProviderSessionId && chatProviderSessionId(chat) === deletedProviderSessionId) {
+          return false;
+        }
+        return true;
+      });
+
+      if (nextChats.length === chats.length) {
+        return state;
+      }
+
+      return {
+        projectChatsByProject: {
+          ...state.projectChatsByProject,
+          [item.projectPath]: nextChats,
+        },
+      };
+    });
+  }
+
   async function handleRenameChatItem() {
     if (!renameDialogItem) {
       return;
@@ -1439,11 +1470,20 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
         return;
       }
 
-      await reloadProjectChatState(deleteDialogItem.projectPath);
+      removeDeletedChatProjection(deleteDialogItem);
       applyDeletedChatState(deleteDialogItem, wasActiveChat);
       setDeleteDialogItem(null);
       setDeleteAssessment(null);
-      toast.success(`Deleted ${deleteDialogItem.label}`);
+      const cleanupSuffix = payload.cleanup_status === "queued"
+        ? "; provider cleanup will continue in the background"
+        : "";
+      toast.success(`Deleted ${deleteDialogItem.label}${cleanupSuffix}`);
+      void reloadProjectChatState(deleteDialogItem.projectPath).catch((error) => {
+        const message = error instanceof Error
+          ? error.message
+          : "Failed to refresh project chats after delete";
+        toast.error(message);
+      });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to delete chat"
@@ -2262,10 +2302,10 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                 ? deleteAssessment.detail
                 : `Delete ${deleteDialogItem?.label ?? "this chat"} from Pixel Forge${
                     deleteDialogItem?.providerSessionId
-                      ? ` and ${
+                      ? ` now? ${
                           deleteDialogItem.providerId === "agent-deck"
-                            ? "Agent Deck"
-                            : `${formatProviderLabel(deleteDialogItem.providerId, agentProviders)} binding`
+                            ? "Agent Deck cleanup will continue in the background."
+                            : `${formatProviderLabel(deleteDialogItem.providerId, agentProviders)} cleanup will continue in the background.`
                         }`
                       : ""
                   }?`}

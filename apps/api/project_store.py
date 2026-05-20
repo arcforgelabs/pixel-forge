@@ -2175,6 +2175,59 @@ def list_project_sessions(
         ]
 
 
+def list_hidden_provider_session_refs(
+    project_path: str,
+    *,
+    profile_id: str = DEFAULT_PROFILE_ID,
+) -> set[tuple[str, str]]:
+    normalized_path = normalize_project_path(project_path)
+    normalized_profile_id = _normalize_profile_id(profile_id)
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT provider_id, provider_session_id, agent_deck_session_id
+            FROM sessions
+            WHERE project_path = ?
+              AND profile_id = ?
+              AND hidden_at IS NOT NULL
+            UNION ALL
+            SELECT provider_id, provider_session_id, agent_deck_session_id
+            FROM chat_session_bindings
+            WHERE project_path = ?
+              AND profile_id = ?
+              AND hidden_at IS NOT NULL
+            """,
+            (
+                normalized_path,
+                normalized_profile_id,
+                normalized_path,
+                normalized_profile_id,
+            ),
+        ).fetchall()
+
+    refs: set[tuple[str, str]] = set()
+    for row in rows:
+        provider_id = row["provider_id"].strip() if isinstance(row["provider_id"], str) else ""
+        provider_session_id = (
+            row["provider_session_id"].strip()
+            if isinstance(row["provider_session_id"], str)
+            else ""
+        )
+        agent_deck_session_id = (
+            row["agent_deck_session_id"].strip()
+            if isinstance(row["agent_deck_session_id"], str)
+            else ""
+        )
+
+        if provider_id and provider_session_id:
+            refs.add((provider_id, provider_session_id))
+        if agent_deck_session_id:
+            refs.add(("agent-deck", agent_deck_session_id))
+
+    return refs
+
+
 def get_project_session(
     project_path: str,
     thread_id: str,

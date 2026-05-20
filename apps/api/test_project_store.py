@@ -499,6 +499,30 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         second_sessions = project_store.list_project_sessions(str(project_path))
         self.assertEqual(second_sessions, [])
 
+    def test_hidden_provider_session_refs_include_deleted_agent_deck_chats(self) -> None:
+        project_path = Path(self.tempdir.name) / "project"
+        project_path.mkdir(parents=True)
+        project_store.upsert_project(str(project_path))
+        project_store.upsert_session(
+            str(project_path),
+            thread_id="chat-bound",
+            backend="agent-deck",
+            provider_id="agent-deck",
+            provider_session_id="deck-bound",
+            provider_session_title="Bound chat",
+            provider_agent_id="codex",
+            agent_deck_session_id="deck-bound",
+            agent_deck_session_title="Bound chat",
+            agent_deck_tool="codex",
+        )
+
+        self.assertTrue(project_store.delete_session(str(project_path), "chat-bound"))
+
+        self.assertEqual(
+            project_store.list_hidden_provider_session_refs(str(project_path)),
+            {("agent-deck", "deck-bound")},
+        )
+
     def test_legacy_instance_live_editor_rows_import_once_and_do_not_resurrect_after_delete(self) -> None:
         project_path = Path(self.tempdir.name) / "project"
         project_path.mkdir(parents=True)

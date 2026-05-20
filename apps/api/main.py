@@ -24,7 +24,6 @@ from uuid import uuid4
 
 from agent_deck_bridge import (
     AgentDeckBridgeError,
-    AgentDeckDeleteAssessment,
     AgentDeckSessionTarget,
     assess_agent_deck_delete_state,
     claude_jsonl_path,
@@ -54,7 +53,7 @@ import pixel_forge_cli as _pf_cli
 from acpx_bridge import AcpxBridgeError, prompt_acpx_session
 from agent_deck_config import get_claude_1m_settings, set_claude_1m_settings
 from desktop_dialogs import DirectoryBrowseError, browse_for_directory
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -78,6 +77,7 @@ from project_store import (
     get_project_session,
     get_project_session_by_agent_deck_session_id,
     get_project_session_by_provider_session_id,
+    list_hidden_provider_session_refs,
     list_project_sessions,
     list_project_urls,
     get_project_logo_forge_state,
@@ -1191,22 +1191,119 @@ def _is_missing_agent_deck_session_error(error: BaseException | str) -> bool:
     )
 
 
-def _serialize_delete_assessment(
-    assessment: AgentDeckDeleteAssessment,
-) -> dict[str, object]:
-    return {
-        "session_id": assessment.session_id,
-        "session_title": assessment.session_title,
-        "workspace_path": assessment.workspace_path,
-        "repo_root": assessment.repo_root,
-        "target_branch": assessment.target_branch,
-        "is_clone": assessment.is_clone,
-        "is_worktree": assessment.is_worktree,
-        "has_activity": assessment.has_activity,
-        "requires_closeout": assessment.requires_closeout,
-        "can_force_delete": assessment.can_force_delete,
-        "detail": assessment.detail,
+async def _cleanup_deleted_agent_deck_chat(
+    project_path: str,
+    chat_id: str | None,
+    agent_deck_session_id: str,
+    *,
+    thread_has_activity: bool,
+    force_clone_remove: bool,
+) -> None:
+    event_chat_id = chat_id or f"agent-deck:{agent_deck_session_id}"
+
+    def record_cleanup_event(event_type: str, payload: dict[str, object]) -> None:
+        with suppress(Exception):
+            append_workstation_event(
+                project_path,
+                event_chat_id,
+                agent_deck_session_id=agent_deck_session_id,
+                event_type=event_type,
+                payload=payload,
+            )
+
+    try:
+        assessment = await assess_agent_deck_delete_state(
+            project_path,
+            agent_deck_session_id,
+            thread_has_activity=thread_has_activity,
+        )
+        if assessment.requires_closeout and not force_clone_remove:
+            record_cleanup_event(
+                "provider_cleanup_requires_closeout",
+                {
+                    "provider_id": "agent-deck",
+                    "provider_session_id": agent_deck_session_id,
+                    "detail": assessment.detail,
+                    "workspace_path": assessment.workspace_path,
+                    "target_branch": assessment.target_branch,
+                },
+            )
+            return
+
+        await delete_agent_deck_session_target(
+            project_path,
+            agent_deck_session_id,
+            force_clone_remove=bool(force_clone_remove and assessment.can_force_delete),
+        )
+        record_cleanup_event(
+            "provider_cleanup_completed",
+            {
+                "provider_id": "agent-deck",
+                "provider_session_id": agent_deck_session_id,
+                "forced": bool(force_clone_remove and assessment.can_force_delete),
+            },
+        )
+    except AgentDeckBridgeError as exc:
+        if _is_missing_agent_deck_session_error(exc):
+            record_cleanup_event(
+                "provider_cleanup_completed",
+                {
+                    "provider_id": "agent-deck",
+                    "provider_session_id": agent_deck_session_id,
+                    "already_missing": True,
+                },
+            )
+            return
+        record_cleanup_event(
+            "provider_cleanup_failed",
+            {
+                "provider_id": "agent-deck",
+                "provider_session_id": agent_deck_session_id,
+                "detail": str(exc),
+            },
+        )
+    except Exception as exc:
+        record_cleanup_event(
+            "provider_cleanup_failed",
+            {
+                "provider_id": "agent-deck",
+                "provider_session_id": agent_deck_session_id,
+                "detail": str(exc),
+            },
+        )
+
+
+def _queue_deleted_agent_deck_cleanup(
+    background_tasks: BackgroundTasks | None,
+    project_path: str,
+    chat_id: str | None,
+    agent_deck_session_id: str,
+    *,
+    thread_has_activity: bool,
+    force_clone_remove: bool,
+) -> None:
+    kwargs = {
+        "thread_has_activity": thread_has_activity,
+        "force_clone_remove": force_clone_remove,
     }
+    if background_tasks is not None:
+        background_tasks.add_task(
+            _cleanup_deleted_agent_deck_chat,
+            project_path,
+            chat_id,
+            agent_deck_session_id,
+            **kwargs,
+        )
+        return
+
+    asyncio.create_task(
+        _cleanup_deleted_agent_deck_chat(
+            project_path,
+            chat_id,
+            agent_deck_session_id,
+            **kwargs,
+        )
+    )
 
 
 def _open_agent_deck_tui_terminal(
@@ -1294,11 +1391,16 @@ async def _load_reconciled_project_chats(
         except AgentDeckBridgeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    hidden_provider_session_refs = list_hidden_provider_session_refs(normalized_project_path)
     visible_sessions_by_id = {
-        (session.provider_id, session.id): session for session in visible_sessions
+        (session.provider_id, session.id): session
+        for session in visible_sessions
+        if (session.provider_id, session.id) not in hidden_provider_session_refs
     }
     for session in extra_visible_targets or []:
-        visible_sessions_by_id.setdefault((session.provider_id, session.id), session)
+        key = (session.provider_id, session.id)
+        if key not in hidden_provider_session_refs:
+            visible_sessions_by_id.setdefault(key, session)
 
     if agent_deck_status and agent_deck_status.enabled and agent_deck_status.available:
         live_session_ids = {session.id for session in live_sessions}
@@ -2167,6 +2269,7 @@ async def open_project_chat_item_tui(
 async def delete_project_chat_item(
     project_path: str,
     request: ChatItemDeleteRequest,
+    background_tasks: BackgroundTasks,
 ):
     (
         normalized_project_path,
@@ -2199,67 +2302,23 @@ async def delete_project_chat_item(
     ):
         raise HTTPException(status_code=404, detail="Chat item not found")
 
-    assessment: AgentDeckDeleteAssessment | None = None
-    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
-        try:
-            assessment = await assess_agent_deck_delete_state(
-                normalized_project_path,
-                resolved_agent_deck_session_id,
-                thread_has_activity=_thread_has_activity(thread_record),
-            )
-        except AgentDeckBridgeError as exc:
-            if _is_missing_agent_deck_session_error(exc):
-                resolved_agent_deck_session_id = None
-            else:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        if resolved_agent_deck_session_id is None:
-            assessment = None
-
-    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
-        if assessment is not None and assessment.requires_closeout and not request.force_clone_remove:
-            return {
-                "status": "requires_closeout",
-                "assessment": _serialize_delete_assessment(assessment),
-            }
-
-        try:
-            await delete_agent_deck_session_target(
-                normalized_project_path,
-                resolved_agent_deck_session_id,
-                force_clone_remove=bool(
-                    request.force_clone_remove
-                    and assessment is not None
-                    and assessment.can_force_delete
-                ),
-            )
-        except AgentDeckBridgeError as exc:
-            if _is_missing_agent_deck_session_error(exc):
-                resolved_agent_deck_session_id = None
-            elif assessment is not None and assessment.can_force_delete and not request.force_clone_remove:
-                fallback_assessment = AgentDeckDeleteAssessment(
-                    session_id=assessment.session_id,
-                    session_title=assessment.session_title,
-                    workspace_path=assessment.workspace_path,
-                    repo_root=assessment.repo_root,
-                    target_branch=assessment.target_branch,
-                    is_clone=assessment.is_clone,
-                    is_worktree=assessment.is_worktree,
-                    has_activity=True,
-                    requires_closeout=True,
-                    can_force_delete=assessment.can_force_delete,
-                    detail=str(exc),
-                )
-                return {
-                    "status": "requires_closeout",
-                    "assessment": _serialize_delete_assessment(fallback_assessment),
-                }
-            else:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
+    thread_has_activity = _thread_has_activity(thread_record)
+    cleanup_status: str | None = None
 
     if normalized_thread_id:
         delete_session(normalized_project_path, normalized_thread_id)
         delete_live_editor_thread(normalized_thread_id)
+
+    if resolved_provider_id == "agent-deck" and resolved_agent_deck_session_id:
+        _queue_deleted_agent_deck_cleanup(
+            background_tasks,
+            normalized_project_path,
+            normalized_thread_id,
+            resolved_agent_deck_session_id,
+            thread_has_activity=thread_has_activity,
+            force_clone_remove=bool(request.force_clone_remove),
+        )
+        cleanup_status = "queued"
 
     return {
         "status": "deleted",
@@ -2267,6 +2326,7 @@ async def delete_project_chat_item(
         "provider_id": resolved_provider_id,
         "provider_session_id": resolved_provider_session_id,
         "agent_deck_session_id": resolved_agent_deck_session_id,
+        "cleanup_status": cleanup_status,
     }
 
 
