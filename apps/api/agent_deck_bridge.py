@@ -4,10 +4,12 @@ import asyncio
 import json
 import os
 import re
+import signal
 import shutil
 import tempfile
 import urllib.error
 import urllib.request
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -34,6 +36,9 @@ CODEX_POLL_INTERVAL_SECONDS = 1.0
 CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 AGENT_DECK_LAUNCH_RECOVERY_TIMEOUT_SECONDS = 45.0
+AGENT_DECK_COMMAND_TIMEOUT_SECONDS = 12.0
+AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS = 25.0
+AGENT_DECK_CLEANUP_COMMAND_TIMEOUT_SECONDS = 90.0
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 AgentDeckLaunchSession = Callable[..., Awaitable[dict[str, object]]]
 def _pi_agent_dir() -> Path:
@@ -262,6 +267,10 @@ def _is_already_exists_session_error(error: BaseException | str) -> bool:
     return "already_exists" in message or "session already exists" in message
 
 
+def _is_agent_deck_timeout_error(error: BaseException | str) -> bool:
+    return "timed out after" in str(error).lower()
+
+
 def _existing_session_id_from_already_exists_error(error: BaseException | str) -> str | None:
     message = str(error)
     match = re.search(r"session already exists:\s+.*\(([^()]+)\)", message, re.IGNORECASE)
@@ -427,19 +436,64 @@ def _resolve_runtime_executable(binary_name: str) -> str:
     )
 
 
-async def _run_command(args: list[str], cwd: str | None = None) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
-    )
-    stdout, stderr = await proc.communicate()
+def _command_timeout_message(args: list[str], timeout_seconds: float) -> str:
+    command = " ".join(args[:3]) if args else "command"
+    return f"{command} timed out after {timeout_seconds:.1f}s"
+
+
+async def _communicate_with_timeout(
+    proc: asyncio.subprocess.Process,
+    args: list[str],
+    timeout_seconds: float | None,
+) -> tuple[int, str, str]:
+    try:
+        if timeout_seconds and timeout_seconds > 0:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout_seconds,
+            )
+        else:
+            stdout, stderr = await proc.communicate()
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            if os.name == "nt":
+                proc.kill()
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
+        stdout, stderr = await proc.communicate()
+        timeout_message = _command_timeout_message(args, timeout_seconds or 0)
+        decoded_stderr = stderr.decode("utf-8", errors="replace")
+        if decoded_stderr.strip():
+            decoded_stderr = f"{decoded_stderr.rstrip()}\n{timeout_message}"
+        else:
+            decoded_stderr = timeout_message
+        return (
+            124,
+            stdout.decode("utf-8", errors="replace"),
+            decoded_stderr,
+        )
+
     return (
         proc.returncode,
         stdout.decode("utf-8", errors="replace"),
         stderr.decode("utf-8", errors="replace"),
     )
+
+
+async def _run_command(
+    args: list[str],
+    cwd: str | None = None,
+    *,
+    timeout_seconds: float | None = None,
+) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        start_new_session=(os.name != "nt"),
+    )
+    return await _communicate_with_timeout(proc, args, timeout_seconds)
 
 
 async def _run_command_with_env(
@@ -447,6 +501,7 @@ async def _run_command_with_env(
     *,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -454,13 +509,9 @@ async def _run_command_with_env(
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
         env=env,
+        start_new_session=(os.name != "nt"),
     )
-    stdout, stderr = await proc.communicate()
-    return (
-        proc.returncode,
-        stdout.decode("utf-8", errors="replace"),
-        stderr.decode("utf-8", errors="replace"),
-    )
+    return await _communicate_with_timeout(proc, args, timeout_seconds)
 
 
 def _agent_deck_args(*args: str) -> list[str]:
@@ -477,6 +528,34 @@ def _agent_deck_args(*args: str) -> list[str]:
     return [*command, *args]
 
 
+def _env_float(name: str, fallback: float) -> float:
+    raw = os.environ.get(name)
+    if not isinstance(raw, str) or not raw.strip():
+        return fallback
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return fallback
+    return value if value > 0 else fallback
+
+
+def _agent_deck_command_timeout_seconds(args: list[str]) -> float:
+    if args and args[0] == "launch":
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_LAUNCH_TIMEOUT_SECONDS",
+            AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS,
+        )
+    if args and args[0] in {"clone", "rm"}:
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_CLEANUP_TIMEOUT_SECONDS",
+            AGENT_DECK_CLEANUP_COMMAND_TIMEOUT_SECONDS,
+        )
+    return _env_float(
+        "PIXEL_FORGE_AGENT_DECK_COMMAND_TIMEOUT_SECONDS",
+        AGENT_DECK_COMMAND_TIMEOUT_SECONDS,
+    )
+
+
 async def _run_agent_deck_command(
     args: list[str],
     *,
@@ -486,6 +565,7 @@ async def _run_agent_deck_command(
         _agent_deck_args(*args),
         cwd=cwd,
         env=agent_deck_env(),
+        timeout_seconds=_agent_deck_command_timeout_seconds(args),
     )
 
 
@@ -586,7 +666,12 @@ def _payload_int(payload: dict[str, object], key: str) -> int | None:
 
 
 async def _enforce_agent_deck_launch_admission() -> None:
-    payload = await _run_agent_deck_json_array_command(["ls", "-json"])
+    try:
+        payload = await _run_agent_deck_json_array_command(["ls", "-json"])
+    except AgentDeckBridgeError as exc:
+        if _is_agent_deck_timeout_error(exc):
+            return
+        raise
     sessions = [entry for entry in payload if isinstance(entry, dict)]
     decision = plan_agent_deck_launch_admission(sessions)
 

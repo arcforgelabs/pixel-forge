@@ -1191,6 +1191,10 @@ def _is_missing_agent_deck_session_error(error: BaseException | str) -> bool:
     )
 
 
+def _is_agent_deck_timeout_error(error: BaseException | str) -> bool:
+    return "timed out after" in str(error).lower()
+
+
 async def _cleanup_deleted_agent_deck_chat(
     project_path: str,
     chat_id: str | None,
@@ -1389,6 +1393,18 @@ async def _load_reconciled_project_chats(
                 include_live_editor=False,
             )
         except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                sessions = list_project_sessions(normalized_project_path)
+                cached_targets = _cached_project_chat_targets(sessions)
+                chats = reconcile_project_chats(
+                    normalized_project_path,
+                    sessions=sessions,
+                    visible_targets=[
+                        *cached_targets,
+                        *(extra_visible_targets or []),
+                    ],
+                )
+                return normalized_project_path, chats
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     hidden_provider_session_refs = list_hidden_provider_session_refs(normalized_project_path)

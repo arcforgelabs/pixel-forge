@@ -878,6 +878,19 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_run_command_times_out_hung_processes(self) -> None:
+        code, _stdout, stderr = await agent_deck_bridge._run_command(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(10)",
+            ],
+            timeout_seconds=0.1,
+        )
+
+        self.assertEqual(code, 124)
+        self.assertIn("timed out after", stderr)
+
     async def test_list_project_sessions_treats_empty_profile_message_as_empty_json_list(self) -> None:
         with patch.object(
             agent_deck_bridge,
@@ -928,6 +941,16 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
             await agent_deck_bridge._enforce_agent_deck_launch_admission()
 
         self.assertEqual(run_mock.await_count, 2)
+
+    async def test_launch_admission_skips_when_agent_deck_inventory_times_out(self) -> None:
+        with patch.object(
+            agent_deck_bridge,
+            "_run_agent_deck_command",
+            AsyncMock(return_value=(124, "", "agent-deck ls -json timed out after 12.0s")),
+        ) as run_mock:
+            await agent_deck_bridge._enforce_agent_deck_launch_admission()
+
+        run_mock.assert_awaited_once_with(["ls", "-json"], cwd=None)
 
     async def test_launch_admission_refuses_when_active_sessions_fill_budget(self) -> None:
         async def run_command(args, cwd=None):

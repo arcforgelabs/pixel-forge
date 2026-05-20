@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import main
+from agent_deck_bridge import AgentDeckBridgeError
 from agent_providers.models import AgentProviderStatus, ProviderCapabilitySet
 from project_store import SessionRecord
 
@@ -94,3 +95,34 @@ class ProjectChatsRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.list_sessions.await_count, 2)
         self.assertEqual(payload["chats"], [])
 
+    async def test_project_chats_reconcile_falls_back_to_cached_projection_when_agent_deck_times_out(self) -> None:
+        with tempfile.TemporaryDirectory() as project_path:
+            session = create_session(
+                project_path,
+                backend="agent-deck",
+                provider_id="agent-deck",
+                provider_session_id=None,
+                provider_session_title="Chat chat-cf7",
+                provider_agent_id="codex",
+                agent_deck_session_id=None,
+                agent_deck_session_title="Chat chat-cf7",
+                agent_deck_tool="codex",
+            )
+            provider = _ExplodingProvider()
+            provider.list_sessions = AsyncMock(
+                side_effect=AgentDeckBridgeError("agent-deck ls -json timed out after 12.0s")
+            )
+            with (
+                patch.object(main, "get_agent_provider", Mock(return_value=provider)),
+                patch.object(main, "list_project_sessions", Mock(return_value=[session])),
+                patch.object(main, "detach_missing_agent_deck_session_bindings", Mock()) as detach_sessions,
+                patch.object(main, "detach_missing_agent_deck_thread_bindings", Mock()) as detach_threads,
+            ):
+                payload = await main.get_project_chats(project_path, reconcile=True)
+
+        self.assertEqual(provider.list_sessions.await_count, 1)
+        detach_sessions.assert_not_called()
+        detach_threads.assert_not_called()
+        self.assertEqual(len(payload["chats"]), 1)
+        self.assertEqual(payload["chats"][0]["thread_id"], "chat-direct-a")
+        self.assertEqual(payload["chats"][0]["binding_state"], "detached")
