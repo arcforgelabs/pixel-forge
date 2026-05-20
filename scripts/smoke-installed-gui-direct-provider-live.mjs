@@ -37,6 +37,10 @@ const expectedFirstToken = providerMode === 'agent-deck'
   : 'GUI_DIRECT_PROVIDER_LIVE_OK'
 const expectedSecondToken = 'GUI_DIRECT_PROVIDER_RELOAD_OK'
 
+function tokenInstruction(token) {
+  return `Reply with these underscore-joined words only: ${token.replaceAll('_', ' ')}.`
+}
+
 async function findHostGoBinary() {
   if (process.env.PIXEL_FORGE_GO_BIN) {
     try {
@@ -68,6 +72,32 @@ async function findHostGoBinary() {
     } catch {}
   }
   return null
+}
+
+async function configureCodexHome(homeDir, env) {
+  const configuredCodexHome = process.env.CODEX_HOME?.trim()
+  const sourceCodexHome = configuredCodexHome || path.join(os.homedir(), '.codex')
+  try {
+    const stat = await fs.stat(sourceCodexHome)
+    if (!stat.isDirectory()) {
+      return env
+    }
+  } catch {
+    return env
+  }
+
+  const targetCodexHome = path.join(homeDir, '.codex')
+  try {
+    await fs.symlink(sourceCodexHome, targetCodexHome, 'dir')
+  } catch (error) {
+    if (error?.code !== 'EEXIST') {
+      throw error
+    }
+  }
+  return {
+    ...env,
+    CODEX_HOME: sourceCodexHome,
+  }
 }
 
 function projectUrl(context, projectPath, suffix) {
@@ -133,6 +163,25 @@ async function fetchThreadRecords(context, projectPath, threadId) {
     session: sessionsPayload.sessions.find((record) => record.thread_id === threadId),
     chat: chatsPayload.chats.find((record) => record.thread_id === threadId),
   }
+}
+
+async function waitForBoundProviderRecords(context, projectPath, threadId, label) {
+  return await waitForCondition(async () => {
+    const records = await fetchThreadRecords(context, projectPath, threadId)
+    const sessionProviderSessionId = records.session?.provider_session_id
+    const chatProviderSessionId = records.chat?.provider_session_id
+    return (
+      typeof sessionProviderSessionId === 'string'
+      && sessionProviderSessionId.trim()
+      && chatProviderSessionId === sessionProviderSessionId
+    )
+      ? records
+      : null
+  }, {
+    timeoutMs: 300000,
+    intervalMs: 1000,
+    description: `${label} persisted provider binding`,
+  })
 }
 
 async function readRequestManifests(projectPath) {
@@ -399,6 +448,7 @@ try {
     'utf-8',
   )
   await fs.mkdir(homeDir, { recursive: true })
+  context.env = await configureCodexHome(homeDir, context.env)
 
   await installPixelForge(repoRoot, context)
   await runPixelForge(context, ['start'])
@@ -444,7 +494,7 @@ try {
   openedUi = await openInstalledUi(context)
   await sendPromptAndWait(
     openedUi.page,
-    `Pixel Forge installed GUI ${providerLabel} live smoke. Reply with ${expectedFirstToken} only. Do not edit files.`,
+    `Pixel Forge installed GUI ${providerLabel} live smoke. ${tokenInstruction(expectedFirstToken)} Do not edit files.`,
     expectedFirstToken,
   )
   if (providerMode !== 'agent-deck') {
@@ -452,7 +502,12 @@ try {
     assertProviderManifest(firstManifest, `first GUI ${providerLabel} turn`, created.thread_id)
   }
 
-  let records = await fetchThreadRecords(context, projectPath, created.thread_id)
+  let records = await waitForBoundProviderRecords(
+    context,
+    projectPath,
+    created.thread_id,
+    `first GUI ${providerLabel} turn`,
+  )
   assertProviderRecord(records.session, 'first-turn session', created.thread_id)
   assertProviderRecord(records.chat, 'first-turn chat', created.thread_id)
   const providerSessionId = records.session.provider_session_id
@@ -487,7 +542,7 @@ try {
     openedUi = await openInstalledUi(context)
     await sendPromptAndWait(
       openedUi.page,
-      `Second installed GUI direct-provider live smoke after restart. Reply with ${expectedSecondToken} only. Do not edit files.`,
+      `Second installed GUI direct-provider live smoke after restart. ${tokenInstruction(expectedSecondToken)} Do not edit files.`,
       expectedSecondToken,
     )
     const secondManifest = await waitForNewRequestManifest(projectPath, secondStartManifestCount)

@@ -217,6 +217,10 @@ class _CodexAppServerClient:
             if isinstance(status, dict) and status.get("type") == "idle":
                 self.thread_idle.set()
 
+    def begin_turn(self) -> None:
+        self.agent_output = ""
+        self.thread_idle.clear()
+
 
 async def _start_codex_thread(
     project_path: str,
@@ -305,6 +309,7 @@ async def _run_codex_turn(
         for path in image_paths or []:
             if path.strip():
                 input_items.append({"type": "localImage", "path": path.strip()})
+        client.begin_turn()
         await client.request(
             "turn/start",
             {

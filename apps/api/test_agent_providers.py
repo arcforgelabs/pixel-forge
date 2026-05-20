@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import tempfile
@@ -499,3 +500,57 @@ class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dispatch.provider_session_id, "codex-thread-a")
         self.assertEqual(dispatch.agent_id, "codex")
         self.assertEqual(result, "done")
+
+    async def test_codex_turn_clears_resume_idle_before_waiting_for_turn(self) -> None:
+        test_case = self
+
+        class FakeCodexAppServerClient:
+            def __init__(self, cwd: str) -> None:
+                self.cwd = cwd
+                self.agent_output = ""
+                self.thread_idle = asyncio.Event()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def begin_turn(self) -> None:
+                self.agent_output = ""
+                self.thread_idle.clear()
+
+            async def request(self, method: str, params: dict[str, object], *, timeout_seconds: float = 30.0):
+                if method == "thread/resume":
+                    self.thread_idle.set()
+                    return {"result": {}}
+                if method == "turn/start":
+                    test_case.assertFalse(
+                        self.thread_idle.is_set(),
+                        "stale resume idle state must be cleared before turn/start",
+                    )
+                    self.agent_output = "second turn output"
+                    self.thread_idle.set()
+                    return {"result": {}}
+                raise AssertionError(f"unexpected method {method}")
+
+        session = CodexCliSessionInfo(
+            provider_session_id="codex-thread-a",
+            title="Codex thread",
+            workspace_path="/tmp/project",
+            status="idle",
+            codex_session_id="codex-thread-a",
+        )
+
+        with patch(
+            "agent_provider_plugins.codex_cli._CodexAppServerClient",
+            FakeCodexAppServerClient,
+        ):
+            output = await codex_cli_plugin._run_codex_turn(
+                session,
+                prompt="hello again",
+                image_paths=[],
+                timeout_seconds=1.0,
+            )
+
+        self.assertEqual(output, "second turn output")
