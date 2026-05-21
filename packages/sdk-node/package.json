@@ -37,9 +37,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.79.0"
+    "@anthropic-ai/sdk": "^0.91.1"
   },
   "peerDependencies": {
-    "@anthropic-ai/sdk": "^0.79.0"
+    "@anthropic-ai/sdk": "^0.91.1"
   }
 }
