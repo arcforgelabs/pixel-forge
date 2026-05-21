@@ -44,10 +44,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify
+      - name: Verify release package gates
         env:
           CI: '1'
-        run: pnpm verify
+        run: |
+          pnpm check:version
+          pnpm check:shell
+          pnpm check:api
+          pnpm check:desktop
+          pnpm lint:web
+          pnpm test:web
+          pnpm check:web
+          pnpm test:retired-lane-env
+          pnpm smoke:install
+          pnpm smoke:gui
+          pnpm smoke:direct-provider
+          pnpm smoke:update
 
       - name: Dry-run npm packages
         run: |
