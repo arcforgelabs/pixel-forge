@@ -842,6 +842,56 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 "Test Rename",
             )
 
+    async def test_bound_lane_timeout_uses_optimistic_binding_instead_of_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+
+            thread = LiveEditorThreadRecord(
+                thread_id="thread-a",
+                profile_id="default",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id="deck-a",
+                agent_deck_session_title="Improve docs",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id="request-a",
+                last_live_preview_hash=None,
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+                provider_id="agent-deck",
+                provider_session_id="deck-a",
+                provider_session_title="Improve docs",
+                provider_agent_id="codex",
+            )
+
+            load_mock = AsyncMock(
+                side_effect=agent_deck_bridge.AgentDeckBridgeError(
+                    "agent-deck session show timed out after 2.5s"
+                )
+            )
+            launch_mock = AsyncMock()
+
+            with patch.object(agent_deck_bridge, "_load_existing_session", load_mock):
+                session_info = await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="codex",
+                    launch_session=launch_mock,
+                )
+
+            launch_mock.assert_not_awaited()
+            self.assertEqual(session_info.agent_deck_session_id, "deck-a")
+            self.assertEqual(session_info.agent_deck_session_title, "Improve docs")
+            self.assertEqual(session_info.workspace_path, str(project_path.resolve()))
+            self.assertEqual(session_info.tool, "codex")
+            self.assertEqual(session_info.status, "waiting")
+
 
 class AgentDeckBridgePromptSendCommandTest(unittest.IsolatedAsyncioTestCase):
     def test_session_send_uses_dedicated_timeout_budget(self) -> None:

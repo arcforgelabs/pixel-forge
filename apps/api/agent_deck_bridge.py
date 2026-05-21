@@ -426,6 +426,47 @@ def _preferred_thread_session_title(
     return _session_title(project_path, thread.thread_id)
 
 
+def _optimistic_bound_session_info(
+    project_path: str,
+    thread: LiveEditorThreadRecord,
+    *,
+    session_id: str,
+    agent_type: str,
+) -> AgentDeckSessionInfo:
+    title = (
+        _normalized_text(getattr(thread, "agent_deck_session_title", None))
+        or _normalized_text(getattr(thread, "provider_session_title", None))
+        or _session_title(project_path, thread.thread_id)
+    )
+    workspace_path = (
+        _thread_rebind_workspace_path(project_path, thread)
+        or _normalized_text(getattr(thread, "workspace_path", None))
+        or _normalize_path(project_path)
+    )
+    tool = (
+        _normalized_text(getattr(thread, "agent_deck_tool", None))
+        or _normalized_text(getattr(thread, "provider_agent_id", None))
+        or _normalized_text(agent_type)
+        or "claude"
+    )
+    return AgentDeckSessionInfo(
+        agent_deck_session_id=session_id,
+        agent_deck_session_title=title,
+        workspace_path=workspace_path,
+        tmux_session=None,
+        tool=tool.strip().lower(),
+        status="waiting",
+        acpx_agent=None,
+        acpx_session_name=None,
+        acpx_record_id=None,
+        acp_session_id=None,
+        claude_session_id=None,
+        codex_session_id=None,
+        gemini_session_id=None,
+        jsonl_path=None,
+    )
+
+
 def _group_path(project_path: str) -> str:
     return f"pixel-forge/{_project_slug(project_path)}"
 
@@ -1988,6 +2029,13 @@ async def ensure_agent_deck_session(
                     agent_model=agent_model,
                     agent_thinking=agent_thinking,
                 )
+            elif _is_agent_deck_timeout_error(exc):
+                return _optimistic_bound_session_info(
+                    project_path,
+                    thread,
+                    session_id=explicit_target_id,
+                    agent_type=agent_type,
+                )
             else:
                 raise
     elif bound_session_id:
@@ -1999,7 +2047,14 @@ async def ensure_agent_deck_session(
                 payload,
                 requested_agent_type=agent_type,
             )
-        except AgentDeckBridgeError:
+        except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                return _optimistic_bound_session_info(
+                    project_path,
+                    thread,
+                    session_id=bound_session_id,
+                    agent_type=agent_type,
+                )
             payload = await launch_agent_deck_session(
                 session_title=preferred_session_title,
                 agent_type=agent_type,
