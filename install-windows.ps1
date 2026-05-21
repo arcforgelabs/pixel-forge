@@ -179,6 +179,9 @@ if (-not $SkipBuild) {
     Info "Installing workspace dependencies"
     Push-Location $Source
     try {
+        if (-not $env:CI) {
+            $env:CI = "true"
+        }
         $env:PUPPETEER_SKIP_DOWNLOAD = "1"
         Run-Pnpm install --frozen-lockfile --ignore-scripts
         Run-Pnpm --dir apps/web build
