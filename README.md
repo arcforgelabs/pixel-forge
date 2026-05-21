@@ -59,6 +59,7 @@ Retired `pixel-forge-alpha` / `pixel-forge-workstation-v2` install env overrides
 
 - `INTENT.md` — intent, goals, requirements, proof status
 - `ARCHITECTURE.md` — current system shape, operating lanes, next target release
+- `CHANGELOG.md` — public release notes and contributor credit
 - `AGENTS.md` — agent guardrails for working in this repo
 - `CLAUDE.md` — Claude Code specific guardrails
 

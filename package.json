@@ -1,7 +1,7 @@
 {
   "name": "pixel-forge",
   "private": true,
-  "version": "2026.5.19-1",
+  "version": "2026.5.21",
   "description": "Visual app editor with screenshot bootstrap and live editing for real running apps.",
   "license": "MIT",
   "repository": {
