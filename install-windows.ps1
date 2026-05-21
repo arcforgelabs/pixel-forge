@@ -231,6 +231,11 @@ $WebLauncher = Join-Path $BinDir "pixel-forge-open-web.ps1"
 
 New-Launcher -Path $ApiLauncher -Content @"
 `$ErrorActionPreference = "Stop"
+foreach (`$candidate in @((Join-Path `$env:APPDATA "npm"), (Join-Path `$env:LOCALAPPDATA "Microsoft\WindowsApps"))) {
+    if (`$candidate -and (Test-Path `$candidate) -and (`$env:PATH -notlike "*`$candidate*")) {
+        `$env:PATH = "`$candidate;`$env:PATH"
+    }
+}
 `$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
 `$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
 `$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
@@ -254,6 +259,11 @@ New-Launcher -Path $ShellLauncher -Content @"
 `$ErrorActionPreference = "Stop"
 `$url = "http://${UrlHost}:${ApiPort}/"
 `$runtimeInfoUrl = `$url + "api/runtime-info"
+foreach (`$candidate in @((Join-Path `$env:APPDATA "npm"), (Join-Path `$env:LOCALAPPDATA "Microsoft\WindowsApps"))) {
+    if (`$candidate -and (Test-Path `$candidate) -and (`$env:PATH -notlike "*`$candidate*")) {
+        `$env:PATH = "`$candidate;`$env:PATH"
+    }
+}
 `$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
 `$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
 `$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
