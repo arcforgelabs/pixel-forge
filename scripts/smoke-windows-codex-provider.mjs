@@ -221,6 +221,8 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pixel-forge-windows-codex-
 const installRoot = path.join(root, 'install')
 const stateDir = path.join(root, 'state')
 const projectPath = path.join(root, 'workspace')
+const shortcutStartMenuDir = path.join(root, 'start-menu')
+const shortcutDesktopDir = path.join(root, 'desktop')
 const port = await reservePort()
 const baseUrl = `http://127.0.0.1:${port}`
 let apiProcess = null
@@ -240,6 +242,8 @@ try {
     PIXEL_FORGE_WITH_AGENT_DECK: '0',
     PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID: 'codex-cli',
     PIXEL_FORGE_TUI_OPEN_DRY_RUN: '1',
+    PIXEL_FORGE_START_MENU_DIR: shortcutStartMenuDir,
+    PIXEL_FORGE_DESKTOP_DIR: shortcutDesktopDir,
   }
 
   await runProcess('powershell.exe', [
@@ -252,12 +256,17 @@ try {
     installRoot,
     '-SourceDir',
     repoRoot,
-    '-SkipShortcuts',
   ], {
     env,
     timeoutMs: 600000,
     label: 'install-windows.ps1',
   })
+
+  await fs.access(path.join(installRoot, 'runtime', 'icons', 'pixel-forge.ico'))
+  await fs.access(path.join(installRoot, 'runtime', 'icons', 'pixel-forge.png'))
+  await fs.access(path.join(installRoot, 'bin', 'pixel-forge.ps1'))
+  await fs.access(path.join(shortcutStartMenuDir, 'Pixel Forge', 'Pixel Forge.lnk'))
+  await fs.access(path.join(shortcutDesktopDir, 'Pixel Forge.lnk'))
 
   const apiLauncher = path.join(installRoot, 'bin', 'pixel-forge-api.ps1')
   apiProcess = startProcess('powershell.exe', [

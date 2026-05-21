@@ -130,9 +130,11 @@ $ApiDir = Join-Path $RuntimeDir "api"
 $FrontendDir = Join-Path $RuntimeDir "frontend"
 $DesktopDir = Join-Path $RuntimeDir "desktop"
 $VenvDir = Join-Path $RuntimeDir ".venv"
-$IconSource = Join-Path $Source "apps\web\public\favicon\app.png"
+$IconSourcePng = Join-Path $Source "apps\web\public\favicon\app.png"
+$IconSourceIco = Join-Path $Source "apps\web\public\favicon\app.ico"
 $IconDir = Join-Path $RuntimeDir "icons"
 $IconPath = Join-Path $IconDir "pixel-forge.png"
+$IconIcoPath = Join-Path $IconDir "pixel-forge.ico"
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir, $BinDir, $StateDir, $IconDir | Out-Null
 
@@ -154,8 +156,11 @@ Copy-DirectoryClean -Source (Join-Path $Source "apps\api") -Destination $ApiDir
 Copy-DirectoryClean -Source (Join-Path $Source "apps\web\dist") -Destination $FrontendDir
 Copy-DirectoryClean -Source (Join-Path $Source "apps\desktop") -Destination $DesktopDir
 Copy-Item -Force (Join-Path $Source "VERSION") (Join-Path $RuntimeDir "VERSION")
-if (Test-Path $IconSource) {
-    Copy-Item -Force $IconSource $IconPath
+if (Test-Path $IconSourcePng) {
+    Copy-Item -Force $IconSourcePng $IconPath
+}
+if (Test-Path $IconSourceIco) {
+    Copy-Item -Force $IconSourceIco $IconIcoPath
 }
 
 Info "Installing Python dependencies"
@@ -168,6 +173,7 @@ if (-not (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
 $ApiPort = if ($env:PIXEL_FORGE_API_PORT) { $env:PIXEL_FORGE_API_PORT } elseif ($env:PIXEL_FORGE_PORT) { $env:PIXEL_FORGE_PORT } else { "7201" }
 $UrlHost = if ($env:PIXEL_FORGE_URL_HOST) { $env:PIXEL_FORGE_URL_HOST } else { "127.0.0.1" }
 $ApiLauncher = Join-Path $BinDir "pixel-forge-api.ps1"
+$AppLauncher = Join-Path $BinDir "pixel-forge.ps1"
 $WebLauncher = Join-Path $BinDir "pixel-forge-open-web.ps1"
 
 New-Launcher -Path $ApiLauncher -Content @"
@@ -189,28 +195,58 @@ New-Launcher -Path $WebLauncher -Content @"
 Start-Process `$url
 "@
 
+New-Launcher -Path $AppLauncher -Content @"
+`$ErrorActionPreference = "Stop"
+`$url = "http://${UrlHost}:${ApiPort}/"
+try {
+    `$response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri (`$url + "api/runtime-info")
+}
+catch {
+    Start-Process powershell.exe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$ApiLauncher") -WindowStyle Minimized
+    Start-Sleep -Seconds 2
+}
+Start-Process `$url
+"@
+
 if (-not $SkipShortcuts) {
-    $ProgramsDir = [Environment]::GetFolderPath("Programs")
+    $ProgramsDir = if ($env:PIXEL_FORGE_START_MENU_DIR) { $env:PIXEL_FORGE_START_MENU_DIR } else { [Environment]::GetFolderPath("Programs") }
+    $DesktopShortcutDir = if ($env:PIXEL_FORGE_DESKTOP_DIR) { $env:PIXEL_FORGE_DESKTOP_DIR } else { [Environment]::GetFolderPath("Desktop") }
     $ShortcutDir = Join-Path $ProgramsDir "Pixel Forge"
-    New-Item -ItemType Directory -Force -Path $ShortcutDir | Out-Null
+    $ShortcutIcon = if (Test-Path $IconIcoPath) { $IconIcoPath } else { $IconPath }
+    New-Item -ItemType Directory -Force -Path $ShortcutDir, $DesktopShortcutDir | Out-Null
+    New-Shortcut `
+        -ShortcutPath (Join-Path $ShortcutDir "Pixel Forge.lnk") `
+        -TargetPath "powershell.exe" `
+        -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$AppLauncher`"" `
+        -WorkingDirectory $RuntimeDir `
+        -Description "Open Pixel Forge" `
+        -IconPath $ShortcutIcon
+    New-Shortcut `
+        -ShortcutPath (Join-Path $DesktopShortcutDir "Pixel Forge.lnk") `
+        -TargetPath "powershell.exe" `
+        -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$AppLauncher`"" `
+        -WorkingDirectory $RuntimeDir `
+        -Description "Open Pixel Forge" `
+        -IconPath $ShortcutIcon
     New-Shortcut `
         -ShortcutPath (Join-Path $ShortcutDir "Pixel Forge API.lnk") `
         -TargetPath "powershell.exe" `
         -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$ApiLauncher`"" `
         -WorkingDirectory $RuntimeDir `
         -Description "Start Pixel Forge API" `
-        -IconPath $IconPath
+        -IconPath $ShortcutIcon
     New-Shortcut `
         -ShortcutPath (Join-Path $ShortcutDir "Pixel Forge Web.lnk") `
         -TargetPath "powershell.exe" `
         -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$WebLauncher`"" `
         -WorkingDirectory $RuntimeDir `
         -Description "Open Pixel Forge in the browser" `
-        -IconPath $IconPath
+        -IconPath $ShortcutIcon
 }
 
 Info "Windows groundwork install complete"
 Write-Host "Runtime: $RuntimeDir"
 Write-Host "State:   $StateDir"
+Write-Host "Launch:  powershell -ExecutionPolicy Bypass -File `"$AppLauncher`""
 Write-Host "Start:   powershell -ExecutionPolicy Bypass -File `"$ApiLauncher`""
 Write-Host "Open:    powershell -ExecutionPolicy Bypass -File `"$WebLauncher`""
