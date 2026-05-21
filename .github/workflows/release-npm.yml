@@ -58,7 +58,8 @@ jobs:
           pnpm test:retired-lane-env
           pnpm smoke:install
           pnpm smoke:gui
-          pnpm smoke:direct-provider
+          # Direct provider live smokes require a local authenticated Codex CLI.
+          # Keep them in VM release proof instead of the npm publish runner.
           pnpm smoke:update
 
       - name: Dry-run npm packages
