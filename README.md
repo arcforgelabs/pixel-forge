@@ -1,70 +1,40 @@
 # Pixel Forge
 
-Visual app editor with screenshot bootstrap and live editing for real running apps.
+Visual app editor for changing real running apps with screenshots, selections, chat, and Codex.
 
-Status: Linux MVP one-command install is ready for the scoped Codex and Agent Deck/Codex paths. Windows support is a Codex CLI-first lane; Agent Deck is disabled by default on Windows.
+Linux is MVP-ready. Windows is Codex CLI-first; Agent Deck is off by default there.
 
 ## Install
 
-One-line Linux install from npm:
+Ubuntu / Linux:
 
 ```bash
 npx --yes @arcforgelabs/pixel-forge
 ```
 
-One-line unattended Linux install:
-
-```bash
-PIXEL_FORGE_UNATTENDED=1 npx --yes @arcforgelabs/pixel-forge
-```
-
-Linux source installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/arcforgelabs/pixel-forge/master/scripts/quick-install.sh | bash
-```
-
-Windows groundwork from a checkout:
+Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+npx --yes @arcforgelabs/pixel-forge
 ```
-
-The Linux installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.24); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts. The Windows installer prepares the checkout/runtime, builds web assets, installs Python dependencies, creates local launchers/Start Menu shortcuts, disables Agent Deck by default, and routes new chats through the user's Codex CLI.
 
 After install:
 
 ```bash
-pixel-forge            # control the service (start/stop/open/status/logs)
-pixel-forge-shell      # open the desktop shell
-pixel-forge-agent-deck # open the Agent Deck terminal
+pixel-forge-shell
 ```
 
-Windows validation from a checkout:
+## What It Does
 
-```powershell
-pnpm smoke:windows-codex-provider
-```
+- Opens a desktop editor around your app.
+- Lets you select UI elements visually.
+- Sends changes to Codex from inside the chat.
+- Opens the active chat in a terminal when you want the full CLI.
+- Keeps project chats and browser previews in one place.
 
-To uninstall: run `./uninstall.sh` from the repo checkout (pass `--remove-state` to also wipe `~/.pixel-forge`).
-
-Retired `pixel-forge-alpha` / `pixel-forge-workstation-v2` install env overrides are ignored by default by both `install.sh` and the installed `pixel-forge`, `pixel-forge-shell`, and `pixel-forge-agent-deck` launchers, so a stale shell session cannot accidentally reinstall or misroute runtime into the old lane. Set `PIXEL_FORGE_INSTALL_ALLOW_RETIRED_LANE_ENV=1` only if you are intentionally reproducing a legacy install for investigation.
-
-## npm Packages
-
-- `@arcforgelabs/pixel-forge`: public installer entrypoint.
-- `@arcforgelabs/pixel-forge-sdk`: Node SDK for screenshot bootstrap workflows.
-
-## Active docs
+## Docs
 
 - `INTENT.md` — intent, goals, requirements, proof status
-- `ARCHITECTURE.md` — current system shape, operating lanes, next target release
+- `ARCHITECTURE.md` — system shape and operating lanes
 - `CHANGELOG.md` — public release notes and contributor credit
 - `AGENTS.md` — agent guardrails for working in this repo
-- `CLAUDE.md` — Claude Code specific guardrails
-
-Historical and displaced root docs live under `docs/archives/root-docs/`.
-
-## Versioning
-
-CalVer `YYYY.M.D` (stable), `YYYY.M.D-N` (same-day correction), `YYYY.M.D-beta.N` (prerelease). See `INTENT.md` REQ-S-014 / REQ-S-015.

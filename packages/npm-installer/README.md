@@ -1,26 +1,30 @@
-# Pixel Forge Installer
+# Pixel Forge
 
-Public npm entrypoint for installing Pixel Forge from the canonical source repository.
+Visual app editor for changing real running apps with screenshots, selections, chat, and Codex.
 
-## Linux
+## Install
+
+Ubuntu / Linux:
 
 ```bash
-npx @arcforgelabs/pixel-forge
+npx --yes @arcforgelabs/pixel-forge
 ```
 
-This runs the same source installer as the GitHub one-liner. It clones or updates the checkout at `~/.local/src/pixel-forge`, installs prerequisites when the platform installer supports that, then runs `./install.sh` from the checkout.
-
-## Windows
+Windows PowerShell:
 
 ```powershell
-npx @arcforgelabs/pixel-forge
+npx --yes @arcforgelabs/pixel-forge
 ```
 
-On Windows this launches `install-windows.ps1` from the source checkout. The Windows installer is early groundwork and currently prepares the checkout, builds the web assets, installs Python dependencies, and creates local launch scripts/Start Menu shortcuts.
+After install:
 
-## Environment
+```bash
+pixel-forge-shell
+```
 
-- `PIXEL_FORGE_REPO_URL`: source repository URL, default `https://github.com/arcforgelabs/pixel-forge.git`
-- `PIXEL_FORGE_REF`: git ref, default `master`
-- `PIXEL_FORGE_SRC`: source checkout path
-- `PIXEL_FORGE_UNATTENDED=1`: skip supported installer prompts
+## What It Does
+
+- Opens a desktop editor around your app.
+- Lets you select UI elements visually.
+- Sends changes to Codex from inside the chat.
+- Opens the active chat in a terminal when you want the full CLI.
