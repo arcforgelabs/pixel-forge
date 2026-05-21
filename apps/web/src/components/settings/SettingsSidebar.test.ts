@@ -170,15 +170,27 @@ describe('SettingsSidebar chat TUI action state', () => {
     })
   })
 
-  it('keeps direct provider sessions disabled until their TUI harness exists', () => {
+  it('allows direct Codex provider chats that are attached to a bound session', () => {
     expect(resolveChatTuiActionState({
       providerId: 'codex-cli',
       providerSessionId: 'codex-session-a',
       agentDeckSessionId: null,
       bindingState: 'attached',
     })).toEqual({
+      canOpen: true,
+      disabledReason: null,
+    })
+  })
+
+  it('keeps unsupported direct provider sessions disabled', () => {
+    expect(resolveChatTuiActionState({
+      providerId: 'claude-cli',
+      providerSessionId: 'claude-session-a',
+      agentDeckSessionId: null,
+      bindingState: 'attached',
+    })).toEqual({
       canOpen: false,
-      disabledReason: 'Direct provider TUI is not available yet.',
+      disabledReason: 'Open TUI is not available for this provider yet.',
     })
   })
 })

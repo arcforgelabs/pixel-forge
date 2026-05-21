@@ -38,6 +38,7 @@
     "smoke:installed-gui-claude-provider:turn": "PIXEL_FORGE_SMOKE_PROVIDER_MODE=claude-cli node scripts/smoke-installed-gui-direct-provider-live.mjs",
     "smoke:installed-gui-agent-deck-provider:turn": "PIXEL_FORGE_SMOKE_PROVIDER_MODE=agent-deck node scripts/smoke-installed-gui-direct-provider-live.mjs",
     "smoke:linux-ui-vm": "bash scripts/vm/linux-ui-vm-smoke.sh",
+    "smoke:windows-codex-provider": "node scripts/smoke-windows-codex-provider.mjs",
     "smoke:agent-deck-provider": "node scripts/smoke-agent-deck-provider.mjs",
     "smoke:direct-provider": "node scripts/smoke-direct-provider-reload.mjs",
     "smoke:direct-provider:turn": "PIXEL_FORGE_SMOKE_DIRECT_TURN=1 node scripts/smoke-direct-provider-reload.mjs",

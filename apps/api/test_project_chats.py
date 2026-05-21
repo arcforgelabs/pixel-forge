@@ -79,6 +79,25 @@ class ProjectChatsReconcileTest(unittest.TestCase):
         self.assertEqual(chats[0].origin_kind, "managed")
         self.assertEqual(chats[0].agent_deck_session_id, "deck-a")
 
+    def test_adopts_provider_title_when_local_title_is_placeholder(self) -> None:
+        chats = reconcile_project_chats(
+            "/tmp/project",
+            sessions=[
+                create_session(
+                    thread_id="chat-c72fa95da17c",
+                    provider_session_title="Chat chat-c72",
+                    agent_deck_session_title="Chat chat-c72",
+                )
+            ],
+            visible_targets=[
+                create_target(
+                    title="Improve documentation",
+                )
+            ],
+        )
+
+        self.assertEqual(chats[0].title, "Improve documentation")
+
     def test_keeps_direct_provider_chat_out_of_agent_deck_fields(self) -> None:
         chats = reconcile_project_chats(
             "/tmp/project",

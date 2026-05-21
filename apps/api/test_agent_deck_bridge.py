@@ -14,7 +14,7 @@ from live_editor_threads import LiveEditorThreadRecord
 def _session_info(*, tool: str = "codex") -> agent_deck_bridge.AgentDeckSessionInfo:
     return agent_deck_bridge.AgentDeckSessionInfo(
         agent_deck_session_id="deck-a",
-        agent_deck_session_title="pixel-forge-project-thread-a",
+        agent_deck_session_title="New project chat",
         workspace_path="/tmp/project/.agents/thread-a",
         tmux_session="tmux-a",
         tool=tool,
@@ -344,6 +344,55 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 agent_thinking=None,
             )
 
+    async def test_placeholder_title_launches_with_project_default_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            project_path = Path(tempdir) / "project"
+            project_path.mkdir(parents=True)
+
+            thread = LiveEditorThreadRecord(
+                thread_id="chat-c72fa95da17c",
+                profile_id="default",
+                project_path=str(project_path.resolve()),
+                workspace_path=str(project_path.resolve()),
+                backend="agent-deck",
+                agent_deck_session_id=None,
+                agent_deck_session_title="Chat chat-c72",
+                acpx_agent=None,
+                acpx_session_name=None,
+                acpx_record_id=None,
+                acp_session_id=None,
+                claude_session_id=None,
+                last_request_id=None,
+                last_live_preview_hash=None,
+                created_at="2026-03-20T00:00:00Z",
+                updated_at="2026-03-20T00:00:00Z",
+            )
+
+            launch_mock = AsyncMock(
+                return_value={
+                    "id": "deck-a",
+                    "title": "New project chat",
+                    "path": str(project_path.resolve()),
+                    "tool": "codex",
+                }
+            )
+            build_mock = AsyncMock(return_value=_session_info(tool="codex"))
+
+            with (
+                patch.object(agent_deck_bridge, "_launch_new_session", launch_mock),
+                patch.object(agent_deck_bridge, "_build_session_info", build_mock),
+            ):
+                await agent_deck_bridge.ensure_agent_deck_session(
+                    str(project_path.resolve()),
+                    thread,
+                    agent_type="codex",
+                )
+
+            self.assertEqual(
+                launch_mock.await_args.kwargs["session_title"],
+                "New project chat",
+            )
+
     async def test_detached_clone_lane_reuses_existing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             project_path = Path(tempdir) / "project"
@@ -372,7 +421,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             launch_mock = AsyncMock(
                 return_value={
                     "id": "deck-a",
-                    "title": "pixel-forge-project-thread-a",
+                    "title": "New project chat",
                     "path": str(workspace_path.resolve()),
                     "tool": "claude",
                 }
@@ -380,7 +429,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             build_mock = AsyncMock(
                 return_value=agent_deck_bridge.AgentDeckSessionInfo(
                     agent_deck_session_id="deck-a",
-                    agent_deck_session_title="pixel-forge-project-thread-a",
+                    agent_deck_session_title="New project chat",
                     workspace_path=str(workspace_path.resolve()),
                     tmux_session="tmux-a",
                     tool="claude",
@@ -429,7 +478,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
                 agent_deck_session_id=None,
-                agent_deck_session_title="Chat chat-abc",
+                agent_deck_session_title="Improve docs",
                 acpx_agent=None,
                 acpx_session_name=None,
                 acpx_record_id=None,
@@ -442,7 +491,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             )
             existing_target = agent_deck_bridge.AgentDeckSessionTarget(
                 id="deck-existing",
-                title="Chat chat-abc",
+                title="Improve docs",
                 path=str(project_path.resolve()),
                 group="pixel-forge/project",
                 tool="codex",
@@ -456,7 +505,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             load_mock = AsyncMock(
                 return_value={
                     "id": "deck-existing",
-                    "title": "Chat chat-abc",
+                    "title": "Improve docs",
                     "path": str(project_path.resolve()),
                     "tool": "codex",
                 }
@@ -499,7 +548,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
                 agent_deck_session_id=None,
-                agent_deck_session_title="Chat chat-abc",
+                agent_deck_session_title="Improve docs",
                 acpx_agent=None,
                 acpx_session_name=None,
                 acpx_record_id=None,
@@ -512,13 +561,13 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             )
             launch_mock = AsyncMock(
                 side_effect=agent_deck_bridge.AgentDeckBridgeError(
-                    '{"code":"ALREADY_EXISTS","error":"session already exists: Chat chat-abc (deck-existing)","success":false}'
+                    '{"code":"ALREADY_EXISTS","error":"session already exists: Improve docs (deck-existing)","success":false}'
                 )
             )
             load_mock = AsyncMock(
                 return_value={
                     "id": "deck-existing",
-                    "title": "Chat chat-abc",
+                    "title": "Improve docs",
                     "path": str(project_path.resolve()),
                     "tool": "codex",
                 }
@@ -555,7 +604,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
                 agent_deck_session_id=None,
-                agent_deck_session_title="Chat chat-abc",
+                agent_deck_session_title="Improve docs",
                 acpx_agent=None,
                 acpx_session_name=None,
                 acpx_record_id=None,
@@ -568,7 +617,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             )
             existing_target = agent_deck_bridge.AgentDeckSessionTarget(
                 id="deck-existing",
-                title="Chat chat-abc",
+                title="Improve docs",
                 path=str(project_path.resolve()),
                 group="pixel-forge/project",
                 tool="codex",
@@ -583,7 +632,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             load_mock = AsyncMock(
                 return_value={
                     "id": "deck-existing",
-                    "title": "Chat chat-abc",
+                    "title": "Improve docs",
                     "path": str(project_path.resolve()),
                     "tool": "codex",
                 }
@@ -633,7 +682,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             launch_mock = AsyncMock(
                 return_value={
                     "id": "deck-a",
-                    "title": "pixel-forge-project-thread-a",
+                    "title": "New project chat",
                     "path": str((project_path / ".agents" / "thread-a").resolve()),
                     "tool": "claude",
                 }
@@ -641,7 +690,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             build_mock = AsyncMock(
                 return_value=agent_deck_bridge.AgentDeckSessionInfo(
                     agent_deck_session_id="deck-a",
-                    agent_deck_session_title="pixel-forge-project-thread-a",
+                    agent_deck_session_title="New project chat",
                     workspace_path=str((project_path / ".agents" / "thread-a").resolve()),
                     tmux_session="tmux-a",
                     tool="claude",
@@ -690,7 +739,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
                 workspace_path=str(project_path.resolve()),
                 backend="agent-deck",
                 agent_deck_session_id=None,
-                agent_deck_session_title="Chat chat-abc",
+                agent_deck_session_title="Improve docs",
                 acpx_agent=None,
                 acpx_session_name=None,
                 acpx_record_id=None,
@@ -704,7 +753,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             launch_mock = AsyncMock(
                 return_value={
                     "id": "deck-new",
-                    "title": "Chat chat-abc",
+                    "title": "Improve docs",
                     "path": str(project_path.resolve()),
                     "tool": "codex",
                 }
@@ -759,7 +808,7 @@ class AgentDeckBridgeSessionReuseTest(unittest.IsolatedAsyncioTestCase):
             load_mock = AsyncMock(
                 return_value={
                     "id": "deck-a",
-                    "title": "pixel-forge-project-thread-a",
+                    "title": "New project chat",
                     "path": str(project_path.resolve()),
                     "tool": "claude",
                 }
@@ -1756,7 +1805,7 @@ class AgentDeckBridgeTurnCompletionTest(unittest.IsolatedAsyncioTestCase):
     ) -> agent_deck_bridge.AgentDeckSessionInfo:
         return agent_deck_bridge.AgentDeckSessionInfo(
             agent_deck_session_id="deck-a",
-            agent_deck_session_title="pixel-forge-project-thread-a",
+            agent_deck_session_title="New project chat",
             workspace_path="/tmp/project/.agents/thread-a",
             tmux_session="tmux-a",
             tool="claude",

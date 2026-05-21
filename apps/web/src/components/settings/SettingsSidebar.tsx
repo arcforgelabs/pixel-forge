@@ -530,10 +530,10 @@ export function resolveChatTuiActionState(item: {
     };
   }
 
-  if (providerId !== "agent-deck") {
+  if (providerId && !["agent-deck", "codex-cli"].includes(providerId)) {
     return {
       canOpen: false,
-      disabledReason: "Direct provider TUI is not available yet.",
+      disabledReason: "Open TUI is not available for this provider yet.",
     };
   }
 
@@ -1708,7 +1708,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
             <button
               type="button"
               disabled={isOpeningTui || !tuiActionState.canOpen}
-              title={tuiActionState.disabledReason ?? "Open Agent Deck TUI for this chat."}
+              title={tuiActionState.disabledReason ?? "Open the provider TUI for this chat."}
               onClick={() => {
                 if (!tuiActionState.canOpen) {
                   return;

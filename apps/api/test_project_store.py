@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_editor_threads
@@ -393,6 +394,21 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.codex_default_thinking, "xhigh")
         self.assertEqual(saved.pi_default_model, "xai/grok-code-fast-1")
         self.assertEqual(saved.pi_default_thinking, "high")
+
+    def test_disabled_agent_deck_env_normalizes_profile_default_to_codex(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PIXEL_FORGE_WITH_AGENT_DECK": "0",
+                "PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID": "",
+            },
+            clear=False,
+        ):
+            initial = project_store.get_profile_state()
+            saved = project_store.upsert_profile_state(default_agent_provider_id="agent-deck")
+
+        self.assertEqual(initial.default_agent_provider_id, "codex-cli")
+        self.assertEqual(saved.default_agent_provider_id, "codex-cli")
 
     def test_codex_profile_defaults_accept_current_gpt_55_model(self) -> None:
         saved = project_store.upsert_profile_state(

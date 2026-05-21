@@ -26,7 +26,6 @@ DEFAULT_PROFILE_ID = "default"
 SAFE_THREAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
 DEFAULT_CLAUDE_THINKING = "xhigh"
-DEFAULT_AGENT_PROVIDER_ID = "agent-deck"
 DEFAULT_AGENT_TYPE = "codex"
 CLAUDE_MODEL_ALIASES = {
     "opus": DEFAULT_CLAUDE_MODEL,
@@ -42,6 +41,30 @@ CLAUDE_MODEL_ALLOWLIST = frozenset({
     "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
 })
+
+
+def _agent_deck_provider_disabled_by_env() -> bool:
+    return str(os.environ.get("PIXEL_FORGE_WITH_AGENT_DECK") or "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+        "disabled",
+    }
+
+
+def default_agent_provider_id() -> str:
+    explicit = os.environ.get("PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID")
+    if explicit == "agent-deck" and _agent_deck_provider_disabled_by_env():
+        return "codex-cli"
+    if explicit in {"agent-deck", "claude-cli", "codex-cli"}:
+        return explicit
+    if _agent_deck_provider_disabled_by_env():
+        return "codex-cli"
+    return "codex-cli" if os.name == "nt" else "agent-deck"
+
+
+DEFAULT_AGENT_PROVIDER_ID = default_agent_provider_id()
 CLAUDE_THINKING_ALLOWLIST = frozenset({"low", "medium", "high", "xhigh", "max"})
 CODEX_MODEL_ALLOWLIST = frozenset(
     {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
@@ -1376,7 +1399,9 @@ def _normalize_agent_type(value: object | None) -> str:
 
 def _normalize_agent_provider_id(value: object | None) -> str:
     normalized = str(value or "").strip()
-    return normalized if normalized in {"agent-deck", "claude-cli", "codex-cli"} else "agent-deck"
+    if normalized == "agent-deck" and _agent_deck_provider_disabled_by_env():
+        return default_agent_provider_id()
+    return normalized if normalized in {"agent-deck", "claude-cli", "codex-cli"} else default_agent_provider_id()
 
 
 def _normalize_workspace_mode(value: object | None) -> str:

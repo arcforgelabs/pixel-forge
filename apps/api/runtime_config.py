@@ -40,6 +40,8 @@ def agent_deck_provider_mode() -> str:
         return "1"
     if raw_mode in AGENT_DECK_DISABLED_VALUES:
         return "0"
+    if os.name == "nt":
+        return "0"
     return "auto"
 
 

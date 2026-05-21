@@ -13,6 +13,7 @@ import json
 import math
 import mimetypes
 import os
+import subprocess
 import re
 import tempfile
 from datetime import datetime, timezone
@@ -71,6 +72,7 @@ from project_store import (
     detach_missing_agent_deck_session_bindings,
     detach_project_session_binding,
     delete_project,
+    default_agent_provider_id,
     ensure_state_store_initialized,
     get_profile_state,
     delete_session,
@@ -112,6 +114,12 @@ from live_preview_context import (
 )
 from skill_registry import load_skill_registry_snapshot
 from browser_preview import MANAGED_BROWSER_PREVIEW, resolve_preview_mode
+from chat_titles import (
+    default_chat_title,
+    is_placeholder_chat_title,
+    title_from_prompt,
+    unique_chat_title,
+)
 from local_target_proxy import LocalTargetAliasMiddleware
 from runtime_config import runtime_kind as current_runtime_kind
 from controller_update_state import (
@@ -695,7 +703,7 @@ class ProfileStateRequest(BaseModel):
     last_workspace_browse_directory: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
-    default_agent_provider_id: Literal["agent-deck", "claude-cli", "codex-cli"] = "agent-deck"
+    default_agent_provider_id: Literal["agent-deck", "claude-cli", "codex-cli"] = default_agent_provider_id()
     default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "codex"
     default_workspace_mode: Literal["root"] = "root"
     claude_default_model: str | None = None
@@ -864,6 +872,13 @@ STACK_EXTENSIONS = {
 
 def normalize_project_path(project_path: str) -> str:
     return os.path.abspath(os.path.expanduser(project_path))
+
+
+def _project_path_identity(project_path: str) -> str:
+    normalized = normalize_project_path(project_path)
+    if os.name == "nt":
+        return normalized.replace("/", "\\").casefold()
+    return normalized
 
 
 def resolve_project_file_path(project_path: str, rel_path: str) -> tuple[str, str]:
@@ -1104,7 +1119,11 @@ def _resolve_chat_item_context(
         else None
     )
 
-    if thread_record is not None and thread_record.project_path != normalized_project_path:
+    if (
+        thread_record is not None
+        and _project_path_identity(getattr(thread_record, "project_path", None))
+        != _project_path_identity(normalized_project_path)
+    ):
         raise HTTPException(status_code=404, detail="Chat thread does not belong to this project")
 
     resolved_provider_id = (
@@ -1350,6 +1369,79 @@ def _open_agent_deck_tui_terminal(
         "agent_deck_session_id": session_id,
         "home": env.get("PIXEL_FORGE_AGENT_DECK_HOME"),
         "title": terminal_title,
+    }
+
+
+def _terminal_command(
+    command: list[str],
+    *,
+    title: str,
+    cwd: str,
+    wm_class: str,
+) -> list[str] | None:
+    if not command:
+        return None
+    if os.name == "nt":
+        return ["cmd.exe", "/c", "start", title, "/D", cwd, *command]
+    return _pf_cli._agent_deck_tui_terminal_command(command, title, wm_class)
+
+
+def _open_codex_cli_tui_terminal(
+    *,
+    session_id: str,
+    workspace_path: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise RuntimeError("Codex chat is not bound to a provider TUI yet.")
+
+    provider = _agent_provider_or_error("codex-cli")
+    status = provider.status()
+    if not status.command:
+        raise RuntimeError(status.reason or "Codex CLI command is unavailable")
+
+    terminal_title = title or f"Codex · {normalized_session_id[:8]}"
+    command = _terminal_command(
+        [*status.command, "resume", normalized_session_id],
+        title=terminal_title,
+        cwd=workspace_path,
+        wm_class="pixel-forge-codex-cli",
+    )
+    if command is None:
+        raise RuntimeError(
+            "No supported terminal emulator found for Codex CLI. "
+            "Install ghostty, gnome-terminal, or x-terminal-emulator."
+        )
+    if str(os.environ.get("PIXEL_FORGE_TUI_OPEN_DRY_RUN") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return {
+            "ok": True,
+            "provider_id": "codex-cli",
+            "provider_session_id": normalized_session_id,
+            "title": terminal_title,
+            "workspace_path": workspace_path,
+            "command": command,
+            "dry_run": True,
+        }
+    subprocess.Popen(
+        command,
+        cwd=workspace_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {
+        "ok": True,
+        "provider_id": "codex-cli",
+        "provider_session_id": normalized_session_id,
+        "title": terminal_title,
+        "workspace_path": workspace_path,
     }
 
 
@@ -1915,6 +2007,59 @@ def _hydrate_live_editor_thread_from_project_session(
     )
 
 
+def _current_thread_title(project_path: str, thread) -> str | None:
+    session = get_project_session(project_path, thread.thread_id)
+    if session is not None:
+        for value in (
+            session.provider_session_title,
+            session.agent_deck_session_title,
+        ):
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for value in (
+        getattr(thread, "provider_session_title", None),
+        getattr(thread, "agent_deck_session_title", None),
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _retitle_placeholder_live_thread(
+    project_path: str,
+    thread,
+    *,
+    prompt: str,
+    provider_id: str,
+    agent_id: str,
+):
+    current_title = _current_thread_title(project_path, thread)
+    if current_title and not is_placeholder_chat_title(
+        current_title,
+        thread_id=thread.thread_id,
+    ):
+        return thread
+
+    prompt_title = title_from_prompt(prompt)
+    if not prompt_title:
+        return thread
+
+    existing_titles = [
+        session.provider_session_title or session.agent_deck_session_title
+        for session in list_project_sessions(project_path)
+        if session.thread_id != thread.thread_id
+    ]
+    normalized_title = unique_chat_title(prompt_title, existing_titles)
+    update_session_title(project_path, thread.thread_id, normalized_title)
+    return update_live_editor_thread(
+        thread.thread_id,
+        provider_id=provider_id,
+        provider_session_title=normalized_title,
+        agent_deck_session_title=normalized_title if provider_id == "agent-deck" else None,
+        provider_agent_id=agent_id,
+    )
+
+
 @app.get("/api/projects/{project_path:path}/agent-deck-sessions")
 async def get_project_agent_deck_sessions(project_path: str):
     normalized_project_path = normalize_project_path(project_path)
@@ -2104,7 +2249,12 @@ async def create_project_chat(
         else get_profile_state().default_agent_provider_id
     )
     if selected_provider_id not in {"agent-deck", "claude-cli", "codex-cli"}:
-        selected_provider_id = "agent-deck"
+        selected_provider_id = default_agent_provider_id()
+    if not (isinstance(request.provider_id, str) and request.provider_id.strip()):
+        provider = get_agent_provider(selected_provider_id)
+        status = provider.status() if provider is not None else None
+        if status is None or not (status.enabled and status.available):
+            selected_provider_id = default_agent_provider_id()
     selected_agent_id = request.agent_type.strip() if request.agent_type.strip() else "claude"
 
     if request.reuse_empty_draft:
@@ -2112,21 +2262,31 @@ async def create_project_chat(
         # reconciliation. Draft creation is a local persisted-state operation.
         for existing in list_project_sessions(normalized_project_path):
             thread_id = existing.thread_id or ""
+            existing_title = (
+                getattr(existing, "provider_session_title", None)
+                or getattr(existing, "agent_deck_session_title", None)
+            )
             if (
                 not getattr(existing, "provider_session_id", None)
                 and not getattr(existing, "agent_deck_session_id", None)
                 and getattr(existing, "provider_id", selected_provider_id) == selected_provider_id
                 and getattr(existing, "provider_agent_id", selected_agent_id) == selected_agent_id
                 and thread_id.startswith("chat-")
+                and is_placeholder_chat_title(existing_title, thread_id=thread_id)
                 and not chat_has_primary_workstation_events(normalized_project_path, thread_id)
             ):
                 return serialize_project_chat(_project_chat_from_session_record(existing))
 
     thread_id = f"chat-{uuid4().hex[:12]}"
+    existing_titles = [
+        getattr(session, "provider_session_title", None)
+        or getattr(session, "agent_deck_session_title", None)
+        for session in list_project_sessions(normalized_project_path)
+    ]
     draft_title = (
         request.title.strip()
         if request.title and request.title.strip()
-        else f"Chat {thread_id[:8]}"
+        else unique_chat_title(default_chat_title(selected_agent_id), existing_titles)
     )
     agent_deck_title = draft_title if selected_provider_id == "agent-deck" else None
     agent_deck_tool = selected_agent_id if selected_provider_id == "agent-deck" else None
@@ -2291,17 +2451,44 @@ async def open_project_chat_item_tui(
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    if resolved_provider_id in {"codex-cli", "claude-cli"}:
+    if resolved_provider_id == "codex-cli":
         if not bound_provider_session_id:
             raise HTTPException(
                 status_code=409,
                 detail="This chat is not bound to a provider TUI yet.",
             )
-        label = "Codex" if resolved_provider_id == "codex-cli" else "Claude Code"
+        raw_title = (
+            getattr(session_record, "provider_session_title", None)
+            or getattr(thread_record, "provider_session_title", None)
+            or normalized_thread_id
+            or bound_provider_session_id
+        )
+        workspace_path = (
+            getattr(session_record, "workspace_path", None)
+            or getattr(thread_record, "workspace_path", None)
+            or normalized_project_path
+        )
+        chat_title = str(raw_title).strip() or "chat"
+        try:
+            return await asyncio.to_thread(
+                _open_codex_cli_tui_terminal,
+                title=f"Codex · {chat_title[:48]}",
+                session_id=bound_provider_session_id,
+                workspace_path=str(workspace_path),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if resolved_provider_id == "claude-cli":
+        if not bound_provider_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This chat is not bound to a provider TUI yet.",
+            )
         raise HTTPException(
             status_code=501,
             detail=(
-                f"{label} bound-chat TUI launch is not wired yet. "
+                "Claude Code bound-chat TUI launch is not wired yet. "
                 "Use Agent Deck-backed chats for Open TUI until the direct CLI harness is available."
             ),
         )
@@ -4979,6 +5166,13 @@ async def live_editor_chat(websocket: WebSocket):
                 thread = _hydrate_live_editor_thread_from_project_session(
                     normalized_project_path,
                     thread,
+                )
+                thread = _retitle_placeholder_live_thread(
+                    normalized_project_path,
+                    thread,
+                    prompt=request_message,
+                    provider_id=provider_id,
+                    agent_id=agent_type if isinstance(agent_type, str) else "claude",
                 )
                 turn_policy = AgentTurnPolicy(
                     autonomy="no-approval",

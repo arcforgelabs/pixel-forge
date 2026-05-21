@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import uuid
@@ -58,6 +59,10 @@ def _normalize_optional_text(value: object | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _normalize_project_path(project_path: str) -> str:
+    return os.path.abspath(os.path.expanduser(project_path))
 
 
 def _normalize_provider_binding(
@@ -161,8 +166,8 @@ def _migrate_legacy_rows(conn: sqlite3.Connection) -> None:
             (
                 row["thread_id"],
                 "default",
-                str(Path(row["project_path"]).resolve()),
-                str(Path(row["workspace_path"]).resolve()),
+                _normalize_project_path(row["project_path"]),
+                _normalize_project_path(row["workspace_path"]),
                 row["backend"],
                 row["agent_deck_session_id"],
                 row["agent_deck_session_title"],
@@ -234,8 +239,8 @@ def _migrate_legacy_instance_rows(conn: sqlite3.Connection) -> None:
                 (
                     row["thread_id"],
                     "default",
-                    str(Path(row["project_path"]).resolve()),
-                    str(Path(row["workspace_path"]).resolve()),
+                    _normalize_project_path(row["project_path"]),
+                    _normalize_project_path(row["workspace_path"]),
                     row["backend"],
                     row["agent_deck_session_id"],
                     row["agent_deck_session_title"],
@@ -439,7 +444,7 @@ def get_or_create_live_editor_thread(
     *,
     profile_id: str = "default",
 ) -> LiveEditorThreadRecord:
-    normalized_project_path = str(Path(project_path).resolve())
+    normalized_project_path = _normalize_project_path(project_path)
     normalized_profile_id = str(profile_id or "default").strip() or "default"
 
     if thread_id:
@@ -548,7 +553,7 @@ def update_live_editor_thread(
         values.append(normalized_agent_deck_session_id)
     if workspace_path is not None:
         assignments.append("workspace_path = ?")
-        values.append(str(Path(workspace_path).resolve()))
+        values.append(_normalize_project_path(workspace_path))
     if backend is not None:
         assignments.append("backend = ?")
         values.append(backend.strip() or "agent-deck")
@@ -604,7 +609,7 @@ def detach_missing_agent_deck_thread_bindings(
     *,
     profile_id: str = "default",
 ) -> list[LiveEditorThreadRecord]:
-    normalized_project_path = str(Path(project_path).resolve())
+    normalized_project_path = _normalize_project_path(project_path)
     normalized_profile_id = str(profile_id or "default").strip() or "default"
     available_ids = {
         session_id.strip()

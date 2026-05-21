@@ -140,7 +140,8 @@ if (-not $SkipBuild) {
     Info "Installing workspace dependencies"
     Push-Location $Source
     try {
-        pnpm install --frozen-lockfile
+        $env:PUPPETEER_SKIP_DOWNLOAD = "1"
+        pnpm install --frozen-lockfile --ignore-scripts
         pnpm --dir apps/web build
     }
     finally {
@@ -177,6 +178,8 @@ New-Launcher -Path $ApiLauncher -Content @"
 `$env:PIXEL_FORGE_API_PORT = "$ApiPort"
 `$env:PIXEL_FORGE_PORT = "$ApiPort"
 `$env:PIXEL_FORGE_URL_HOST = "$UrlHost"
+`$env:PIXEL_FORGE_WITH_AGENT_DECK = "0"
+`$env:PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID = "codex-cli"
 Set-Location "$ApiDir"
 & "$VenvDir\Scripts\python.exe" "main.py"
 "@

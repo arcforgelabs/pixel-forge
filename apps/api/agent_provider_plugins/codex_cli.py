@@ -18,6 +18,7 @@ from agent_providers.models import (
     AgentTurnRequest,
     ProviderCapabilitySet,
 )
+from chat_titles import is_placeholder_chat_title
 
 
 class CodexCliProviderError(RuntimeError):
@@ -304,7 +305,9 @@ async def _run_codex_turn(
             thread_id = str(thread["id"]).strip()
             session_info.provider_session_id = thread_id
             session_info.codex_session_id = thread_id
-            session_info.title = str(thread.get("name") or "").strip() or f"codex:{thread_id[:8]}"
+            native_title = str(thread.get("name") or "").strip()
+            if is_placeholder_chat_title(session_info.title):
+                session_info.title = native_title or f"codex:{thread_id[:8]}"
         input_items: list[dict[str, object]] = [{"type": "text", "text": prompt}]
         for path in image_paths or []:
             if path.strip():
@@ -337,6 +340,7 @@ class CodexCliProvider:
         launch=True,
         send=True,
         observe=True,
+        open_tui=True,
         rename=False,
         delete=False,
     )

@@ -26,6 +26,10 @@ from agent_deck_launch import (
     resolve_agent_model_effort_args as _resolve_agent_model_effort_args,
 )
 from agent_deck_runtime import agent_deck_available, agent_deck_command, agent_deck_env
+from chat_titles import (
+    fallback_project_chat_title,
+    is_placeholder_chat_title,
+)
 from live_editor_threads import LiveEditorThreadRecord
 from memory_governance import plan_agent_deck_launch_admission
 
@@ -382,8 +386,8 @@ def _project_slug(project_path: str) -> str:
 
 
 def _session_title(project_path: str, thread_id: str) -> str:
-    normalized = thread_id.strip() if isinstance(thread_id, str) else ""
-    return normalized or "chat"
+    del thread_id
+    return fallback_project_chat_title(project_path)
 
 
 def _is_legacy_pixel_forge_session_title(project_path: str, title: str | None) -> bool:
@@ -396,12 +400,28 @@ def _is_legacy_pixel_forge_session_title(project_path: str, title: str | None) -
     return stripped.startswith(legacy_prefix)
 
 
+def _is_generated_session_title(
+    project_path: str,
+    title: str | None,
+    *,
+    thread_id: str | None = None,
+) -> bool:
+    return (
+        _is_legacy_pixel_forge_session_title(project_path, title)
+        or is_placeholder_chat_title(title, thread_id=thread_id)
+    )
+
+
 def _preferred_thread_session_title(
     project_path: str,
     thread: LiveEditorThreadRecord,
 ) -> str:
     persisted = _normalized_text(thread.agent_deck_session_title)
-    if persisted and not _is_legacy_pixel_forge_session_title(project_path, persisted):
+    if persisted and not _is_generated_session_title(
+        project_path,
+        persisted,
+        thread_id=thread.thread_id,
+    ):
         return persisted
     return _session_title(project_path, thread.thread_id)
 
@@ -2014,7 +2034,11 @@ async def ensure_agent_deck_session(
 
     rename_target: str | None = None
     if persisted_thread_title:
-        if _is_legacy_pixel_forge_session_title(project_path, persisted_thread_title):
+        if _is_generated_session_title(
+            project_path,
+            persisted_thread_title,
+            thread_id=thread.thread_id,
+        ):
             rename_target = preferred_session_title
         else:
             rename_target = persisted_thread_title

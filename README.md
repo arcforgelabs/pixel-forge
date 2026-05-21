@@ -2,7 +2,7 @@
 
 Visual app editor with screenshot bootstrap and live editing for real running apps.
 
-Status: early public-release groundwork. Linux is the primary install path today; Windows groundwork is in progress.
+Status: Linux MVP one-command install is ready for the scoped Codex and Agent Deck/Codex paths. Windows support is a Codex CLI-first lane; Agent Deck is disabled by default on Windows.
 
 ## Install
 
@@ -30,7 +30,7 @@ Windows groundwork from a checkout:
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-The Linux installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.24); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts. The Windows installer currently prepares the checkout/runtime, builds web assets, installs Python dependencies, and creates local launchers/Start Menu shortcuts.
+The Linux installer checks for `node` (>=20), `python3` (>=3.11), `pnpm`, `uv`, and `go` (>=1.24); it prompts before installing any missing prereqs. Set `PIXEL_FORGE_UNATTENDED=1` to skip prompts. The Windows installer prepares the checkout/runtime, builds web assets, installs Python dependencies, creates local launchers/Start Menu shortcuts, disables Agent Deck by default, and routes new chats through the user's Codex CLI.
 
 After install:
 
@@ -38,6 +38,12 @@ After install:
 pixel-forge            # control the service (start/stop/open/status/logs)
 pixel-forge-shell      # open the desktop shell
 pixel-forge-agent-deck # open the Agent Deck terminal
+```
+
+Windows validation from a checkout:
+
+```powershell
+pnpm smoke:windows-codex-provider
 ```
 
 To uninstall: run `./uninstall.sh` from the repo checkout (pass `--remove-state` to also wipe `~/.pixel-forge`).

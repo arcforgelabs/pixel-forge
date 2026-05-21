@@ -338,6 +338,75 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
+    def test_resolve_chat_item_context_normalizes_thread_project_path(self) -> None:
+        thread = SimpleNamespace(
+            thread_id="chat-win",
+            project_path="C:/Users/samuel/Project",
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            agent_deck_session_id=None,
+        )
+        with (
+            patch.object(
+                main,
+                "normalize_project_path",
+                Mock(side_effect=lambda value: str(value).replace("\\", "/").rstrip("/")),
+            ),
+            patch.object(main, "get_project_session", Mock(return_value=None)),
+            patch.object(main, "get_live_editor_thread", Mock(return_value=thread)),
+            patch.object(
+                main,
+                "get_project_session_by_provider_session_id",
+                Mock(return_value=None),
+            ),
+        ):
+            payload = main._resolve_chat_item_context(
+                "C:\\Users\\samuel\\Project",
+                thread_id="chat-win",
+                provider_id="codex-cli",
+                provider_session_id="codex-thread-a",
+                agent_deck_session_id=None,
+            )
+
+        self.assertEqual(payload[1], "chat-win")
+        self.assertEqual(payload[4], "codex-cli")
+        self.assertEqual(payload[5], "codex-thread-a")
+
+    def test_resolve_chat_item_context_matches_windows_path_case(self) -> None:
+        thread = SimpleNamespace(
+            thread_id="chat-win",
+            project_path="C:\\Windows\\Temp\\Project",
+            provider_id="codex-cli",
+            provider_session_id="codex-thread-a",
+            agent_deck_session_id=None,
+        )
+        with (
+            patch.object(main.os, "name", "nt"),
+            patch.object(
+                main,
+                "normalize_project_path",
+                Mock(side_effect=lambda value: str(value).replace("/", "\\")),
+            ),
+            patch.object(main, "get_project_session", Mock(return_value=None)),
+            patch.object(main, "get_live_editor_thread", Mock(return_value=thread)),
+            patch.object(
+                main,
+                "get_project_session_by_provider_session_id",
+                Mock(return_value=None),
+            ),
+        ):
+            payload = main._resolve_chat_item_context(
+                "C:\\WINDOWS\\TEMP\\Project",
+                thread_id="chat-win",
+                provider_id="codex-cli",
+                provider_session_id="codex-thread-a",
+                agent_deck_session_id=None,
+            )
+
+        self.assertEqual(payload[1], "chat-win")
+        self.assertEqual(payload[4], "codex-cli")
+        self.assertEqual(payload[5], "codex-thread-a")
+
     def test_open_agent_deck_tui_terminal_selects_bound_session(self) -> None:
         with (
             patch.object(
@@ -479,7 +548,11 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["ok"])
         open_tui.assert_called_once()
 
-    async def test_open_direct_codex_chat_tui_reports_future_harness(self) -> None:
+    async def test_open_direct_codex_chat_tui_uses_codex_terminal(self) -> None:
+        session_record = SimpleNamespace(
+            provider_session_title="Improve docs",
+            workspace_path="/tmp/project",
+        )
         with (
             patch.object(
                 main,
@@ -487,8 +560,8 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
                 return_value=(
                     "/tmp/project",
                     "thread-direct",
-                    object(),
-                    object(),
+                    session_record,
+                    None,
                     "codex-cli",
                     "codex-thread-a",
                     None,
@@ -496,20 +569,95 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(main.os.path, "isdir", return_value=True),
             patch.object(main, "_open_agent_deck_tui_terminal", Mock()) as open_tui,
+            patch.object(
+                main,
+                "_open_codex_cli_tui_terminal",
+                Mock(return_value={"ok": True, "provider_id": "codex-cli"}),
+            ) as open_codex,
         ):
-            with self.assertRaises(main.HTTPException) as context:
-                await main.open_project_chat_item_tui(
-                    "/tmp/project",
-                    main.ChatItemOpenTuiRequest(
-                        thread_id="thread-direct",
-                        provider_id="codex-cli",
-                        provider_session_id="codex-thread-a",
-                    ),
-                )
+            payload = await main.open_project_chat_item_tui(
+                "/tmp/project",
+                main.ChatItemOpenTuiRequest(
+                    thread_id="thread-direct",
+                    provider_id="codex-cli",
+                    provider_session_id="codex-thread-a",
+                ),
+            )
 
-        self.assertEqual(context.exception.status_code, 501)
-        self.assertIn("Codex bound-chat TUI launch is not wired yet", context.exception.detail)
+        self.assertTrue(payload["ok"])
         open_tui.assert_not_called()
+        open_codex.assert_called_once_with(
+            title="Codex · Improve docs",
+            session_id="codex-thread-a",
+            workspace_path="/tmp/project",
+        )
+
+    def test_open_codex_tui_terminal_uses_windows_default_terminal(self) -> None:
+        provider = _FakeProvider("codex-cli")
+        provider._status = AgentProviderStatus(
+            id="codex-cli",
+            display_name="Codex CLI",
+            enabled=True,
+            available=True,
+            reason=None,
+            command=["C:\\Tools\\codex.cmd"],
+            capabilities=ProviderCapabilitySet(open_tui=True),
+        )
+        with (
+            patch.object(main, "_agent_provider_or_error", Mock(return_value=provider)),
+            patch.object(main.os, "name", "nt"),
+            patch.object(main.subprocess, "Popen", Mock()) as popen,
+        ):
+            payload = main._open_codex_cli_tui_terminal(
+                session_id="codex-thread-a",
+                workspace_path="C:\\Work\\Project",
+                title="Codex · Improve docs",
+            )
+
+        self.assertTrue(payload["ok"])
+        args, kwargs = popen.call_args
+        self.assertEqual(
+            args[0],
+            [
+                "cmd.exe",
+                "/c",
+                "start",
+                "Codex · Improve docs",
+                "/D",
+                "C:\\Work\\Project",
+                "C:\\Tools\\codex.cmd",
+                "resume",
+                "codex-thread-a",
+            ],
+        )
+        self.assertEqual(kwargs["cwd"], "C:\\Work\\Project")
+
+    def test_open_codex_tui_terminal_supports_dry_run_for_smokes(self) -> None:
+        provider = _FakeProvider("codex-cli")
+        provider._status = AgentProviderStatus(
+            id="codex-cli",
+            display_name="Codex CLI",
+            enabled=True,
+            available=True,
+            reason=None,
+            command=["codex"],
+            capabilities=ProviderCapabilitySet(open_tui=True),
+        )
+        with (
+            patch.object(main, "_agent_provider_or_error", Mock(return_value=provider)),
+            patch.dict(main.os.environ, {"PIXEL_FORGE_TUI_OPEN_DRY_RUN": "1"}, clear=False),
+            patch.object(main.subprocess, "Popen", Mock()) as popen,
+        ):
+            payload = main._open_codex_cli_tui_terminal(
+                session_id="codex-thread-a",
+                workspace_path="/tmp/project",
+                title="Codex · Improve docs",
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["command"][-2:], ["resume", "codex-thread-a"])
+        popen.assert_not_called()
 
     async def test_open_detached_agent_deck_chat_tui_reports_not_bound(self) -> None:
         with (
@@ -654,7 +802,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             backend="agent-deck",
             origin_kind="managed",
             agent_deck_session_id=None,
-            agent_deck_session_title="Chat chat-exi",
+            agent_deck_session_title="Chat chat-e1a",
             agent_deck_tool=None,
             editor_state={
                 "draftAgentType": "claude",
@@ -683,7 +831,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
 
         upsert_session.assert_not_called()
         self.assertEqual(payload["thread_id"], "chat-existing123")
-        self.assertEqual(payload["title"], "Chat chat-exi")
+        self.assertEqual(payload["title"], "Chat chat-e1a")
 
     async def test_create_project_chat_can_force_fresh_draft_for_replay(self) -> None:
         existing_session = SimpleNamespace(
@@ -695,7 +843,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             backend="agent-deck",
             origin_kind="managed",
             agent_deck_session_id=None,
-            agent_deck_session_title="Chat chat-exi",
+            agent_deck_session_title="Chat chat-e1a",
             agent_deck_tool=None,
             editor_state={
                 "draftAgentType": "claude",
@@ -741,6 +889,64 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
         self.assertEqual(payload["thread_id"], expected_thread_id)
 
+    async def test_create_project_chat_does_not_reuse_named_empty_draft(self) -> None:
+        existing_session = SimpleNamespace(
+            id=1,
+            profile_id="default",
+            project_path="/tmp/project",
+            thread_id="chat-existing123",
+            workspace_path="/tmp/project",
+            backend="agent-deck",
+            origin_kind="managed",
+            agent_deck_session_id=None,
+            agent_deck_session_title="gog INTEGRATION",
+            agent_deck_tool=None,
+            editor_state={
+                "draftAgentType": "claude",
+                "draftWorkspaceMode": "root",
+            },
+            created_at="2026-03-21T00:00:00Z",
+            last_active="2026-03-21T00:00:00Z",
+        )
+        expected_thread_id = "chat-fedcba098765"
+        created_session = SimpleNamespace(
+            **{
+                **existing_session.__dict__,
+                "id": 2,
+                "thread_id": expected_thread_id,
+                "agent_deck_session_title": "New chat",
+                "provider_session_title": "New chat",
+            }
+        )
+
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "upsert_project", Mock()),
+            patch.object(main, "project_name_for_path", Mock(return_value="project")),
+            patch.object(
+                main,
+                "uuid4",
+                Mock(return_value=SimpleNamespace(hex="fedcba0987654321fedcba0987654321")),
+            ),
+            patch.object(main, "list_project_sessions", Mock(return_value=[existing_session])),
+            patch.object(main, "chat_has_primary_workstation_events", Mock(return_value=False)),
+            patch.object(main, "upsert_session", Mock(return_value=created_session)) as upsert_session,
+        ):
+            payload = await main.create_project_chat(
+                "/tmp/project",
+                main.AgentDeckSessionRequest(
+                    agent_type="claude",
+                    title=None,
+                    workspace_mode="root",
+                ),
+            )
+
+        upsert_session.assert_called_once()
+        self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
+        self.assertEqual(upsert_session.call_args.kwargs["provider_session_title"], "New chat")
+        self.assertEqual(payload["thread_id"], expected_thread_id)
+        self.assertEqual(payload["title"], "New chat")
+
     async def test_create_project_chat_generates_unique_chat_thread_id(self) -> None:
         expected_thread_id = "chat-1234567890ab"
         created_session = SimpleNamespace(
@@ -752,7 +958,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             backend="agent-deck",
             origin_kind="managed",
             agent_deck_session_id=None,
-            agent_deck_session_title=f"Chat {expected_thread_id[:8]}",
+            agent_deck_session_title="New chat",
             agent_deck_tool=None,
             editor_state={
                 "draftAgentType": "claude",
@@ -795,6 +1001,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
         upsert_session.assert_called_once()
         load_chats.assert_not_awaited()
         self.assertEqual(upsert_session.call_args.kwargs["thread_id"], expected_thread_id)
+        self.assertEqual(upsert_session.call_args.kwargs["provider_session_title"], "New chat")
         self.assertEqual(
             upsert_session.call_args.kwargs["editor_state"],
             {
@@ -804,7 +1011,7 @@ class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(payload["thread_id"], expected_thread_id)
-        self.assertEqual(payload["title"], f"Chat {expected_thread_id[:8]}")
+        self.assertEqual(payload["title"], "New chat")
         self.assertEqual(payload["binding_state"], "detached")
 
 
@@ -1516,6 +1723,49 @@ class LiveEditorPromptDispatchTest(unittest.IsolatedAsyncioTestCase):
 
 
 class LiveEditorThreadHydrationTest(unittest.TestCase):
+    def test_retitle_placeholder_live_thread_uses_prompt_title(self) -> None:
+        thread = SimpleNamespace(
+            thread_id="chat-c72fa95da17c",
+            provider_session_title="Chat chat-c72",
+            agent_deck_session_title="Chat chat-c72",
+        )
+        updated = SimpleNamespace(thread_id="chat-c72fa95da17c")
+        with (
+            patch.object(
+                main,
+                "get_project_session",
+                Mock(return_value=SimpleNamespace(
+                    thread_id="chat-c72fa95da17c",
+                    provider_session_title="Chat chat-c72",
+                    agent_deck_session_title="Chat chat-c72",
+                )),
+            ),
+            patch.object(main, "list_project_sessions", Mock(return_value=[])),
+            patch.object(main, "update_session_title", Mock()) as update_session_title,
+            patch.object(main, "update_live_editor_thread", Mock(return_value=updated)) as update_thread,
+        ):
+            result = main._retitle_placeholder_live_thread(
+                "/tmp/project",
+                thread,
+                prompt="improve documentation in @filename",
+                provider_id="agent-deck",
+                agent_id="codex",
+            )
+
+        self.assertIs(result, updated)
+        update_session_title.assert_called_once_with(
+            "/tmp/project",
+            "chat-c72fa95da17c",
+            "Improve documentation in @filename",
+        )
+        update_thread.assert_called_once_with(
+            "chat-c72fa95da17c",
+            provider_id="agent-deck",
+            provider_session_title="Improve documentation in @filename",
+            agent_deck_session_title="Improve documentation in @filename",
+            provider_agent_id="codex",
+        )
+
     def test_detaches_missing_direct_provider_binding(self) -> None:
         thread = SimpleNamespace(thread_id="chat-stale")
         provider = SimpleNamespace(

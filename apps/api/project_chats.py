@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_providers.models import AgentProviderSessionTarget
+from chat_titles import is_placeholder_chat_title
 from project_store import SessionRecord, normalize_project_path, should_surface_session
 
 
@@ -48,6 +49,13 @@ def _chat_title(
         if isinstance(persisted_title, str) and persisted_title.strip()
         else None
     )
+    if (
+        target
+        and isinstance(target.title, str)
+        and target.title.strip()
+        and is_placeholder_chat_title(normalized_persisted_title, thread_id=thread_id)
+    ):
+        return target.title.strip()
     if normalized_persisted_title:
         return normalized_persisted_title
     if target and isinstance(target.title, str) and target.title.strip():
