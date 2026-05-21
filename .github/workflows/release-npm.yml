@@ -67,14 +67,17 @@ jobs:
           npm pack --dry-run --json ./packages/npm-installer
           npm pack --dry-run --json ./packages/sdk-node
 
+      - name: Verify npm token
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish installer package
-        run: |
-          npm whoami
-          npm publish ./packages/npm-installer --access public
+        run: npm publish ./packages/npm-installer --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish SDK package
-        run: npm publish ./packages/sdk-node --access public
+        run: npm publish ./packages/sdk-node --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
