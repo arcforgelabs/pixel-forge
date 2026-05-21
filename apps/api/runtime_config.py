@@ -188,6 +188,13 @@ def source_root() -> Path:
         and (installed_root / "frontend" / "index.html").is_file()
     ):
         return installed_root
+    windows_runtime_root = installed_root.parent
+    if (
+        (windows_runtime_root / "api" / "main.py").is_file()
+        and (windows_runtime_root / "api" / "requirements.txt").is_file()
+        and (windows_runtime_root / "frontend" / "index.html").is_file()
+    ):
+        return windows_runtime_root
 
     repo_root = here.parents[2]
     if (repo_root / "apps" / "api" / "main.py").is_file():

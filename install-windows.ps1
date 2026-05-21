@@ -170,10 +170,26 @@ if (-not (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
 & (Join-Path $VenvDir "Scripts\python.exe") -m pip install --upgrade pip
 & (Join-Path $VenvDir "Scripts\python.exe") -m pip install -r (Join-Path $Source "apps\api\requirements.txt")
 
+Info "Installing desktop shell dependencies"
+Push-Location $DesktopDir
+try {
+    $DesktopPackageLock = Join-Path $DesktopDir "package-lock.json"
+    if (Test-Path $DesktopPackageLock) {
+        Remove-Item -Force $DesktopPackageLock
+    }
+    $ElectronVersion = (& node -p "require('./package.json').dependencies.electron.replace(/^[^0-9]*/, '')").Trim()
+    npm install --no-fund --no-audit "electron@$ElectronVersion"
+}
+finally {
+    Pop-Location
+}
+
 $ApiPort = if ($env:PIXEL_FORGE_API_PORT) { $env:PIXEL_FORGE_API_PORT } elseif ($env:PIXEL_FORGE_PORT) { $env:PIXEL_FORGE_PORT } else { "7201" }
 $UrlHost = if ($env:PIXEL_FORGE_URL_HOST) { $env:PIXEL_FORGE_URL_HOST } else { "127.0.0.1" }
 $ApiLauncher = Join-Path $BinDir "pixel-forge-api.ps1"
 $AppLauncher = Join-Path $BinDir "pixel-forge.ps1"
+$ShellLauncher = Join-Path $BinDir "pixel-forge-shell.ps1"
+$HiddenAppLauncher = Join-Path $BinDir "pixel-forge.vbs"
 $WebLauncher = Join-Path $BinDir "pixel-forge-open-web.ps1"
 
 New-Launcher -Path $ApiLauncher -Content @"
@@ -181,6 +197,8 @@ New-Launcher -Path $ApiLauncher -Content @"
 `$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
 `$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
 `$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
+`$env:PIXEL_FORGE_RUNTIME_SOURCE_ROOT = "$RuntimeDir"
+`$env:PIXEL_FORGE_FRONTEND_DIST = "$FrontendDir"
 `$env:PIXEL_FORGE_API_PORT = "$ApiPort"
 `$env:PIXEL_FORGE_PORT = "$ApiPort"
 `$env:PIXEL_FORGE_URL_HOST = "$UrlHost"
@@ -195,17 +213,62 @@ New-Launcher -Path $WebLauncher -Content @"
 Start-Process `$url
 "@
 
-New-Launcher -Path $AppLauncher -Content @"
+New-Launcher -Path $ShellLauncher -Content @"
 `$ErrorActionPreference = "Stop"
 `$url = "http://${UrlHost}:${ApiPort}/"
-try {
-    `$response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri (`$url + "api/runtime-info")
+`$runtimeInfoUrl = `$url + "api/runtime-info"
+`$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
+`$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
+`$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
+`$env:PIXEL_FORGE_RUNTIME_SOURCE_ROOT = "$RuntimeDir"
+`$env:PIXEL_FORGE_FRONTEND_DIST = "$FrontendDir"
+`$env:PIXEL_FORGE_API_PORT = "$ApiPort"
+`$env:PIXEL_FORGE_PORT = "$ApiPort"
+`$env:PIXEL_FORGE_URL_HOST = "$UrlHost"
+`$env:PIXEL_FORGE_SHELL_URL = `$url
+`$env:PIXEL_FORGE_WITH_AGENT_DECK = "0"
+`$env:PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID = "codex-cli"
+
+function Test-PixelForgeReady {
+    try {
+        `$response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 -Uri `$runtimeInfoUrl
+        return `$response.StatusCode -ge 200 -and `$response.StatusCode -lt 300
+    }
+    catch {
+        return `$false
+    }
 }
-catch {
-    Start-Process powershell.exe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$ApiLauncher") -WindowStyle Minimized
-    Start-Sleep -Seconds 2
+
+if (-not (Test-PixelForgeReady)) {
+    Start-Process powershell.exe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$ApiLauncher") -WindowStyle Hidden
+    for (`$i = 0; `$i -lt 60; `$i++) {
+        if (Test-PixelForgeReady) {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
 }
-Start-Process `$url
+
+if (-not (Test-PixelForgeReady)) {
+    throw "Pixel Forge API did not become ready at `$runtimeInfoUrl"
+}
+
+`$electronExe = Join-Path "$DesktopDir" "node_modules\electron\dist\electron.exe"
+if (-not (Test-Path `$electronExe)) {
+    throw "Pixel Forge desktop shell is not installed at `$electronExe. Re-run install-windows.ps1."
+}
+
+Start-Process -FilePath `$electronExe -ArgumentList @("--no-sandbox", "$DesktopDir") -WorkingDirectory "$DesktopDir"
+"@
+
+New-Launcher -Path $AppLauncher -Content @"
+`$ErrorActionPreference = "Stop"
+& "$ShellLauncher"
+"@
+
+New-Launcher -Path $HiddenAppLauncher -Content @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$ShellLauncher""", 0, False
 "@
 
 if (-not $SkipShortcuts) {
@@ -216,15 +279,15 @@ if (-not $SkipShortcuts) {
     New-Item -ItemType Directory -Force -Path $ShortcutDir, $DesktopShortcutDir | Out-Null
     New-Shortcut `
         -ShortcutPath (Join-Path $ShortcutDir "Pixel Forge.lnk") `
-        -TargetPath "powershell.exe" `
-        -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$AppLauncher`"" `
+        -TargetPath "wscript.exe" `
+        -Arguments "`"$HiddenAppLauncher`"" `
         -WorkingDirectory $RuntimeDir `
         -Description "Open Pixel Forge" `
         -IconPath $ShortcutIcon
     New-Shortcut `
         -ShortcutPath (Join-Path $DesktopShortcutDir "Pixel Forge.lnk") `
-        -TargetPath "powershell.exe" `
-        -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$AppLauncher`"" `
+        -TargetPath "wscript.exe" `
+        -Arguments "`"$HiddenAppLauncher`"" `
         -WorkingDirectory $RuntimeDir `
         -Description "Open Pixel Forge" `
         -IconPath $ShortcutIcon

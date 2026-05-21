@@ -19,6 +19,10 @@ function isTruthy(value) {
     && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
 
+function psSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "''")}'`
+}
+
 async function reservePort() {
   return await new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -264,9 +268,33 @@ try {
 
   await fs.access(path.join(installRoot, 'runtime', 'icons', 'pixel-forge.ico'))
   await fs.access(path.join(installRoot, 'runtime', 'icons', 'pixel-forge.png'))
+  await fs.access(path.join(installRoot, 'runtime', 'frontend', 'index.html'))
+  await fs.access(path.join(installRoot, 'runtime', 'desktop', 'node_modules', 'electron', 'dist', 'electron.exe'))
   await fs.access(path.join(installRoot, 'bin', 'pixel-forge.ps1'))
+  await fs.access(path.join(installRoot, 'bin', 'pixel-forge-shell.ps1'))
+  await fs.access(path.join(installRoot, 'bin', 'pixel-forge.vbs'))
   await fs.access(path.join(shortcutStartMenuDir, 'Pixel Forge', 'Pixel Forge.lnk'))
   await fs.access(path.join(shortcutDesktopDir, 'Pixel Forge.lnk'))
+
+  const shellLauncher = await fs.readFile(path.join(installRoot, 'bin', 'pixel-forge-shell.ps1'), 'utf-8')
+  assert(shellLauncher.includes('electron.exe'), 'Pixel Forge shell launcher must start Electron.')
+  assert(!shellLauncher.includes('Start-Process `$url'), 'Pixel Forge shell launcher must not open the raw web URL.')
+  const shortcutProbe = await runProcess('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    `$s=(New-Object -ComObject WScript.Shell).CreateShortcut(${psSingleQuote(path.join(shortcutDesktopDir, 'Pixel Forge.lnk'))}); Write-Output $s.TargetPath; Write-Output $s.Arguments`,
+  ], {
+    env,
+    label: 'inspect Pixel Forge desktop shortcut',
+  })
+  assert(
+    shortcutProbe.stdout.toLowerCase().includes('wscript.exe'),
+    `Pixel Forge shortcut should launch through wscript.exe, got: ${shortcutProbe.stdout}`,
+  )
+  assert(
+    shortcutProbe.stdout.includes('pixel-forge.vbs'),
+    `Pixel Forge shortcut should use the hidden app launcher, got: ${shortcutProbe.stdout}`,
+  )
 
   const apiLauncher = path.join(installRoot, 'bin', 'pixel-forge-api.ps1')
   apiProcess = startProcess('powershell.exe', [
@@ -280,6 +308,10 @@ try {
   await waitForHttpOk(`${baseUrl}/api/runtime-info`, {
     description: 'Windows Pixel Forge API',
     timeoutMs: 90000,
+  })
+  await waitForHttpOk(`${baseUrl}/`, {
+    description: 'Windows Pixel Forge frontend',
+    timeoutMs: 10000,
   })
 
   const profile = await fetchJson(`${baseUrl}/api/profile-state`)

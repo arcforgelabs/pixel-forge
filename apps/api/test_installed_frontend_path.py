@@ -10,6 +10,10 @@ class InstalledFrontendPathTest(unittest.TestCase):
             '_INSTALLED_DIST = Path(__file__).resolve().parent / "frontend"',
             source,
         )
+        self.assertIn(
+            '_WINDOWS_RUNTIME_DIST = Path(__file__).resolve().parent.parent / "frontend"',
+            source,
+        )
 
 
 if __name__ == "__main__":

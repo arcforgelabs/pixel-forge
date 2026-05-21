@@ -77,6 +77,12 @@ def _detect_runtime_layout(root: Path) -> str:
         and (root / "frontend" / "index.html").is_file()
     ):
         return "installed"
+    if (
+        (root / "api" / "main.py").is_file()
+        and (root / "api" / "requirements.txt").is_file()
+        and (root / "frontend" / "index.html").is_file()
+    ):
+        return "installed"
     if (root / "apps" / "api" / "main.py").is_file():
         return "workspace"
     return "unknown"
@@ -87,6 +93,7 @@ def _has_acpx_bridge(root: Path) -> bool:
         candidate.is_file()
         for candidate in (
             root / "acpx_bridge.py",
+            root / "api" / "acpx_bridge.py",
             root / "apps" / "api" / "acpx_bridge.py",
         )
     )

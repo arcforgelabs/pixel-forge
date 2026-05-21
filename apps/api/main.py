@@ -562,13 +562,14 @@ from pathlib import Path
 _FRONTEND_DIST_OVERRIDE = os.environ.get("PIXEL_FORGE_FRONTEND_DIST")
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 _INSTALLED_DIST = Path(__file__).resolve().parent / "frontend"
+_WINDOWS_RUNTIME_DIST = Path(__file__).resolve().parent.parent / "frontend"
 _SERVING_FRONTEND = False
 _FRONTEND_INDEX_PATH: Path | None = None
 _FRONTEND_DIST_CANDIDATES: list[Path] = []
 
 if _FRONTEND_DIST_OVERRIDE:
     _FRONTEND_DIST_CANDIDATES.append(Path(_FRONTEND_DIST_OVERRIDE).expanduser().resolve())
-_FRONTEND_DIST_CANDIDATES.extend((_INSTALLED_DIST, _FRONTEND_DIST))
+_FRONTEND_DIST_CANDIDATES.extend((_INSTALLED_DIST, _WINDOWS_RUNTIME_DIST, _FRONTEND_DIST))
 
 for _dist_candidate in _FRONTEND_DIST_CANDIDATES:
     if (_dist_candidate / "index.html").is_file():
