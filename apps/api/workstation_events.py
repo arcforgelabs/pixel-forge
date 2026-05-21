@@ -6,7 +6,11 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from agent_deck_bridge import AgentDeckBridgeError, get_agent_deck_session_activity
+from agent_deck_bridge import (
+    AgentDeckBridgeError,
+    _is_agent_deck_timeout_error,
+    get_agent_deck_session_activity,
+)
 from project_store import (
     detach_project_session_binding,
     get_project_session,
@@ -596,6 +600,23 @@ async def _build_current_activity_snapshot(
             output=activity.output,
         )
     except AgentDeckBridgeError as exc:
+        if _is_agent_deck_timeout_error(exc):
+            return session_record.agent_deck_session_id, _activity_snapshot(
+                project_path=project_path,
+                chat_id=chat_id,
+                workspace_path=session_record.workspace_path,
+                provider_id=session_record.provider_id,
+                provider_session_id=session_record.provider_session_id,
+                provider_session_title=session_record.provider_session_title,
+                provider_agent_id=session_record.provider_agent_id,
+                provider_session_status=None,
+                agent_deck_session_id=session_record.agent_deck_session_id,
+                agent_deck_session_title=session_record.agent_deck_session_title,
+                agent_deck_tool=session_record.agent_deck_tool,
+                agent_deck_session_status="resolving",
+                binding_state="attached",
+                output="",
+            )
         if not _is_missing_session_error(exc):
             raise
 

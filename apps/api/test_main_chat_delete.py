@@ -340,7 +340,11 @@ class ChatItemDeleteRouteTest(unittest.IsolatedAsyncioTestCase):
 class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
     def test_open_agent_deck_tui_terminal_selects_bound_session(self) -> None:
         with (
-            patch.object(main._pf_cli, "agent_deck_command", Mock(return_value=["agent-deck"])),
+            patch.object(
+                main._pf_cli,
+                "agent_deck_tui_command",
+                Mock(return_value=["/tmp/pixel-forge/scripts/agent-deck.sh"]),
+            ) as tui_command,
             patch.object(main._pf_cli, "agent_deck_tui_wm_class", Mock(return_value="pixel-forge-agent-deck")),
             patch.object(
                 main._pf_cli,
@@ -361,8 +365,9 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["provider_session_id"], "deck-a")
+        tui_command.assert_called_once_with()
         terminal_command.assert_called_once_with(
-            ["agent-deck", "--select", "deck-a"],
+            ["/tmp/pixel-forge/scripts/agent-deck.sh", "--select", "deck-a"],
             "Agent Deck · Chat chat-a",
             "pixel-forge-agent-deck",
         )
@@ -408,6 +413,71 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
         _, kwargs = open_tui.call_args
         self.assertEqual(kwargs["session_id"], "deck-a")
         self.assertIn("Agent Deck Chat", kwargs["title"])
+
+    async def test_open_agent_deck_chat_tui_does_not_probe_provider_before_opening(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-a",
+                    object(),
+                    object(),
+                    "agent-deck",
+                    "deck-a",
+                    "deck-a",
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_agent_provider_or_error", Mock()) as provider_or_error,
+            patch.object(main, "detach_project_session_binding", Mock()) as detach_binding,
+            patch.object(
+                main,
+                "_open_agent_deck_tui_terminal",
+                Mock(return_value={"ok": True, "provider_id": "agent-deck"}),
+            ) as open_tui,
+        ):
+            payload = await main.open_project_chat_item_tui(
+                "/tmp/project",
+                main.ChatItemOpenTuiRequest(thread_id="thread-a", provider_id="agent-deck"),
+            )
+
+        self.assertTrue(payload["ok"])
+        provider_or_error.assert_called_once_with("agent-deck")
+        detach_binding.assert_not_called()
+        open_tui.assert_called_once()
+
+    async def test_open_slow_agent_deck_chat_tui_still_opens_terminal(self) -> None:
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    "thread-a",
+                    object(),
+                    object(),
+                    "agent-deck",
+                    "deck-a",
+                    "deck-a",
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_agent_provider_or_error", Mock()),
+            patch.object(
+                main,
+                "_open_agent_deck_tui_terminal",
+                Mock(return_value={"ok": True, "provider_id": "agent-deck"}),
+            ) as open_tui,
+        ):
+            payload = await main.open_project_chat_item_tui(
+                "/tmp/project",
+                main.ChatItemOpenTuiRequest(thread_id="thread-a", provider_id="agent-deck"),
+            )
+
+        self.assertTrue(payload["ok"])
+        open_tui.assert_called_once()
 
     async def test_open_direct_codex_chat_tui_reports_future_harness(self) -> None:
         with (
@@ -498,6 +568,79 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 409)
         self.assertEqual(context.exception.detail, "This chat is not bound to a provider TUI yet.")
         open_tui.assert_not_called()
+
+
+class AgentDeckTimeoutDegradeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_generic_agent_session_list_timeout_returns_degraded_payload(self) -> None:
+        provider = SimpleNamespace(
+            provider_id="agent-deck",
+            list_sessions=AsyncMock(side_effect=AgentDeckBridgeError("agent-deck ls -json timed out after 2.5s")),
+        )
+        cached_session = SimpleNamespace(
+            provider_id="agent-deck",
+            provider_session_id="deck-a",
+            provider_session_title="Cached Chat",
+            provider_agent_id="codex",
+            agent_deck_session_id="deck-a",
+            agent_deck_session_title="Cached Chat",
+            agent_deck_tool="codex",
+            workspace_path="/tmp/project",
+            project_path="/tmp/project",
+            thread_id="chat-a",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        with (
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(main, "_agent_provider_or_error", Mock(return_value=provider)),
+            patch.object(main, "list_project_sessions", Mock(return_value=[cached_session])),
+        ):
+            payload = await main.get_project_agent_sessions("/tmp/project", provider="agent-deck")
+
+        self.assertEqual(payload["provider_id"], "agent-deck")
+        self.assertEqual(payload["sessions"][0]["provider_session_id"], "deck-a")
+        self.assertEqual(payload["sessions"][0]["status"], "cached")
+        self.assertEqual(payload["provider_status"], "timeout")
+
+    async def test_agent_deck_activity_timeout_returns_resolving_payload(self) -> None:
+        session_record = SimpleNamespace(
+            provider_session_title="Chat A",
+            provider_agent_id="codex",
+            agent_deck_session_title="Chat A",
+            agent_deck_tool="codex",
+            workspace_path="/tmp/project",
+        )
+        with (
+            patch.object(
+                main,
+                "_resolve_chat_item_context",
+                return_value=(
+                    "/tmp/project",
+                    None,
+                    session_record,
+                    None,
+                    "agent-deck",
+                    "deck-a",
+                    "deck-a",
+                ),
+            ),
+            patch.object(main.os.path, "isdir", return_value=True),
+            patch.object(
+                main,
+                "get_agent_deck_session_activity",
+                AsyncMock(side_effect=AgentDeckBridgeError("agent-deck session show timed out after 2.5s")),
+            ),
+        ):
+            payload = await main.get_project_chat_item_activity(
+                "/tmp/project",
+                provider_id="agent-deck",
+                provider_session_id="deck-a",
+                agent_deck_session_id="deck-a",
+            )
+
+        self.assertEqual(payload["provider_id"], "agent-deck")
+        self.assertEqual(payload["agent_deck_session_id"], "deck-a")
+        self.assertEqual(payload["agent_deck_session_status"], "resolving")
+        self.assertEqual(payload["binding_state"], "attached")
 
 
 class ChatCreateRouteTest(unittest.IsolatedAsyncioTestCase):

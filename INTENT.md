@@ -57,7 +57,24 @@ The target architecture for this next improvement is:
 
 Current limiting factor:
 
-The Codex and Agent Deck/Codex Linux readiness gate is now clear for the current scoped claim: public npm install, full VM verification, install/update proof, a real direct Codex live turn, and a real Agent Deck/Codex live turn all pass in `ubuntu-ui-test`. Direct Claude is explicitly not Linux-ready until the VM has Claude Code installed/authenticated and the native path is proven. Memory governance is useful resilience work, but it is not a blocker for calling the Codex + Agent Deck/Codex Linux path ready. The next limiting factor is release promotion and rollout discipline: keep the validated gate attached to the release cut, keep public install proof green before publishing, and do not expand the Linux-ready claim to Claude or other providers until their own live installed-GUI gates pass.
+The Codex and Agent Deck/Codex Linux readiness gate is clear for the current scoped claim, but workstation reality exposed the next product blocker: chat actions are still too dependent on synchronous provider inventory and process telemetry. Public npm install, full VM verification, install/update proof, a real direct Codex live turn, and a real Agent Deck/Codex live turn all pass in `ubuntu-ui-test`; direct Claude remains explicitly not Linux-ready until the VM has Claude Code installed/authenticated and the native path is proven. The limiting factor has now shifted from "can the paths work" to "can they feel reliably snappy under real dirty user state." Pixel Forge must preserve the validated Linux scope while changing the chat/provider architecture so first user-visible action happens within about three seconds even when a provider has stale sessions, many warm processes, slow process telemetry, or a conflicting standalone install nearby.
+
+Next architecture goal:
+
+Make the Live Editor chat path an event-driven, materialized provider system instead of a request/response wrapper around provider CLIs. The active chat must acknowledge input and show a meaningful state transition within about three seconds. Expensive operations such as Agent Deck `ls -json`, process-tree memory telemetry, transcript discovery, stale-session cleanup, delete closeout checks, and native OAuth/readiness probing must run behind cached provider state, background reconciliation, or streamed progress events. The UI may show "resolving provider session", "starting Codex", "checking sign-in", or "waiting for first prompt", but it must not block the composer or sidebar on a full provider inventory scan.
+
+Requirements for the snappy chat architecture:
+
+1. New chat send must persist the chat/turn event immediately, then launch or attach provider work asynchronously.
+2. The sidebar must render from Pixel Forge's materialized project/chat store first; live provider inventory is an enrichment, not routing authority.
+3. Provider list/show calls must stay inside the interaction budget or return stale/resolving state; they must not surface as blocking chat failures merely because a provider profile is dirty.
+4. Provider adapters must publish normalized lifecycle events: `queued`, `launching`, `checking_auth`, `ready`, `sending`, `streaming`, `waiting`, `completed`, `failed`, and `stale`.
+5. Agent Deck process/memory telemetry should move off the critical path into a watcher/cache with TTLs and explicit stale markers.
+6. Delete/rename/Open TUI actions must update Pixel Forge state quickly, then reconcile provider cleanup in the background unless user work would be destroyed.
+7. Open TUI should be enabled only for a real bound provider session, but it should use Pixel Forge's binding record as the fast gate and provider verification as background or bounded confirmation.
+8. Provider failures must remain loud and actionable, but the fallback should be "session resolving/stale, retry or detach" rather than a raw CLI timeout in the center of the chat.
+9. Memory governance is useful resilience, but it is not a substitute for making provider observation cheap, cached, and off the foreground path.
+10. Release promotion must keep the validated Linux claim precise: public install plus direct Codex and Agent Deck/Codex installed-GUI live turns. Do not expand the Linux-ready claim to Claude or other providers until their own live installed-GUI gates pass.
 
 Current source state:
 

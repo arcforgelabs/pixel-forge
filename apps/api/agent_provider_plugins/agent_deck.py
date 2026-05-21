@@ -330,9 +330,14 @@ class AgentDeckProvider:
         if session_info.tool == "codex" and not (
             session_info.codex_session_id and session_info.jsonl_path
         ):
-            baseline_output = await agent_deck_bridge.get_last_output(
-                session_info.agent_deck_session_id
-            )
+            try:
+                baseline_output = await agent_deck_bridge.get_last_output(
+                    session_info.agent_deck_session_id
+                )
+            except agent_deck_bridge.AgentDeckBridgeError as exc:
+                if not agent_deck_bridge._is_agent_deck_timeout_error(exc):
+                    raise
+                baseline_output = ""
 
         tool_label = (session_info.tool or "agent").strip().capitalize() or "Agent"
         if (

@@ -127,6 +127,25 @@ class WorkstationEventsTest(unittest.IsolatedAsyncioTestCase):
         assert session is not None
         self.assertIsNone(session.agent_deck_session_id)
 
+    async def test_slow_agent_deck_activity_keeps_binding_and_records_resolving_snapshot(self) -> None:
+        with patch.object(
+            workstation_events,
+            "get_agent_deck_session_activity",
+            AsyncMock(side_effect=AgentDeckBridgeError("agent-deck session show timed out after 15.0s")),
+        ):
+            record = await workstation_events.sync_chat_activity_event(
+                str(self.project_path),
+                "thread-a",
+            )
+
+        assert record is not None
+        self.assertEqual(record.payload["binding_state"], "attached")
+        self.assertEqual(record.payload["agent_deck_session_id"], "deck-a")
+        self.assertEqual(record.payload["agent_deck_session_status"], "resolving")
+        session = project_store.get_project_session(str(self.project_path), "thread-a")
+        assert session is not None
+        self.assertEqual(session.agent_deck_session_id, "deck-a")
+
     async def test_append_workstation_event_marks_chat_as_typed_turn_history(self) -> None:
         record = workstation_events.append_workstation_event(
             str(self.project_path),

@@ -7,6 +7,7 @@ import re
 import signal
 import shutil
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from contextlib import suppress
@@ -37,11 +38,104 @@ CODEX_READY_PROMPT_PREFIX = "› "
 EMPTY_SESSION_LIST_RE = re.compile(r"^No sessions found in profile '.*'\.$")
 AGENT_DECK_LAUNCH_RECOVERY_TIMEOUT_SECONDS = 45.0
 AGENT_DECK_COMMAND_TIMEOUT_SECONDS = 3.0
+AGENT_DECK_LIST_COMMAND_TIMEOUT_SECONDS = 2.5
+AGENT_DECK_LIST_CACHE_TTL_SECONDS = 2.0
+AGENT_DECK_LIST_STALE_CACHE_TTL_SECONDS = 300.0
+AGENT_DECK_LIST_BACKGROUND_REFRESH_TIMEOUT_SECONDS = 60.0
+AGENT_DECK_SESSION_SHOW_COMMAND_TIMEOUT_SECONDS = 2.5
+AGENT_DECK_SESSION_OUTPUT_COMMAND_TIMEOUT_SECONDS = 2.5
 AGENT_DECK_SEND_COMMAND_TIMEOUT_SECONDS = 45.0
 AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS = 25.0
 AGENT_DECK_CLEANUP_COMMAND_TIMEOUT_SECONDS = 90.0
 StreamPayloadCallback = Callable[[dict[str, object]], Awaitable[None]]
 AgentDeckLaunchSession = Callable[..., Awaitable[dict[str, object]]]
+
+_AGENT_DECK_JSON_LIST_CACHE: dict[tuple[tuple[str, ...], str | None], tuple[float, object]] = {}
+_AGENT_DECK_JSON_LIST_STALE_CACHE: dict[tuple[tuple[str, ...], str | None], tuple[float, object]] = {}
+_AGENT_DECK_JSON_LIST_REFRESH_TASKS: dict[tuple[tuple[str, ...], str | None], asyncio.Task[None]] = {}
+
+
+def _agent_deck_list_cache_ttl_seconds() -> float:
+    return _env_float(
+        "PIXEL_FORGE_AGENT_DECK_LIST_CACHE_TTL_SECONDS",
+        AGENT_DECK_LIST_CACHE_TTL_SECONDS,
+    )
+
+
+def _agent_deck_list_stale_cache_ttl_seconds() -> float:
+    return _env_float(
+        "PIXEL_FORGE_AGENT_DECK_LIST_STALE_CACHE_TTL_SECONDS",
+        AGENT_DECK_LIST_STALE_CACHE_TTL_SECONDS,
+    )
+
+
+def _agent_deck_list_background_refresh_timeout_seconds() -> float:
+    return _env_float(
+        "PIXEL_FORGE_AGENT_DECK_LIST_BACKGROUND_TIMEOUT_SECONDS",
+        AGENT_DECK_LIST_BACKGROUND_REFRESH_TIMEOUT_SECONDS,
+    )
+
+
+def _is_agent_deck_json_list_args(args: list[str]) -> bool:
+    return bool(args and args[0] in {"ls", "list"} and "-json" in args)
+
+
+def _invalidate_agent_deck_json_list_cache() -> None:
+    _AGENT_DECK_JSON_LIST_CACHE.clear()
+    _AGENT_DECK_JSON_LIST_STALE_CACHE.clear()
+    for task in list(_AGENT_DECK_JSON_LIST_REFRESH_TASKS.values()):
+        if not task.done():
+            task.cancel()
+    _AGENT_DECK_JSON_LIST_REFRESH_TASKS.clear()
+
+
+def _agent_deck_command_may_mutate_inventory(args: list[str]) -> bool:
+    if not args:
+        return False
+    if args[0] in {"add", "launch", "remove", "rm", "rename", "mv"}:
+        return True
+    if args[0] in {"clone", "group", "profile", "worktree", "wt"}:
+        return True
+    if args[0] == "session" and len(args) >= 2:
+        return args[1] not in {"show", "output", "current"}
+    return False
+
+
+def _agent_deck_json_list_cache_key(
+    args: list[str],
+    cwd: str | None,
+) -> tuple[tuple[str, ...], str | None]:
+    return (tuple(args), cwd)
+
+
+def _cached_agent_deck_json_list_payload(
+    cache: dict[tuple[tuple[str, ...], str | None], tuple[float, object]],
+    cache_key: tuple[tuple[str, ...], str | None],
+    *,
+    ttl_seconds: float,
+) -> object | None:
+    cached = cache.get(cache_key)
+    if cached is None:
+        return None
+    cached_at, cached_payload = cached
+    if time.monotonic() - cached_at <= ttl_seconds:
+        return cached_payload
+    return None
+
+
+def cached_agent_deck_json_list_payload(
+    args: list[str] | None = None,
+    cwd: str | None = None,
+) -> object | None:
+    normalized_args = args or ["ls", "-json"]
+    if not _is_agent_deck_json_list_args(normalized_args):
+        return None
+    cache_key = _agent_deck_json_list_cache_key(normalized_args, cwd)
+    return _cached_agent_deck_json_list_payload(
+        _AGENT_DECK_JSON_LIST_STALE_CACHE,
+        cache_key,
+        ttl_seconds=_agent_deck_list_stale_cache_ttl_seconds(),
+    )
 def _pi_agent_dir() -> Path:
     configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
     if configured:
@@ -546,6 +640,21 @@ def _agent_deck_command_timeout_seconds(args: list[str]) -> float:
             "PIXEL_FORGE_AGENT_DECK_LAUNCH_TIMEOUT_SECONDS",
             AGENT_DECK_LAUNCH_COMMAND_TIMEOUT_SECONDS,
         )
+    if args and args[0] in {"ls", "list"}:
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_LIST_TIMEOUT_SECONDS",
+            AGENT_DECK_LIST_COMMAND_TIMEOUT_SECONDS,
+        )
+    if len(args) >= 2 and args[0] == "session" and args[1] == "show":
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_SHOW_TIMEOUT_SECONDS",
+            AGENT_DECK_SESSION_SHOW_COMMAND_TIMEOUT_SECONDS,
+        )
+    if len(args) >= 2 and args[0] == "session" and args[1] == "output":
+        return _env_float(
+            "PIXEL_FORGE_AGENT_DECK_OUTPUT_TIMEOUT_SECONDS",
+            AGENT_DECK_SESSION_OUTPUT_COMMAND_TIMEOUT_SECONDS,
+        )
     if len(args) >= 2 and args[0] == "session" and args[1] == "send":
         return _env_float(
             "PIXEL_FORGE_AGENT_DECK_SEND_TIMEOUT_SECONDS",
@@ -567,12 +676,61 @@ async def _run_agent_deck_command(
     *,
     cwd: str | None = None,
 ) -> tuple[int, str, str]:
-    return await _run_command_with_env(
+    result = await _run_command_with_env(
         _agent_deck_args(*args),
         cwd=cwd,
         env=agent_deck_env(),
         timeout_seconds=_agent_deck_command_timeout_seconds(args),
     )
+    if result[0] == 0 and _agent_deck_command_may_mutate_inventory(args):
+        _invalidate_agent_deck_json_list_cache()
+    return result
+
+
+async def _refresh_agent_deck_json_list_cache(
+    args: list[str],
+    cwd: str | None,
+    cache_key: tuple[tuple[str, ...], str | None],
+) -> None:
+    try:
+        code, stdout, stderr = await _run_command_with_env(
+            _agent_deck_args(*args),
+            cwd=cwd,
+            env=agent_deck_env(),
+            timeout_seconds=_agent_deck_list_background_refresh_timeout_seconds(),
+        )
+        if code != 0:
+            return
+        payload = _decode_agent_deck_json_output(stdout, args)
+    except Exception:
+        return
+
+    now = time.monotonic()
+    _AGENT_DECK_JSON_LIST_CACHE[cache_key] = (now, payload)
+    _AGENT_DECK_JSON_LIST_STALE_CACHE[cache_key] = (now, payload)
+
+
+def _schedule_agent_deck_json_list_refresh(
+    args: list[str],
+    cwd: str | None,
+    cache_key: tuple[tuple[str, ...], str | None],
+) -> None:
+    existing_task = _AGENT_DECK_JSON_LIST_REFRESH_TASKS.get(cache_key)
+    if existing_task is not None and not existing_task.done():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    task = loop.create_task(_refresh_agent_deck_json_list_cache(args, cwd, cache_key))
+    _AGENT_DECK_JSON_LIST_REFRESH_TASKS[cache_key] = task
+
+    def cleanup(done_task: asyncio.Task[None]) -> None:
+        if _AGENT_DECK_JSON_LIST_REFRESH_TASKS.get(cache_key) is done_task:
+            _AGENT_DECK_JSON_LIST_REFRESH_TASKS.pop(cache_key, None)
+
+    task.add_done_callback(cleanup)
 
 
 def _decode_json_output(stdout: str, args: list[str]) -> object:
@@ -623,19 +781,56 @@ async def _run_json_array_command(args: list[str], cwd: str | None = None) -> li
     return payload
 
 
-async def _run_agent_deck_json_command(args: list[str], cwd: str | None = None) -> object:
+async def _run_agent_deck_json_command(
+    args: list[str],
+    cwd: str | None = None,
+    *,
+    background_refresh: bool = True,
+) -> object:
+    cache_key: tuple[tuple[str, ...], str | None] | None = None
+    if _is_agent_deck_json_list_args(args):
+        cache_key = _agent_deck_json_list_cache_key(args, cwd)
+        cached_payload = _cached_agent_deck_json_list_payload(
+            _AGENT_DECK_JSON_LIST_CACHE,
+            cache_key,
+            ttl_seconds=_agent_deck_list_cache_ttl_seconds(),
+        )
+        if cached_payload is not None:
+            return cached_payload
+
     code, stdout, stderr = await _run_agent_deck_command(args, cwd=cwd)
     if code != 0:
+        if cache_key is not None:
+            if background_refresh:
+                _schedule_agent_deck_json_list_refresh(args, cwd, cache_key)
+            stale_payload = _cached_agent_deck_json_list_payload(
+                _AGENT_DECK_JSON_LIST_STALE_CACHE,
+                cache_key,
+                ttl_seconds=_agent_deck_list_stale_cache_ttl_seconds(),
+            )
+            if stale_payload is not None:
+                return stale_payload
         error_output = stderr.strip() or stdout.strip() or "Unknown error"
         raise AgentDeckBridgeError(error_output)
-    return _decode_agent_deck_json_output(stdout, args)
+    payload = _decode_agent_deck_json_output(stdout, args)
+    if cache_key is not None:
+        now = time.monotonic()
+        _AGENT_DECK_JSON_LIST_CACHE[cache_key] = (now, payload)
+        _AGENT_DECK_JSON_LIST_STALE_CACHE[cache_key] = (now, payload)
+    return payload
 
 
 async def _run_agent_deck_json_object_command(
     args: list[str],
     cwd: str | None = None,
+    *,
+    background_refresh: bool = True,
 ) -> dict[str, object]:
-    payload = await _run_agent_deck_json_command(args, cwd=cwd)
+    payload = await _run_agent_deck_json_command(
+        args,
+        cwd=cwd,
+        background_refresh=background_refresh,
+    )
     if not isinstance(payload, dict):
         raise AgentDeckBridgeError(
             f"Agent Deck returned an unexpected JSON shape for {' '.join(_agent_deck_args(*args))}"
@@ -646,8 +841,14 @@ async def _run_agent_deck_json_object_command(
 async def _run_agent_deck_json_array_command(
     args: list[str],
     cwd: str | None = None,
+    *,
+    background_refresh: bool = True,
 ) -> list[object]:
-    payload = await _run_agent_deck_json_command(args, cwd=cwd)
+    payload = await _run_agent_deck_json_command(
+        args,
+        cwd=cwd,
+        background_refresh=background_refresh,
+    )
     if not isinstance(payload, list):
         raise AgentDeckBridgeError(
             f"Agent Deck returned an unexpected JSON shape for {' '.join(_agent_deck_args(*args))}"
@@ -673,7 +874,10 @@ def _payload_int(payload: dict[str, object], key: str) -> int | None:
 
 async def _enforce_agent_deck_launch_admission() -> None:
     try:
-        payload = await _run_agent_deck_json_array_command(["ls", "-json"])
+        payload = await _run_agent_deck_json_array_command(
+            ["ls", "-json"],
+            background_refresh=False,
+        )
     except AgentDeckBridgeError as exc:
         if _is_agent_deck_timeout_error(exc):
             return
@@ -1605,7 +1809,12 @@ async def _wait_for_claude_session_id(
     last_payload: dict[str, object] = {}
 
     while asyncio.get_running_loop().time() < deadline:
-        payload = await session_show(agent_deck_session_id)
+        try:
+            payload = await session_show(agent_deck_session_id)
+        except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                return None, None, last_payload
+            raise
         last_payload = payload
         claude_session_id = payload.get("claude_session_id")
         if isinstance(claude_session_id, str) and claude_session_id:
@@ -1625,7 +1834,12 @@ async def _wait_for_codex_session_id(
     last_payload: dict[str, object] = {}
 
     while asyncio.get_running_loop().time() < deadline:
-        payload = await session_show(agent_deck_session_id)
+        try:
+            payload = await session_show(agent_deck_session_id)
+        except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                return None, None, last_payload
+            raise
         last_payload = payload
         codex_session_id = payload.get("codex_session_id")
         if isinstance(codex_session_id, str) and codex_session_id:
@@ -1645,7 +1859,12 @@ async def _wait_for_gemini_session_id(
     last_payload: dict[str, object] = {}
 
     while asyncio.get_running_loop().time() < deadline:
-        payload = await session_show(agent_deck_session_id)
+        try:
+            payload = await session_show(agent_deck_session_id)
+        except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                return None, last_payload
+            raise
         last_payload = payload
         gemini_session_id = payload.get("gemini_session_id")
         if isinstance(gemini_session_id, str) and gemini_session_id:
@@ -2583,7 +2802,14 @@ async def wait_for_agent_deck_turn_completion(
     jsonl_last_change_time: float | None = None
 
     while loop.time() < completion_deadline:
-        payload = await session_show(session_info.agent_deck_session_id)
+        try:
+            payload = await session_show(session_info.agent_deck_session_id)
+        except AgentDeckBridgeError as exc:
+            if _is_agent_deck_timeout_error(exc):
+                # The prompt has already been accepted by Agent Deck. Observation is
+                # allowed to degrade without failing the user's foreground turn.
+                return
+            raise
         status = str(payload.get("status") or "").strip().lower()
 
         if jsonl_path is not None and jsonl_last_size is not None:
@@ -2782,7 +3008,15 @@ async def stream_codex_session_output(
     last_activity = asyncio.get_running_loop().time()
 
     while True:
-        current_output = await get_last_output(agent_deck_session_id)
+        try:
+            current_output = await get_last_output(agent_deck_session_id)
+        except AgentDeckBridgeError as exc:
+            if not _is_agent_deck_timeout_error(exc):
+                raise
+            if wait_task.done():
+                break
+            await asyncio.sleep(CODEX_POLL_INTERVAL_SECONDS)
+            continue
         if current_output != last_output:
             delta = _extract_session_output_delta(last_output, current_output)
             sanitized_delta = _strip_codex_prompt_echo(delta)

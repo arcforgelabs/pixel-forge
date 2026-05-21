@@ -1321,7 +1321,7 @@ def _open_agent_deck_tui_terminal(
         _pf_cli.agent_deck_tui_title(),
     )
     env["PIXEL_FORGE_AGENT_DECK_TUI_TITLE"] = terminal_title
-    agent_deck_command = _pf_cli.agent_deck_command()
+    agent_deck_command = _pf_cli.agent_deck_tui_command()
     if session_id:
         agent_deck_command = [*agent_deck_command, "--select", session_id]
     command = _pf_cli._agent_deck_tui_terminal_command(
@@ -1933,6 +1933,20 @@ async def get_project_agent_deck_sessions(project_path: str):
             include_live_editor=False,
         )
     except AgentDeckBridgeError as exc:
+        if agent_provider.provider_id == "agent-deck" and _is_agent_deck_timeout_error(exc):
+            cached_targets = _cached_project_chat_targets(
+                list_project_sessions(normalized_project_path)
+            )
+            return {
+                "provider_id": agent_provider.provider_id,
+                "sessions": [
+                    serialize_agent_provider_session_target(session)
+                    for session in cached_targets
+                    if session.provider_id == "agent-deck"
+                ],
+                "provider_status": "timeout",
+                "detail": str(exc),
+            }
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     live_session_ids = {session.id for session in live_sessions}
@@ -1971,6 +1985,20 @@ async def get_project_agent_sessions(project_path: str, provider: str = "agent-d
             include_live_editor=False,
         )
     except AgentDeckBridgeError as exc:
+        if agent_provider.provider_id == "agent-deck" and _is_agent_deck_timeout_error(exc):
+            cached_targets = _cached_project_chat_targets(
+                list_project_sessions(normalized_project_path)
+            )
+            return {
+                "provider_id": agent_provider.provider_id,
+                "sessions": [
+                    serialize_agent_provider_session_target(session)
+                    for session in cached_targets
+                    if session.provider_id == "agent-deck"
+                ],
+                "provider_status": "timeout",
+                "detail": str(exc),
+            }
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if agent_provider.provider_id == "agent-deck":
@@ -2478,6 +2506,22 @@ async def get_project_chat_item_activity(
                 "workspace_path": getattr(session_record, "workspace_path", None)
                 or getattr(thread_record, "workspace_path", normalized_project_path),
                 "binding_state": "detached",
+                "output": "",
+            }
+        if _is_agent_deck_timeout_error(exc):
+            return {
+                "thread_id": normalized_thread_id,
+                "provider_id": resolved_provider_id,
+                "provider_session_id": resolved_provider_session_id,
+                "provider_session_title": getattr(session_record, "provider_session_title", None),
+                "provider_agent_id": getattr(session_record, "provider_agent_id", None),
+                "agent_deck_session_id": resolved_agent_deck_session_id,
+                "agent_deck_session_title": getattr(session_record, "agent_deck_session_title", None),
+                "agent_deck_tool": getattr(session_record, "agent_deck_tool", None),
+                "agent_deck_session_status": "resolving",
+                "workspace_path": getattr(session_record, "workspace_path", None)
+                or getattr(thread_record, "workspace_path", normalized_project_path),
+                "binding_state": "attached",
                 "output": "",
             }
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -5457,9 +5501,14 @@ async def live_editor_chat(websocket: WebSocket):
                         if not stream_stats or not stream_stats.streamed_text:
                             fallback_output = getattr(stream_stats, "last_output", "")
                             if not fallback_output:
-                                fallback_output = await get_last_output(
-                                    session_info.agent_deck_session_id
-                                )
+                                try:
+                                    fallback_output = await get_last_output(
+                                        session_info.agent_deck_session_id
+                                    )
+                                except AgentDeckBridgeError as exc:
+                                    if not _is_agent_deck_timeout_error(exc):
+                                        raise
+                                    fallback_output = ""
                             if fallback_output:
                                 await websocket.send_json(
                                     {
@@ -5471,12 +5520,17 @@ async def live_editor_chat(websocket: WebSocket):
                                 assistant_output = fallback_output
 
                 if agent_provider.provider_id == "agent-deck":
-                    refreshed_session = await agent_provider.ensure_live_session(
-                        normalized_project_path,
-                        thread,
-                        agent_type=agent_type,
-                        workspace_mode=workspace_mode,
-                    )
+                    try:
+                        refreshed_session = await agent_provider.ensure_live_session(
+                            normalized_project_path,
+                            thread,
+                            agent_type=agent_type,
+                            workspace_mode=workspace_mode,
+                        )
+                    except AgentDeckBridgeError as exc:
+                        if not _is_agent_deck_timeout_error(exc):
+                            raise
+                        refreshed_session = session_info
                 else:
                     refreshed_session = session_info
                 if agent_provider.provider_id == "agent-deck":

@@ -131,6 +131,10 @@ def agent_deck_tui_wm_class() -> str:
     )
 
 
+def agent_deck_tui_command() -> list[str]:
+    return agent_deck_command(require_launch_yolo=True) or agent_deck_command()
+
+
 def port() -> str:
     return os.environ.get("PIXEL_FORGE_API_PORT") or os.environ.get("PIXEL_FORGE_PORT", "7001")
 
@@ -1019,7 +1023,7 @@ def _command_agent_deck_tui_list_mirrors(_args: argparse.Namespace) -> int:
 
 def _command_agent_deck_tui_run(args: argparse.Namespace) -> int:
     mirror_slug = getattr(args, "mirror", None)
-    _exec(agent_deck_command(), env=_agent_deck_tui_exec_env(mirror_slug=mirror_slug))
+    _exec(agent_deck_tui_command(), env=_agent_deck_tui_exec_env(mirror_slug=mirror_slug))
 
 
 def _command_agent_deck_tui_open(args: argparse.Namespace) -> int:
@@ -1029,7 +1033,7 @@ def _command_agent_deck_tui_open(args: argparse.Namespace) -> int:
         short_slug = mirror_slug.split("-")[-1]
         title = f"{title} · mirror {short_slug}" if short_slug else title
     command = _agent_deck_tui_terminal_command(
-        agent_deck_command(),
+        agent_deck_tui_command(),
         title,
         agent_deck_tui_wm_class(),
     )

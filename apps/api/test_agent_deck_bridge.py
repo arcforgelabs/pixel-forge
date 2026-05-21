@@ -812,7 +812,19 @@ class AgentDeckBridgePromptSendCommandTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 agent_deck_bridge._agent_deck_command_timeout_seconds(["ls", "-json"]),
-                agent_deck_bridge.AGENT_DECK_COMMAND_TIMEOUT_SECONDS,
+                agent_deck_bridge.AGENT_DECK_LIST_COMMAND_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "show", "deck-a", "-json"]
+                ),
+                agent_deck_bridge.AGENT_DECK_SESSION_SHOW_COMMAND_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "output", "deck-a", "-q"]
+                ),
+                agent_deck_bridge.AGENT_DECK_SESSION_OUTPUT_COMMAND_TIMEOUT_SECONDS,
             )
 
     def test_session_send_timeout_can_be_overridden_separately(self) -> None:
@@ -832,7 +844,35 @@ class AgentDeckBridgePromptSendCommandTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 agent_deck_bridge._agent_deck_command_timeout_seconds(["ls", "-json"]),
-                3.0,
+                agent_deck_bridge.AGENT_DECK_LIST_COMMAND_TIMEOUT_SECONDS,
+            )
+
+    def test_session_inventory_timeout_can_be_overridden_separately(self) -> None:
+        with patch.dict(
+            agent_deck_bridge.os.environ,
+            {
+                "PIXEL_FORGE_AGENT_DECK_LIST_TIMEOUT_SECONDS": "21",
+                "PIXEL_FORGE_AGENT_DECK_SHOW_TIMEOUT_SECONDS": "22",
+                "PIXEL_FORGE_AGENT_DECK_OUTPUT_TIMEOUT_SECONDS": "23",
+                "PIXEL_FORGE_AGENT_DECK_COMMAND_TIMEOUT_SECONDS": "3",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(["ls", "-json"]),
+                21.0,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "show", "deck-a", "-json"]
+                ),
+                22.0,
+            )
+            self.assertEqual(
+                agent_deck_bridge._agent_deck_command_timeout_seconds(
+                    ["session", "output", "deck-a", "-q"]
+                ),
+                23.0,
             )
 
     async def test_send_agent_deck_prompt_reliably_waits_for_ready_without_cli_wait_flag(self) -> None:
@@ -971,6 +1011,9 @@ class AgentDeckBridgePromptSendTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        agent_deck_bridge._invalidate_agent_deck_json_list_cache()
+
     async def test_run_command_times_out_hung_processes(self) -> None:
         code, _stdout, stderr = await agent_deck_bridge._run_command(
             [
@@ -993,6 +1036,56 @@ class AgentDeckBridgeSessionListingTest(unittest.IsolatedAsyncioTestCase):
             sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
 
         self.assertEqual(sessions, [])
+
+    async def test_list_project_sessions_returns_stale_cache_when_foreground_inventory_times_out(self) -> None:
+        payload = json.dumps(
+            [
+                {
+                    "id": "deck-a",
+                    "title": "Chat A",
+                    "path": "/tmp/project",
+                    "tool": "codex",
+                    "status": "waiting",
+                }
+            ]
+        )
+
+        with patch.object(
+            agent_deck_bridge,
+            "_run_agent_deck_command",
+            AsyncMock(return_value=(0, payload, "")),
+        ):
+            sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual([session.id for session in sessions], ["deck-a"])
+        agent_deck_bridge._AGENT_DECK_JSON_LIST_CACHE.clear()
+
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "_run_agent_deck_command",
+                AsyncMock(return_value=(124, "", "agent-deck ls -json timed out after 2.5s")),
+            ),
+            patch.object(agent_deck_bridge, "_schedule_agent_deck_json_list_refresh") as schedule_refresh,
+        ):
+            stale_sessions = await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        self.assertEqual([session.id for session in stale_sessions], ["deck-a"])
+        schedule_refresh.assert_called_once()
+
+    async def test_list_project_sessions_schedules_background_refresh_when_no_stale_cache_exists(self) -> None:
+        with (
+            patch.object(
+                agent_deck_bridge,
+                "_run_agent_deck_command",
+                AsyncMock(return_value=(124, "", "agent-deck ls -json timed out after 2.5s")),
+            ),
+            patch.object(agent_deck_bridge, "_schedule_agent_deck_json_list_refresh") as schedule_refresh,
+        ):
+            with self.assertRaises(agent_deck_bridge.AgentDeckBridgeError):
+                await agent_deck_bridge.list_project_agent_deck_sessions("/tmp/project")
+
+        schedule_refresh.assert_called_once()
 
     async def test_launch_admission_parks_oldest_idle_session_before_starting_new_one(self) -> None:
         async def run_command(args, cwd=None):
@@ -1635,6 +1728,27 @@ class AgentDeckBridgeCodexStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(stats.streamed_text)
         self.assertEqual(stats.last_output, "")
 
+    async def test_stream_codex_session_output_degrades_when_output_probe_times_out(self) -> None:
+        websocket = AsyncMock()
+        wait_task = asyncio.get_running_loop().create_future()
+        wait_task.set_result(None)
+
+        with patch.object(
+            agent_deck_bridge,
+            "get_last_output",
+            AsyncMock(side_effect=agent_deck_bridge.AgentDeckBridgeError("agent-deck session output timed out after 2.5s")),
+        ):
+            stats = await agent_deck_bridge.stream_codex_session_output(
+                websocket,
+                agent_deck_session_id="deck-a",
+                baseline_output="",
+                prompt="Fix the bug",
+                wait_task=wait_task,
+            )
+
+        websocket.send_json.assert_not_awaited()
+        self.assertFalse(stats.streamed_text)
+
 
 class AgentDeckBridgeTurnCompletionTest(unittest.IsolatedAsyncioTestCase):
     def _session_info_with_jsonl(
@@ -1732,6 +1846,21 @@ class AgentDeckBridgeTurnCompletionTest(unittest.IsolatedAsyncioTestCase):
                     completion_timeout_seconds=1.0,
                     poll_interval_seconds=0.01,
                 )
+
+    async def test_turn_completion_degrades_when_session_show_times_out(self) -> None:
+        session_info = self._session_info_with_jsonl(Path("/tmp/missing.jsonl"))
+
+        with patch.object(
+            agent_deck_bridge,
+            "session_show",
+            AsyncMock(side_effect=agent_deck_bridge.AgentDeckBridgeError("agent-deck session show timed out after 2.5s")),
+        ):
+            await agent_deck_bridge.wait_for_agent_deck_turn_completion(
+                session_info,
+                startup_timeout_seconds=0.05,
+                completion_timeout_seconds=1.0,
+                poll_interval_seconds=0.01,
+            )
 
 
 if __name__ == "__main__":
