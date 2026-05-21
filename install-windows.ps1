@@ -113,10 +113,11 @@ function Copy-DirectoryClean {
 function New-Launcher {
     param(
         [string]$Path,
-        [string]$Content
+        [string]$Content,
+        [string]$Encoding = "UTF8"
     )
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
-    Set-Content -Path $Path -Value $Content -Encoding UTF8
+    Set-Content -Path $Path -Value $Content -Encoding $Encoding
 }
 
 function New-Shortcut {
@@ -319,7 +320,7 @@ New-Launcher -Path $AppLauncher -Content @"
 New-Launcher -Path $HiddenAppLauncher -Content @"
 Set shell = CreateObject("WScript.Shell")
 shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$ShellLauncher""", 0, False
-"@
+"@ -Encoding ASCII
 
 if (-not $SkipShortcuts) {
     $ProgramsDir = if ($env:PIXEL_FORGE_START_MENU_DIR) { $env:PIXEL_FORGE_START_MENU_DIR } else { [Environment]::GetFolderPath("Programs") }

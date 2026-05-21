@@ -279,6 +279,15 @@ try {
   const shellLauncher = await fs.readFile(path.join(installRoot, 'bin', 'pixel-forge-shell.ps1'), 'utf-8')
   assert(shellLauncher.includes('electron.exe'), 'Pixel Forge shell launcher must start Electron.')
   assert(!shellLauncher.includes('Start-Process `$url'), 'Pixel Forge shell launcher must not open the raw web URL.')
+  const hiddenLauncher = await fs.readFile(path.join(installRoot, 'bin', 'pixel-forge.vbs'))
+  assert(
+    hiddenLauncher[0] !== 0xef || hiddenLauncher[1] !== 0xbb || hiddenLauncher[2] !== 0xbf,
+    'Pixel Forge hidden VBS launcher must not include a UTF-8 BOM.',
+  )
+  assert(
+    hiddenLauncher.toString('ascii').startsWith('Set shell = CreateObject'),
+    'Pixel Forge hidden VBS launcher must start with valid VBScript text.',
+  )
   const shortcutProbe = await runProcess('powershell.exe', [
     '-NoProfile',
     '-Command',
