@@ -42,6 +42,43 @@ function Require-Command {
     }
 }
 
+$script:UseCorepackPnpm = $false
+
+function Ensure-Pnpm {
+    if (Get-Command "pnpm" -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    Require-Command "corepack" "Install Node.js 22 LTS from https://nodejs.org/."
+    Warn "pnpm is not on PATH; using corepack pnpm for this install."
+    $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"
+    & corepack pnpm --version | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        & corepack enable pnpm
+        & corepack pnpm --version | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "pnpm is required and corepack could not prepare it. Run: corepack enable pnpm"
+    }
+    $script:UseCorepackPnpm = $true
+}
+
+function Run-Pnpm {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+    if ($script:UseCorepackPnpm) {
+        & corepack pnpm @Arguments
+    }
+    else {
+        & pnpm @Arguments
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "pnpm $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    }
+}
+
 function Resolve-SourceCheckout {
     $resolvedSource = [Environment]::ExpandEnvironmentVariables($SourceDir)
     if (Test-Path (Join-Path $resolvedSource ".git")) {
@@ -113,7 +150,7 @@ if (-not $IsWindows -and $PSVersionTable.PSEdition -eq "Core") {
 
 Info "Pixel Forge Windows installer groundwork"
 Require-Command "node" "Install Node.js 22 LTS from https://nodejs.org/."
-Require-Command "pnpm" "Install pnpm with: corepack enable pnpm"
+Ensure-Pnpm
 Require-Command "python" "Install Python 3.12 from https://www.python.org/downloads/windows/."
 Require-Command "git" "Install Git for Windows from https://git-scm.com/download/win."
 
@@ -143,8 +180,8 @@ if (-not $SkipBuild) {
     Push-Location $Source
     try {
         $env:PUPPETEER_SKIP_DOWNLOAD = "1"
-        pnpm install --frozen-lockfile --ignore-scripts
-        pnpm --dir apps/web build
+        Run-Pnpm install --frozen-lockfile --ignore-scripts
+        Run-Pnpm --dir apps/web build
     }
     finally {
         Pop-Location
