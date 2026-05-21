@@ -625,9 +625,9 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
                 "Codex · Improve docs",
                 "/D",
                 "C:\\Work\\Project",
-                "C:\\Tools\\codex.cmd",
-                "resume",
-                "codex-thread-a",
+                "cmd.exe",
+                "/k",
+                "C:\\Tools\\codex.cmd resume codex-thread-a",
             ],
         )
         self.assertEqual(kwargs["cwd"], "C:\\Work\\Project")

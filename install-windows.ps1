@@ -235,6 +235,9 @@ $WebLauncher = Join-Path $BinDir "pixel-forge-open-web.ps1"
 
 New-Launcher -Path $ApiLauncher -Content @"
 `$ErrorActionPreference = "Stop"
+`$effectiveApiPort = if (`$env:PIXEL_FORGE_API_PORT) { `$env:PIXEL_FORGE_API_PORT } else { "$ApiPort" }
+`$effectiveUrlHost = if (`$env:PIXEL_FORGE_URL_HOST) { `$env:PIXEL_FORGE_URL_HOST } else { "$UrlHost" }
+`$launchSessionOwner = if (`$env:PIXEL_FORGE_LAUNCH_SESSION_OWNER) { `$env:PIXEL_FORGE_LAUNCH_SESSION_OWNER } else { "`$env:USERDOMAIN\`$env:USERNAME" }
 foreach (`$candidate in @((Join-Path `$env:APPDATA "npm"), (Join-Path `$env:LOCALAPPDATA "Microsoft\WindowsApps"))) {
     if (`$candidate -and (Test-Path `$candidate) -and (`$env:PATH -notlike "*`$candidate*")) {
         `$env:PATH = "`$candidate;`$env:PATH"
@@ -245,9 +248,10 @@ foreach (`$candidate in @((Join-Path `$env:APPDATA "npm"), (Join-Path `$env:LOCA
 `$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
 `$env:PIXEL_FORGE_RUNTIME_SOURCE_ROOT = "$RuntimeDir"
 `$env:PIXEL_FORGE_FRONTEND_DIST = "$FrontendDir"
-`$env:PIXEL_FORGE_API_PORT = "$ApiPort"
-`$env:PIXEL_FORGE_PORT = "$ApiPort"
-`$env:PIXEL_FORGE_URL_HOST = "$UrlHost"
+`$env:PIXEL_FORGE_API_PORT = `$effectiveApiPort
+`$env:PIXEL_FORGE_PORT = `$effectiveApiPort
+`$env:PIXEL_FORGE_URL_HOST = `$effectiveUrlHost
+`$env:PIXEL_FORGE_LAUNCH_SESSION_OWNER = `$launchSessionOwner
 `$env:PIXEL_FORGE_WITH_AGENT_DECK = "0"
 `$env:PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID = "codex-cli"
 Set-Location "$ApiDir"
@@ -261,33 +265,100 @@ Start-Process `$url
 
 New-Launcher -Path $ShellLauncher -Content @"
 `$ErrorActionPreference = "Stop"
-`$url = "http://${UrlHost}:${ApiPort}/"
-`$runtimeInfoUrl = `$url + "api/runtime-info"
+`$baseApiPort = "$ApiPort"
+`$effectiveApiPort = `$baseApiPort
+`$effectiveUrlHost = "$UrlHost"
+`$url = `$null
+`$runtimeInfoUrl = `$null
+`$launchSessionOwner = "`$env:USERDOMAIN\`$env:USERNAME"
+
+function Update-PixelForgeUrls {
+    `$script:url = "http://`$(`$effectiveUrlHost):`$(`$effectiveApiPort)/"
+    `$script:runtimeInfoUrl = `$script:url + "api/runtime-info"
+}
+
+function Set-PixelForgeRuntimeEnv {
+    `$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
+    `$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
+    `$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
+    `$env:PIXEL_FORGE_RUNTIME_SOURCE_ROOT = "$RuntimeDir"
+    `$env:PIXEL_FORGE_FRONTEND_DIST = "$FrontendDir"
+    `$env:PIXEL_FORGE_API_PORT = `$effectiveApiPort
+    `$env:PIXEL_FORGE_PORT = `$effectiveApiPort
+    `$env:PIXEL_FORGE_URL_HOST = `$effectiveUrlHost
+    `$env:PIXEL_FORGE_SHELL_URL = `$url
+    `$env:PIXEL_FORGE_WITH_AGENT_DECK = "0"
+    `$env:PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID = "codex-cli"
+    `$env:PIXEL_FORGE_LAUNCH_SESSION_OWNER = `$launchSessionOwner
+}
+
+function Get-FreeTcpPort {
+    `$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    `$listener.Start()
+    try {
+        return [int]`$listener.LocalEndpoint.Port
+    }
+    finally {
+        `$listener.Stop()
+    }
+}
+
+function Test-PortListening {
+    param([int]`$Port)
+    `$client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        `$result = `$client.BeginConnect("127.0.0.1", `$Port, `$null, `$null)
+        if (-not `$result.AsyncWaitHandle.WaitOne(200)) {
+            return `$false
+        }
+        `$client.EndConnect(`$result)
+        return `$true
+    }
+    catch {
+        return `$false
+    }
+    finally {
+        `$client.Close()
+    }
+}
+
+function Get-PixelForgeRuntimeInfo {
+    try {
+        return Invoke-RestMethod -UseBasicParsing -TimeoutSec 1 -Uri `$runtimeInfoUrl
+    }
+    catch {
+        return `$null
+    }
+}
+
+function Test-PixelForgeRuntimeInfoMatches {
+    param([object]`$Info)
+    if (-not `$Info) {
+        return `$false
+    }
+    if (-not `$Info.launchSessionOwner) {
+        return `$false
+    }
+    return [string]`$Info.launchSessionOwner -eq `$launchSessionOwner
+}
+
+Update-PixelForgeUrls
 foreach (`$candidate in @((Join-Path `$env:APPDATA "npm"), (Join-Path `$env:LOCALAPPDATA "Microsoft\WindowsApps"))) {
     if (`$candidate -and (Test-Path `$candidate) -and (`$env:PATH -notlike "*`$candidate*")) {
         `$env:PATH = "`$candidate;`$env:PATH"
     }
 }
-`$env:PIXEL_FORGE_INSTALL_DIR = "$RuntimeDir"
-`$env:PIXEL_FORGE_SHARED_STATE_DIR = "$StateDir"
-`$env:PIXEL_FORGE_RUNTIME_DIR = "$RuntimeDir"
-`$env:PIXEL_FORGE_RUNTIME_SOURCE_ROOT = "$RuntimeDir"
-`$env:PIXEL_FORGE_FRONTEND_DIST = "$FrontendDir"
-`$env:PIXEL_FORGE_API_PORT = "$ApiPort"
-`$env:PIXEL_FORGE_PORT = "$ApiPort"
-`$env:PIXEL_FORGE_URL_HOST = "$UrlHost"
-`$env:PIXEL_FORGE_SHELL_URL = `$url
-`$env:PIXEL_FORGE_WITH_AGENT_DECK = "0"
-`$env:PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID = "codex-cli"
+Set-PixelForgeRuntimeEnv
 
 function Test-PixelForgeReady {
-    try {
-        `$response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 -Uri `$runtimeInfoUrl
-        return `$response.StatusCode -ge 200 -and `$response.StatusCode -lt 300
-    }
-    catch {
-        return `$false
-    }
+    return Test-PixelForgeRuntimeInfoMatches (Get-PixelForgeRuntimeInfo)
+}
+
+`$initialInfo = Get-PixelForgeRuntimeInfo
+if ((`$initialInfo -and -not (Test-PixelForgeRuntimeInfoMatches `$initialInfo)) -or ((-not `$initialInfo) -and (Test-PortListening ([int]`$effectiveApiPort)))) {
+    `$effectiveApiPort = [string](Get-FreeTcpPort)
+    Update-PixelForgeUrls
+    Set-PixelForgeRuntimeEnv
 }
 
 if (-not (Test-PixelForgeReady)) {

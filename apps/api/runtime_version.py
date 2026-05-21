@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -139,4 +140,8 @@ def read_runtime_info() -> dict[str, str | bool | None]:
     runtime_info = read_runtime_info_for_root(root)
     runtime_info["controllerVersion"] = read_runtime_version()
     runtime_info["runtimeKind"] = runtime_kind()
+    runtime_info["processPid"] = str(os.getpid())
+    runtime_info["launchSessionOwner"] = _normalize_text(
+        os.environ.get("PIXEL_FORGE_LAUNCH_SESSION_OWNER")
+    )
     return runtime_info

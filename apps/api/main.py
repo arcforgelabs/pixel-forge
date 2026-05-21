@@ -1383,7 +1383,8 @@ def _terminal_command(
     if not command:
         return None
     if os.name == "nt":
-        return ["cmd.exe", "/c", "start", title, "/D", cwd, *command]
+        shell_command = subprocess.list2cmdline(command)
+        return ["cmd.exe", "/c", "start", title, "/D", cwd, "cmd.exe", "/k", shell_command]
     return _pf_cli._agent_deck_tui_terminal_command(command, title, wm_class)
 
 

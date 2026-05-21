@@ -397,8 +397,9 @@ try {
   assert(Array.isArray(openTui.command), `Expected Open TUI command: ${JSON.stringify(openTui)}`)
   assert(openTui.command[0]?.toLowerCase() === 'cmd.exe', `Expected cmd.exe launcher: ${JSON.stringify(openTui.command)}`)
   assert(openTui.command.includes('start'), `Expected Windows start launcher: ${JSON.stringify(openTui.command)}`)
-  assert(openTui.command.at(-2) === 'resume', `Expected codex resume command: ${JSON.stringify(openTui.command)}`)
-  assert(openTui.command.at(-1) === providerSessionId, `Expected provider session in command: ${JSON.stringify(openTui.command)}`)
+  assert(openTui.command.includes('/k'), `Expected Windows terminal shell to stay open: ${JSON.stringify(openTui.command)}`)
+  assert(openTui.command.at(-1).includes('resume'), `Expected codex resume command: ${JSON.stringify(openTui.command)}`)
+  assert(openTui.command.at(-1).includes(providerSessionId), `Expected provider session in command: ${JSON.stringify(openTui.command)}`)
 
   console.log(`[smoke:windows-codex-provider] codex-cli default and Open TUI command proved on ${baseUrl}${liveTurn ? ' with live turn' : ''}`)
 } catch (error) {
