@@ -1,6 +1,6 @@
 # Cursor CLI Provider Integration Plan
 
-Status: implemented (2026-05-24)
+Status: implemented in source, installed-runtime smoke pending
 Created: 2026-05-24
 Owner: Pixel Forge
 
@@ -12,8 +12,8 @@ direct-provider boundary so the operator can choose Cursor from Settings and
 send Live Editor turns directly to `cursor-agent` without Agent Deck.
 
 The goal is not to embed the Cursor IDE. The goal is a native Pixel Forge
-provider that launches and resumes Cursor CLI chats, streams CLI events back
-into Pixel Forge, and preserves provider-neutral chat/session metadata.
+provider that launches and resumes Cursor CLI chats, parses CLI events for
+Pixel Forge-owned turns, and preserves provider-neutral chat/session metadata.
 
 ## Current Cursor CLI Facts
 
@@ -198,8 +198,7 @@ Frontend:
 
 Docs:
 
-- Update `docs/agent-runtime-map.md` after the provider is implemented and
-  proven.
+- Update `docs/agent-runtime-map.md` after the provider is implemented.
 - Update `INTENT.md` only after a real installed-runtime Cursor turn passes;
   until then this file remains the planning source.
 
@@ -250,8 +249,9 @@ Installed smoke:
 6. Send a selected-preview request using `cursor-cli`.
 7. Verify request pack metadata contains `provider_id=cursor-cli`,
    `provider_session_id=<cursor chat id>`, and no Agent Deck session id.
-8. Verify assistant chunks stream to the Live Editor and the terminal event
-   closes with a completed provider turn.
+8. Verify assistant output appears in the Live Editor and the terminal event
+   closes with a completed provider turn. Direct-provider live partial
+   streaming is a follow-up provider-contract improvement.
 9. Use Open TUI and verify it resumes the same Cursor CLI chat.
 
 ## Open Questions

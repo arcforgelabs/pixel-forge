@@ -360,6 +360,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(initial.claude_default_thinking, "xhigh")
         self.assertIsNone(initial.codex_default_model)
         self.assertIsNone(initial.codex_default_thinking)
+        self.assertIsNone(initial.cursor_default_model)
         self.assertIsNone(initial.pi_default_model)
         self.assertIsNone(initial.pi_default_thinking)
 
@@ -377,6 +378,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
             claude_default_thinking="high",
             codex_default_model="gpt-5.4",
             codex_default_thinking="xhigh",
+            cursor_default_model="composer-2.5",
             pi_default_model="xai/grok-code-fast-1",
             pi_default_thinking="high",
         )
@@ -392,6 +394,7 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
         self.assertEqual(saved.claude_default_thinking, "high")
         self.assertEqual(saved.codex_default_model, "gpt-5.4")
         self.assertEqual(saved.codex_default_thinking, "xhigh")
+        self.assertEqual(saved.cursor_default_model, "composer-2.5")
         self.assertEqual(saved.pi_default_model, "xai/grok-code-fast-1")
         self.assertEqual(saved.pi_default_thinking, "high")
 
@@ -427,6 +430,23 @@ class ProjectStoreSessionStateTest(unittest.TestCase):
 
         self.assertIsNone(saved.codex_default_model)
         self.assertEqual(saved.codex_default_thinking, "high")
+
+    def test_cursor_profile_defaults_round_trip_supported_models(self) -> None:
+        saved = project_store.upsert_profile_state(
+            default_agent_provider_id="cursor-cli",
+            default_agent_type="cursor",
+            cursor_default_model="composer-2.5-fast",
+        )
+
+        self.assertEqual(saved.default_agent_provider_id, "cursor-cli")
+        self.assertEqual(saved.default_agent_type, "cursor")
+        self.assertEqual(saved.cursor_default_model, "composer-2.5-fast")
+
+        saved = project_store.upsert_profile_state(
+            cursor_default_model="not-a-cursor-model",
+        )
+
+        self.assertIsNone(saved.cursor_default_model)
 
     def test_pi_profile_defaults_accept_xai_and_ollama_models(self) -> None:
         saved = project_store.upsert_profile_state(

@@ -711,6 +711,7 @@ class ProfileStateRequest(BaseModel):
     claude_default_thinking: str | None = None
     codex_default_model: str | None = None
     codex_default_thinking: str | None = None
+    cursor_default_model: str | None = None
     gemini_default_model: str | None = None
     pi_default_model: str | None = None
     pi_default_thinking: str | None = None
@@ -1084,6 +1085,7 @@ def serialize_profile_state(profile_state) -> dict[str, object]:
         "claude_default_thinking": profile_state.claude_default_thinking,
         "codex_default_model": profile_state.codex_default_model,
         "codex_default_thinking": profile_state.codex_default_thinking,
+        "cursor_default_model": profile_state.cursor_default_model,
         "gemini_default_model": profile_state.gemini_default_model,
         "pi_default_model": profile_state.pi_default_model,
         "pi_default_thinking": profile_state.pi_default_thinking,
@@ -1731,6 +1733,7 @@ async def save_default_profile_state(request: ProfileStateRequest):
             claude_default_thinking=request.claude_default_thinking,
             codex_default_model=request.codex_default_model,
             codex_default_thinking=request.codex_default_thinking,
+            cursor_default_model=request.cursor_default_model,
             gemini_default_model=request.gemini_default_model,
             pi_default_model=request.pi_default_model,
             pi_default_thinking=request.pi_default_thinking,

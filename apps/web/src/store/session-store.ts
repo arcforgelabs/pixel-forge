@@ -402,6 +402,7 @@ interface ApiProfileState {
   claude_default_thinking: string | null;
   codex_default_model: string | null;
   codex_default_thinking: string | null;
+  cursor_default_model: string | null;
   gemini_default_model: string | null;
   pi_default_model: string | null;
   pi_default_thinking: string | null;
@@ -582,6 +583,7 @@ function normalizeProfileState(profileState: ApiProfileState): ProfileStateRecor
     defaultAgentModels: {
       claude: profileState.claude_default_model ?? null,
       codex: profileState.codex_default_model ?? null,
+      cursor: profileState.cursor_default_model ?? null,
       gemini: profileState.gemini_default_model ?? null,
       pi: profileState.pi_default_model ?? null,
     },
@@ -1171,6 +1173,7 @@ function normalizeAgentProfileDefaults(
   return {
     claude: value?.claude?.trim() || null,
     codex: value?.codex?.trim() || null,
+    cursor: value?.cursor?.trim() || null,
     gemini: value?.gemini?.trim() || null,
     pi: value?.pi?.trim() || null,
     openclaw: value?.openclaw?.trim() || null,
@@ -1319,6 +1322,7 @@ async function upsertProfileStateToApi(options: {
       claude_default_thinking: options.defaultAgentThinking.claude,
       codex_default_model: options.defaultAgentModels.codex,
       codex_default_thinking: options.defaultAgentThinking.codex,
+      cursor_default_model: options.defaultAgentModels.cursor,
       gemini_default_model: options.defaultAgentModels.gemini,
       pi_default_model: options.defaultAgentModels.pi,
       pi_default_thinking: options.defaultAgentThinking.pi,
@@ -1566,8 +1570,8 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   // Agent selection
   defaultAgentProviderId: "agent-deck",
   defaultAgentType: "codex",
-  defaultAgentModels: { claude: "claude-opus-4-7", codex: null, gemini: null, pi: null },
-  defaultAgentThinking: { claude: "xhigh", codex: null, gemini: null, pi: null },
+  defaultAgentModels: { claude: "claude-opus-4-7", codex: null, cursor: null, gemini: null, pi: null },
+  defaultAgentThinking: { claude: "xhigh", codex: null, cursor: null, gemini: null, pi: null },
   setDefaultAgentProviderId: (providerId: string) => {
     const normalizedProviderId = normalizeAgentProviderId(providerId);
     set({ defaultAgentProviderId: normalizedProviderId });

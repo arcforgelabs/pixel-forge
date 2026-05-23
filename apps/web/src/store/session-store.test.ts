@@ -57,6 +57,7 @@ describe("session-store thread switching", () => {
               claude_default_thinking: body.claude_default_thinking ?? null,
               codex_default_model: body.codex_default_model ?? null,
               codex_default_thinking: body.codex_default_thinking ?? null,
+              cursor_default_model: body.cursor_default_model ?? null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -183,6 +184,7 @@ describe("session-store thread switching", () => {
               claude_default_thinking: null,
               codex_default_model: null,
               codex_default_thinking: null,
+              cursor_default_model: null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -287,6 +289,34 @@ describe("session-store thread switching", () => {
     const body = JSON.parse(String(profilePost?.[1]?.body || "{}"));
 
     expect(body.default_agent_provider_id).toBe("cursor-cli");
+  });
+
+  it("persists the Cursor default model", async () => {
+    const fetchMock = vi.mocked(fetch);
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      liveEditorSession: null,
+      profileLoaded: true,
+      profileState: null,
+    });
+
+    useSessionStore.getState().setDefaultAgentModel("cursor", "composer-2.5");
+
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => (
+          String(url).includes("/api/profile-state")
+          && init?.method === "POST"
+        ))
+      ).toBe(true);
+    });
+
+    const profilePost = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).includes("/api/profile-state") && init?.method === "POST")
+      .at(-1);
+    const body = JSON.parse(String(profilePost?.[1]?.body || "{}"));
+
+    expect(body.cursor_default_model).toBe("composer-2.5");
   });
 
   it("switches the active live editor lane to the chosen project thread", () => {
@@ -586,6 +616,7 @@ describe("session-store thread switching", () => {
               claude_default_thinking: body.claude_default_thinking ?? null,
               codex_default_model: body.codex_default_model ?? null,
               codex_default_thinking: body.codex_default_thinking ?? null,
+              cursor_default_model: body.cursor_default_model ?? null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -782,6 +813,7 @@ describe("session-store thread switching", () => {
               claude_default_thinking: body.claude_default_thinking ?? null,
               codex_default_model: body.codex_default_model ?? null,
               codex_default_thinking: body.codex_default_thinking ?? null,
+              cursor_default_model: body.cursor_default_model ?? null,
               updated_at: "2026-03-20T00:00:00Z",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
