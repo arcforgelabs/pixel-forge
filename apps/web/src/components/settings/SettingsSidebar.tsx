@@ -363,6 +363,7 @@ export function resolveReleaseDisplayText({
 const DIRECT_AGENT_PROVIDER_BY_AGENT: Record<string, string> = {
   claude: "claude-cli",
   codex: "codex-cli",
+  cursor: "cursor-cli",
   gemini: "gemini-cli",
   pi: "pi-cli",
   openclaw: "openclaw-cli",
@@ -382,6 +383,12 @@ const AGENT_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = 
     { value: "gpt-5.4", label: "GPT 5.4" },
     { value: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
     { value: "gpt-5.4-nano", label: "GPT 5.4 Nano" },
+  ],
+  cursor: [
+    { value: "composer-2.5-fast", label: "Composer 2.5 Fast" },
+    { value: "composer-2.5", label: "Composer 2.5" },
+    { value: "composer-2-fast", label: "Composer 2 Fast" },
+    { value: "composer-2", label: "Composer 2" },
   ],
   gemini: [
     { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
@@ -530,7 +537,7 @@ export function resolveChatTuiActionState(item: {
     };
   }
 
-  if (providerId && !["agent-deck", "codex-cli"].includes(providerId)) {
+  if (providerId && !["agent-deck", "codex-cli", "cursor-cli"].includes(providerId)) {
     return {
       canOpen: false,
       disabledReason: "Open TUI is not available for this provider yet.",
@@ -3133,6 +3140,7 @@ export function SettingsSidebar({ settings, setSettings, onOpenWorkspacePicker, 
                                   <SelectContent>
                                     <SelectItem value="claude">Claude Code</SelectItem>
                                     <SelectItem value="codex">Codex</SelectItem>
+                                    <SelectItem value="cursor">Cursor</SelectItem>
                                     <SelectItem value="gemini">Gemini</SelectItem>
                                     <SelectItem value="pi">Pi</SelectItem>
                                     <SelectItem value="openclaw">OpenClaw</SelectItem>

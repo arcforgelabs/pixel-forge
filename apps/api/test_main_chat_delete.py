@@ -659,6 +659,37 @@ class ChatItemOpenTuiRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["command"][-2:], ["resume", "codex-thread-a"])
         popen.assert_not_called()
 
+    def test_open_cursor_tui_terminal_supports_dry_run_for_smokes(self) -> None:
+        provider = _FakeProvider("cursor-cli")
+        provider._status = AgentProviderStatus(
+            id="cursor-cli",
+            display_name="Cursor CLI",
+            enabled=True,
+            available=True,
+            reason=None,
+            command=["cursor-agent"],
+            capabilities=ProviderCapabilitySet(open_tui=True),
+        )
+        with (
+            patch.object(main, "_agent_provider_or_error", Mock(return_value=provider)),
+            patch.dict(main.os.environ, {"PIXEL_FORGE_TUI_OPEN_DRY_RUN": "1"}, clear=False),
+            patch.object(main.subprocess, "Popen", Mock()) as popen,
+        ):
+            payload = main._open_cursor_cli_tui_terminal(
+                session_id="7bf5a15b-1d89-44a1-84b0-d8269656fa9c",
+                workspace_path="/tmp/project",
+                title="Cursor · Improve docs",
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["provider_id"], "cursor-cli")
+        self.assertEqual(
+            payload["command"][-2:],
+            ["--resume", "7bf5a15b-1d89-44a1-84b0-d8269656fa9c"],
+        )
+        popen.assert_not_called()
+
     async def test_open_detached_agent_deck_chat_tui_reports_not_bound(self) -> None:
         with (
             patch.object(

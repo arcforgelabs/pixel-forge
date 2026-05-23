@@ -704,8 +704,8 @@ class ProfileStateRequest(BaseModel):
     last_workspace_browse_directory: str | None = None
     active_mode: Literal["screenshot", "live-editor", "logo-forge"] = "screenshot"
     active_live_editor_thread_id: str | None = None
-    default_agent_provider_id: Literal["agent-deck", "claude-cli", "codex-cli"] = default_agent_provider_id()
-    default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw"] = "codex"
+    default_agent_provider_id: Literal["agent-deck", "claude-cli", "codex-cli", "cursor-cli"] = default_agent_provider_id()
+    default_agent_type: Literal["claude", "codex", "gemini", "pi", "openclaw", "cursor"] = "codex"
     default_workspace_mode: Literal["root"] = "root"
     claude_default_model: str | None = None
     claude_default_thinking: str | None = None
@@ -1447,6 +1447,71 @@ def _open_codex_cli_tui_terminal(
     }
 
 
+def _open_cursor_cli_tui_terminal(
+    *,
+    session_id: str,
+    workspace_path: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise RuntimeError("Cursor chat is not bound to a provider TUI yet.")
+
+    provider = _agent_provider_or_error("cursor-cli")
+    status = provider.status()
+    if not status.command:
+        raise RuntimeError(status.reason or "Cursor CLI command is unavailable")
+
+    terminal_title = title or f"Cursor · {normalized_session_id[:8]}"
+    command = _terminal_command(
+        [
+            *status.command,
+            "--workspace",
+            workspace_path,
+            "--resume",
+            normalized_session_id,
+        ],
+        title=terminal_title,
+        cwd=workspace_path,
+        wm_class="pixel-forge-cursor-cli",
+    )
+    if command is None:
+        raise RuntimeError(
+            "No supported terminal emulator found for Cursor CLI. "
+            "Install ghostty, gnome-terminal, or x-terminal-emulator."
+        )
+    if str(os.environ.get("PIXEL_FORGE_TUI_OPEN_DRY_RUN") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return {
+            "ok": True,
+            "provider_id": "cursor-cli",
+            "provider_session_id": normalized_session_id,
+            "title": terminal_title,
+            "workspace_path": workspace_path,
+            "command": command,
+            "dry_run": True,
+        }
+    subprocess.Popen(
+        command,
+        cwd=workspace_path,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {
+        "ok": True,
+        "provider_id": "cursor-cli",
+        "provider_session_id": normalized_session_id,
+        "title": terminal_title,
+        "workspace_path": workspace_path,
+    }
+
+
 async def _load_reconciled_project_chats(
     project_path: str,
     *,
@@ -1900,6 +1965,7 @@ DIRECT_CLI_RETRY_PROVIDER_BY_AGENT = {
     "claude": "claude-cli",
     "claude-code": "claude-cli",
     "codex": "codex-cli",
+    "cursor": "cursor-cli",
 }
 
 
@@ -1918,7 +1984,13 @@ def _direct_cli_retry_options_for_agent(agent_type: object) -> list[dict[str, ob
             "id": f"retry-{retry_provider_id}",
             "label": f"Retry with {retry_provider.display_name}",
             "provider_id": retry_provider_id,
-            "agent_type": "claude" if retry_provider_id == "claude-cli" else normalized_agent_type,
+            "agent_type": (
+                "claude"
+                if retry_provider_id == "claude-cli"
+                else "cursor"
+                if retry_provider_id == "cursor-cli"
+                else normalized_agent_type
+            ),
             "available": available,
             "reason": None if available else status.reason or "Direct CLI provider is unavailable",
         }
@@ -2250,7 +2322,7 @@ async def create_project_chat(
         if isinstance(request.provider_id, str) and request.provider_id.strip()
         else get_profile_state().default_agent_provider_id
     )
-    if selected_provider_id not in {"agent-deck", "claude-cli", "codex-cli"}:
+    if selected_provider_id not in {"agent-deck", "claude-cli", "codex-cli", "cursor-cli"}:
         selected_provider_id = default_agent_provider_id()
     if not (isinstance(request.provider_id, str) and request.provider_id.strip()):
         provider = get_agent_provider(selected_provider_id)
@@ -2475,6 +2547,34 @@ async def open_project_chat_item_tui(
             return await asyncio.to_thread(
                 _open_codex_cli_tui_terminal,
                 title=f"Codex · {chat_title[:48]}",
+                session_id=bound_provider_session_id,
+                workspace_path=str(workspace_path),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if resolved_provider_id == "cursor-cli":
+        if not bound_provider_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This chat is not bound to a provider TUI yet.",
+            )
+        raw_title = (
+            getattr(session_record, "provider_session_title", None)
+            or getattr(thread_record, "provider_session_title", None)
+            or normalized_thread_id
+            or bound_provider_session_id
+        )
+        workspace_path = (
+            getattr(session_record, "workspace_path", None)
+            or getattr(thread_record, "workspace_path", None)
+            or normalized_project_path
+        )
+        chat_title = str(raw_title).strip() or "chat"
+        try:
+            return await asyncio.to_thread(
+                _open_cursor_cli_tui_terminal,
+                title=f"Cursor · {chat_title[:48]}",
                 session_id=bound_provider_session_id,
                 workspace_path=str(workspace_path),
             )

@@ -193,6 +193,18 @@ describe('SettingsSidebar chat TUI action state', () => {
       disabledReason: 'Open TUI is not available for this provider yet.',
     })
   })
+
+  it('allows direct Cursor provider chats that are attached to a bound session', () => {
+    expect(resolveChatTuiActionState({
+      providerId: 'cursor-cli',
+      providerSessionId: '7bf5a15b-1d89-44a1-84b0-d8269656fa9c',
+      agentDeckSessionId: null,
+      bindingState: 'attached',
+    })).toEqual({
+      canOpen: true,
+      disabledReason: null,
+    })
+  })
 })
 
 describe('SettingsSidebar provider diagnostics', () => {

@@ -580,6 +580,7 @@ function normalizeDraftAgentType(agentType: string | null | undefined): string {
     || agentType === 'gemini'
     || agentType === 'pi'
     || agentType === 'openclaw'
+    || agentType === 'cursor'
   )
     ? agentType
     : 'claude'
@@ -592,6 +593,9 @@ function defaultAgentTypeForProvider(providerId: string | null | undefined): str
   }
   if (normalized === 'codex-cli') {
     return 'codex'
+  }
+  if (normalized === 'cursor-cli') {
+    return 'cursor'
   }
   return null
 }

@@ -29,6 +29,8 @@ def agent_display_name(agent_id: str | None) -> str:
         "pi-cli": "Pi",
         "openclaw": "OpenClaw",
         "openclaw-cli": "OpenClaw",
+        "cursor": "Cursor",
+        "cursor-cli": "Cursor",
     }
     return names.get(normalized, normalized.replace("-", " ").title() if normalized else "Agent")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent_provider_plugins.agent_deck import AgentDeckProvider
 from agent_provider_plugins.claude_cli import ClaudeCliProvider
 from agent_provider_plugins.codex_cli import CodexCliProvider
+from agent_provider_plugins.cursor_cli import CursorCliProvider
 
 from .base import AgentProvider
 from .models import AgentProviderStatus
@@ -14,6 +15,7 @@ class AgentProviderRegistry:
             AgentDeckProvider.provider_id: AgentDeckProvider(),
             ClaudeCliProvider.provider_id: ClaudeCliProvider(),
             CodexCliProvider.provider_id: CodexCliProvider(),
+            CursorCliProvider.provider_id: CursorCliProvider(),
         }
 
     def get(self, provider_id: str) -> AgentProvider | None:

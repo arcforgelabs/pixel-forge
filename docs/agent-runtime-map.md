@@ -10,6 +10,7 @@ Pixel Forge exposes provider metadata at `/api/agent-providers`, including curre
 - Codex: current warm-turn transport is `codex exec resume --json --dangerously-bypass-approvals-and-sandbox`, with JSONL/session-output observation. That is the best short-term bridge because it uses a native Codex entrypoint and supports image attachments, but it is not the end-state architecture because it does not make the visible Codex TUI the authoritative transport.
 - Codex preferred architecture: a direct `codex-cli` provider using the experimental `codex app-server`/remote TUI protocol. The installed CLI can generate protocol schemas with thread start/resume, turn start/completion, agent-message deltas, approval requests, images, and file-change notifications, which maps much more cleanly to Pixel Forge's provider contract.
 - Claude: current warm-turn transport remains `claude -p --resume` where a session id is available, with Agent Deck/tmux fallback for visible panes. Remote Control remains a candidate only where it preserves the native visible-session contract.
+- Cursor: direct `cursor-cli` provider uses `cursor-agent --print --output-format stream-json --resume` for headless turns and `cursor-agent --workspace ... --resume ...` for Open TUI. Session ids come from `cursor-agent create-chat`; default model is `composer-2.5-fast`.
 - Gemini/Pi: current transport remains Agent Deck/tmux-mediated. Both expose non-interactive/session-capable CLI flags, but direct providers still need validation before they replace the Agent Deck wrapper.
 
 ```mermaid

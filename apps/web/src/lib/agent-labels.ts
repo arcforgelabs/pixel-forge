@@ -14,7 +14,9 @@ export function formatAgentToolLabel(tool: string | null | undefined): string {
     ? "Claude Code"
     : tool === "codex"
       ? "Codex"
-      : tool === "gemini"
+      : tool === "cursor"
+        ? "Cursor"
+        : tool === "gemini"
         ? "Gemini"
         : tool === "pi"
           ? "Pi"
@@ -46,6 +48,9 @@ export function formatProviderLabel(
   }
   if (normalizedProviderId === "codex-cli") {
     return "Codex CLI";
+  }
+  if (normalizedProviderId === "cursor-cli") {
+    return "Cursor CLI";
   }
 
   return capitalize(normalizedProviderId.replace(/[-_]+/g, " "));

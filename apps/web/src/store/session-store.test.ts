@@ -261,6 +261,34 @@ describe("session-store thread switching", () => {
     expect(body.default_agent_provider_id).toBe("codex-cli");
   });
 
+  it("persists cursor-cli as the default direct provider", async () => {
+    const fetchMock = vi.mocked(fetch);
+    useSessionStore.setState({
+      projectPath: "/tmp/example-project",
+      liveEditorSession: null,
+      profileLoaded: true,
+      profileState: null,
+    });
+
+    useSessionStore.getState().setDefaultAgentProviderId("cursor-cli");
+
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) => (
+          String(url).includes("/api/profile-state")
+          && init?.method === "POST"
+        ))
+      ).toBe(true);
+    });
+
+    const profilePost = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).includes("/api/profile-state") && init?.method === "POST")
+      .at(-1);
+    const body = JSON.parse(String(profilePost?.[1]?.body || "{}"));
+
+    expect(body.default_agent_provider_id).toBe("cursor-cli");
+  });
+
   it("switches the active live editor lane to the chosen project thread", () => {
     const session = createProjectSession({
       threadId: "thread-b",

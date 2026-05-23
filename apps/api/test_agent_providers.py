@@ -15,10 +15,12 @@ from agent_deck_bridge import (
     AgentDeckSessionTarget,
 )
 from agent_provider_plugins import codex_cli as codex_cli_plugin
+from agent_provider_plugins import cursor_cli as cursor_cli_plugin
 from agent_providers import list_agent_providers
 from agent_providers.agent_deck import AgentDeckProvider
 from agent_providers.claude_cli import ClaudeCliProvider, ClaudeCliSessionInfo
 from agent_providers.codex_cli import CodexCliProvider, CodexCliSessionInfo
+from agent_providers.cursor_cli import CursorCliProvider, CursorCliSessionInfo
 from agent_providers.models import AgentTurnPolicy, AgentTurnRequest
 
 
@@ -34,9 +36,11 @@ class AgentProviderRegistryTest(unittest.TestCase):
             "PIXEL_FORGE_RUNTIME_SOURCE_ROOT": os.environ.get("PIXEL_FORGE_RUNTIME_SOURCE_ROOT"),
         }
         codex_cli_plugin._resolve_codex_executable.cache_clear()
+        cursor_cli_plugin._resolve_cursor_executable.cache_clear()
 
     def tearDown(self) -> None:
         codex_cli_plugin._resolve_codex_executable.cache_clear()
+        cursor_cli_plugin._resolve_cursor_executable.cache_clear()
         for key, value in self.original_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -183,6 +187,18 @@ class AgentProviderRegistryTest(unittest.TestCase):
         }
         self.assertIn("claude", transports)
         self.assertIn("direct-CLI replay", transports["claude"]["architecture_note"])
+
+    def test_cursor_cli_provider_is_registered_with_stream_json_transport(self) -> None:
+        statuses = [status.to_dict() for status in list_agent_providers()]
+        matches = [status for status in statuses if status["id"] == "cursor-cli"]
+        self.assertEqual(len(matches), 1)
+        self.assertIn("config_home", matches[0]["diagnostics"])
+        transports = {
+            transport["agent_id"]: transport
+            for transport in matches[0]["transports"]  # type: ignore[index]
+        }
+        self.assertIn("cursor", transports)
+        self.assertIn("stream-json", transports["cursor"]["current_transport"])
 
     def test_codex_cli_provider_resolves_user_npm_global_bin_without_service_path(self) -> None:
         codex_bin = Path(self.tempdir.name) / ".npm-global" / "bin" / "codex"
@@ -627,3 +643,142 @@ class CodexCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(output, "second turn output")
+
+
+class CursorCliProviderBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        cursor_cli_plugin._resolve_cursor_executable.cache_clear()
+
+    def tearDown(self) -> None:
+        cursor_cli_plugin._resolve_cursor_executable.cache_clear()
+
+    def test_cursor_cli_provider_resolves_user_local_bin(self) -> None:
+        cursor_bin = Path(self.tempdir.name) / ".local" / "bin" / "cursor-agent"
+        cursor_bin.parent.mkdir(parents=True)
+        cursor_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        cursor_bin.chmod(0o755)
+
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": self.tempdir.name,
+                "PATH": "/usr/bin:/bin",
+                "PIXEL_FORGE_CURSOR_AGENT_CMD": "",
+            },
+            clear=False,
+        ):
+            cursor_cli_plugin._resolve_cursor_executable.cache_clear()
+            status = CursorCliProvider().status()
+
+        self.assertTrue(status.available)
+        self.assertEqual(status.command, [str(cursor_bin)])
+
+    def test_parse_stream_json_output_collects_assistant_and_result(self) -> None:
+        stdout = "\n".join(
+            [
+                '{"type":"system","session_id":"7bf5a15b-1d89-44a1-84b0-d8269656fa9c"}',
+                '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]},"session_id":"7bf5a15b-1d89-44a1-84b0-d8269656fa9c"}',
+                '{"type":"result","subtype":"success","result":"hello","session_id":"7bf5a15b-1d89-44a1-84b0-d8269656fa9c","is_error":false}',
+            ]
+        )
+        output, session_id, _ = cursor_cli_plugin._parse_stream_json_output(
+            stdout,
+            stderr="",
+            returncode=0,
+        )
+        self.assertEqual(output, "hello")
+        self.assertEqual(session_id, "7bf5a15b-1d89-44a1-84b0-d8269656fa9c")
+
+    def test_build_cursor_dispatch_argv_includes_stream_json_and_resume(self) -> None:
+        argv = cursor_cli_plugin._build_cursor_dispatch_argv(
+            "/usr/local/bin/cursor-agent",
+            workspace_path="/tmp/project",
+            prompt="hello",
+            provider_session_id="7bf5a15b-1d89-44a1-84b0-d8269656fa9c",
+            model="composer-2.5",
+            resume=True,
+        )
+        self.assertEqual(
+            argv,
+            [
+                "/usr/local/bin/cursor-agent",
+                "--print",
+                "--output-format",
+                "stream-json",
+                "--stream-partial-output",
+                "--trust",
+                "--force",
+                "--approve-mcps",
+                "--workspace",
+                "/tmp/project",
+                "--model",
+                "composer-2.5",
+                "--resume",
+                "7bf5a15b-1d89-44a1-84b0-d8269656fa9c",
+                "hello",
+            ],
+        )
+
+    async def test_create_session_uses_create_chat(self) -> None:
+        async def fake_create_chat() -> str:
+            return "7bf5a15b-1d89-44a1-84b0-d8269656fa9c"
+
+        with patch(
+            "agent_provider_plugins.cursor_cli._create_cursor_chat",
+            side_effect=fake_create_chat,
+        ):
+            session = await CursorCliProvider().create_session("/tmp/project")
+
+        self.assertEqual(session.provider_id, "cursor-cli")
+        self.assertEqual(session.id, "7bf5a15b-1d89-44a1-84b0-d8269656fa9c")
+        self.assertEqual(session.agent_id, "cursor")
+
+    async def test_dispatch_turn_parses_cursor_stream_json(self) -> None:
+        session = CursorCliSessionInfo(
+            provider_session_id="7bf5a15b-1d89-44a1-84b0-d8269656fa9c",
+            title="Cursor thread",
+            workspace_path="/tmp/project",
+            status="idle",
+            cursor_session_id="7bf5a15b-1d89-44a1-84b0-d8269656fa9c",
+            has_started=True,
+        )
+
+        async def fake_run(session_info, **kwargs):
+            self.assertEqual(kwargs["prompt"], "hello")
+            self.assertEqual(kwargs["model"], "composer-2.5-fast")
+            return "done"
+
+        with patch(
+            "agent_provider_plugins.cursor_cli._run_cursor_turn",
+            side_effect=fake_run,
+        ):
+            dispatch = await CursorCliProvider().dispatch_turn(
+                session,
+                project_path="/tmp/project",
+                prompt="hello",
+                image_paths=[],
+                startup_timeout_seconds=1.0,
+                completion_timeout_seconds=2.0,
+                request=AgentTurnRequest(
+                    project_path="/tmp/project",
+                    thread_id="thread-a",
+                    prompt="hello",
+                    agent_id="cursor",
+                    agent_model="composer-2.5-fast",
+                    policy=AgentTurnPolicy(no_approval=True),
+                ),
+            )
+            result = await dispatch.wait_task
+
+        self.assertEqual(dispatch.provider_id, "cursor-cli")
+        self.assertEqual(dispatch.agent_id, "cursor")
+        self.assertEqual(result, "done")
+
+    def test_missing_session_detection(self) -> None:
+        provider = CursorCliProvider()
+        self.assertTrue(
+            provider.is_missing_session_error(Exception("Unknown chat session abc"))
+        )
+        self.assertFalse(provider.is_missing_session_error(Exception("authentication failed")))

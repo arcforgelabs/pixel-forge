@@ -1147,6 +1147,7 @@ function normalizeAgentType(agentType: string | null | undefined): string {
     || agentType === "gemini"
     || agentType === "pi"
     || agentType === "openclaw"
+    || agentType === "cursor"
   )
     ? agentType
     : "claude";
@@ -1154,7 +1155,7 @@ function normalizeAgentType(agentType: string | null | undefined): string {
 
 function normalizeAgentProviderId(providerId: string | null | undefined): string {
   const normalized = providerId?.trim() || "";
-  return ["agent-deck", "claude-cli", "codex-cli"].includes(normalized)
+  return ["agent-deck", "claude-cli", "codex-cli", "cursor-cli"].includes(normalized)
     ? normalized
     : "agent-deck";
 }

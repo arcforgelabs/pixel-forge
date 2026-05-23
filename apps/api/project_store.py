@@ -57,7 +57,7 @@ def default_agent_provider_id() -> str:
     explicit = os.environ.get("PIXEL_FORGE_DEFAULT_AGENT_PROVIDER_ID")
     if explicit == "agent-deck" and _agent_deck_provider_disabled_by_env():
         return "codex-cli"
-    if explicit in {"agent-deck", "claude-cli", "codex-cli"}:
+    if explicit in {"agent-deck", "claude-cli", "codex-cli", "cursor-cli"}:
         return explicit
     if _agent_deck_provider_disabled_by_env():
         return "codex-cli"
@@ -1394,14 +1394,22 @@ def _normalize_active_mode(value: object | None) -> str:
 
 
 def _normalize_agent_type(value: object | None) -> str:
-    return str(value) if value in {"claude", "codex", "gemini", "pi", "openclaw"} else "claude"
+    return (
+        str(value)
+        if value in {"claude", "codex", "gemini", "pi", "openclaw", "cursor"}
+        else "claude"
+    )
 
 
 def _normalize_agent_provider_id(value: object | None) -> str:
     normalized = str(value or "").strip()
     if normalized == "agent-deck" and _agent_deck_provider_disabled_by_env():
         return default_agent_provider_id()
-    return normalized if normalized in {"agent-deck", "claude-cli", "codex-cli"} else default_agent_provider_id()
+    return (
+        normalized
+        if normalized in {"agent-deck", "claude-cli", "codex-cli", "cursor-cli"}
+        else default_agent_provider_id()
+    )
 
 
 def _normalize_workspace_mode(value: object | None) -> str:
